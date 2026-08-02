@@ -8,7 +8,9 @@
     "dev": "nest start --watch",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "migrate": "nest build && node dist/db/migrate.js",
+    "test:integration": "vitest run --config vitest.integration.config.mts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.28",
@@ -16,6 +18,8 @@
     "@nestjs/platform-express": "^11.1.28",
     "@relay/protocol": "workspace:*",
     "@relay/service-kit": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.22.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },
@@ -23,6 +27,8 @@
     "@nestjs/cli": "^11.0.24",
     "@nestjs/testing": "^11.1.28",
     "@swc/core": "^1.15.47",
+    "@types/pg": "^8.20.3",
+    "drizzle-kit": "^0.31.10",
     "unplugin-swc": "^1.5.9"
   }
 }
