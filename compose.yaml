@@ -1,0 +1,72 @@
+# The whole local world, one command:  docker compose up -d --wait
+# Four stores, each here by a recorded decision (SAD §9). Host ports are env
+# knobs with the standard defaults; the container side never changes.
+name: relay
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      # Dev-only credentials — this file never ships anywhere.
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD: relay
+      POSTGRES_DB: relay
+    ports:
+      - "${RELAY_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "relay", "-d", "relay"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:8-alpine
+    # No volume, on purpose: nothing in Redis is a source of truth.
+    # Fan-out is lossy by design (ADR-07); presence self-heals (ADR-10).
+    ports:
+      - "${RELAY_REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  nats:
+    image: nats:2.12-alpine
+    # JetStream on (-js) with file storage (-sd): the durable event spine
+    # (ADR-02) must survive a restart. -m exposes the monitoring endpoint.
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "${RELAY_NATS_PORT:-4222}:4222"
+      - "${RELAY_NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3
+    # The analytical store rides its own path (CON-01): single node in v1,
+    # schema already cluster-shaped (ADR-08).
+    ports:
+      - "${RELAY_CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${RELAY_CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres-data:
+  nats-data:
+  clickhouse-data:
