@@ -18,7 +18,17 @@ export class ProtocolErrorFilter implements ExceptionFilter {
     const res = host.switchToHttp().getResponse<ServerResponse>();
     const status =
       exception instanceof HttpException ? exception.getStatus() : 500;
-    const code = status === 404 ? "not_found" : "internal_error";
+    // REST error codes by status (chapter 2.2 widened this: a 400 that
+    // calls itself "internal_error" is a lie the client cannot act on).
+    // The registry stays here until an API chapter owns a REST one.
+    const code =
+      status === 400
+        ? "invalid_request"
+        : status === 401
+          ? "unauthorized"
+          : status === 404
+            ? "not_found"
+            : "internal_error";
     const message =
       exception instanceof HttpException
         ? exception.message

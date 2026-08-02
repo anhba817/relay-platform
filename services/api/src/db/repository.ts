@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
 
 import type { Db } from "./client";
-import { channels, members, users } from "./schema";
+import { channels, members, messages, users } from "./schema";
 
 // The repository layer — the ONE place data access lives (ADR-04's single
 // writer, constitution I). Two surfaces with a bright line between them:
@@ -59,6 +59,26 @@ export interface ChannelRow {
   external_id: string;
   type: "public" | "private";
   name: string | null;
+}
+
+export interface MessageRow {
+  id: string;
+  channel_id: string;
+  seq: number;
+  text: string | null;
+  created_at: string;
+}
+
+/** Thrown when a channel id resolves to nothing IN THIS TENANT — which,
+ * from the caller's side, is indistinguishable from "does not exist"
+ * (FR-TEN-05: no data, and no reveal that the foreign id exists). The
+ * layer stays framework-free; the service turns this into the wire's
+ * 404 (constitution I's isolation, EIR-API-04's envelope). */
+export class ChannelNotFoundError extends Error {
+  constructor(public readonly channelId: string) {
+    super(`channel not found: ${channelId}`);
+    this.name = "ChannelNotFoundError";
+  }
 }
 
 export class Repository {
@@ -187,5 +207,54 @@ export class Repository {
         ),
       );
     return rows.map((r) => r.channel_id);
+  }
+
+  /** The write path (chapter 2.2): sequence assignment under the channel
+   * row lock (ADR-03). The transaction IS the ordering guarantee: the
+   * lock serialises assignment per channel, and the ack that matters
+   * happens only after commit (FR-MSG-05).
+   */
+  async sendMessage(
+    channelId: string,
+    {
+      userId,
+      text,
+      metadata,
+    }: { userId?: string; text: string; metadata?: unknown },
+  ): Promise<MessageRow> {
+    return this.db.transaction(async (tx) => {
+      const [channel] = await tx
+        .select({ id: channels.id, lastSequence: channels.lastSequence })
+        .from(channels)
+        .where(
+          and(
+            eq(channels.id, channelId),
+            eq(channels.environmentId, this.environmentId),
+          ),
+        )
+        .for("update");
+      if (!channel) throw new ChannelNotFoundError(channelId);
+      const seq = channel.lastSequence + 1;
+      const id = randomUUID();
+      await tx
+        .update(channels)
+        .set({ lastSequence: seq })
+        .where(eq(channels.id, channel.id));
+      await tx.insert(messages).values({
+        id,
+        channelId: channel.id,
+        sequence: seq,
+        userId: userId ?? null,
+        text,
+        metadata: metadata ?? {},
+      });
+      return {
+        id,
+        channel_id: channel.id,
+        seq,
+        text,
+        created_at: new Date().toISOString(),
+      };
+    });
   }
 }

@@ -26,10 +26,10 @@ let repoB: Repository;
 
 beforeAll(async () => {
   await migrate(pool);
-  // Deterministic ground: this suite owns these tables in the dev database.
-  await pool.query(
-    "TRUNCATE members, messages, channels, users, environments, applications CASCADE",
-  );
+  // Deterministic ground WITHOUT a truncate: this suite mints its own
+  // environments, and 2.1 proved no other environment's rows are visible
+  // through them. Isolation buys parallel-safe test files for free — see
+  // the note below.
   envA = await createEnvironment(db, { name: "tenant-a" });
   envB = await createEnvironment(db, { name: "tenant-b" });
   repoA = new Repository(db, envA.id);
@@ -72,5 +72,18 @@ describe("tenant isolation is structural (FR-TEN-05)", () => {
       repoB.createUser("tuan", "A different Tuan"),
     ).resolves.toBeTruthy();
     await expect(repoA.createUser("tuan", "Duplicate in A")).rejects.toThrow();
+  });
+});
+
+describe("sequence assignment is serialised per channel (ADR-03)", () => {
+  it("two concurrent sends never interleave", async () => {
+    const channel = await repoA.createChannel("ordering", "public");
+    const [a, b] = await Promise.all([
+      repoA.sendMessage(channel.id, { text: "first writer" }),
+      repoA.sendMessage(channel.id, { text: "second writer" }),
+    ]);
+    // Two sends, two DISTINCT consecutive sequence numbers — always.
+    expect(new Set([a.seq, b.seq]).size).toBe(2);
+    expect(Math.abs(a.seq - b.seq)).toBe(1);
   });
 });
