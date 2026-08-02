@@ -1,5 +1,5 @@
 {
-  "name": "@relay/protocol",
+  "name": "@relay/service-kit",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -13,8 +13,5 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
-  },
-  "dependencies": {
-    "zod": "^4.4.3"
   }
 }

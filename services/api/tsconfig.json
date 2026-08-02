@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // ADR-15's stated trade-off, spent here and only here: NestJS's DI reads
+    // constructor parameter types from decorator metadata, which is emitted
+    // code — so this service gives up erasableSyntaxOnly (still ON in the
+    // gateway and every package) and turns the two decorator flags on.
+    // verbatimModuleSyntax must also yield: this package compiles to
+    // CommonJS (the framework's native dialect), so `import` statements are
+    // rewritten to `require` calls at build time.
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "verbatimModuleSyntax": false
+  },
+  "include": ["src"]
+}
