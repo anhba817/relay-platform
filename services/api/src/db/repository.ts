@@ -67,6 +67,10 @@ export interface MessageRow {
   seq: number;
   text: string | null;
   created_at: string;
+  /** Chapter 2.3 (FR-MSG-04): true when a retry was recognised by the
+   * idempotency index and the ORIGINAL message was returned instead of
+   * a new insert. The service layer uses this to decide response shape. */
+  duplicate?: boolean;
 }
 
 /** Thrown when a channel id resolves to nothing IN THIS TENANT — which,
@@ -79,6 +83,13 @@ export class ChannelNotFoundError extends Error {
     super(`channel not found: ${channelId}`);
     this.name = "ChannelNotFoundError";
   }
+}
+
+/** Timestamps cross the wire as RFC 3339 strings (constitution: UTC,
+ * millisecond precision) — the driver hands back a Date or a string
+ * depending on the column and the query shape. */
+function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : String(value);
 }
 
 export class Repository {
@@ -209,10 +220,16 @@ export class Repository {
     return rows.map((r) => r.channel_id);
   }
 
-  /** The write path (chapter 2.2): sequence assignment under the channel
-   * row lock (ADR-03). The transaction IS the ordering guarantee: the
-   * lock serialises assignment per channel, and the ack that matters
-   * happens only after commit (FR-MSG-05).
+  /** The write path (chapters 2.2 + 2.3): sequence assignment under the
+   * channel row lock (ADR-03), with idempotency enforcement via the
+   * partial unique index (DR-03). The transaction IS the ordering
+   * guarantee: the lock serialises assignment per channel, and the ack
+   * that matters happens only after commit (FR-MSG-05).
+   *
+   * When an idempotency key is present and conflicts with an existing
+   * message, the insert is skipped (ON CONFLICT DO NOTHING), the channel's
+   * sequence is left untouched, and the ORIGINAL message is returned with
+   * `duplicate: true` — FR-MSG-04's "201-equivalent semantics".
    */
   async sendMessage(
     channelId: string,
@@ -220,7 +237,13 @@ export class Repository {
       userId,
       text,
       metadata,
-    }: { userId?: string; text: string; metadata?: unknown },
+      idempotencyKey,
+    }: {
+      userId?: string;
+      text: string;
+      metadata?: unknown;
+      idempotencyKey?: string;
+    },
   ): Promise<MessageRow> {
     return this.db.transaction(async (tx) => {
       const [channel] = await tx
@@ -236,25 +259,119 @@ export class Repository {
       if (!channel) throw new ChannelNotFoundError(channelId);
       const seq = channel.lastSequence + 1;
       const id = randomUUID();
-      await tx
-        .update(channels)
-        .set({ lastSequence: seq })
-        .where(eq(channels.id, channel.id));
-      await tx.insert(messages).values({
+
+      const insert = tx.insert(messages).values({
         id,
         channelId: channel.id,
         sequence: seq,
         userId: userId ?? null,
         text,
         metadata: metadata ?? {},
+        idempotencyKey: idempotencyKey ?? null,
       });
+
+      // The conflict clause is attached ONLY when a key is present, and it
+      // names the partial index explicitly. A bare ON CONFLICT DO NOTHING
+      // would absorb every constraint on the table — including DR-01's
+      // UNIQUE (channel_id, sequence), whose loud failure is 2.2's safety
+      // net. A keyless send therefore carries no conflict clause at all.
+      const inserted = await (
+        idempotencyKey
+          ? insert.onConflictDoNothing({
+              target: [messages.channelId, messages.idempotencyKey],
+              where: sql`${messages.idempotencyKey} IS NOT NULL`,
+            })
+          : insert
+      ).returning({ id: messages.id, createdAt: messages.createdAt });
+
+      if (inserted.length === 0) {
+        // The key has been here before. Return the ORIGINAL message — the
+        // retry gets the same answer the lost ack carried (FR-MSG-04) —
+        // and leave last_sequence alone: a recognised duplicate wrote
+        // nothing, so it consumes nothing.
+        return {
+          ...(await this.getMessageByIdempotencyKey(
+            tx,
+            channel.id,
+            idempotencyKey!,
+          )),
+          duplicate: true,
+        };
+      }
+
+      // The sequence is spent only by a message that actually landed.
+      await tx
+        .update(channels)
+        .set({ lastSequence: seq })
+        .where(eq(channels.id, channel.id));
+
       return {
         id,
         channel_id: channel.id,
         seq,
         text,
-        created_at: new Date().toISOString(),
+        created_at: toIso(inserted[0]!.createdAt),
       };
     });
+  }
+
+  /** Fetch a message by its idempotency key within a channel — the
+   * recovery leg of 2.3's duplicate-recognised path. The channel join
+   * carries the tenant scope: every query in this layer answers only for
+   * its own environment, private helpers included (constitution I). */
+  private async getMessageByIdempotencyKey(
+    tx: Db,
+    channelId: string,
+    idempotencyKey: string,
+  ): Promise<MessageRow> {
+    const [row] = await tx
+      .select({
+        id: messages.id,
+        channel_id: messages.channelId,
+        seq: messages.sequence,
+        text: messages.text,
+        created_at: messages.createdAt,
+      })
+      .from(messages)
+      .innerJoin(channels, eq(channels.id, messages.channelId))
+      .where(
+        and(
+          eq(messages.channelId, channelId),
+          eq(messages.idempotencyKey, idempotencyKey),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      );
+    // The row MUST exist: this method is only reached when the insert
+    // conflicted on the idempotency index, so the key is already there.
+    if (!row) {
+      throw new Error(
+        `idempotency key ${idempotencyKey} conflicted but its message is missing — index inconsistency`,
+      );
+    }
+    return { ...row, created_at: toIso(row.created_at) };
+  }
+
+  /** Every message in the channel, ordered by sequence — tenant-scoped
+   * like everything else here. DECISION (chapter 2.3): this exists for
+   * the idempotency suite's row counts; 2.4 replaces it with the real
+   * paginated read, and this method retires with that chapter. */
+  async listMessagesRaw(
+    channelId: string,
+  ): Promise<{ id: string; text: string | null; seq: number }[]> {
+    return this.db
+      .select({
+        id: messages.id,
+        text: messages.text,
+        seq: messages.sequence,
+      })
+      .from(messages)
+      .innerJoin(channels, eq(channels.id, messages.channelId))
+      .where(
+        and(
+          eq(messages.channelId, channelId),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      )
+      .orderBy(asc(messages.sequence));
   }
 }

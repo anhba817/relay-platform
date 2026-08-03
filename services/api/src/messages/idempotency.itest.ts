@@ -1,0 +1,136 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+
+import {
+  createDb,
+  createPool,
+  DEFAULT_DATABASE_URL,
+  type Db,
+} from "../db/client";
+import { migrate } from "../db/migrate";
+import {
+  createEnvironment,
+  Repository,
+  type Environment,
+} from "../db/repository";
+
+// The idempotency suite (chapter 2.3): staged failure without keys,
+// enforced deduplication with keys, concurrent retries, and cross-channel
+// key namespacing. Requires the compose Postgres — *.itest.ts keeps it
+// out of the Docker-free unit lane.
+
+// Guardrail: integration tests run against the LOCAL compose stack only.
+const url = new URL(process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL);
+if (!["localhost", "127.0.0.1"].includes(url.hostname)) {
+  throw new Error(
+    `integration tests refuse non-local databases (got host "${url.hostname}") — never point this suite at a shared database`,
+  );
+}
+
+const pool = createPool();
+const db: Db = createDb(pool);
+let env: Environment;
+let repo: Repository;
+
+beforeAll(async () => {
+  await migrate(pool);
+  env = await createEnvironment(db, { name: "idempotency-itest" });
+  repo = new Repository(db, env.id);
+});
+
+afterAll(async () => {
+  await pool.end();
+});
+
+describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
+  it("a retry WITHOUT a key duplicates the message — journey 4's failure, staged", async () => {
+    const channel = await repo.createChannel("idem-no-key", "public");
+    await repo.sendMessage(channel.id, { text: "B2, north ramp" });
+    // The ack was lost; the client cannot know. It retries:
+    await repo.sendMessage(channel.id, { text: "B2, north ramp" });
+    const rows = await repo.listMessagesRaw(channel.id);
+    // Two rows, seq 1 and 2, identical text. The dispatcher reads it twice.
+    expect(rows.filter((m) => m.text === "B2, north ramp")).toHaveLength(2);
+  });
+
+  it("a retry WITH a key returns the ORIGINAL message — the fix", async () => {
+    const channel = await repo.createChannel("idem-with-key", "public");
+    const key = randomUUID();
+    const first = await repo.sendMessage(channel.id, {
+      text: "B2, north ramp",
+      idempotencyKey: key,
+    });
+    // The ack was lost; the client retries with the same key:
+    const retry = await repo.sendMessage(channel.id, {
+      text: "B2, north ramp",
+      idempotencyKey: key,
+    });
+    // One row, ever.
+    const rows = await repo.listMessagesRaw(channel.id);
+    expect(rows.filter((m) => m.text === "B2, north ramp")).toHaveLength(1);
+    // The retry got the ORIGINAL message back — same id, same seq.
+    expect(retry.id).toBe(first.id);
+    expect(retry.seq).toBe(first.seq);
+    expect(retry.duplicate).toBe(true);
+  });
+
+  it("five concurrent sends with the SAME key produce exactly one row", async () => {
+    const channel = await repo.createChannel("idem-concurrent", "public");
+    const key = randomUUID();
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        repo.sendMessage(channel.id, {
+          text: "concurrent send",
+          idempotencyKey: key,
+        }),
+      ),
+    );
+    // Exactly one row in the database.
+    const rows = await repo.listMessagesRaw(channel.id);
+    expect(rows.filter((m) => m.text === "concurrent send")).toHaveLength(1);
+    // All five responses carry the same id and seq.
+    const ids = new Set(results.map((r) => r.id));
+    const seqs = new Set(results.map((r) => r.seq));
+    expect(ids.size).toBe(1);
+    expect(seqs.size).toBe(1);
+  });
+
+  it("a recognised duplicate consumes no sequence number", async () => {
+    const channel = await repo.createChannel("idem-no-burn", "public");
+    const key = randomUUID();
+    await repo.sendMessage(channel.id, { text: "once", idempotencyKey: key });
+    await repo.sendMessage(channel.id, { text: "once", idempotencyKey: key });
+    await repo.sendMessage(channel.id, { text: "once", idempotencyKey: key });
+    // Three sends, one row — and the NEXT message gets seq 2, not seq 4:
+    // a retry that wrote nothing spends nothing (FR-MSG-02 tolerates gaps,
+    // but there is no reason to manufacture them).
+    const next = await repo.sendMessage(channel.id, { text: "after" });
+    expect(next.seq).toBe(2);
+  });
+
+  it("the same key in DIFFERENT channels produces two rows — key namespace is the channel", async () => {
+    const channelA = await repo.createChannel("idem-ns-a", "public");
+    const channelB = await repo.createChannel("idem-ns-b", "public");
+    const key = randomUUID();
+    const a = await repo.sendMessage(channelA.id, {
+      text: "same key, different channel",
+      idempotencyKey: key,
+    });
+    const b = await repo.sendMessage(channelB.id, {
+      text: "same key, different channel",
+      idempotencyKey: key,
+    });
+    // Two distinct rows — the key's scope is (channel_id, key), not global.
+    expect(a.id).not.toBe(b.id);
+    expect(
+      (await repo.listMessagesRaw(channelA.id)).filter(
+        (m) => m.text === "same key, different channel",
+      ),
+    ).toHaveLength(1);
+    expect(
+      (await repo.listMessagesRaw(channelB.id)).filter(
+        (m) => m.text === "same key, different channel",
+      ),
+    ).toHaveLength(1);
+  });
+});

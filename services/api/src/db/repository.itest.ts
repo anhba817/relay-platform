@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
 
 import { createDb, createPool, DEFAULT_DATABASE_URL, type Db } from "./client";
 import { migrate } from "./migrate";
@@ -85,5 +86,24 @@ describe("sequence assignment is serialised per channel (ADR-03)", () => {
     // Two sends, two DISTINCT consecutive sequence numbers — always.
     expect(new Set([a.seq, b.seq]).size).toBe(2);
     expect(Math.abs(a.seq - b.seq)).toBe(1);
+  });
+});
+
+describe("idempotency must not disarm DR-01 (chapter 2.3)", () => {
+  it("a keyless send still fails loudly on a sequence collision", async () => {
+    const channel = await repoA.createChannel("dr01-guard", "public");
+    await repoA.sendMessage(channel.id, { text: "first" });
+    // Rewind the counter so the next keyless send reuses seq 1. The
+    // conflict clause must NOT swallow this: DR-01's unique constraint is
+    // 2.2's safety net, and idempotency has no business disarming it.
+    await db.execute(
+      sql`UPDATE channels SET last_sequence = 0 WHERE id = ${channel.id}`,
+    );
+    await expect(
+      repoA.sendMessage(channel.id, { text: "collides" }),
+    ).rejects.toThrow();
+    // And nothing landed: the failed insert wrote no row.
+    const rows = await repoA.listMessagesRaw(channel.id);
+    expect(rows).toHaveLength(1);
   });
 });
