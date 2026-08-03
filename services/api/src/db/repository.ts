@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lt, sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "./client";
 import { channels, members, messages, users } from "./schema";
@@ -349,6 +349,60 @@ export class Repository {
       );
     }
     return { ...row, created_at: toIso(row.created_at) };
+  }
+
+  /** History reads (chapter 2.4): one page of messages anchored to a
+   * sequence position, in either direction (FR-MSG-09), riding the
+   * messages_channel_seq index in its natural order. The channel join
+   * carries the tenant scope, so a foreign channel id pages nothing.
+   *
+   * Anchors are strictly EXCLUSIVE: the cursor names the last row the
+   * client already has. Inclusive comparisons would serve that row twice,
+   * once per page — offset drift rebuilt at a single row's scale.
+   */
+  async listMessages(
+    channelId: string,
+    {
+      beforeSeq,
+      afterSeq,
+      limit,
+    }: { beforeSeq?: number; afterSeq?: number; limit: number },
+  ): Promise<MessageRow[]> {
+    const columns = {
+      id: messages.id,
+      channel_id: messages.channelId,
+      seq: messages.sequence,
+      text: messages.text,
+      created_at: messages.createdAt,
+    };
+    const scoped = (extra?: SQL) =>
+      and(
+        eq(messages.channelId, channelId),
+        eq(channels.environmentId, this.environmentId),
+        ...(extra ? [extra] : []),
+      );
+    const rows = await (afterSeq === undefined
+      ? this.db
+          .select(columns)
+          .from(messages)
+          .innerJoin(channels, eq(channels.id, messages.channelId))
+          .where(
+            scoped(
+              beforeSeq === undefined
+                ? undefined
+                : lt(messages.sequence, beforeSeq),
+            ),
+          )
+          .orderBy(desc(messages.sequence))
+          .limit(limit)
+      : this.db
+          .select(columns)
+          .from(messages)
+          .innerJoin(channels, eq(channels.id, messages.channelId))
+          .where(scoped(gt(messages.sequence, afterSeq)))
+          .orderBy(asc(messages.sequence))
+          .limit(limit));
+    return rows.map((row) => ({ ...row, created_at: toIso(row.created_at) }));
   }
 
   /** Every message in the channel, ordered by sequence — tenant-scoped

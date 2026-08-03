@@ -8,6 +8,13 @@
       "when": 1785644867008,
       "tag": "0000_core_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785728365707,
+      "tag": "0001_drop_redundant_index",
+      "breakpoints": true
     }
   ]
 }

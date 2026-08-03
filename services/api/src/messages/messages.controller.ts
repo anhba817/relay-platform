@@ -1,13 +1,21 @@
-import { Body, Controller, Param, Post, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 
 import { EnvironmentContextGuard } from "./environment-context.guard";
 import { MessagesService } from "./messages.service";
-import { sendMessageBodySchema } from "./messages.schema";
+import { historyQuerySchema, sendMessageBodySchema } from "./messages.schema";
 // `import type` is required, not stylistic: with isolatedModules and
 // emitDecoratorMetadata on (ADR-15's trade-off, chapter 1.4), a type used
 // in a decorated signature must be imported as a type or TS1272 refuses
 // to compile it.
-import type { SendMessageBody } from "./messages.schema";
+import type { HistoryQuery, SendMessageBody } from "./messages.schema";
 import { ZodValidationPipe } from "./zod-validation.pipe";
 
 // The api's first product endpoint (chapter 2.2). Validation is zod at the
@@ -24,5 +32,13 @@ export class MessagesController {
     @Body(new ZodValidationPipe(sendMessageBodySchema)) body: SendMessageBody,
   ) {
     return this.messages.send(channelId, body);
+  }
+
+  @Get()
+  async history(
+    @Param("channelId") channelId: string,
+    @Query(new ZodValidationPipe(historyQuerySchema)) query: HistoryQuery,
+  ) {
+    return this.messages.history(channelId, query);
   }
 }
