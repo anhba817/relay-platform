@@ -1,30 +1,45 @@
 import { CLOSE_CODES, frameSchema } from "@relay/protocol";
 import { createLogger, serve, type Logger } from "@relay/service-kit";
 
+import { createApiClient } from "./api-client.js";
+import { attachSessions } from "./session.js";
+
 // The gateway — SAD §4.1: terminates WebSockets and never writes to the
-// database (ADR-05). At walking-skeleton stage no sockets exist yet; instead
-// the gateway DECLARES the wire vocabulary it will speak, computed from
-// @relay/protocol — never hardcoded, so the advertisement cannot drift from
-// the contract. Sessions, JWT verification, and real frames arrive in Part 2.
+// database (ADR-05). Chapter 1.4 stood up the HTTP half (health, request
+// ids, structured logs); chapter 2.5 gives it the job it exists for. The
+// health payload still advertises the wire vocabulary, computed from
+// @relay/protocol so the advertisement cannot drift from the contract.
 
 const frames = frameSchema.options.map((option) => option.shape.type.value);
 const closeCodes = Object.keys(CLOSE_CODES).map(Number);
 
+export const DEFAULT_API_URL = "http://localhost:4000";
+
 export function createServer(logger?: Logger) {
-  return serve({
+  const log = logger ?? createLogger("gateway");
+  const server = serve({
     service: "gateway",
     health: () => ({
       uptime_s: Math.round(process.uptime()),
       protocol: { frames, close_codes: closeCodes },
     }),
-    ...(logger ? { logger } : {}),
+    logger: log,
   });
+  // The socket server rides the SAME listener as health — one port, two
+  // protocols, which is what an upgrade handshake is for.
+  const sessions = attachSessions({
+    server,
+    api: createApiClient(process.env.RELAY_API_URL ?? DEFAULT_API_URL),
+    logger: log,
+  });
+  server.on("close", sessions.close);
+  return server;
 }
 
 if (import.meta.main) {
   const port = Number(process.env.PORT ?? 4001);
   const logger = createLogger("gateway");
-  createServer().listen(port, () => {
+  createServer(logger).listen(port, () => {
     logger.log("info", "listening", { port });
   });
 }

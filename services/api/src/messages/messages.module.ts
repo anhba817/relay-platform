@@ -34,5 +34,6 @@ import { MessagesService } from "./messages.service";
     MessagesService,
     EnvironmentContextGuard,
   ],
+  exports: [Repository, MessagesService, EnvironmentContextGuard],
 })
 export class MessagesModule {}

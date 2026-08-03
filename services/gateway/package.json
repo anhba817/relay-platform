@@ -10,9 +10,12 @@
   },
   "dependencies": {
     "@relay/protocol": "workspace:*",
-    "@relay/service-kit": "workspace:*"
+    "@relay/service-kit": "workspace:*",
+    "jose": "^6.2.7",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
     "tsx": "^4.23.1"
   }
 }
