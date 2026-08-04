@@ -1,12 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 
-import { CLOSE_CODES, frameSchema, type Frame } from "@relay/protocol";
+import {
+  CLOSE_CODES,
+  frameSchema,
+  type Frame,
+  type Message,
+} from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import type { ApiClient } from "./api-client.js";
 import { verifyToken, type Identity } from "./auth.js";
+import type { Fanout } from "./fanout.js";
 import { Registry, type Connection } from "./registry.js";
 
 // One session per socket (chapter 2.5). The order of operations here is the
@@ -38,6 +44,11 @@ export interface SessionServerOptions {
   server: Server;
   api: ApiClient;
   logger: Logger;
+  /** The cross-instance fabric (chapter 2.6). Optional so 2.5's tests —
+   * and a single-instance dev run — still work without Redis; when it is
+   * absent, delivery is local-only, which is exactly the split brain this
+   * chapter opened with. */
+  fanout?: Fanout;
   /** Overridable so tests can run the heartbeat in milliseconds instead of
    * half-minutes — the interval is a contract (EIR-WS-04), not a constant
    * the tests should have to wait out. */
@@ -48,9 +59,20 @@ export function attachSessions({
   server,
   api,
   logger,
+  fanout,
   pingIntervalMs = PING_INTERVAL_MS,
 }: SessionServerOptions): { registry: Registry; close: () => void } {
   const registry = new Registry();
+
+  /** A frame arriving from the fabric — born on this instance or another,
+   * indistinguishable by design — becomes message.created for every local
+   * member of its channel. */
+  function deliver(channelId: string, message: Message): void {
+    for (const connection of registry.subscribersOf(channelId)) {
+      send(connection.socket, { type: "message.created", payload: message });
+    }
+  }
+  fanout?.onDelivery(deliver);
   // noServer: the upgrade is handled by hand so the token can be checked
   // BEFORE the handshake completes. Letting ws own the upgrade would mean
   // rejecting a socket that already exists (EIR-WS-05 wants the close code
@@ -103,6 +125,28 @@ export function attachSessions({
     }
 
     registry.add(connection);
+    // Subscriptions follow membership: the first local member of a channel
+    // makes this instance a subscriber, and the last one to leave releases
+    // it (reference-counted in the fabric).
+    //
+    // NOT AWAITED, and that is the whole point. EIR-WS-03 gives the
+    // handshake one second, and the fabric is the one dependency in this
+    // path that is ALLOWED to be down (ADR-07). Awaiting it here made the
+    // ack wait on Redis — a stopped broker stopped connections dead, which
+    // is a far worse failure than the dropped frames the fabric is
+    // permitted. Subscriptions land when they land; ioredis replays them on
+    // reconnect, and until then this instance is simply deaf, which is the
+    // documented cost.
+    void Promise.all(
+      [...connection.channelIds].map((channelId) =>
+        fanout?.subscribe(channelId).catch((error: unknown) => {
+          logger.log("error", "fanout.subscribe_failed", {
+            channel: channelId,
+            error: String(error),
+          });
+        }),
+      ),
+    );
     logger.log("info", "connection.opened", {
       connection_id: connection.id,
       user: identity.userExternalId,
@@ -128,6 +172,11 @@ export function attachSessions({
     socket.on("message", (raw) => void handle(connection, raw.toString()));
     socket.on("close", (code) => {
       registry.remove(connection.id);
+      void Promise.all(
+        [...connection.channelIds].map((channelId) =>
+          fanout?.unsubscribe(channelId),
+        ),
+      );
       logger.log("info", "connection.closed", {
         connection_id: connection.id,
         code,
@@ -166,15 +215,35 @@ export function attachSessions({
 
     const { channel, text, idem_key } = frame.data.payload;
     try {
-      const { seq } = await api.sendMessage(connection.identity, {
+      const committed = await api.sendMessage(connection.identity, {
         channel_id: channel,
         text,
         idempotency_key: idem_key,
       });
+      const { seq } = committed;
       // The ack carries the sequence the API committed — after the commit,
       // never before (FR-MSG-05, unchanged since 2.2; the socket is a new
       // door onto the same write path).
       send(connection.socket, { type: "message.ack", payload: { seq } });
+      // …and only THEN does anyone else hear about it. Durability, then the
+      // sender's confirmation, then everybody's copy: no step overtakes the
+      // one before it (§5.1's ordering, now spanning machines).
+      //
+      // A RECOGNISED RETRY IS NOT REPUBLISHED. 2.3 made the retry safe for
+      // storage; that did not make it safe for delivery, and a client that
+      // retries on a flaky link would otherwise put the same message on
+      // every member's screen twice. `text === null` is the same argument:
+      // a tombstone recovered by an old key is not a creation.
+      if (!committed.duplicate && committed.text !== null) {
+        await fanout?.publish({
+          id: committed.id,
+          channel: committed.channel_id,
+          seq: committed.seq,
+          user: committed.user,
+          text: committed.text,
+          created_at: committed.created_at,
+        });
+      }
     } catch (error) {
       logger.log("error", "send.failed", {
         connection_id: connection.id,

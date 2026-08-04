@@ -14,32 +14,34 @@ import type { HistoryQuery, SendMessageBody } from "./messages.schema";
 
 // The thin layer between HTTP and the repository (chapters 2.2 + 2.3). It
 // owns two things: turning the layer's domain error into the wire's 404,
-// and translating the repository's `duplicate: true` into FR-MSG-04's
-// "201-equivalent semantics" — the retry returns the original message,
-// indistinguishable from a fresh send (the `duplicate` flag stays internal).
+// and carrying the write path's inputs down to the repository.
+//
+// AMENDED in chapter 2.6: `duplicate` used to be erased here, which made
+// FR-MSG-04's "indistinguishable retry" a property of the SERVICE. It is
+// really a property of the PUBLIC WIRE — the internal caller needs the
+// flag to avoid publishing a retry to every member. So the flag now
+// travels to the controllers, and the public one erases it.
 @Injectable()
 export class MessagesService {
   constructor(private readonly repo: Repository) {}
 
-  async send(channelId: string, body: SendMessageBody): Promise<MessageRow> {
+  async send(
+    channelId: string,
+    body: SendMessageBody,
+    /** Chapter 2.6: who wrote it. Optional because the public REST route
+     * has no authenticated user yet (its own chapter, Part 3); the
+     * internal route always knows. */
+    userId?: string,
+  ): Promise<MessageRow> {
     try {
-      const result = await this.repo.sendMessage(channelId, {
+      return await this.repo.sendMessage(channelId, {
         text: body.text,
         metadata: body.metadata,
+        ...(userId !== undefined && { userId }),
         ...(body.idempotency_key != null && {
           idempotencyKey: body.idempotency_key,
         }),
       });
-      // The internal duplicate flag never reaches the wire: the client
-      // sees the same body whether this was the original send or the
-      // retry that recovered it (FR-MSG-04's 201-equivalent semantics).
-      return {
-        id: result.id,
-        channel_id: result.channel_id,
-        seq: result.seq,
-        text: result.text,
-        created_at: result.created_at,
-      };
     } catch (error) {
       if (error instanceof ChannelNotFoundError) {
         // A CONSTANT message: echoing the id back would make the foreign-id

@@ -56,11 +56,22 @@ export class InternalController {
     if (!userExternalId) throw new BadRequestException("missing x-relay-user");
     const user = await this.repo.getUserByExternalId(userExternalId);
     if (!user) throw new BadRequestException("unknown user");
-    return this.messages.send(body.channel_id, {
-      text: body.text,
-      ...(body.idempotency_key !== undefined && {
-        idempotency_key: body.idempotency_key,
-      }),
-    });
+    const message = await this.messages.send(
+      body.channel_id,
+      {
+        text: body.text,
+        ...(body.idempotency_key !== undefined && {
+          idempotency_key: body.idempotency_key,
+        }),
+      },
+      // Chapter 2.6: the sender is RESOLVED here and, until now, dropped
+      // here — every socket-written row had user_id NULL. Fan-out cannot
+      // build a message.created frame without a sender, so the write path
+      // finally records the one it already had in its hand.
+      user.id,
+    );
+    // `user` is echoed as the EXTERNAL id: internal uuids are ours, and
+    // the frame this becomes is client-facing.
+    return { ...message, user: userExternalId };
   }
 }

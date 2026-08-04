@@ -31,7 +31,21 @@ export class MessagesController {
     @Param("channelId") channelId: string,
     @Body(new ZodValidationPipe(sendMessageBodySchema)) body: SendMessageBody,
   ) {
-    return this.messages.send(channelId, body);
+    const message = await this.messages.send(channelId, body);
+    // FR-MSG-04's "201-equivalent semantics" lives HERE, on the public
+    // wire: the client sees the same body whether this was the original
+    // send or the retry that recovered it. Moved down from the service in
+    // chapter 2.6, where an internal caller turned out to need the flag.
+    // The field list is spelled out rather than spread-minus-`duplicate`,
+    // so a new column joins the public response only when someone decides
+    // it should.
+    return {
+      id: message.id,
+      channel_id: message.channel_id,
+      seq: message.seq,
+      text: message.text,
+      created_at: message.created_at,
+    };
   }
 
   @Get()

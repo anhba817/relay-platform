@@ -24,8 +24,18 @@ export const internalSendResponseSchema = z.strictObject({
   id: z.string().min(1),
   channel_id: z.string().min(1),
   seq: z.number().int().positive(),
+  /** The sender, as the api RECORDED it — not as the caller asserted it.
+   * Added in chapter 2.6: fan-out is the first feature that must name a
+   * sender, and a frame the live path invents would not match the frame
+   * 2.7's resume path reads back out of Postgres. */
+  user: z.string().min(1),
   text: z.string().nullable(),
   created_at: z.iso.datetime(),
+  /** True when 2.3's idempotency index recognised a retry. The PUBLIC api
+   * still hides this (a client cannot tell a retry from a first send);
+   * an internal caller needs it, because storage being idempotent does
+   * not make delivery idempotent — chapter 2.6's trap. */
+  duplicate: z.boolean().optional(),
 });
 
 /** api → gateway: the channels this user may hear (FR-RTM-01). */

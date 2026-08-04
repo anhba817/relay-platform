@@ -12,6 +12,7 @@ import type { InternalSendResponse } from "@relay/protocol";
 
 import type { ApiClient } from "./api-client.js";
 import { DEV_JWT_SECRET } from "./auth.js";
+import type { Fanout } from "./fanout.js";
 import { attachSessions } from "./session.js";
 
 // The door, the frames, and the liveness clock — all provable without a
@@ -29,6 +30,7 @@ function committed(seq: number): InternalSendResponse {
     id: "00000000-0000-0000-0000-000000000001",
     channel_id: "11111111-1111-1111-1111-111111111111",
     seq,
+    user: "tuan",
     text: "hello",
     created_at: new Date().toISOString(),
   };
@@ -54,9 +56,31 @@ interface Harness {
   close: () => Promise<void>;
 }
 
+/** A fabric that records instead of connecting. What gets published, and
+ * in what order relative to the ack, is the gateway's decision — provable
+ * without Redis. Chapter 2.6's itest covers the part that needs a broker. */
+function stubFanout(): Fanout & { published: unknown[]; subjects: string[] } {
+  const published: unknown[] = [];
+  const subjects: string[] = [];
+  return {
+    published,
+    subjects,
+    onDelivery: () => {},
+    publish: async (message) => {
+      published.push(message);
+    },
+    subscribe: async (channelId) => {
+      subjects.push(channelId);
+    },
+    unsubscribe: async () => {},
+    close: async () => {},
+  };
+}
+
 async function boot(
   api: ApiClient = stubApi(),
   pingIntervalMs?: number,
+  fanout?: Fanout,
 ): Promise<Harness> {
   const server: Server = serve({
     service: "gateway",
@@ -67,6 +91,7 @@ async function boot(
     server,
     api,
     logger: silent,
+    ...(fanout !== undefined && { fanout }),
     ...(pingIntervalMs !== undefined && { pingIntervalMs }),
   });
   await new Promise<void>((resolve) => server.listen(0, resolve));
@@ -192,5 +217,100 @@ describe("the socket (chapter 2.5)", () => {
     await nextFrame(socket, "connection.ack");
     socket.pong = () => {}; // stop answering
     expect(await closeCode(socket)).toBe(1001);
+  });
+  it("subscribes to every channel the session can hear (chapter 2.6)", async () => {
+    const fanout = stubFanout();
+    harness = await boot(stubApi(), undefined, fanout);
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    await nextFrame(socket, "connection.ack");
+    // Membership decides subscriptions: an instance hears exactly the
+    // channels its local sockets belong to, nothing more.
+    expect(fanout.subjects).toEqual(["11111111-1111-1111-1111-111111111111"]);
+    socket.close();
+  });
+
+  it("acks the handshake even when the fabric never answers (chapter 2.6)", async () => {
+    const fanout = stubFanout();
+    // A broker that is down, modelled honestly: subscribe never settles.
+    // ioredis queues the command and replays it on reconnect, so the
+    // promise can stay pending indefinitely.
+    fanout.subscribe = () => new Promise<void>(() => {});
+    harness = await boot(stubApi(), undefined, fanout);
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    // EIR-WS-03's budget is not negotiable, and the fabric is the one
+    // dependency here that is ALLOWED to be down (ADR-07). Awaiting the
+    // subscribe made a stopped Redis stop connections — worse than the
+    // dropped frames at-most-once already permits.
+    const ack = await nextFrame(socket, "connection.ack");
+    expect(ack).toMatchObject({ type: "connection.ack" });
+    socket.close();
+  });
+
+  it("publishes the committed message only after the ack (chapter 2.6)", async () => {
+    const fanout = stubFanout();
+    harness = await boot(stubApi(), undefined, fanout);
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    await nextFrame(socket, "connection.ack");
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          // idem_key is REQUIRED by the wire contract (2.3): every socket
+          // send is retryable by construction, which is exactly why the
+          // republish rule below matters.
+          idem_key: "k-0",
+          channel: "11111111-1111-1111-1111-111111111111",
+          text: "hello",
+        },
+      }),
+    );
+    await nextFrame(socket, "message.ack");
+    // The published frame is the WIRE shape, not the internal response:
+    // `channel`, not `channel_id`, and a sender that came back from the
+    // api rather than being asserted by the gateway.
+    expect(fanout.published).toEqual([
+      {
+        id: "00000000-0000-0000-0000-000000000001",
+        channel: "11111111-1111-1111-1111-111111111111",
+        seq: 42,
+        user: "tuan",
+        text: "hello",
+        created_at: expect.any(String),
+      },
+    ]);
+    socket.close();
+  });
+
+  it("does not republish a recognised retry (chapter 2.6's trap)", async () => {
+    const fanout = stubFanout();
+    harness = await boot(
+      // The api recognised 2.3's idempotency key and returned the
+      // ORIGINAL message. Storage stayed correct; delivery must not now
+      // put the same message on every screen a second time.
+      stubApi({
+        sendMessage: async () => ({ ...committed(42), duplicate: true }),
+      }),
+      undefined,
+      fanout,
+    );
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    await nextFrame(socket, "connection.ack");
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          channel: "11111111-1111-1111-1111-111111111111",
+          text: "hello",
+          idem_key: "k-1",
+        },
+      }),
+    );
+    // The sender is still acked — the retry SUCCEEDED, and FR-MSG-04 says
+    // it looks like a first send.
+    expect(await nextFrame(socket, "message.ack")).toMatchObject({
+      payload: { seq: 42 },
+    });
+    expect(fanout.published).toEqual([]);
+    socket.close();
   });
 });
