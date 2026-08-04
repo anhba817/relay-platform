@@ -8,7 +8,7 @@ import { createLogger, type Logger } from "@relay/service-kit";
 import { serve } from "@relay/service-kit";
 import type { Frame } from "@relay/protocol";
 
-import type { InternalSendResponse } from "@relay/protocol";
+import type { InternalSendResponse, Message } from "@relay/protocol";
 
 import type { ApiClient } from "./api-client.js";
 import { DEV_JWT_SECRET } from "./auth.js";
@@ -38,9 +38,24 @@ function committed(seq: number): InternalSendResponse {
 
 function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
-    memberships: async () => ["11111111-1111-1111-1111-111111111111"],
+    memberships: async () => [CHANNEL],
+    backfill: async () => ({}),
     sendMessage: async () => committed(42),
     ...overrides,
+  };
+}
+
+const CHANNEL = "11111111-1111-1111-1111-111111111111";
+
+/** A backfilled or live frame, in the wire shape the api now returns. */
+function frame(seq: number, channel = CHANNEL): Message {
+  return {
+    id: `id-${seq}`,
+    channel,
+    seq,
+    user: "dispatcher",
+    text: `m${seq}`,
+    created_at: "2026-08-04T00:00:00.000Z",
   };
 }
 
@@ -59,13 +74,30 @@ interface Harness {
 /** A fabric that records instead of connecting. What gets published, and
  * in what order relative to the ack, is the gateway's decision — provable
  * without Redis. Chapter 2.6's itest covers the part that needs a broker. */
-function stubFanout(): Fanout & { published: unknown[]; subjects: string[] } {
+function stubFanout(): Fanout & {
+  published: unknown[];
+  subjects: string[];
+  /** Inject a live frame at a moment the test chooses. This is how the
+   * flagship race gets reproduced deterministically instead of hopefully:
+   * the api stub calls it from inside the backfill, so "a message published
+   * during the backfill window" is a line of code, not a stress loop. */
+  emit: (message: Message) => void;
+} {
   const published: unknown[] = [];
   const subjects: string[] = [];
+  let deliver: (channelId: string, message: Message) => void = () => {};
   return {
     published,
     subjects,
-    onDelivery: () => {},
+    // Honest about the fabric's one rule: a frame published to a subject
+    // this instance has not subscribed to does NOT arrive. Without that,
+    // the stub would silently paper over the gap variant of the race.
+    emit: (message) => {
+      if (subjects.includes(message.channel)) deliver(message.channel, message);
+    },
+    onDelivery: (handler) => {
+      deliver = handler;
+    },
     publish: async (message) => {
       published.push(message);
     },
@@ -81,6 +113,7 @@ async function boot(
   api: ApiClient = stubApi(),
   pingIntervalMs?: number,
   fanout?: Fanout,
+  resumeDeadlineMs?: number,
 ): Promise<Harness> {
   const server: Server = serve({
     service: "gateway",
@@ -93,6 +126,7 @@ async function boot(
     logger: silent,
     ...(fanout !== undefined && { fanout }),
     ...(pingIntervalMs !== undefined && { pingIntervalMs }),
+    ...(resumeDeadlineMs !== undefined && { resumeDeadlineMs }),
   });
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
@@ -311,6 +345,228 @@ describe("the socket (chapter 2.5)", () => {
       payload: { seq: 42 },
     });
     expect(fanout.published).toEqual([]);
+    socket.close();
+  });
+  // ── chapter 2.7: the tunnel ────────────────────────────────────────────
+  //
+  // Every test below turns the resume window into something a test can hold
+  // still. `record` collects frames in arrival ORDER, because order is the
+  // property under test: an ack, then the backfill, then the flush.
+
+  function record(socket: WebSocket): Frame[] {
+    const frames: Frame[] = [];
+    socket.on("message", (raw) =>
+      frames.push(JSON.parse(raw.toString()) as Frame),
+    );
+    return frames;
+  }
+
+  const created = (frames: Frame[]): number[] =>
+    frames
+      .filter((f) => f.type === "message.created")
+      .map((f) => (f as { payload: Message }).payload.seq);
+
+  async function settle(ms = 60): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  it("delivers the backfill after the ack, in sequence order (FR-RTM-03)", async () => {
+    const fanout = stubFanout();
+    harness = await boot(
+      stubApi({
+        backfill: async (_identity, cursors) => {
+          // The cursor the client presented arrives verbatim.
+          expect(cursors).toEqual({ [CHANNEL]: 41 });
+          return {
+            [CHANNEL]: { messages: [frame(42), frame(43)], truncated: false },
+          };
+        },
+      }),
+      undefined,
+      fanout,
+    );
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+    expect(frames[0]).toMatchObject({
+      type: "connection.ack",
+      payload: { resume_ok: true, truncated: [], cursor: { [CHANNEL]: 41 } },
+    });
+    expect(created(frames)).toEqual([42, 43]);
+    socket.close();
+  });
+
+  it("stages the race: a frame published DURING backfill is neither lost nor doubled", async () => {
+    // The flagship bug (SAD §5.2). seq 43 is published while the backfill
+    // is in flight, and the backfill ALSO contains it — the interleaving
+    // where a naive subscribe-then-deliver sends it twice.
+    const fanout = stubFanout();
+    harness = await boot(
+      stubApi({
+        backfill: async () => {
+          fanout.emit(frame(43));
+          return {
+            [CHANNEL]: { messages: [frame(42), frame(43)], truncated: false },
+          };
+        },
+      }),
+      undefined,
+      fanout,
+    );
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+    const seqs = created(frames);
+    expect(seqs).toEqual([42, 43]); // complete…
+    expect(new Set(seqs).size).toBe(seqs.length); // …and exactly once
+    socket.close();
+  });
+
+  it("stages the other interleaving: published during backfill, absent from it", async () => {
+    // Same window, the other order: seq 43 committed AFTER the backfill
+    // query's snapshot, so it exists ONLY in the buffer. This is the
+    // interleaving where backfill-then-subscribe loses the message.
+    const fanout = stubFanout();
+    harness = await boot(
+      stubApi({
+        backfill: async () => {
+          fanout.emit(frame(43));
+          return { [CHANNEL]: { messages: [frame(42)], truncated: false } };
+        },
+      }),
+      undefined,
+      fanout,
+    );
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+    expect(created(frames)).toEqual([42, 43]);
+    socket.close();
+  });
+
+  it("forwards per-channel truncation so the client pages history instead (FR-RTM-04)", async () => {
+    const fanout = stubFanout();
+    harness = await boot(
+      stubApi({
+        backfill: async () => ({
+          [CHANNEL]: { messages: [frame(42)], truncated: true },
+        }),
+      }),
+      undefined,
+      fanout,
+    );
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const ack = await nextFrame(socket, "connection.ack");
+    expect(ack).toMatchObject({
+      payload: { resume_ok: true, truncated: [CHANNEL] },
+    });
+    socket.close();
+  });
+
+  it("degrades honestly when the fabric will not confirm the subscription", async () => {
+    const fanout = stubFanout();
+    fanout.subscribe = () => new Promise<void>(() => {}); // broker down
+    let asked = false;
+    harness = await boot(
+      stubApi({
+        backfill: async () => {
+          asked = true;
+          return {};
+        },
+      }),
+      undefined,
+      fanout,
+      20, // deadline in ms, injected like the ping interval
+    );
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const ack = await nextFrame(socket, "connection.ack");
+    // resume_ok: false and the channel listed — the client refetches rather
+    // than believing a stream that has a hole in it. And the backfill is
+    // never requested: a resume that cannot be safe should not be expensive.
+    expect(ack).toMatchObject({
+      payload: { resume_ok: false, truncated: [CHANNEL] },
+    });
+    expect(asked).toBe(false);
+    socket.close();
+  });
+
+  it("degrades on a malformed cursor rather than closing the door", async () => {
+    harness = await boot(stubApi(), undefined, stubFanout());
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=garbage`,
+    );
+    const ack = await nextFrame(socket, "connection.ack");
+    expect(ack).toMatchObject({ payload: { resume_ok: false } });
+    socket.close();
+  });
+
+  it("degrades when the api cannot serve the backfill", async () => {
+    harness = await boot(
+      stubApi({
+        backfill: async () => {
+          throw new Error("api down");
+        },
+      }),
+      undefined,
+      stubFanout(),
+    );
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    expect(await nextFrame(socket, "connection.ack")).toMatchObject({
+      payload: { resume_ok: false, truncated: [CHANNEL] },
+    });
+    socket.close();
+  });
+
+  it("never buffers a fresh connect — 2.6's rule survives 2.7", async () => {
+    // No cursor means no resume: the connection is born live and a live
+    // frame goes straight out, no buffer, no flush. (That the ack does not
+    // WAIT on the fabric is 2.6's test above; this one is about phase.)
+    const fanout = stubFanout();
+    harness = await boot(stubApi(), undefined, fanout);
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    fanout.emit(frame(1));
+    await settle();
+    expect(created(frames)).toEqual([1]);
+    socket.close();
+  });
+
+  it("ignores a cursor for a channel the user is not a member of", async () => {
+    let seen: Record<string, number> | undefined;
+    harness = await boot(
+      stubApi({
+        backfill: async (_identity, cursors) => {
+          seen = cursors;
+          return {};
+        },
+      }),
+      undefined,
+      stubFanout(),
+    );
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}` +
+        `&cursor=${CHANNEL}:41&cursor=99999999-9999-9999-9999-999999999999:7`,
+    );
+    await nextFrame(socket, "connection.ack");
+    // The foreign cursor never reaches the api: membership is the bound on
+    // resume work, and a channel the caller is not in is not a question.
+    expect(seen).toEqual({ [CHANNEL]: 41 });
     socket.close();
   });
 });

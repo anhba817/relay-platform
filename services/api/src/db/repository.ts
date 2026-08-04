@@ -73,6 +73,16 @@ export interface MessageRow {
   duplicate?: boolean;
 }
 
+/** A message as the READ paths return it (chapter 2.7). The sender is the
+ * external id — the identifier a client knows — and it is nullable for two
+ * honest reasons: the column has been nullable since 2.1 (system messages
+ * have no author), and every row written through the socket before 2.6's
+ * fix has no author recorded. A caller that needs to build a wire frame
+ * has to decide what to do with those; the layer does not decide for it. */
+export interface MessageWithSender extends MessageRow {
+  user: string | null;
+}
+
 /** Thrown when a channel id resolves to nothing IN THIS TENANT — which,
  * from the caller's side, is indistinguishable from "does not exist"
  * (FR-TEN-05: no data, and no reveal that the foreign id exists). The
@@ -367,11 +377,16 @@ export class Repository {
       afterSeq,
       limit,
     }: { beforeSeq?: number; afterSeq?: number; limit: number },
-  ): Promise<MessageRow[]> {
+  ): Promise<MessageWithSender[]> {
     const columns = {
       id: messages.id,
       channel_id: messages.channelId,
       seq: messages.sequence,
+      // The sender joins the read path in 2.7 (the IOU 2.6 wrote): resume
+      // must emit frames identical to live ones, and a reader that gets a
+      // different shape depending on which door it came through is a client
+      // bug waiting for a reconnect.
+      user: users.externalId,
       text: messages.text,
       created_at: messages.createdAt,
     };
@@ -386,6 +401,10 @@ export class Repository {
           .select(columns)
           .from(messages)
           .innerJoin(channels, eq(channels.id, messages.channelId))
+          // LEFT, not INNER: an unattributed row must still be READ. An
+          // inner join here would make those rows vanish from history —
+          // silent data loss dressed up as a query.
+          .leftJoin(users, eq(users.id, messages.userId))
           .where(
             scoped(
               beforeSeq === undefined
@@ -399,10 +418,69 @@ export class Repository {
           .select(columns)
           .from(messages)
           .innerJoin(channels, eq(channels.id, messages.channelId))
+          // LEFT, not INNER: an unattributed row must still be READ. An
+          // inner join here would make those rows vanish from history —
+          // silent data loss dressed up as a query.
+          .leftJoin(users, eq(users.id, messages.userId))
           .where(scoped(gt(messages.sequence, afterSeq)))
           .orderBy(asc(messages.sequence))
           .limit(limit));
     return rows.map((row) => ({ ...row, created_at: toIso(row.created_at) }));
+  }
+
+  /** Resume backfill (chapter 2.7, FR-RTM-03): for each cursor, everything
+   * the client has not applied yet — capped, with an honest truncation
+   * signal per channel (FR-RTM-04).
+   *
+   * Membership is evaluated NOW, not when the cursor was minted: a channel
+   * the user was removed from while offline backfills nothing, and a cursor
+   * naming a channel in another tenant is a no-op rather than a leak
+   * (constitution I, and the members join is what enforces it).
+   *
+   * One query per channel, deliberately. A single statement would need a
+   * window function to apply a per-channel cap, and the loop is bounded by
+   * the caller's membership — each iteration is an index scan on
+   * (channel_id, sequence) starting exactly where the client stopped.
+   */
+  async backfill(
+    userId: string,
+    cursors: Record<string, number>,
+    /** Required, not defaulted: FR-RTM-04's ceiling is a contract number,
+     * and the contract lives one layer up. The repository enforces a cap;
+     * it does not get to choose it. */
+    limit: number,
+  ): Promise<
+    Record<string, { messages: MessageWithSender[]; truncated: boolean }>
+  > {
+    const out: Record<
+      string,
+      { messages: MessageWithSender[]; truncated: boolean }
+    > = {};
+    for (const [channelId, since] of Object.entries(cursors)) {
+      const [member] = await this.db
+        .select({ channel_id: members.channelId })
+        .from(members)
+        .innerJoin(channels, eq(channels.id, members.channelId))
+        .where(
+          and(
+            eq(members.channelId, channelId),
+            eq(members.userId, userId),
+            eq(channels.environmentId, this.environmentId),
+          ),
+        );
+      if (!member) continue;
+      // limit + 1 is how the cap answers two questions with one scan: the
+      // page, and whether there was more.
+      const rows = await this.listMessages(channelId, {
+        afterSeq: since,
+        limit: limit + 1,
+      });
+      out[channelId] = {
+        messages: rows.slice(0, limit),
+        truncated: rows.length > limit,
+      };
+    }
+    return out;
   }
 
   /** Every message in the channel, ordered by sequence — tenant-scoped

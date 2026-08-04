@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createLogger } from "@relay/service-kit";
@@ -18,8 +20,14 @@ import { createFanout, subjectFor, type Fanout } from "./fanout.js";
 const url = `redis://localhost:${process.env.RELAY_REDIS_PORT ?? "6379"}`;
 const logger = createLogger("fanout-itest");
 
-const CHANNEL = "11111111-1111-1111-1111-111111111111";
-const OTHER = "22222222-2222-2222-2222-222222222222";
+// Fresh subjects per run (chapter 2.7's fix). Redis pub/sub has no
+// namespaces, so two suites publishing to a hard-coded subject on one broker
+// read each other's frames — which is exactly what happened the first time
+// resume.itest.ts ran beside this file. 2.1 solved the same problem for
+// Postgres with a per-suite environment; the fix here is the same idea in
+// the only namespace pub/sub has: the channel id.
+const CHANNEL = randomUUID();
+const OTHER = randomUUID();
 
 function messageOn(channel: string, seq: number): Message {
   return {

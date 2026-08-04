@@ -14,6 +14,15 @@ import type { ApiClient } from "./api-client.js";
 import { verifyToken, type Identity } from "./auth.js";
 import type { Fanout } from "./fanout.js";
 import { Registry, type Connection } from "./registry.js";
+import {
+  MAX_BUFFERED_FRAMES,
+  SUBSCRIBE_DEADLINE_MS,
+  flushable,
+  highWaterMarks,
+  parseCursors,
+  scopeCursors,
+  withDeadline,
+} from "./resume.js";
 
 // One session per socket (chapter 2.5). The order of operations here is the
 // chapter: verify at the door, learn memberships, register, ack inside
@@ -53,6 +62,10 @@ export interface SessionServerOptions {
    * half-minutes — the interval is a contract (EIR-WS-04), not a constant
    * the tests should have to wait out. */
   pingIntervalMs?: number;
+  /** Same reasoning for the resume path's patience with the fabric
+   * (chapter 2.7): the degrade branch is a contract, and a test should not
+   * have to sit through half a second to see it. */
+  resumeDeadlineMs?: number;
 }
 
 export function attachSessions({
@@ -61,6 +74,7 @@ export function attachSessions({
   logger,
   fanout,
   pingIntervalMs = PING_INTERVAL_MS,
+  resumeDeadlineMs = SUBSCRIBE_DEADLINE_MS,
 }: SessionServerOptions): { registry: Registry; close: () => void } {
   const registry = new Registry();
 
@@ -69,6 +83,17 @@ export function attachSessions({
    * member of its channel. */
   function deliver(channelId: string, message: Message): void {
     for (const connection of registry.subscribersOf(channelId)) {
+      if (connection.phase === "buffering") {
+        // Step 2 (chapter 2.7). The frame is NOT dropped and NOT sent: it
+        // waits until the backfill has had its turn, because sending it now
+        // risks a duplicate and dropping it risks a gap.
+        if (connection.buffer.length >= MAX_BUFFERED_FRAMES) {
+          connection.overflowed = true;
+          continue;
+        }
+        connection.buffer.push(message);
+        continue;
+      }
       send(connection.socket, { type: "message.created", payload: message });
     }
   }
@@ -96,18 +121,28 @@ export function attachSessions({
           logger.log("info", "connection.rejected", { reason: "bad_token" });
           return;
         }
-        void open(ws, identity);
+        void open(ws, identity, req.url ?? "/");
       });
     })();
   });
 
-  async function open(socket: WebSocket, identity: Identity): Promise<void> {
+  async function open(
+    socket: WebSocket,
+    identity: Identity,
+    url: string,
+  ): Promise<void> {
+    // Cursors are read BEFORE anything else, because their presence decides
+    // whether this connection is born buffering or born live.
+    const presented = parseCursors(url);
     const connection: Connection = {
       id: randomUUID(),
       identity,
       socket,
       channelIds: new Set(),
       missedPings: 0,
+      phase: presented === undefined ? "live" : "buffering",
+      buffer: [],
+      overflowed: false,
     };
     try {
       connection.channelIds = new Set(await api.memberships(identity));
@@ -128,44 +163,23 @@ export function attachSessions({
     // Subscriptions follow membership: the first local member of a channel
     // makes this instance a subscriber, and the last one to leave releases
     // it (reference-counted in the fabric).
-    //
-    // NOT AWAITED, and that is the whole point. EIR-WS-03 gives the
-    // handshake one second, and the fabric is the one dependency in this
-    // path that is ALLOWED to be down (ADR-07). Awaiting it here made the
-    // ack wait on Redis — a stopped broker stopped connections dead, which
-    // is a far worse failure than the dropped frames the fabric is
-    // permitted. Subscriptions land when they land; ioredis replays them on
-    // reconnect, and until then this instance is simply deaf, which is the
-    // documented cost.
-    void Promise.all(
+    const subscribing = Promise.all(
       [...connection.channelIds].map((channelId) =>
-        fanout?.subscribe(channelId).catch((error: unknown) => {
-          logger.log("error", "fanout.subscribe_failed", {
-            channel: channelId,
-            error: String(error),
-          });
-        }),
+        fanout?.subscribe(channelId),
       ),
     );
     logger.log("info", "connection.opened", {
       connection_id: connection.id,
       user: identity.userExternalId,
       channels: connection.channelIds.size,
+      resuming: presented !== undefined,
     });
 
-    // EIR-WS-03: identity and a resume cursor within one second. The cursor
-    // is empty here and means it for the first time in 2.7 — the field
-    // exists because the contract says so, not because we have data for it.
-    send(socket, {
-      type: "connection.ack",
-      payload: {
-        user: identity.userExternalId,
-        cursor: {},
-        resume_ok: true,
-        truncated: [],
-      },
-    });
-
+    // Listeners go on BEFORE the resume, not after the ack. A resume takes
+    // a round trip to the api, and a socket that dies inside that window
+    // must still be removed from the registry and release its subscriptions
+    // — otherwise a client that reconnects impatiently leaks an instance's
+    // worth of state per attempt.
     socket.on("pong", () => {
       connection.missedPings = 0;
     });
@@ -181,6 +195,142 @@ export function attachSessions({
         connection_id: connection.id,
         code,
       });
+    });
+
+    if (presented === undefined) {
+      // A FRESH connect, and 2.6's rule stands unchanged: never wait on the
+      // fabric here. EIR-WS-03 gives the handshake one second, and a stopped
+      // broker must cost delivery, not connections.
+      void subscribing.catch((error: unknown) => {
+        logger.log("error", "fanout.subscribe_failed", {
+          connection_id: connection.id,
+          error: String(error),
+        });
+      });
+      ack(connection, { cursor: {}, resume_ok: true, truncated: [] });
+      return;
+    }
+    await resume(connection, presented, subscribing);
+  }
+
+  /** EIR-WS-03's ack. `cursor` echoes what the server ACCEPTED, never the
+   * post-backfill high-water mark: this frame goes out BEFORE the backfilled
+   * frames, so advertising a position the client has not received yet is how
+   * you manufacture the gap this chapter exists to close. */
+  function ack(
+    connection: Connection,
+    payload: {
+      cursor: Record<string, number>;
+      resume_ok: boolean;
+      truncated: string[];
+    },
+  ): void {
+    send(connection.socket, {
+      type: "connection.ack",
+      payload: { user: connection.identity.userExternalId, ...payload },
+    });
+  }
+
+  /** The five steps (chapter 2.7, SAD §5.2). Steps 1 and 2 already happened
+   * — the connection was born `buffering` and the subscribes are in flight
+   * — so what is left is: confirm, backfill, ack, emit, flush, live. */
+  async function resume(
+    connection: Connection,
+    presented: Record<string, number> | null,
+    subscribing: Promise<unknown>,
+  ): Promise<void> {
+    const cursors =
+      presented === null ? {} : scopeCursors(presented, connection.channelIds);
+
+    /** Everything that cannot promise completeness ends up here: the client
+     * is told resume did not happen and which channels to page instead. The
+     * frames held so far are dropped on purpose — they would be an arbitrary
+     * fragment of a stream the client is about to refetch in full. */
+    const degrade = (reason: string): void => {
+      connection.buffer = [];
+      connection.phase = "live";
+      ack(connection, {
+        cursor: cursors,
+        resume_ok: false,
+        truncated: [...connection.channelIds],
+      });
+      logger.log("info", "resume.degraded", {
+        connection_id: connection.id,
+        reason,
+      });
+    };
+
+    // A malformed cursor is not a closed connection. A client whose stored
+    // cursor got corrupted can recover from `resume_ok: false` by paging
+    // history; a client closed at the door can only reconnect and be closed
+    // again. (2.4 answers a bad cursor with 400 because a REST caller can
+    // read the error and change its mind mid-flight; a socket cannot.)
+    if (presented === null) return degrade("malformed_cursor");
+
+    // Step 1 must be TRUE, not merely started: a subscription that lands
+    // after the backfill query leaves the window open. 2.6's rule survives
+    // via the deadline — resume waits briefly and then degrades honestly
+    // rather than hanging a handshake on a broker.
+    if (!(await withDeadline(subscribing, resumeDeadlineMs))) {
+      return degrade("fabric_unconfirmed");
+    }
+
+    let backfilled: Awaited<ReturnType<ApiClient["backfill"]>>;
+    try {
+      // Step 3. Nothing is emitted yet — the ack has to carry the
+      // truncation list, so the fetch comes first (EIR-WS-03's comment in
+      // the protocol package has said so since 1.3).
+      backfilled = await api.backfill(connection.identity, cursors);
+    } catch (error) {
+      logger.log("error", "resume.backfill_failed", {
+        connection_id: connection.id,
+        error: String(error),
+      });
+      return degrade("backfill_failed");
+    }
+
+    const marks = highWaterMarks(cursors, backfilled);
+    const truncated = Object.entries(backfilled)
+      .filter(([, page]) => page.truncated)
+      .map(([channelId]) => channelId);
+    // An overflowed buffer means live frames were dropped and we cannot say
+    // which; the honest answer is the same one FR-RTM-04 gives for too much
+    // backfill — page history instead of trusting the stream.
+    if (connection.overflowed) return degrade("buffer_overflow");
+
+    ack(connection, { cursor: cursors, resume_ok: true, truncated });
+
+    for (const [, page] of Object.entries(backfilled)) {
+      for (const message of page.messages) {
+        send(connection.socket, {
+          type: "message.created",
+          payload: message,
+        });
+      }
+    }
+
+    // Step 4. Overflow between the ack and here cannot be reported in an
+    // ack that already left, so the socket closes and the client resumes
+    // again from the cursor it never advanced. (A channel busy enough to
+    // overflow every attempt would loop; 7.5's load work is where that gets
+    // measured rather than guessed.)
+    if (connection.overflowed) {
+      connection.socket.close(1011, "resume buffer overflow");
+      return;
+    }
+    for (const message of flushable(connection.buffer, marks)) {
+      send(connection.socket, { type: "message.created", payload: message });
+    }
+    connection.buffer = [];
+    // Step 5.
+    connection.phase = "live";
+    logger.log("info", "resume.completed", {
+      connection_id: connection.id,
+      backfilled: Object.values(backfilled).reduce(
+        (n, page) => n + page.messages.length,
+        0,
+      ),
+      truncated: truncated.length,
     });
   }
 

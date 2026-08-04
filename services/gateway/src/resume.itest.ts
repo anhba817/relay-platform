@@ -1,0 +1,182 @@
+import { randomUUID } from "node:crypto";
+
+import { SignJWT } from "jose";
+import { WebSocket } from "ws";
+import { afterEach, describe, expect, it } from "vitest";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+
+import { createLogger, serve, type Logger } from "@relay/service-kit";
+import type { Frame, Message } from "@relay/protocol";
+
+import type { ApiClient } from "./api-client.js";
+import { DEV_JWT_SECRET } from "./auth.js";
+import { createFanout } from "./fanout.js";
+import { attachSessions } from "./session.js";
+
+// Chapter 2.7's race, run against a REAL broker. The unit suite proves the
+// ordering with a stub whose timing the test controls; this file proves it
+// with Redis in the middle, where the publish is a network round trip on
+// another connection and nobody is faking the interleaving.
+//
+// The api is still a stub — the gateway has no database (ADR-05), and the
+// api's own half of resume is tested in its own lane against Postgres. What
+// is real here is the thing that was fake before: the fabric.
+//
+//   docker compose up -d redis
+//   RELAY_REDIS_PORT=16379 pnpm --filter @relay/gateway test:integration
+
+const url = `redis://localhost:${process.env.RELAY_REDIS_PORT ?? "6379"}`;
+const silent: Logger = createLogger("gateway", () => {});
+// Unique per run, so this suite and 2.6's cannot hear each other on a
+// shared broker (see the note in fanout.itest.ts).
+const CHANNEL = randomUUID();
+
+function frame(seq: number): Message {
+  return {
+    id: `id-${seq}`,
+    channel: CHANNEL,
+    seq,
+    user: "dispatcher",
+    text: `m${seq}`,
+    created_at: "2026-08-04T00:00:00.000Z",
+  };
+}
+
+function token(): Promise<string> {
+  return new SignJWT({ env: "env-1" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject("tuan")
+    .sign(new TextEncoder().encode(DEV_JWT_SECRET));
+}
+
+interface Harness {
+  url: string;
+  close: () => Promise<void>;
+}
+
+async function boot(api: ApiClient): Promise<Harness> {
+  const fanout = createFanout({ url, logger: silent });
+  const server: Server = serve({
+    service: "gateway",
+    health: () => ({}),
+    logger: silent,
+  });
+  const sessions = attachSessions({ server, api, logger: silent, fanout });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `ws://127.0.0.1:${port}/v1/ws`,
+    close: async () => {
+      sessions.close();
+      await fanout.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+/** Another gateway instance, as far as Redis is concerned. */
+async function publishFromElsewhere(message: Message): Promise<void> {
+  const other = createFanout({ url, logger: silent });
+  await other.publish(message);
+  await other.close();
+}
+
+function record(socket: WebSocket): Frame[] {
+  const frames: Frame[] = [];
+  socket.on("message", (raw) =>
+    frames.push(JSON.parse(raw.toString()) as Frame),
+  );
+  return frames;
+}
+
+const created = (frames: Frame[]): number[] =>
+  frames
+    .filter((f) => f.type === "message.created")
+    .map((f) => (f as { payload: Message }).payload.seq);
+
+const settle = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+describe("resume across a real fabric", () => {
+  let harness: Harness | undefined;
+
+  afterEach(async () => {
+    await harness?.close();
+    harness = undefined;
+  });
+
+  it("loses nothing and repeats nothing when a frame is published mid-backfill", async () => {
+    // The backfill leg is deliberately slow, and a DIFFERENT process — a
+    // different fanout client on the same subject — publishes into the
+    // window. Neither side coordinates; only the buffer saves this.
+    harness = await boot({
+      memberships: async () => [CHANNEL],
+      backfill: async () => {
+        await publishFromElsewhere(frame(43));
+        await settle(150); // give Redis time to actually deliver it
+        return {
+          [CHANNEL]: { messages: [frame(42), frame(43)], truncated: false },
+        };
+      },
+      sendMessage: async () => {
+        throw new Error("not used");
+      },
+    });
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await settle(700);
+    const seqs = created(frames);
+    expect(seqs).toEqual([42, 43]);
+    expect(new Set(seqs).size).toBe(seqs.length);
+    socket.close();
+  });
+
+  it("delivers a mid-backfill frame that the backfill did not contain", async () => {
+    // Committed after the backfill's snapshot: it exists ONLY in the buffer,
+    // and the flush is the only reason the client ever sees it.
+    harness = await boot({
+      memberships: async () => [CHANNEL],
+      backfill: async () => {
+        await publishFromElsewhere(frame(43));
+        await settle(150);
+        return { [CHANNEL]: { messages: [frame(42)], truncated: false } };
+      },
+      sendMessage: async () => {
+        throw new Error("not used");
+      },
+    });
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await settle(700);
+    expect(created(frames)).toEqual([42, 43]);
+    socket.close();
+  });
+
+  it("goes live after the flush, with no buffering left behind", async () => {
+    harness = await boot({
+      memberships: async () => [CHANNEL],
+      backfill: async () => ({
+        [CHANNEL]: { messages: [frame(42)], truncated: false },
+      }),
+      sendMessage: async () => {
+        throw new Error("not used");
+      },
+    });
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await settle(400);
+    // A frame published AFTER the resume finished must arrive immediately —
+    // the phase went back to normal 2.6 delivery.
+    await publishFromElsewhere(frame(44));
+    await settle(300);
+    expect(created(frames)).toEqual([42, 44]);
+    socket.close();
+  });
+});

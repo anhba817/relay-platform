@@ -8,6 +8,7 @@ import {
   ChannelNotFoundError,
   Repository,
   type MessageRow,
+  type MessageWithSender,
 } from "../db/repository";
 import { decodeCursor, encodeCursor } from "./cursor";
 import type { HistoryQuery, SendMessageBody } from "./messages.schema";
@@ -61,7 +62,7 @@ export class MessagesService {
     channelId: string,
     { cursor, direction, limit }: HistoryQuery,
   ): Promise<{
-    messages: MessageRow[];
+    messages: MessageWithSender[];
     next_cursor: string | null;
     prev_cursor: string | null;
   }> {

@@ -1,6 +1,9 @@
 import {
+  internalBackfillResponseSchema,
   internalMembershipsResponseSchema,
   internalSendResponseSchema,
+  type InternalBackfillRequest,
+  type InternalBackfillResponse,
   type InternalSendRequest,
   type InternalSendResponse,
 } from "@relay/protocol";
@@ -24,6 +27,12 @@ export interface Identity {
 
 export interface ApiClient {
   memberships(identity: Identity): Promise<string[]>;
+  /** Resume backfill (chapter 2.7): everything past the cursors, per
+   * channel, already shaped as wire frames. */
+  backfill(
+    identity: Identity,
+    cursors: Record<string, number>,
+  ): Promise<InternalBackfillResponse["channels"]>;
   sendMessage(
     identity: Identity,
     body: InternalSendRequest,
@@ -61,6 +70,15 @@ export function createApiClient(baseUrl: string): ApiClient {
         "memberships",
       );
       return body.channel_ids;
+    },
+    async backfill(identity, cursors) {
+      const res = await fetch(`${baseUrl}/internal/backfill`, {
+        method: "POST",
+        headers: headers(identity),
+        body: JSON.stringify({ cursors } satisfies InternalBackfillRequest),
+      });
+      const body = await parse(res, internalBackfillResponseSchema, "backfill");
+      return body.channels;
     },
     async sendMessage(identity, body) {
       const res = await fetch(`${baseUrl}/internal/messages`, {

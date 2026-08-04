@@ -1,6 +1,9 @@
 import type { WebSocket } from "ws";
 
+import type { Message } from "@relay/protocol";
+
 import type { Identity } from "./auth.js";
+import type { ResumePhase } from "./resume.js";
 
 // The in-memory connection registry (chapter 2.5): who is connected to
 // THIS instance, and which channels they can hear. Its cross-instance
@@ -17,6 +20,15 @@ export interface Connection {
   readonly socket: WebSocket;
   channelIds: Set<string>;
   missedPings: number;
+  /** Chapter 2.7. A connection resuming through the tunnel spends its first
+   * milliseconds holding live frames back so the backfill can go first; a
+   * fresh connect is born "live" and never buffers. Delivery reads this
+   * field and nothing else — the resume machinery is invisible to it. */
+  phase: ResumePhase;
+  buffer: Message[];
+  /** Set when the buffer hit its ceiling. The frames are gone, so the
+   * client must be told to page history instead of trusting the stream. */
+  overflowed: boolean;
 }
 
 export class Registry {

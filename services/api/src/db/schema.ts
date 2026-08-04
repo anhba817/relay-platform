@@ -130,7 +130,7 @@ export const messages = pgTable(
     // No dedicated (channel_id, sequence DESC) index: DR-01's unique
     // constraint above already supplies that ordering, and Postgres walks
     // it backward for newest-first pages. Chapter 2.4 measured it and
-    // migration 0002 dropped the redundant twin (SAD §6.3, amended).
+    // migration 0001 dropped the redundant twin (SAD §6.3, amended).
   ],
 );
 
