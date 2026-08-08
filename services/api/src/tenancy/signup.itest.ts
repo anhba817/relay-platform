@@ -282,20 +282,52 @@ describe("signup", () => {
       const text = await res.text();
       expect(text).not.toContain("organisation");
     }
-    const before = await db.execute(
-      `SELECT count(*)::int AS n FROM organisations`,
-    );
-    await fetch(`${url}/internal/memberships`, {
-      headers: {
-        "x-relay-environment": "00000000-0000-0000-0000-000000000000",
-      },
-    });
-    const after = await db.execute(
-      `SELECT count(*)::int AS n FROM organisations`,
-    );
-    expect((after.rows[0] as { n: number }).n).toBe(
-      (before.rows[0] as { n: number }).n,
-    );
+    // AND THE SECOND HALF READS THE SOURCE, BECAUSE THE COUNT COULD ONLY FAIL FOR
+    // SOMEBODY ELSE'S REASON.
+    //
+    // This was `SELECT count(*) FROM organisations` before and after a credential-free
+    // `GET /internal/memberships`, asserting the two matched. Ask what would have to be
+    // false for it to fail: that request is refused before it reaches a handler, so no
+    // code path exists that could move the number — and the number moves anyway, because
+    // it is the whole table and a neighbour provisions a tenant. It failed as
+    // `expected 20140 to be 20139`, which names no neighbour and no route.
+    //
+    // **A whole-table count is the wrong instrument for "nothing else exposes this".**
+    // What invariant 7 actually claims is structural, and the comment above already
+    // states it: provisioning is a module-free function, reachable only from the signup
+    // path. That is readable, exactly, from the tree — and it is STRONGER than the
+    // count, which fires only if a new route both exists and is called here, while this
+    // goes red the moment one imports the function.
+    await fetch(`${url}/internal/memberships`);
+
+    // `__dirname`, NOT `import.meta.url`: this package compiles to CommonJS and
+    // `import.meta` is a compile error there — the same constraint that makes the
+    // vitest configs `.mts`.
+    const SRC = join(__dirname, "..");
+    const importers: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (
+          entry.name.endsWith(".ts") &&
+          !entry.name.endsWith(".test.ts") &&
+          !entry.name.endsWith(".itest.ts") &&
+          full !== join(SRC, "db", "repository.ts")
+        ) {
+          if (/\bprovisionOrganisation\b/.test(readFileSync(full, "utf8"))) {
+            importers.push(full.slice(SRC.length + 1));
+          }
+        }
+      }
+    };
+    walk(SRC);
+    // Its definition is excluded above; every other mention is a caller. One file, and
+    // it is the signup path. A count rather than a `toContain`, because "the signup
+    // controller uses it" stays true when a second route starts using it too.
+    expect(importers, `provisionOrganisation is reachable from: ${importers.join(", ")}`)
+      .toEqual(["tenancy/signup.controller.ts"]);
   });
 
   it("refuses a callback whose state does not match the cookie (invariant 5, over HTTP)", async () => {
