@@ -13,8 +13,10 @@ import {
   memberships,
   messages,
   organisations,
+  outbox,
   users,
 } from "./schema";
+import { messageCreatedEvent } from "../outbox/event";
 import {
   mintApiKey,
   parseApiKeyCredential,
@@ -216,6 +218,87 @@ export async function environmentSigningSecret(
     .from(environments)
     .where(eq(environments.id, environmentId));
   return row ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// The outbox drain (chapter 3.3, ADR-06). Part of the ADMIN surface for the
+// same reason the credential lookup is: it runs on behalf of the platform
+// rather than of a tenant, and it is deliberately NOT scoped by environment —
+// one relay drains every environment's events, because an outbox row is work
+// the platform owes itself.
+//
+// The SQL lives here rather than in the relay module because the query engine
+// lives inside this layer and nowhere else (constitution I, ADR-16). The relay
+// supplies WHAT to do with a row; this supplies HOW rows are claimed and
+// retired.
+// ---------------------------------------------------------------------------
+
+export interface OutboxRow {
+  id: number;
+  subject: string;
+  payload: unknown;
+}
+
+/** Claim up to `limit` unpublished rows, hand each to `publish`, and mark the
+ * ones that succeeded — all inside ONE transaction.
+ *
+ * `FOR UPDATE SKIP LOCKED` is what makes a second relay safe: competing
+ * drainers skip each other's claimed rows instead of blocking on them, so
+ * horizontal scaling is a property of this query rather than of a coordination
+ * mechanism nobody wants to operate (ADR-06).
+ *
+ * PUBLISH THEN MARK, never the reverse. A crash between the two republishes on
+ * restart, which is at-least-once and is the accepted cost. Marking first would
+ * make it at-most-once and reintroduce exactly the loss this chapter removes
+ * (research R3).
+ *
+ * A publisher that throws aborts the batch: rows already published in this
+ * batch are marked, the failing row and everything after it stay pending, and
+ * the next pass tries again from there.
+ */
+export async function drainOutbox(
+  db: Db,
+  limit: number,
+  publish: (row: OutboxRow) => Promise<void>,
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    const claimed = (await tx.execute(
+      sql`SELECT id, subject, payload
+            FROM outbox
+           WHERE published_at IS NULL
+           ORDER BY created_at, id
+           LIMIT ${limit}
+             FOR UPDATE SKIP LOCKED`,
+    )) as unknown as { rows: OutboxRow[] };
+
+    const published: number[] = [];
+    try {
+      for (const row of claimed.rows) {
+        await publish(row);
+        published.push(row.id);
+      }
+    } finally {
+      // In the `finally` on purpose: whatever went wrong with row N+1, rows 1..N
+      // really did reach the broker and must not be sent a second time by this
+      // instance's next pass.
+      if (published.length > 0) {
+        await tx.execute(
+          sql`UPDATE outbox SET published_at = now()
+               WHERE id = ANY(${sql.raw(`ARRAY[${published.join(",")}]::bigint[]`)})`,
+        );
+      }
+    }
+    return published.length;
+  });
+}
+
+/** How far behind the relay is. The single number worth alarming on later, and
+ * the one the chapter shows going up while the broker is down. */
+export async function outboxDepth(db: Db): Promise<number> {
+  const result = (await db.execute(
+    sql`SELECT count(*)::int AS pending FROM outbox WHERE published_at IS NULL`,
+  )) as unknown as { rows: { pending: number }[] };
+  return result.rows[0]?.pending ?? 0;
 }
 
 /** What a signup produced — or found. `created` answers "was an organisation
@@ -599,11 +682,18 @@ export class Repository {
     channelId: string,
     {
       userId,
+      userExternalId,
       text,
       metadata,
       idempotencyKey,
     }: {
       userId?: string;
+      /** Chapter 3.3: the sender as a CONSUMER will see them. Threaded from the
+       * caller rather than looked up here — the internal route already holds it
+       * (it is the token's subject), and an extra SELECT inside the write
+       * transaction is a cost every message would pay forever. Absent on the
+       * public REST route, where a key-authenticated send is unattributed. */
+      userExternalId?: string;
       text: string;
       metadata?: unknown;
       idempotencyKey?: string;
@@ -669,12 +759,46 @@ export class Repository {
         .set({ lastSequence: seq })
         .where(eq(channels.id, channel.id));
 
+      const createdAt = toIso(inserted[0]!.createdAt);
+
+      // THE EVENT COMMITS WITH THE MESSAGE (chapter 3.3, ADR-06).
+      //
+      // This insert is inside the transaction that already guards the write, so
+      // the two share a fate: no message without its event, no event without
+      // its message. Publishing after the commit instead would leave a gap —
+      // crash in it and the message exists while the event never did, silently,
+      // with nothing to reconcile against.
+      //
+      // It sits on the INSERTED branch only. A recognised idempotent retry
+      // returned above without writing anything and must consume no event
+      // either, or a client retrying on a flaky link fires a second webhook for
+      // one message (FR-MSG-04, research R1).
+      //
+      // The envelope is built complete here and never touched again: the relay
+      // moves bytes, it does not author them (ADR-04).
+      const event = messageCreatedEvent({
+        eventId: randomUUID(),
+        environmentId: this.environmentId,
+        message: {
+          id,
+          channel_id: channel.id,
+          seq,
+          user: userExternalId ?? null,
+          text,
+          created_at: createdAt,
+        },
+      });
+      await tx.insert(outbox).values({
+        subject: event.subject,
+        payload: event.payload,
+      });
+
       return {
         id,
         channel_id: channel.id,
         seq,
         text,
-        created_at: toIso(inserted[0]!.createdAt),
+        created_at: createdAt,
       };
     });
   }

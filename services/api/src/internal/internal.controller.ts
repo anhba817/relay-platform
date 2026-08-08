@@ -75,6 +75,9 @@ export class InternalController {
       // build a message.created frame without a sender, so the write path
       // finally records the one it already had in its hand.
       user.id,
+      // Chapter 3.3: and the external id travels too, because the event this
+      // write now emits is read by customers, who know users by that name.
+      userExternalId,
     );
     // `user` is echoed as the EXTERNAL id: internal uuids are ours, and
     // the frame this becomes is client-facing.

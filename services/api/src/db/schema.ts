@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigserial,
   bigint,
   check,
   index,
@@ -20,9 +21,9 @@ import {
 // definitions, and the generated SQL is reviewed against §6.1 before the
 // runner applies it. The four tenant-bearing tables reproduce §6.1
 // column-for-column, constraints and DR citations included. Deliberately
-// absent, with named arrivals: message_edits (edit chapter), outbox
-// (ADR-06's chapter), emoji/media tables (their parts), messages
-// partitioning (SAD growth note -> retention chapter).
+// absent, with named arrivals: message_edits (edit chapter), emoji/media
+// tables (their parts), messages partitioning (SAD growth note -> retention
+// chapter). The outbox arrived in 3.3 and is at the bottom of this file.
 
 // The tenancy hierarchy (chapter 3.1). Everything from here to `members`
 // below sits ABOVE the environment boundary: these rows say who owns a
@@ -279,5 +280,48 @@ export const members = pgTable(
     primaryKey({ columns: [t.channelId, t.userId] }),
     // Hot-path index (SAD §6.3): the resume path's "which channels am I in".
     index("members_user_channel").on(t.userId, t.channelId),
+  ],
+);
+
+// The outbox (chapter 3.3, ADR-06). For the first time in Part 3 this table is
+// QUOTED rather than derived: SAD §6.1 defines it column-for-column, so nothing
+// about its shape is a chapter invention.
+//
+// Three absences are deliberate and worth knowing about.
+//
+// No environment_id. Every other table below the tenant boundary carries one
+// (FR-TEN-06); this one does not, because an outbox row is not tenant data — it
+// is work the platform owes itself. The environment travels inside `subject`
+// and `payload`, so a consumer can filter, but nothing reads this table on a
+// tenant's behalf. Same family of exception as 3.2's unscoped key lookup, and
+// recorded for the same reason.
+//
+// No status column. `published_at IS NULL` is the queue: a row is pending or it
+// is done, and there is no third state to get stuck in.
+//
+// No attempts or last_error. Retry accounting belongs to webhook delivery
+// (FR-WHK-03/06, chapter 3.5). This relay retries by not marking a row done.
+export const outbox = pgTable(
+  "outbox",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    subject: text("subject").notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+  },
+  (t) => [
+    // DECISION (chapter 3.3): SAD §6.1 defines this table but no index for it.
+    // The relay's only query is "the oldest rows with published_at IS NULL",
+    // and without an index that degrades into a full scan over a table which is
+    // 99.9% published rows. The predicate is PARTIAL on purpose: the index
+    // covers only what the relay reads, so published rows cost nothing to keep
+    // and pruning stays optional rather than urgent (ADR-06 calls pruning
+    // trivial; it still needs a scheduler this platform does not have).
+    index("outbox_unpublished")
+      .on(t.createdAt)
+      .where(sql`${t.publishedAt} IS NULL`),
   ],
 );

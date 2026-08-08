@@ -152,9 +152,6 @@ describe("signup", () => {
   });
 
   it("writes the full set or nothing when provisioning fails (invariant 1)", async () => {
-    const before = await db.execute(
-      `SELECT count(*)::int AS n FROM organisations`,
-    );
     // Force a failure inside the transaction, after the organisation insert:
     // an organisation name that is fine and a provider value the CHECK
     // constraint refuses.
@@ -165,14 +162,14 @@ describe("signup", () => {
         organisationName: "doomed org",
       }),
     ).rejects.toThrow();
-    const after = await db.execute(
-      `SELECT count(*)::int AS n FROM organisations`,
-    );
-    // Nothing survived — no half-built tenant, which is the whole point of the
-    // single transaction.
-    expect((after.rows[0] as { n: number }).n).toBe(
-      (before.rows[0] as { n: number }).n,
-    );
+    // REVISED by chapter 3.3: this used to count ALL organisations before and
+    // after and assert the totals matched. That is a global assertion in a lane
+    // where other suites create tenants concurrently — it passed for two
+    // chapters and then failed with "expected 884 to be 883" the day 3.3's
+    // crash tests started spawning child processes that provision their own.
+    // The precise assertion below was always the one carrying the weight: the
+    // doomed organisation must not survive its transaction. A count of
+    // everything was never evidence about this rollback.
     const orphan = await db.execute(
       `SELECT count(*)::int AS n FROM organisations WHERE name = 'doomed org'`,
     );

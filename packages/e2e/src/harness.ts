@@ -330,7 +330,18 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       "RELAY_POSTGRES_PORT",
       "RELAY_REDIS_URL",
       "RELAY_REDIS_PORT",
+      // Chapter 3.3: the api's relay needs the broker's address. Forwarded,
+      // never composed here — a harness that invents a URL becomes a second
+      // source of truth, which is exactly how this suite first failed.
+      "RELAY_NATS_URL",
+      "RELAY_NATS_PORT",
     ),
+    // Chapter 3.3: the api children run WITHOUT the outbox relay. This journey
+    // asserts message delivery, and a background loop draining the outbox while
+    // 3.3's own suite asserts on that same table is a race between two test
+    // files, not a property of the system. The relay has its own suite, which
+    // drives it explicitly.
+    RELAY_OUTBOX_RELAY: "off",
   };
 
   const apiPort = Number(process.env.RELAY_E2E_API_PORT ?? 4100);

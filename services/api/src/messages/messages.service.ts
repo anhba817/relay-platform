@@ -29,16 +29,22 @@ export class MessagesService {
   async send(
     channelId: string,
     body: SendMessageBody,
-    /** Chapter 2.6: who wrote it. Optional because the public REST route
-     * has no authenticated user yet (its own chapter, Part 3); the
-     * internal route always knows. */
+    /** Chapter 2.6: who wrote it. Optional because a key-authenticated public
+     * send is unattributed (3.2's recorded bound); the internal route always
+     * knows. */
     userId?: string,
+    /** Chapter 3.3: the same person as a CONSUMER will see them. The event
+     * envelope carries external ids, and the internal route already holds this
+     * one — it is the token's subject — so threading it costs nothing where a
+     * lookup inside the write transaction would cost a query per message. */
+    userExternalId?: string,
   ): Promise<MessageRow> {
     try {
       return await this.repo.sendMessage(channelId, {
         text: body.text,
         metadata: body.metadata,
         ...(userId !== undefined && { userId }),
+        ...(userExternalId !== undefined && { userExternalId }),
         ...(body.idempotency_key != null && {
           idempotencyKey: body.idempotency_key,
         }),

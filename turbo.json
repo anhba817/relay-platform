@@ -18,13 +18,16 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/compose.yaml"]
     },
     "test:integration": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "build"],
       "cache": false,
       "env": [
         "DATABASE_URL",
         "RELAY_POSTGRES_PORT",
         "RELAY_REDIS_URL",
         "RELAY_REDIS_PORT",
+        "RELAY_NATS_URL",
+        "RELAY_NATS_PORT",
+        "RELAY_OUTBOX_RELAY",
         "RELAY_E2E_API_PORT"
       ]
     },

@@ -10,6 +10,7 @@ import { AuthenticateMiddleware } from "./auth/authenticate.middleware";
 import { HealthController } from "./health.controller";
 import { InternalModule } from "./internal/internal.module";
 import { MessagesModule } from "./messages/messages.module";
+import { OutboxModule } from "./outbox/outbox.module";
 import { TenancyModule } from "./tenancy/tenancy.module";
 import { LOGGER, apiLogger } from "./logger";
 import { ProtocolErrorFilter } from "./protocol-error.filter";
@@ -20,7 +21,13 @@ import { RequestContextMiddleware } from "./request-context.middleware";
 // provider (APP_FILTER) instead of wiring it in main.ts means every entry
 // point — including tests — gets the same error envelope for free.
 @Module({
-  imports: [AuthModule, MessagesModule, InternalModule, TenancyModule],
+  imports: [
+    AuthModule,
+    MessagesModule,
+    InternalModule,
+    TenancyModule,
+    OutboxModule,
+  ],
   controllers: [HealthController],
   providers: [
     { provide: LOGGER, useFactory: apiLogger },

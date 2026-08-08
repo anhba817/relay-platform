@@ -114,7 +114,10 @@ async function startApi(): Promise<ApiUnderTest> {
 
   const port = Number(process.env.RELAY_SESSION_ITEST_API_PORT ?? 4123);
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
-    env: { ...process.env, PORT: String(port) },
+    // Chapter 3.3: no outbox relay in this child. This suite is about the
+    // socket's credentials; a background loop draining a table that chapter
+    // 3.3's suite is asserting on turns two unrelated test files into a race.
+    env: { ...process.env, PORT: String(port), RELAY_OUTBOX_RELAY: "off" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const url = `http://127.0.0.1:${port}`;

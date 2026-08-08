@@ -29,6 +29,13 @@
       "when": 1786193376722,
       "tag": "0003_api_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786202371832,
+      "tag": "0004_outbox",
+      "breakpoints": true
     }
   ]
 }
