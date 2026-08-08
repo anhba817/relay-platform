@@ -24,13 +24,87 @@ import {
 // (ADR-06's chapter), emoji/media tables (their parts), messages
 // partitioning (SAD growth note -> retention chapter).
 
-// DECISION (chapter 2.1): the SAD's environments table references
-// applications(id) but never defines the table. This stub satisfies the
-// foreign key; the real application lifecycle belongs to Part 3's tenancy
-// chapters.
-export const applications = pgTable("applications", {
+// The tenancy hierarchy (chapter 3.1). Everything from here to `members`
+// below sits ABOVE the environment boundary: these rows say who owns a
+// platform account, and they are the only tables in this file without an
+// environment_id. Everything below the boundary carries one and is scoped by
+// the repository (constitution I).
+//
+// DECISION (chapter 3.1): SAD §6.1 defines `environments` and everything under
+// it, but never defines the containers above — the gap 2.1 papered over with a
+// one-column `applications` stub. These three tables are derived from the SRS
+// (FR-TEN-01/02/03/04/07), not quoted from the SAD, and that is why they carry
+// this note.
+export const organisations = pgTable("organisations", {
   id: uuid("id").primaryKey(),
   name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+// A person who signs in to Relay. NOT the `users` table below — see ADR-18.
+// Identity is the provider account, never the email: emails change hands, and
+// a provider may not release one at all (hence nullable).
+export const humans = pgTable(
+  "humans",
+  {
+    id: uuid("id").primaryKey(),
+    provider: text("provider").notNull(),
+    providerAccountId: text("provider_account_id").notNull(),
+    displayName: text("display_name"),
+    email: text("email"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // Signup idempotency, decided by the index rather than by a read-then-
+    // write check that loses to a concurrent second click (2.3's lesson).
+    unique("humans_provider_account_unique").on(
+      t.provider,
+      t.providerAccountId,
+    ),
+    check("humans_provider_check", sql`${t.provider} IN ('github','google')`),
+  ],
+);
+
+export const memberships = pgTable(
+  "memberships",
+  {
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    humanId: uuid("human_id")
+      .notNull()
+      .references(() => humans.id),
+    role: text("role").notNull(),
+    joinedAt: timestamp("joined_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.organisationId, t.humanId] }),
+    check(
+      "memberships_role_check",
+      sql`${t.role} IN ('owner','admin','member')`,
+    ), // FR-TEN-07
+  ],
+);
+
+// Replaces chapter 2.1's stub: an application now knows who owns it
+// (FR-TEN-03). Deletion (FR-TEN-08) needs machinery this chapter does not
+// build, so no cascade is declared — a cascade would imply a deletion story
+// that does not exist yet.
+export const applications = pgTable("applications", {
+  id: uuid("id").primaryKey(),
+  organisationId: uuid("organisation_id")
+    .notNull()
+    .references(() => organisations.id),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const environments = pgTable(
@@ -51,6 +125,10 @@ export const environments = pgTable(
       "environments_kind_check",
       sql`${t.kind} IN ('development','production')`,
     ),
+    // FR-TEN-04 says exactly two environments per application. With the CHECK
+    // above, this unique index IS that rule: two legal kinds, one row each.
+    // No trigger, no counting query, nothing to lose a race to.
+    unique("environments_application_kind_unique").on(t.applicationId, t.kind),
   ],
 );
 

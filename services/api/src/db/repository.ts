@@ -3,15 +3,25 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, lt, sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "./client";
-import { channels, members, messages, users } from "./schema";
+import {
+  applications,
+  channels,
+  environments,
+  humans,
+  members,
+  memberships,
+  messages,
+  organisations,
+  users,
+} from "./schema";
 
 // The repository layer — the ONE place data access lives (ADR-04's single
 // writer, constitution I). Two surfaces with a bright line between them:
 //
-//   createEnvironment — the ADMIN surface. It creates tenants, so it is the
-//   only operation here that is not tenant-scoped. It also inserts a stub
-//   application row to satisfy environments' NOT NULL foreign key (recorded
-//   decision: the real application lifecycle belongs to Part 3).
+//   createEnvironment / provisionOrganisation — the ADMIN surface. These
+//   create tenants, so they are the only operations here that are not
+//   tenant-scoped. As of chapter 3.1 they build the whole container stack:
+//   organisation -> application -> environment, with no stubs left.
 //
 //   Repository — everything else. The constructor REQUIRES an
 //   environment_id; every query is scoped by it HERE, in one home — never
@@ -34,18 +44,199 @@ export async function createEnvironment(
   db: Db,
   { name, kind = "development" }: { name: string; kind?: Environment["kind"] },
 ): Promise<Environment> {
+  const organisationId = randomUUID();
   const applicationId = randomUUID();
   const environmentId = randomUUID();
   // The admin surface writes through the same Db handle but carries no
   // tenant scope — it is the operation that MINTS the scope.
+  //
+  // Chapter 3.1 added the organisation above the application, and this
+  // function had to grow with it the same day: `applications.organisation_id`
+  // is NOT NULL, and this is the function every Part 2 suite, the e2e harness
+  // and three walk scripts use to make a tenant. A schema change whose only
+  // writer is left behind is not a migration, it is an outage.
   await db.execute(
-    sql`INSERT INTO applications (id, name) VALUES (${applicationId}, ${name})`,
+    sql`INSERT INTO organisations (id, name) VALUES (${organisationId}, ${name})`,
+  );
+  await db.execute(
+    sql`INSERT INTO applications (id, organisation_id, name)
+        VALUES (${applicationId}, ${organisationId}, ${name})`,
   );
   await db.execute(
     sql`INSERT INTO environments (id, application_id, kind, signing_secret)
         VALUES (${environmentId}, ${applicationId}, ${kind}, ${randomUUID()})`,
   );
   return { id: environmentId, kind };
+}
+
+/** What a signup produced — or found. `created` answers "was an organisation
+ * created on this call?", NOT "was the identity new": a known human who owned
+ * nothing gets `created: true`, because one really was created for them. */
+export interface Provisioned {
+  organisation: { id: string; name: string };
+  application: { id: string; name: string };
+  environment: { id: string; kind: Environment["kind"] };
+  human: { id: string; provider: string; provider_account_id: string };
+  created: boolean;
+}
+
+/** Signup (chapter 3.1, FR-TEN-01/02). The admin surface's second entrance:
+ * it mints a tenant, so like createEnvironment it carries no tenant scope —
+ * it is the operation that creates one.
+ *
+ * ATOMIC: one transaction. A half-built tenant — an application with no
+ * environment — is unusable and invisible to the person who just signed up,
+ * so there is no state between "nothing" and "everything".
+ *
+ * IDEMPOTENT ON THE OWNED ORGANISATION, which is the only rule that is defined
+ * for every reachable case:
+ *
+ *   unknown identity           -> five rows; created: true
+ *   known, owns an org         -> that org; nothing written; created: false
+ *   known, owns none           -> four rows (no new human); created: true
+ *
+ * The third case cannot happen until invitations exist, and the rule is stated
+ * now because "return the existing organisation" is undefined for a human who
+ * only belongs to someone ELSE's — a state FR-TEN-07 makes legal the moment
+ * membership management arrives. Signing up gives you your own workspace; it
+ * never hands you somebody else's.
+ */
+export async function provisionOrganisation(
+  db: Db,
+  {
+    provider,
+    providerAccountId,
+    displayName,
+    email,
+    organisationName,
+  }: {
+    provider: string;
+    providerAccountId: string;
+    displayName?: string | null;
+    email?: string | null;
+    organisationName: string;
+  },
+): Promise<Provisioned> {
+  return db.transaction(async (tx) => {
+    // The identity, or the row that already speaks for it. The unique index on
+    // (provider, provider_account_id) is what decides under concurrency — a
+    // read-then-write check here would let two simultaneous first clicks both
+    // believe they were first (2.3's lesson, on a different table).
+    const [existingHuman] = await tx
+      .select({
+        id: humans.id,
+        provider: humans.provider,
+        provider_account_id: humans.providerAccountId,
+      })
+      .from(humans)
+      .where(
+        and(
+          eq(humans.provider, provider),
+          eq(humans.providerAccountId, providerAccountId),
+        ),
+      );
+
+    if (existingHuman) {
+      // Does this identity already OWN an organisation? Membership is not
+      // ownership: being a member of someone else's does not count.
+      const [owned] = await tx
+        .select({
+          id: organisations.id,
+          name: organisations.name,
+        })
+        .from(memberships)
+        .innerJoin(
+          organisations,
+          eq(organisations.id, memberships.organisationId),
+        )
+        .where(
+          and(
+            eq(memberships.humanId, existingHuman.id),
+            eq(memberships.role, "owner"),
+          ),
+        )
+        .orderBy(asc(memberships.joinedAt))
+        .limit(1);
+
+      if (owned) {
+        const [application] = await tx
+          .select({ id: applications.id, name: applications.name })
+          .from(applications)
+          .where(eq(applications.organisationId, owned.id))
+          .orderBy(asc(applications.createdAt))
+          .limit(1);
+        const [environment] = await tx
+          .select({
+            id: environments.id,
+            kind: sql<Environment["kind"]>`${environments.kind}`,
+          })
+          .from(environments)
+          .where(eq(environments.applicationId, application!.id))
+          .orderBy(asc(environments.kind))
+          .limit(1);
+        return {
+          organisation: owned,
+          application: application!,
+          environment: environment!,
+          human: existingHuman,
+          created: false,
+        };
+      }
+    }
+
+    const human =
+      existingHuman ??
+      (
+        await tx
+          .insert(humans)
+          .values({
+            id: randomUUID(),
+            provider,
+            providerAccountId,
+            displayName: displayName ?? null,
+            email: email ?? null,
+          })
+          .returning({
+            id: humans.id,
+            provider: humans.provider,
+            provider_account_id: humans.providerAccountId,
+          })
+      )[0]!;
+
+    const organisationId = randomUUID();
+    const applicationId = randomUUID();
+    const environmentId = randomUUID();
+
+    await tx
+      .insert(organisations)
+      .values({ id: organisationId, name: organisationName });
+    await tx.insert(applications).values({
+      id: applicationId,
+      organisationId,
+      name: organisationName,
+    });
+    await tx.insert(environments).values({
+      id: environmentId,
+      applicationId,
+      // FR-TEN-02: development, and only development. The production
+      // environment is possible (FR-TEN-04) but not automatic.
+      kind: "development",
+      signingSecret: randomUUID(),
+    });
+    await tx.insert(memberships).values({
+      organisationId,
+      humanId: human.id,
+      role: "owner", // FR-TEN-07's vocabulary; management of it is later
+    });
+
+    return {
+      organisation: { id: organisationId, name: organisationName },
+      application: { id: applicationId, name: organisationName },
+      environment: { id: environmentId, kind: "development" as const },
+      human,
+      created: true,
+    };
+  });
 }
 
 export interface UserRow {
