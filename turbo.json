@@ -17,6 +17,18 @@
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/compose.yaml"]
     },
+    "test:integration": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "env": [
+        "DATABASE_URL",
+        "RELAY_POSTGRES_PORT",
+        "RELAY_REDIS_URL",
+        "RELAY_REDIS_PORT",
+        "RELAY_DEV_JWT_SECRET",
+        "RELAY_E2E_API_PORT"
+      ]
+    },
     "//#lint:root": {
       "inputs": [
         "**/*.{ts,mts,cts,mjs,js}",

@@ -361,6 +361,26 @@ export class Repository {
     return { ...row, created_at: toIso(row.created_at) };
   }
 
+  /** Does this channel resolve IN THIS TENANT? (chapter 2.8.)
+   *
+   * The write path has asked since 2.2 — it needs the channel row to lock —
+   * so it answers a foreign id with a 404. The read path never asked: a
+   * tenant-scoped query over a foreign channel simply returns no rows, and
+   * the endpoint dressed that as an empty page. The milestone suite caught
+   * the two doors disagreeing about the same resource. */
+  async channelExists(channelId: string): Promise<boolean> {
+    const rows = await this.db
+      .select({ id: channels.id })
+      .from(channels)
+      .where(
+        and(
+          eq(channels.id, channelId),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      );
+    return rows.length > 0;
+  }
+
   /** History reads (chapter 2.4): one page of messages anchored to a
    * sequence position, in either direction (FR-MSG-09), riding the
    * messages_channel_seq index in its natural order. The channel join

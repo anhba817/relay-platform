@@ -67,6 +67,25 @@ describe("POST /v1/channels/:channelId/messages", () => {
     expect(typeof body.docs_url).toBe("string");
   });
 
+  it("answers a foreign channel's HISTORY with that same 404 (chapter 2.8)", async () => {
+    // The milestone suite found the two doors disagreeing: POST said 404 for
+    // a channel this tenant cannot see, GET said 200 with an empty page. An
+    // empty page leaks nothing, but it leaves a client unable to tell "no
+    // such conversation" from "nothing said yet" — and one resource should
+    // not answer two ways depending on the verb.
+    const foreign = await fetch(
+      `${url}/v1/channels/${foreignChannelId}/messages?limit=10`,
+      { headers: { "x-relay-environment": env.id } },
+    );
+    const missing = await fetch(
+      `${url}/v1/channels/${crypto.randomUUID()}/messages?limit=10`,
+      { headers: { "x-relay-environment": env.id } },
+    );
+    expect(foreign.status).toBe(404);
+    expect(missing.status).toBe(404);
+    expect(await foreign.json()).toEqual(await missing.json());
+  });
+
   it("answers a FOREIGN channel id with the same 404 as a missing one", async () => {
     const foreign = await send({ text: "not for you" }, foreignChannelId);
     const missing = await send({ text: "nobody home" }, crypto.randomUUID());

@@ -186,9 +186,20 @@ export function attachSessions({
     socket.on("message", (raw) => void handle(connection, raw.toString()));
     socket.on("close", (code) => {
       registry.remove(connection.id);
+      // Releasing a subscription can fail — a broker that went away, or a
+      // fabric already closed while sockets were still draining — and a
+      // close handler is the last place that should throw. The subscribe
+      // path has said this since 2.7; the release path had not, and an
+      // unhandled rejection during teardown is how chapter 2.8's lane found
+      // out. Nothing to recover: the connection is gone either way.
       void Promise.all(
         [...connection.channelIds].map((channelId) =>
-          fanout?.unsubscribe(channelId),
+          fanout?.unsubscribe(channelId).catch((error: unknown) => {
+            logger.log("error", "fanout.unsubscribe_failed", {
+              channel: channelId,
+              error: String(error),
+            });
+          }),
         ),
       );
       logger.log("info", "connection.closed", {

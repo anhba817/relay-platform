@@ -44,6 +44,28 @@ importers:
 
   packages/config: {}
 
+  packages/e2e:
+    dependencies:
+      '@relay/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@relay/api':
+        specifier: workspace:*
+        version: link:../../services/api
+      '@relay/gateway':
+        specifier: workspace:*
+        version: link:../../services/gateway
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+      jose:
+        specifier: ^6.2.7
+        version: 6.2.7
+      ws:
+        specifier: ^8.21.1
+        version: 8.21.1
+
   packages/protocol:
     dependencies:
       zod:

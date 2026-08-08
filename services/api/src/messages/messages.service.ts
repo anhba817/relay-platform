@@ -66,6 +66,16 @@ export class MessagesService {
     next_cursor: string | null;
     prev_cursor: string | null;
   }> {
+    // A channel that does not resolve in this tenant is a 404 here, exactly
+    // as it is on the send path (chapter 2.8's finding). An empty page would
+    // not leak anything — a foreign channel and an empty one would look the
+    // same — but it leaves a client unable to tell "no such conversation"
+    // from "no messages yet", and it made one resource answer two ways
+    // depending on the verb.
+    if (!(await this.repo.channelExists(channelId))) {
+      throw new NotFoundException("channel not found");
+    }
+
     let anchor: number | undefined;
     if (cursor !== undefined) {
       const decoded = decodeCursor(cursor);
