@@ -2,8 +2,8 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Headers,
   Post,
-  Req,
   UseGuards,
 } from "@nestjs/common";
 
@@ -15,8 +15,7 @@ import {
   type Message,
 } from "@relay/protocol";
 
-import { Accepts, CredentialGuard } from "../auth/credential.guard";
-import type { RequestWithPrincipal } from "../auth/principal";
+import { EnvironmentContextGuard } from "../messages/environment-context.guard";
 import { Repository, type MessageWithSender } from "../db/repository";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 
@@ -30,10 +29,7 @@ import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 // gateway needs frames, and this is the boundary where one becomes the
 // other (the same division of labour 2.6 settled for the public send).
 @Controller("internal")
-// The end user's own token, forwarded by the gateway, rather than
-// two headers the gateway asserted. Same trust boundary, narrower claim.
-@Accepts("user")
-@UseGuards(CredentialGuard)
+@UseGuards(EnvironmentContextGuard)
 export class BackfillController {
   constructor(private readonly repo: Repository) {}
 
@@ -41,13 +37,10 @@ export class BackfillController {
   async backfill(
     @Body(new ZodValidationPipe(internalBackfillRequestSchema))
     body: InternalBackfillRequest,
-    @Req() req: RequestWithPrincipal,
+    @Headers("x-relay-user") userExternalId?: string,
   ): Promise<InternalBackfillResponse> {
-    const principal = req.principal;
-    if (principal?.kind !== "user") {
-      throw new BadRequestException("internal routes act for an end user");
-    }
-    const user = await this.repo.getUserByExternalId(principal.userExternalId);
+    if (!userExternalId) throw new BadRequestException("missing x-relay-user");
+    const user = await this.repo.getUserByExternalId(userExternalId);
     // An unknown user resumes nothing — the same answer memberships gives,
     // for the same reason: delivery is not identity forensics.
     if (!user) return { channels: {} };

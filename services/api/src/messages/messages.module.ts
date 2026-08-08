@@ -1,10 +1,10 @@
 import { Module, Scope } from "@nestjs/common";
 import { REQUEST } from "@nestjs/core";
 
-import { AuthModule } from "../auth/auth.module";
 import { createDb, createPool, type Db } from "../db/client";
 import type { RequestWithTenant } from "./request-with-tenant";
 import { Repository } from "../db/repository";
+import { EnvironmentContextGuard } from "./environment-context.guard";
 import { MessagesController } from "./messages.controller";
 import { MessagesService } from "./messages.service";
 
@@ -12,7 +12,6 @@ import { MessagesService } from "./messages.service";
 // to construct it per request with the authenticated tenant (ADR-15's
 // scope note: guards authenticate, the data layer isolates).
 @Module({
-  imports: [AuthModule],
   controllers: [MessagesController],
   providers: [
     {
@@ -25,23 +24,16 @@ import { MessagesService } from "./messages.service";
       scope: Scope.REQUEST,
       inject: ["DB", REQUEST],
       useFactory: (db: Db, req: RequestWithTenant) =>
-        // The FACTORY reads the PRINCIPAL, not the guard's leftovers: Nest
+        // The FACTORY reads the header, not the guard's leftovers: Nest
         // resolves request-scoped providers BEFORE the enhancer chain
         // runs, so anything a guard stashes on the request is invisible
-        // here. Middleware runs earlier still, which is why the credentials chapter
-        // authenticates there (research R5, measured in T004).
-        //
-        // The credentials chapter changed WHERE the environment comes from and nothing
-        // else about this line. It used to be an environment header — a
-        // header any caller could type. It is now the environment resolved
-        // from a verified credential, so a request cannot name a tenant it
-        // has not proved it may act for. The empty-string fallback is the
-        // same as 2.2's: no principal means no scope, and the guard below
-        // turns that into a 401 before any handler runs.
-        new Repository(db, req.principal?.environmentId ?? ""),
+        // here. The guard still rejects tenant-less requests (401); the
+        // factory is what scopes the layer.
+        new Repository(db, req.headers["x-relay-environment"] ?? ""),
     },
     MessagesService,
+    EnvironmentContextGuard,
   ],
-  exports: [Repository, MessagesService],
+  exports: [Repository, MessagesService, EnvironmentContextGuard],
 })
 export class MessagesModule {}

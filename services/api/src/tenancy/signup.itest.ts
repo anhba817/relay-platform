@@ -1,7 +1,9 @@
 import "reflect-metadata";
 
+import { readFileSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
@@ -283,11 +285,11 @@ describe("signup", () => {
     const before = await db.execute(
       `SELECT count(*)::int AS n FROM organisations`,
     );
-    // There is no header left to forge here. The assertion is
-    // unchanged — no route but signup creates a tenant — and a credential-free
-    // internal call is now refused before it reaches a handler, which is a
-    // stronger form of the same guarantee.
-    await fetch(`${url}/internal/memberships`);
+    await fetch(`${url}/internal/memberships`, {
+      headers: {
+        "x-relay-environment": "00000000-0000-0000-0000-000000000000",
+      },
+    });
     const after = await db.execute(
       `SELECT count(*)::int AS n FROM organisations`,
     );

@@ -25,6 +25,7 @@
         "RELAY_POSTGRES_PORT",
         "RELAY_REDIS_URL",
         "RELAY_REDIS_PORT",
+        "RELAY_DEV_JWT_SECRET",
         "RELAY_E2E_API_PORT"
       ]
     },

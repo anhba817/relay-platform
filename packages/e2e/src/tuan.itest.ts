@@ -33,7 +33,7 @@ const sorted = (seqs: number[]): number[] => [...seqs].sort((a, b) => a - b);
 describe("journey 4 — the message that survives the tunnel", () => {
   let system: System;
   let channel: string;
-  let credential: string;
+  let environmentId: string;
   let dispatcher: Client;
   let tuan: Client;
   let foreign: { channel: string; text: string };
@@ -44,7 +44,7 @@ describe("journey 4 — the message that survives the tunnel", () => {
   beforeAll(async () => {
     system = await boot({ gateways: 2 });
     const seeded = await system.seedConversation(); // 2.1
-    ({ channel, credential, dispatcher, tuan } = seeded);
+    ({ channel, environmentId, dispatcher, tuan } = seeded);
     foreign = await system.seedForeignTenant();
 
     // ── stage 1: type and send ───────────────────────────────────────────
@@ -199,14 +199,12 @@ describe("journey 4 — the message that survives the tunnel", () => {
     expect(everything).not.toContain(foreign.text);
     expect(everything).not.toContain(foreign.channel);
 
-    // And through the REST door, with this tenant's CREDENTIAL: a foreign
+    // And through the REST door, with this tenant's header: a foreign
     // channel is a 404, indistinguishable from one that does not exist
-    // (FR-TEN-05). THE CREDENTIALS CHAPTER changed what proves the tenant here — a key
-    // this environment was issued, rather than a header naming it — and the
-    // assertion is deliberately unchanged.
+    // (FR-TEN-05).
     const res = await fetch(
       `${system.apiUrl}/v1/channels/${foreign.channel}/messages?limit=10`,
-      { headers: { authorization: `Bearer ${credential}` } },
+      { headers: { "x-relay-environment": environmentId } },
     );
     expect(res.status).toBe(404);
   });
@@ -217,7 +215,7 @@ describe("journey 4 — the message that survives the tunnel", () => {
     // know now.
     const res = await fetch(
       `${system.apiUrl}/v1/channels/${channel}/messages?limit=50&direction=newer`,
-      { headers: { authorization: `Bearer ${credential}` } },
+      { headers: { "x-relay-environment": environmentId } },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { messages: Message[] };

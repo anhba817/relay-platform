@@ -5,18 +5,13 @@ import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  internalMembershipsResponseSchema,
   internalSendResponseSchema,
-  internalSessionResponseSchema,
 } from "@relay/protocol";
 
 import { AppModule } from "../app.module";
 import { createDb, createPool } from "../db/client";
-import {
-  createEnvironment,
-  environmentSigningSecret,
-  Repository,
-} from "../db/repository";
-import { mintUserToken } from "../auth/user-token";
+import { createEnvironment, Repository } from "../db/repository";
 
 // The internal boundary, tested as a CONTRACT (chapter 2.6). 2.5 built these
 // routes and verified them only through the gateway's tests, where the api
@@ -33,10 +28,6 @@ describe("the internal surface", () => {
   let url: string;
   let env: { id: string };
   let channelId: string;
-  /** The gateway forwards the END USER'S token instead of
-   * asserting two identity headers, so this suite mints tokens the same way the
-   * dev-token endpoint does — with the environment's own signing secret. */
-  let tokenFor: (user: string) => Promise<string>;
 
   beforeAll(async () => {
     const db = createDb(createPool());
@@ -45,16 +36,6 @@ describe("the internal surface", () => {
     const user = await repo.createUser("tuan", "Tuan");
     channelId = (await repo.createChannel("fleet", "public")).id;
     await repo.addMember(channelId, user.id);
-    const signingSecret = (await environmentSigningSecret(db, env.id))!
-      .signingSecret;
-    tokenFor = async (subject: string) =>
-      (
-        await mintUserToken(signingSecret, {
-          user: subject,
-          environmentId: env.id,
-          ttlSeconds: 3600,
-        })
-      ).token;
     app = (
       await Test.createTestingModule({ imports: [AppModule] }).compile()
     ).createNestApplication({ logger: false });
@@ -66,15 +47,16 @@ describe("the internal surface", () => {
     await app.close();
   });
 
-  const headers = async (user = "tuan") => ({
+  const headers = (user = "tuan") => ({
     "content-type": "application/json",
-    authorization: `Bearer ${await tokenFor(user)}`,
+    "x-relay-environment": env.id,
+    "x-relay-user": user,
   });
 
-  const send = async (body: unknown, user = "tuan") =>
+  const send = (body: unknown, user = "tuan") =>
     fetch(`${url}/internal/messages`, {
       method: "POST",
-      headers: await headers(user),
+      headers: headers(user),
       body: JSON.stringify(body),
     });
 
@@ -114,7 +96,7 @@ describe("the internal surface", () => {
     );
     const history = await fetch(
       `${url}/v1/channels/${channelId}/messages?limit=50`,
-      { headers: await headers() },
+      { headers: headers() },
     );
     const page = (await history.json()) as { messages: { id: string }[] };
     // History does not expose `user` yet — 2.7's resume path is where the
@@ -123,43 +105,24 @@ describe("the internal surface", () => {
     expect(page.messages.some((m) => m.id === res.id)).toBe(true);
   });
 
-  // The credentials chapter replaced `GET /internal/memberships` with
-  // `POST /internal/session`. These two cases held that route's contract, and
-  // they move rather than disappear: the route changed, the guarantees did not.
-  // The answer now carries the identity as well, because the gateway no longer
-  // decides it (research R1).
-  it("emits a session response the shared contract accepts", async () => {
-    const res = await fetch(`${url}/internal/session`, {
-      method: "POST",
-      headers: await headers(),
+  it("emits a memberships response the shared contract accepts", async () => {
+    const res = await fetch(`${url}/internal/memberships`, {
+      headers: headers(),
     });
-    const parsed = internalSessionResponseSchema.safeParse(await res.json());
+    const parsed = internalMembershipsResponseSchema.safeParse(
+      await res.json(),
+    );
     expect(parsed.error?.issues ?? []).toEqual([]);
     expect(parsed.data?.channel_ids).toContain(channelId);
-    // The half that is new: the api says who the token belongs to.
-    expect(parsed.data?.user).toBe("tuan");
-    expect(parsed.data?.environment_id).toBe(env.id);
   });
 
   it("answers for an unknown user with no channels rather than an error", async () => {
-    const res = await fetch(`${url}/internal/session`, {
-      method: "POST",
-      headers: await headers("nobody-here"),
+    const res = await fetch(`${url}/internal/memberships`, {
+      headers: headers("nobody-here"),
     });
     expect(res.status).toBe(200);
     expect(
-      internalSessionResponseSchema.parse(await res.json()).channel_ids,
+      internalMembershipsResponseSchema.parse(await res.json()).channel_ids,
     ).toEqual([]);
-  });
-
-  it("refuses an unverifiable token instead of answering for it", async () => {
-    // The refusal the gateway turns into a 4001. It exists here because the
-    // route that verifies is the route that must refuse — the gateway holds no
-    // secret and cannot tell a good token from a bad one any more.
-    const res = await fetch(`${url}/internal/session`, {
-      method: "POST",
-      headers: { authorization: "Bearer not-a-token" },
-    });
-    expect(res.status).toBe(401);
   });
 });
