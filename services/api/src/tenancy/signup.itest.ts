@@ -162,6 +162,11 @@ describe("signup", () => {
     // `expected 452 to be 451` — says nothing about a neighbour. The isolation
     // fixtures seed two tenants and did exactly that.
     //
+    // THE OUTBOX CHAPTER WOULD HAVE FORCED THE SAME FIX. Its crash tests spawn child
+    // processes that provision their own tenants, which moves the same count from the
+    // same direction. Two unrelated chapters arriving at one defect is how you know the
+    // assertion was wrong rather than unlucky.
+    //
     // What invariant 1 actually claims is that the failed transaction left NOTHING
     // behind. That is a question about one organisation, and the test above already
     // asks its questions that way.

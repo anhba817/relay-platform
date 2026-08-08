@@ -17,6 +17,7 @@
     "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@relay/api": "workspace:*",
     "@types/ws": "^8.18.1",
     "tsx": "^4.23.1"
   }

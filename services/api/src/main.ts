@@ -4,6 +4,7 @@ import { NestFactory } from "@nestjs/core";
 import { createLogger } from "@relay/service-kit";
 
 import { AppModule } from "./app.module";
+import { OutboxRelayService } from "./outbox/outbox.module";
 
 // Nest's own banner logger stays off: this workspace already decided what a
 // log line looks like (one JSON object, NFR-OBS-01), and the framework does
@@ -14,17 +15,24 @@ async function bootstrap(): Promise<void> {
   await app.listen(requested);
   // THE PORT IT GOT, NOT THE PORT IT ASKED FOR.
   //
-  // `PORT=0` asks the operating system for any free port, which is what a test
-  // spawning this service should do — a fixed port races whichever sibling suite also
-  // binds one, and a previous run's child still holding it makes a health check succeed
-  // against a service that has never heard of this run's data. Three unrelated-looking
-  // assertions, one fixture.
+  // `PORT=0` asks the operating system for any free port, which is what a test spawning
+  // this service should do — a fixed port races whichever sibling suite also binds one,
+  // and a previous run's child still holding it makes a health check succeed against a
+  // service that has never heard of this run's data. Three unrelated-looking assertions,
+  // one fixture.
   //
   // But a parent can only use the number if this process reports it, and logging
   // `requested` prints 0. So the bound address is read back and logged.
   const address = app.getHttpServer().address() as { port?: number } | string | null;
   const port =
     typeof address === "object" && address !== null ? (address.port ?? requested) : requested;
+  // The relay starts AFTER the server is listening, and starting it cannot fail: the
+  // publisher connects lazily, so an unreachable broker leaves events accumulating in
+  // Postgres instead of preventing the api from serving writes (research R9).
+  app.get(OutboxRelayService).start();
+  // Nest calls onModuleDestroy on shutdown hooks; without this the relay's loop would
+  // outlive the process's intent to stop.
+  app.enableShutdownHooks();
   createLogger("api").log("info", "listening", { port });
 }
 
