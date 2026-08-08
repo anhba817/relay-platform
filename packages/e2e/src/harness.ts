@@ -5,7 +5,6 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SignJWT } from "jose";
 import { WebSocket } from "ws";
 
 import type { Frame, Message } from "@relay/protocol";
@@ -31,8 +30,6 @@ import type { Frame, Message } from "@relay/protocol";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..", "..", "..");
 const require_ = createRequire(import.meta.url);
-
-const DEV_SECRET = process.env.RELAY_DEV_JWT_SECRET ?? "dev-secret";
 
 /** Store coordinates are FORWARDED, never invented. Each service already has
  * a default (2.1's `DEFAULT_DATABASE_URL`, 2.6's `DEFAULT_REDIS_URL`), and a
@@ -60,6 +57,14 @@ interface Seeder {
     db: unknown,
     input: { name: string },
   ) => Promise<{ id: string }>;
+  /** Chapter 3.2: the suite needs a real credential now, and it mints one the
+   * same way signup does. There is still no admin API for keys — that is the
+   * dashboard's chapter — so this stays a test-only seam with a named
+   * retirement, exactly like the rest of this interface. */
+  createApiKey: (
+    db: unknown,
+    input: { environmentId: string; name?: string },
+  ) => Promise<{ credential: string }>;
   Repository: new (
     db: unknown,
     environmentId: string,
@@ -276,6 +281,9 @@ export interface System {
   serviceOutput: () => string;
   seedConversation: () => Promise<{
     environmentId: string;
+    /** An API key for that environment — the credential the REST assertions
+     * present now that the asserted header is gone (chapter 3.2). */
+    credential: string;
     channel: string;
     dispatcher: Client;
     tuan: Client;
@@ -323,7 +331,6 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       "RELAY_REDIS_URL",
       "RELAY_REDIS_PORT",
     ),
-    RELAY_DEV_JWT_SECRET: DEV_SECRET,
   };
 
   const apiPort = Number(process.env.RELAY_E2E_API_PORT ?? 4100);
@@ -367,11 +374,33 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     return new seeder.Repository(db, created.id);
   };
 
-  const token = (environmentId: string, subject: string) =>
-    new SignJWT({ env: environmentId })
-      .setProtectedHeader({ alg: "HS256" })
-      .setSubject(subject)
-      .sign(new TextEncoder().encode(DEV_SECRET));
+  /** Chapter 3.2: the harness cannot sign a token any more, and that is the
+   * point — nothing outside the api holds a signing secret. It asks the api's
+   * development endpoint instead, with the environment's own key, which is
+   * exactly the path a reader follows to get their first token (FR-AUT-09). */
+  const keys = new Map<string, string>();
+  const keyFor = async (environmentId: string) => {
+    const existing = keys.get(environmentId);
+    if (existing !== undefined) return existing;
+    const minted = await seeder.createApiKey(db, { environmentId });
+    keys.set(environmentId, minted.credential);
+    return minted.credential;
+  };
+
+  const token = async (environmentId: string, subject: string) => {
+    const res = await fetch(`${apiUrl}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${await keyFor(environmentId)}`,
+      },
+      body: JSON.stringify({ user: subject }),
+    });
+    if (!res.ok) {
+      throw new Error(`dev-token failed: ${res.status} ${await res.text()}`);
+    }
+    return ((await res.json()) as { token: string }).token;
+  };
 
   let primaryEnvironment = "";
 
@@ -391,6 +420,8 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       say(`seeded one channel with two members in ${primaryEnvironment}`);
       return {
         environmentId: primaryEnvironment,
+        // Chapter 3.2: the REST assertions present a credential, not a header.
+        credential: await keyFor(primaryEnvironment),
         channel: channel.id,
         dispatcher: new Client(
           "dispatcher",

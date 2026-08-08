@@ -1,4 +1,3 @@
-import { SignJWT } from "jose";
 import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
@@ -11,7 +10,6 @@ import type { Frame } from "@relay/protocol";
 import type { InternalSendResponse, Message } from "@relay/protocol";
 
 import type { ApiClient } from "./api-client.js";
-import { DEV_JWT_SECRET } from "./auth.js";
 import type { Fanout } from "./fanout.js";
 import { attachSessions } from "./session.js";
 
@@ -38,7 +36,14 @@ function committed(seq: number): InternalSendResponse {
 
 function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
-    memberships: async () => [CHANNEL],
+    // Chapter 3.2: the api verifies tokens, so the stub is what decides which
+    // credential is good. That inversion is the point — the gateway holds no
+    // secret and cannot check a signature, so there is nothing left here to
+    // fake except the ANSWER.
+    session: async (token) =>
+      token === VALID_TOKEN
+        ? { environment_id: "env-1", user: "tuan", channel_ids: [CHANNEL] }
+        : null,
     backfill: async () => ({}),
     sendMessage: async () => committed(42),
     ...overrides,
@@ -59,11 +64,22 @@ function frame(seq: number, channel = CHANNEL): Message {
   };
 }
 
+/** The one credential the stubbed api recognises. */
+const VALID_TOKEN = "token-for-tuan";
+
+/** A token, from the gateway's point of view: an opaque string it forwards.
+ *
+ * This function used to SIGN one, with HS256 over a development secret both the
+ * gateway and this file knew. After chapter 3.2 neither of them holds a secret —
+ * tokens are signed with the environment's own, in the api — so any override
+ * here simply produces a DIFFERENT opaque string, which the stub refuses. The
+ * refusal cases below therefore test what they always tested: a credential the
+ * api will not accept never reaches session code. */
 async function token(claims: Record<string, string> = {}): Promise<string> {
-  return new SignJWT({ env: "env-1", ...claims })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject("tuan")
-    .sign(new TextEncoder().encode(DEV_JWT_SECRET));
+  const keys = Object.entries(claims);
+  return keys.length === 0
+    ? VALID_TOKEN
+    : `token-with-${keys.map(([k, v]) => `${k}=${v}`).join(",")}`;
 }
 
 interface Harness {
@@ -190,6 +206,23 @@ describe("the socket (chapter 2.5)", () => {
     }
   });
 
+  it("closes 1011, not 4001, when the api cannot answer at all", async () => {
+    // New in chapter 3.2, and the reason `authenticate` has three outcomes
+    // rather than two. Moving verification to the api introduced a failure the
+    // gateway never had: the verifier being DOWN. Answering that with 4001
+    // would tell a client its credential is bad and stop it retrying, when the
+    // truth is that we are broken and it should.
+    harness = await boot(
+      stubApi({
+        session: async () => {
+          throw new Error("connect ECONNREFUSED");
+        },
+      }),
+    );
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    expect(await closeCode(socket)).toBe(1011);
+  });
+
   it("forwards message.send to the api and acks the committed sequence", async () => {
     const sent: unknown[] = [];
     harness = await boot(
@@ -210,10 +243,16 @@ describe("the socket (chapter 2.5)", () => {
     );
     const ack = await nextFrame(socket, "message.ack");
     expect(ack).toMatchObject({ type: "message.ack", payload: { seq: 7 } });
-    // The gateway carried; the api decided. The identity travelled with it.
+    // The gateway carried; the api decided. The identity travelled with it —
+    // and after chapter 3.2 the TOKEN travels too, because the internal hop
+    // forwards the user's own credential rather than asserting who they are.
     expect(sent).toEqual([
       {
-        identity: { userExternalId: "tuan", environmentId: "env-1" },
+        identity: {
+          userExternalId: "tuan",
+          environmentId: "env-1",
+          token: VALID_TOKEN,
+        },
         body: { channel_id: "c1", text: "hello", idempotency_key: "k1" },
       },
     ]);

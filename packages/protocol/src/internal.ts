@@ -87,7 +87,27 @@ export const internalMembershipsResponseSchema = z.strictObject({
   channel_ids: z.array(z.string().min(1)),
 });
 
+/** api → gateway, chapter 3.2: who the presented token belongs to, and what it
+ * may hear — in ONE answer.
+ *
+ * This replaces the memberships response above rather than joining it. The
+ * gateway used to verify a token itself and then ask "what may this user hear";
+ * it now presents the token and is told both. The round-trip count at connect is
+ * unchanged, and the gateway stops being the thing that decides identity
+ * (research R1).
+ *
+ * `user` is the EXTERNAL id, as everywhere else on this contract: internal uuids
+ * are the api's business. */
+export const internalSessionResponseSchema = z.strictObject({
+  environment_id: z.string().min(1),
+  user: z.string().min(1),
+  channel_ids: z.array(z.string().min(1)),
+});
+
 export type InternalSendRequest = z.infer<typeof internalSendRequestSchema>;
+export type InternalSessionResponse = z.infer<
+  typeof internalSessionResponseSchema
+>;
 export type InternalSendResponse = z.infer<typeof internalSendResponseSchema>;
 export type InternalMembershipsResponse = z.infer<
   typeof internalMembershipsResponseSchema

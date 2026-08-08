@@ -2,13 +2,13 @@ import {
   BadRequestException,
   Body,
   Controller,
-  Get,
-  Headers,
   Post,
+  Req,
   UseGuards,
 } from "@nestjs/common";
 
-import { EnvironmentContextGuard } from "../messages/environment-context.guard";
+import { Accepts, CredentialGuard } from "../auth/credential.guard";
+import type { RequestWithPrincipal } from "../auth/principal";
 import { MessagesService } from "../messages/messages.service";
 import { Repository } from "../db/repository";
 import {
@@ -18,42 +18,48 @@ import {
 
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 
+/** The connected user, from the token the gateway forwarded. The guard has
+ * already refused anything that is not a user principal, so this narrowing is
+ * about the type system rather than about trust. */
+function principalUser(req: RequestWithPrincipal): string {
+  const principal = req.principal;
+  if (principal?.kind !== "user") {
+    throw new BadRequestException("internal routes act for an end user");
+  }
+  return principal.userExternalId;
+}
+
 // The internal surface (chapter 2.5): the routes the gateway calls on a
 // connected user's behalf. They reuse the SAME service methods as the
 // public routes — the write path has one implementation (ADR-04), and the
 // socket is a new door onto it, not a second path.
 //
-// DECISION (chapter 2.5): these routes are network-internal and
-// unauthenticated between services at this stage; the gateway's forwarded
-// identity headers are trusted. Service-to-service credentials are Part 3
-// hardening, and this controller is the whole seam.
+// DECISION (chapter 2.5, narrowed by 3.2): these routes are still
+// network-internal, and there is still no service-to-service credential between
+// the gateway and the api — that remains Part 3 hardening. What changed is what
+// they trust. The gateway used to ASSERT identity in two headers it invented
+// from a token it verified locally; it now forwards the END USER'S OWN token,
+// and the api resolves the identity itself. The seam got narrower, not wider:
+// the gateway can no longer claim to be somebody it cannot present a token for.
 @Controller("internal")
-@UseGuards(EnvironmentContextGuard)
+// The end user's token, not a key: these routes exist to act for a connected
+// person, and a route that also accepted an application credential would let a
+// key act as any user without saying which (research R6).
+@Accepts("user")
+@UseGuards(CredentialGuard)
 export class InternalController {
   constructor(
     private readonly repo: Repository,
     private readonly messages: MessagesService,
   ) {}
 
-  /** Which channels may this user hear? The gateway caches the answer on
-   * the session; membership.changed frames invalidate it (FR-RTM-05). */
-  @Get("memberships")
-  async memberships(@Headers("x-relay-user") userExternalId?: string) {
-    if (!userExternalId) throw new BadRequestException("missing x-relay-user");
-    const user = await this.repo.getUserByExternalId(userExternalId);
-    // An unknown user is not an error — it is a user with no channels. The
-    // gateway's job is delivery, not identity forensics.
-    if (!user) return { channel_ids: [] };
-    return { channel_ids: await this.repo.channelsForUser(user.id) };
-  }
-
   @Post("messages")
   async send(
     @Body(new ZodValidationPipe(internalSendRequestSchema))
     body: InternalSendRequest,
-    @Headers("x-relay-user") userExternalId?: string,
+    @Req() req: RequestWithPrincipal,
   ) {
-    if (!userExternalId) throw new BadRequestException("missing x-relay-user");
+    const userExternalId = principalUser(req);
     const user = await this.repo.getUserByExternalId(userExternalId);
     if (!user) throw new BadRequestException("unknown user");
     const message = await this.messages.send(

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { SignJWT } from "jose";
 import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
@@ -10,7 +9,6 @@ import { createLogger, serve, type Logger } from "@relay/service-kit";
 import type { Frame, Message } from "@relay/protocol";
 
 import type { ApiClient } from "./api-client.js";
-import { DEV_JWT_SECRET } from "./auth.js";
 import { createFanout } from "./fanout.js";
 import { attachSessions } from "./session.js";
 
@@ -43,12 +41,15 @@ function frame(seq: number): Message {
   };
 }
 
+const VALID_TOKEN = "token-for-tuan";
+
+/** Chapter 3.2: the gateway holds no signing secret, so a test token is an
+ * opaque string the stubbed api agrees to recognise. What this suite proves —
+ * the resume race against a real broker — never depended on the signature. */
 function token(): Promise<string> {
-  return new SignJWT({ env: "env-1" })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject("tuan")
-    .sign(new TextEncoder().encode(DEV_JWT_SECRET));
+  return Promise.resolve(VALID_TOKEN);
 }
+
 
 interface Harness {
   url: string;
@@ -111,7 +112,11 @@ describe("resume across a real fabric", () => {
     // different fanout client on the same subject — publishes into the
     // window. Neither side coordinates; only the buffer saves this.
     harness = await boot({
-      memberships: async () => [CHANNEL],
+      session: async () => ({
+        environment_id: "env-1",
+        user: "tuan",
+        channel_ids: [CHANNEL],
+      }),
       backfill: async () => {
         await publishFromElsewhere(frame(43));
         await settle(150); // give Redis time to actually deliver it
@@ -138,7 +143,11 @@ describe("resume across a real fabric", () => {
     // Committed after the backfill's snapshot: it exists ONLY in the buffer,
     // and the flush is the only reason the client ever sees it.
     harness = await boot({
-      memberships: async () => [CHANNEL],
+      session: async () => ({
+        environment_id: "env-1",
+        user: "tuan",
+        channel_ids: [CHANNEL],
+      }),
       backfill: async () => {
         await publishFromElsewhere(frame(43));
         await settle(150);
@@ -159,7 +168,11 @@ describe("resume across a real fabric", () => {
 
   it("goes live after the flush, with no buffering left behind", async () => {
     harness = await boot({
-      memberships: async () => [CHANNEL],
+      session: async () => ({
+        environment_id: "env-1",
+        user: "tuan",
+        channel_ids: [CHANNEL],
+      }),
       backfill: async () => ({
         [CHANNEL]: { messages: [frame(42)], truncated: false },
       }),

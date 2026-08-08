@@ -5,6 +5,8 @@ import {
 } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
 
+import { AuthModule } from "./auth/auth.module";
+import { AuthenticateMiddleware } from "./auth/authenticate.middleware";
 import { HealthController } from "./health.controller";
 import { InternalModule } from "./internal/internal.module";
 import { MessagesModule } from "./messages/messages.module";
@@ -18,7 +20,7 @@ import { RequestContextMiddleware } from "./request-context.middleware";
 // provider (APP_FILTER) instead of wiring it in main.ts means every entry
 // point — including tests — gets the same error envelope for free.
 @Module({
-  imports: [MessagesModule, InternalModule, TenancyModule],
+  imports: [AuthModule, MessagesModule, InternalModule, TenancyModule],
   controllers: [HealthController],
   providers: [
     { provide: LOGGER, useFactory: apiLogger },
@@ -28,6 +30,12 @@ import { RequestContextMiddleware } from "./request-context.middleware";
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestContextMiddleware).forRoutes("{*path}");
+    // Order is the chain: the request gets its id first, then its principal.
+    // Chapter 3.2 put authentication HERE rather than in a guard because Nest
+    // constructs request-scoped providers before the enhancer chain runs — the
+    // finding 2.6 paid for, measured again on this path in T004.
+    consumer
+      .apply(RequestContextMiddleware, AuthenticateMiddleware)
+      .forRoutes("{*path}");
   }
 }

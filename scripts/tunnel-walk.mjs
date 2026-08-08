@@ -10,17 +10,16 @@
 //   node services/api/dist/main.js &
 //   (cd services/gateway && PORT=4001 pnpm exec tsx src/main.ts &)
 //   node scripts/tunnel-walk.mjs
-import { SignJWT } from "jose";
 import WebSocket from "ws";
 
 import { createDb, createPool } from "../services/api/dist/db/client.js";
 import {
+  createApiKey,
   createEnvironment,
   Repository,
 } from "../services/api/dist/db/repository.js";
 
 const GW = process.env.RELAY_GW ?? "ws://127.0.0.1:4001";
-const SECRET = process.env.RELAY_DEV_JWT_SECRET ?? "dev-secret";
 const BACKFILL_LIMIT = 500;
 
 const db = createDb(createPool());
@@ -35,11 +34,23 @@ for (const c of [channel, flood]) {
   await repo.addMember(c.id, dispatcher.id);
 }
 
-const token = (sub) =>
-  new SignJWT({ env: env.id })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject(sub)
-    .sign(new TextEncoder().encode(SECRET));
+const API = process.env.RELAY_API_URL ?? "http://127.0.0.1:4000";
+// Chapter 3.2: nothing outside the api can sign a token, so this walk gets one
+// the way a reader does — mint the environment's key, then ask the
+// development-only endpoint for a token (FR-AUT-09).
+const key = await createApiKey(db, { environmentId: env.id });
+const token = async (sub) => {
+  const res = await fetch(`${API}/auth/dev-token`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key.credential}`,
+    },
+    body: JSON.stringify({ user: sub }),
+  });
+  if (!res.ok) throw new Error(`dev-token failed: ${res.status}`);
+  return (await res.json()).token;
+};
 
 /** Connect and report every frame, keeping a cursor the way a client would:
  * the highest sequence it has actually applied, per channel. */

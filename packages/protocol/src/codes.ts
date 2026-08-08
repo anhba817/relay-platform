@@ -21,6 +21,13 @@ export const ERROR_CODES = {
   unknown_frame_type: "the type discriminator names no known frame",
   unauthorized: "the connection is not authorized for this action",
   rate_limited: "too many frames; slow down and retry",
+  // Chapter 3.2. The SRS singles this out as the most common first-integration
+  // failure, so it gets its own code instead of a generic `unauthorized`: the
+  // response has to say which class was presented and which the route wanted.
+  // The MESSAGE names the class and never the credential — "the key rk_dev_abc…
+  // is invalid" is how a live secret reaches a support ticket (NFR-SEC-06).
+  wrong_credential_type:
+    "the credential class presented cannot use this route; the message names presented and expected",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

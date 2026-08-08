@@ -12,7 +12,12 @@ import {
 
 import { AppModule } from "../app.module";
 import { createDb, createPool } from "../db/client";
-import { createEnvironment, Repository } from "../db/repository";
+import {
+  createEnvironment,
+  environmentSigningSecret,
+  Repository,
+} from "../db/repository";
+import { mintUserToken } from "../auth/user-token";
 
 // The api's half of resume (chapter 2.7), against the compose Postgres. The
 // gateway's suites prove the ORDERING; this one proves the read: everything
@@ -27,6 +32,9 @@ describe("POST /internal/backfill", () => {
   let quietChannelId: string;
   let leftChannelId: string;
   let tuan: { id: string };
+  /** Chapter 3.2: the gateway forwards the user's own token now, so the suite
+   * mints one per subject rather than asserting a name in a header. */
+  let tokenFor: (user: string) => Promise<string>;
 
   beforeAll(async () => {
     const db = createDb(createPool());
@@ -44,6 +52,16 @@ describe("POST /internal/backfill", () => {
     // Tuan is NOT a member of leftChannelId — the "removed while offline"
     // case, which is indistinguishable from "never joined" by design.
     await repo.addMember(leftChannelId, dispatcher.id);
+    const signingSecret = (await environmentSigningSecret(db, env.id))!
+      .signingSecret;
+    tokenFor = async (subject: string) =>
+      (
+        await mintUserToken(signingSecret, {
+          user: subject,
+          environmentId: env.id,
+          ttlSeconds: 3600,
+        })
+      ).token;
     app = (
       await Test.createTestingModule({ imports: [AppModule] }).compile()
     ).createNestApplication({ logger: false });
@@ -55,13 +73,12 @@ describe("POST /internal/backfill", () => {
     await app.close();
   });
 
-  const ask = (cursors: Record<string, number>, user = "tuan") =>
+  const ask = async (cursors: Record<string, number>, user = "tuan") =>
     fetch(`${url}/internal/backfill`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-relay-environment": env.id,
-        "x-relay-user": user,
+        authorization: `Bearer ${await tokenFor(user)}`,
       },
       body: JSON.stringify({ cursors }),
     });

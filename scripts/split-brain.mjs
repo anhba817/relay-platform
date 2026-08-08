@@ -3,18 +3,17 @@
 // the conversation split in half, and again after to see it whole. The
 // script does not assert which outcome is correct — it REPORTS what the
 // far side heard, so the same command tells you the truth in both states.
-import { SignJWT } from "jose";
 import WebSocket from "ws";
 
 import { createDb, createPool } from "../services/api/dist/db/client.js";
 import {
+  createApiKey,
   createEnvironment,
   Repository,
 } from "../services/api/dist/db/repository.js";
 
 const G1 = process.env.RELAY_GW1 ?? "ws://127.0.0.1:4001";
 const G2 = process.env.RELAY_GW2 ?? "ws://127.0.0.1:4002";
-const SECRET = process.env.RELAY_DEV_JWT_SECRET ?? "dev-secret";
 
 const db = createDb(createPool());
 const env = await createEnvironment(db, { name: `split-${Date.now()}` });
@@ -25,11 +24,23 @@ const channel = await repo.createChannel("fleet", "public");
 await repo.addMember(channel.id, dispatcher.id);
 await repo.addMember(channel.id, driver.id);
 
-const token = (sub) =>
-  new SignJWT({ env: env.id })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject(sub)
-    .sign(new TextEncoder().encode(SECRET));
+const API = process.env.RELAY_API_URL ?? "http://127.0.0.1:4000";
+// Chapter 3.2: nothing outside the api can sign a token, so this walk gets one
+// the way a reader does — mint the environment's key, then ask the
+// development-only endpoint for a token (FR-AUT-09).
+const key = await createApiKey(db, { environmentId: env.id });
+const token = async (sub) => {
+  const res = await fetch(`${API}/auth/dev-token`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key.credential}`,
+    },
+    body: JSON.stringify({ user: sub }),
+  });
+  if (!res.ok) throw new Error(`dev-token failed: ${res.status}`);
+  return (await res.json()).token;
+};
 
 const heard = [];
 

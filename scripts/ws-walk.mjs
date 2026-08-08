@@ -2,17 +2,16 @@
 // reproducible rather than decorative). Seeds a user, channel and
 // membership, mints a dev token, connects, sends, and retries with the
 // SAME idempotency key so 2.3's recovery leg shows through the socket.
-import { SignJWT } from "jose";
 import WebSocket from "ws";
 
 import { createDb, createPool } from "../services/api/dist/db/client.js";
 import {
+  createApiKey,
   createEnvironment,
   Repository,
 } from "../services/api/dist/db/repository.js";
 
 const GATEWAY = process.env.RELAY_GATEWAY_URL ?? "ws://127.0.0.1:4001";
-const SECRET = process.env.RELAY_DEV_JWT_SECRET ?? "dev-secret";
 
 const db = createDb(createPool());
 const env = await createEnvironment(db, { name: `ws-walk-${Date.now()}` });
@@ -21,13 +20,28 @@ const user = await repo.createUser("tuan", "Tuan");
 const channel = await repo.createChannel("fleet", "public");
 await repo.addMember(channel.id, user.id);
 
-const token = await new SignJWT({ env: env.id })
-  .setProtectedHeader({ alg: "HS256" })
-  .setSubject("tuan")
-  .sign(new TextEncoder().encode(SECRET));
+const API = process.env.RELAY_API_URL ?? "http://127.0.0.1:4000";
+// Chapter 3.2: nothing outside the api can sign a token, so this walk gets one
+// the way a reader does — mint the environment's key, then ask the
+// development-only endpoint for a token (FR-AUT-09).
+const key = await createApiKey(db, { environmentId: env.id });
+const token = async (sub) => {
+  const res = await fetch(`${API}/auth/dev-token`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key.credential}`,
+    },
+    body: JSON.stringify({ user: sub }),
+  });
+  if (!res.ok) throw new Error(`dev-token failed: ${res.status}`);
+  return (await res.json()).token;
+};
+
+const tuanToken = await token("tuan");
 
 const started = Date.now();
-const socket = new WebSocket(`${GATEWAY}/v1/ws?token=${token}`);
+const socket = new WebSocket(`${GATEWAY}/v1/ws?token=${tuanToken}`);
 const frame = {
   type: "message.send",
   payload: {

@@ -35,7 +35,9 @@ import {
 //
 // What these routes do NOT do: issue a session. A session is a credential,
 // credentials are 3.2's subject, and the dashboard that would consume one is
-// Part 5. The callback reports what it created and stops there.
+// Part 5. The callback reports what it created — and, from 3.2, hands over the
+// environment's first API key, because with no session nothing else could
+// bootstrap one (research R8).
 
 /** The two things this controller needs from the response object.
  *
@@ -127,6 +129,18 @@ export class SignupController {
       organisation: result.organisation,
       application: result.application,
       environment: result.environment,
+      // Chapter 3.2, FR-AUT-02: the environment's first key, and the ONLY time
+      // its secret exists outside a hash. It is present only when this call
+      // created the tenant — a returning owner is not handed a new secret,
+      // because the old one is unrecoverable by design and the recovery for a
+      // lost key is rotation, not retrieval (research R8).
+      ...(result.apiKey && {
+        api_key: {
+          prefix: result.apiKey.prefix,
+          secret: result.apiKey.secret,
+          shown_once: true,
+        },
+      }),
       created: result.created,
     };
   }

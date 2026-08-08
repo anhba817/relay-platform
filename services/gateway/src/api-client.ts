@@ -1,11 +1,12 @@
 import {
   internalBackfillResponseSchema,
-  internalMembershipsResponseSchema,
   internalSendResponseSchema,
+  internalSessionResponseSchema,
   type InternalBackfillRequest,
   type InternalBackfillResponse,
   type InternalSendRequest,
   type InternalSendResponse,
+  type InternalSessionResponse,
 } from "@relay/protocol";
 
 // The gateway's only road to state (chapter 2.5, ADR-05): internal HTTP to
@@ -20,13 +21,39 @@ import {
 // the day the api changes a field name, this fails loudly here instead of
 // producing an `undefined` seq in an ack three layers away.
 
+/** A failed internal call, carrying the status. Chapter 3.2 needs the
+ * distinction: a 401 from the api means the CONNECTION'S credential is no longer
+ * good, which a client can act on by reconnecting, while a 500 means we are
+ * broken and it should not. `new Error("send failed")` could not tell them
+ * apart, so the socket answered both the same way. */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(what: string, status: number) {
+    super(`${what} failed: ${status}`);
+    this.name = "ApiError";
+    // Declared and assigned rather than a constructor parameter property:
+    // `erasableSyntaxOnly` is on everywhere except the api (ADR-15, chapter
+    // 1.4), and the gateway keeps that guarantee.
+    this.status = status;
+  }
+}
+
 export interface Identity {
   environmentId: string;
   userExternalId: string;
+  /** Chapter 3.2: the token the client presented at connect, carried so the
+   * internal hop can FORWARD it instead of asserting who the caller is. The
+   * gateway holds it; it does not verify it and holds no secret that could. */
+  token: string;
 }
 
 export interface ApiClient {
-  memberships(identity: Identity): Promise<string[]>;
+  /** Chapter 3.2: present the token, be told who it belongs to and what it may
+   * hear. Null means the api answered "not valid" — distinct from a throw, which
+   * means it could not answer at all, and the two must not close a socket the
+   * same way. */
+  session(token: string): Promise<InternalSessionResponse | null>;
   /** Resume backfill (chapter 2.7): everything past the cursors, per
    * channel, already shaped as wire frames. */
   backfill(
@@ -40,10 +67,14 @@ export interface ApiClient {
 }
 
 export function createApiClient(baseUrl: string): ApiClient {
+  // Chapter 3.2 retired two headers here. The gateway used to send
+  // an environment header and a user header — values it INVENTED from a token
+  // it verified with a shared development secret. It now forwards the token
+  // itself and is told who the caller is (research R1). One header instead of
+  // two, and the api is the only thing that decides identity.
   const headers = (identity: Identity) => ({
     "content-type": "application/json",
-    "x-relay-environment": identity.environmentId,
-    "x-relay-user": identity.userExternalId,
+    authorization: `Bearer ${identity.token}`,
   });
 
   async function parse<T>(
@@ -51,7 +82,7 @@ export function createApiClient(baseUrl: string): ApiClient {
     schema: { safeParse: (value: unknown) => { success: boolean; data?: T } },
     what: string,
   ): Promise<T> {
-    if (!res.ok) throw new Error(`${what} failed: ${res.status}`);
+    if (!res.ok) throw new ApiError(what, res.status);
     const parsed = schema.safeParse(await res.json());
     if (!parsed.success || parsed.data === undefined) {
       throw new Error(`${what} returned a payload the contract does not allow`);
@@ -60,16 +91,19 @@ export function createApiClient(baseUrl: string): ApiClient {
   }
 
   return {
-    async memberships(identity) {
-      const res = await fetch(`${baseUrl}/internal/memberships`, {
-        headers: headers(identity),
+    async session(token) {
+      const res = await fetch(`${baseUrl}/internal/session`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
       });
-      const body = await parse(
-        res,
-        internalMembershipsResponseSchema,
-        "memberships",
-      );
-      return body.channel_ids;
+      // 401 is an ANSWER, not a failure: the api verified the token and refused
+      // it. Everything else falls through to `parse`, which throws — the api
+      // being unreachable is a different event with a different close code.
+      if (res.status === 401 || res.status === 403) return null;
+      return parse(res, internalSessionResponseSchema, "session");
     },
     async backfill(identity, cursors) {
       const res = await fetch(`${baseUrl}/internal/backfill`, {

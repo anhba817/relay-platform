@@ -1,6 +1,10 @@
-// The request shape both the guard and the repository factory read
-// (chapter 2.2). Part 3 replaces the header with real credentials; this
-// type is the seam that keeps that swap to one file.
+import type { Principal } from "../auth/principal";
+
+/** The request shape the repository factory reads (chapter 2.2, rewritten by
+ * 3.2). It used to carry a headers bag, because the tenant arrived as an
+ * asserted environment header. It now carries the PRINCIPAL the
+ * authentication middleware resolved from a credential — the swap 2.2 promised
+ * would be one file, kept to one file. */
 export interface RequestWithTenant {
-  headers: Record<string, string | undefined>;
+  principal?: Principal;
 }

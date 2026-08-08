@@ -10,8 +10,8 @@ import {
 import type { Logger } from "@relay/service-kit";
 import { WebSocketServer, type WebSocket } from "ws";
 
-import type { ApiClient } from "./api-client.js";
-import { verifyToken, type Identity } from "./auth.js";
+import { ApiError, type ApiClient } from "./api-client.js";
+import { authenticate, type Identity } from "./auth.js";
 import type { Fanout } from "./fanout.js";
 import { Registry, type Connection } from "./registry.js";
 import {
@@ -112,16 +112,29 @@ export function attachSessions({
     }
     const token = url.searchParams.get("token");
     void (async () => {
-      const identity = token ? await verifyToken(token) : null;
+      // Chapter 3.2: the api verifies, and answers with the identity AND the
+      // memberships. This is the same one call the connect path already made —
+      // it just asks a better question than "what may this user hear".
+      const result = await authenticate(api, token);
       wss.handleUpgrade(req, socket, head, (ws) => {
-        if (!identity) {
+        if (result.outcome === "refused") {
           // 4001: "invalid or expired token" (EIR-WS-05). The close code is
           // the protocol package's, not a number invented here.
           ws.close(4001, CLOSE_CODES[4001]);
           logger.log("info", "connection.rejected", { reason: "bad_token" });
           return;
         }
-        void open(ws, identity, req.url ?? "/");
+        if (result.outcome === "unavailable") {
+          // The api could not answer. Not the client's fault, so not 4001:
+          // 1011 tells it to retry, which is the honest instruction (the same
+          // distinction 2.5 drew for the memberships lookup).
+          ws.close(1011, "session lookup failed");
+          logger.log("error", "connection.session_failed", {
+            error: result.error,
+          });
+          return;
+        }
+        void open(ws, result.identity, result.channelIds, req.url ?? "/");
       });
     })();
   });
@@ -129,6 +142,7 @@ export function attachSessions({
   async function open(
     socket: WebSocket,
     identity: Identity,
+    channelIds: string[],
     url: string,
   ): Promise<void> {
     // Cursors are read BEFORE anything else, because their presence decides
@@ -138,26 +152,16 @@ export function attachSessions({
       id: randomUUID(),
       identity,
       socket,
-      channelIds: new Set(),
+      // Chapter 3.2: memberships arrived with the identity, from the session
+      // call at the door. There is no second lookup to fail here — the api is
+      // still the only source of membership (ADR-05), it just answers both
+      // questions at once, and a failure now closes the socket before it opens.
+      channelIds: new Set(channelIds),
       missedPings: 0,
       phase: presented === undefined ? "live" : "buffering",
       buffer: [],
       overflowed: false,
     };
-    try {
-      connection.channelIds = new Set(await api.memberships(identity));
-    } catch (error) {
-      // The api is the only source of membership (ADR-05). If it cannot
-      // answer, we do not guess — we close, and the client retries with
-      // backoff. A session with unknown memberships would deliver nothing
-      // and look healthy doing it.
-      logger.log("error", "connection.memberships_failed", {
-        connection_id: connection.id,
-        error: String(error),
-      });
-      socket.close(1011, "membership lookup failed");
-      return;
-    }
 
     registry.add(connection);
     // Subscriptions follow membership: the first local member of a channel
@@ -410,6 +414,22 @@ export function attachSessions({
         connection_id: connection.id,
         error: String(error),
       });
+      // Chapter 3.2. A 401 here means the token this connection was opened
+      // with has aged out: the socket is still up (FR-AUT-11 says expiry must
+      // not terminate it) and still RECEIVES, because delivery never asks the
+      // api anything. Writing does. Until FR-AUT-11's second clause exists — a
+      // frame that lets a client hand over a refreshed token on the open
+      // connection — the honest instruction is "reconnect", and saying so is
+      // more useful than an "internal error" the client cannot act on.
+      if (error instanceof ApiError && error.status === 401) {
+        sendError(
+          connection.socket,
+          "unauthorized",
+          "the token this connection was opened with has expired; " +
+            "reconnect with a fresh one to send again",
+        );
+        return;
+      }
       sendError(connection.socket, "internal_error", "send failed");
     }
   }

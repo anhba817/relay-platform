@@ -132,6 +132,52 @@ export const environments = pgTable(
   ],
 );
 
+// DECISION (chapter 3.2): the SRS states the requirements this table serves
+// (FR-AUT-01…05, NFR-SEC-02) but no source document defines a key table —
+// SAD §6.1 does not have one. Its shape is a chapter derivation, recorded here
+// the way 2.1 recorded `members` and 3.1 recorded the tenancy containers.
+//
+// It sits BELOW the environment boundary, so it carries an environment_id like
+// every other table down here. The credential is two parts: `public_id` is an
+// indexed, non-secret lookup handle, and only a salted hash of the secret half
+// is ever stored. That split exists because authentication must resolve a
+// tenant BEFORE one is known — the single query in this file that cannot be
+// scoped, which is exactly why the lookup column is unique globally.
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: uuid("id").primaryKey(),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    publicId: text("public_id").notNull(),
+    secretHash: text("secret_hash").notNull(),
+    salt: text("salt").notNull(),
+    prefix: text("prefix").notNull(),
+    name: text("name"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    // Non-null means refused from that moment on. A timestamp rather than a
+    // DELETE: a deleted row loses the record of what once had access
+    // (FR-AUT-05).
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    // Globally unique, not per environment: the lookup happens before any
+    // environment is known, so it must resolve to at most one row on its own.
+    unique("api_keys_public_id_unique").on(t.publicId),
+    // FR-AUT-03's two prefixes and nothing else. Several ACTIVE keys per
+    // environment stay legal — that is what makes rotation possible without
+    // downtime (FR-AUT-04), so nothing here constrains the count.
+    check(
+      "api_keys_prefix_check",
+      sql`${t.prefix} IN ('rk_dev_','rk_live_')`,
+    ),
+  ],
+);
+
 export const users = pgTable(
   "users",
   {

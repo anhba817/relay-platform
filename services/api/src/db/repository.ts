@@ -4,6 +4,7 @@ import { and, asc, desc, eq, gt, lt, sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "./client";
 import {
+  apiKeys,
   applications,
   channels,
   environments,
@@ -14,6 +15,13 @@ import {
   organisations,
   users,
 } from "./schema";
+import {
+  mintApiKey,
+  parseApiKeyCredential,
+  prefixMatchesKind,
+  secretMatches,
+  type EnvironmentKind,
+} from "../auth/api-key";
 
 // The repository layer — the ONE place data access lives (ADR-04's single
 // writer, constitution I). Two surfaces with a bright line between them:
@@ -69,6 +77,147 @@ export async function createEnvironment(
   return { id: environmentId, kind };
 }
 
+// ---------------------------------------------------------------------------
+// Credentials (chapter 3.2). Part of the ADMIN surface, and that placement is
+// the interesting bit: authentication has to resolve a tenant BEFORE one is
+// known, so these are the only queries in this file that cannot be scoped by an
+// environment. They are the operations that PRODUCE the scope everything else
+// is bound by — which is why they sit beside createEnvironment rather than
+// inside the request-scoped class below.
+// ---------------------------------------------------------------------------
+
+/** The parts of a minted key a caller may see. `credential` is the only time
+ * the secret exists outside a hash (FR-AUT-02); lose it and the answer is a new
+ * key, not a lookup. */
+export interface CreatedApiKey {
+  id: string;
+  credential: string;
+  publicId: string;
+  prefix: string;
+}
+
+/** A writer that may be the pool or a transaction. `provisionOrganisation`
+ * mints the first key inside its transaction, so this cannot take `Db` alone —
+ * a key written outside that transaction could survive a rolled-back tenant. */
+type Writer = Pick<Db, "insert" | "select" | "update">;
+
+/** FR-AUT-01. The kind is NOT a parameter: it is read from the environment, so
+ * the prefix and the environment can never disagree at creation time. */
+export async function createApiKey(
+  db: Writer,
+  { environmentId, name }: { environmentId: string; name?: string },
+): Promise<CreatedApiKey> {
+  const [environment] = await db
+    .select({ kind: sql<EnvironmentKind>`${environments.kind}` })
+    .from(environments)
+    .where(eq(environments.id, environmentId));
+  if (!environment) {
+    throw new Error(`no such environment: ${environmentId}`);
+  }
+  const minted = mintApiKey(environment.kind);
+  const id = randomUUID();
+  await db.insert(apiKeys).values({
+    id,
+    environmentId,
+    publicId: minted.publicId,
+    secretHash: minted.secretHash,
+    salt: minted.salt,
+    prefix: minted.prefix,
+    name: name ?? null,
+  });
+  return {
+    id,
+    credential: minted.credential,
+    publicId: minted.publicId,
+    prefix: minted.prefix,
+  };
+}
+
+/** What a verified key resolves to. Deliberately not the row: nothing outside
+ * this function needs the hash, the salt, or the name. */
+export interface AuthenticatedKey {
+  keyId: string;
+  environmentId: string;
+}
+
+/** One indexed lookup, then a constant-time comparison. No cache, on purpose:
+ * FR-AUT-05's revocation bound is true by construction when verification is
+ * live, on every instance, with nothing to invalidate (research R7).
+ *
+ * Returns null for every failure — unknown, revoked, wrong secret, mismatched
+ * prefix — because a caller learns nothing from being told which. */
+export async function authenticateApiKey(
+  db: Db,
+  credential: string,
+): Promise<AuthenticatedKey | null> {
+  const parsed = parseApiKeyCredential(credential);
+  if (!parsed) return null;
+
+  const [row] = await db
+    .select({
+      id: apiKeys.id,
+      environmentId: apiKeys.environmentId,
+      secretHash: apiKeys.secretHash,
+      salt: apiKeys.salt,
+      prefix: apiKeys.prefix,
+      revokedAt: apiKeys.revokedAt,
+      kind: sql<EnvironmentKind>`${environments.kind}`,
+    })
+    .from(apiKeys)
+    .innerJoin(environments, eq(environments.id, apiKeys.environmentId))
+    .where(eq(apiKeys.publicId, parsed.publicId));
+
+  if (!row) return null;
+  if (row.revokedAt !== null) return null;
+  if (!secretMatches(parsed.secret, row.salt, row.secretHash)) return null;
+  // A row whose prefix disagrees with its environment's kind is a data fault,
+  // not a credential to trust. Storing the prefix is what makes this checkable.
+  if (!prefixMatchesKind(row.prefix, row.kind)) return null;
+
+  // Touched at most once a minute rather than on every request: the column is
+  // for spotting a key nobody rotated, and that question does not need
+  // second-level precision or a write per authenticated call.
+  await db
+    .update(apiKeys)
+    .set({ lastUsedAt: new Date() })
+    .where(
+      and(
+        eq(apiKeys.id, row.id),
+        sql`(${apiKeys.lastUsedAt} IS NULL OR ${apiKeys.lastUsedAt} < now() - interval '1 minute')`,
+      ),
+    );
+
+  return { keyId: row.id, environmentId: row.environmentId };
+}
+
+/** FR-AUT-05. A timestamp, not a DELETE: the row is the record of what once had
+ * access, and the credential stops working on the next request either way. */
+export async function revokeApiKey(db: Db, keyId: string): Promise<boolean> {
+  const revoked = await db
+    .update(apiKeys)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(apiKeys.id, keyId), sql`${apiKeys.revokedAt} IS NULL`))
+    .returning({ id: apiKeys.id });
+  return revoked.length > 0;
+}
+
+/** The environment's own signing secret, which is what makes an end-user token
+ * verifiable — and what keeps it verifiable ONLY by the service that owns the
+ * database (ADR-05, research R1). The gateway never sees this. */
+export async function environmentSigningSecret(
+  db: Db,
+  environmentId: string,
+): Promise<{ signingSecret: string; kind: EnvironmentKind } | null> {
+  const [row] = await db
+    .select({
+      signingSecret: environments.signingSecret,
+      kind: sql<EnvironmentKind>`${environments.kind}`,
+    })
+    .from(environments)
+    .where(eq(environments.id, environmentId));
+  return row ?? null;
+}
+
 /** What a signup produced — or found. `created` answers "was an organisation
  * created on this call?", NOT "was the identity new": a known human who owned
  * nothing gets `created: true`, because one really was created for them. */
@@ -78,6 +227,12 @@ export interface Provisioned {
   environment: { id: string; kind: Environment["kind"] };
   human: { id: string; provider: string; provider_account_id: string };
   created: boolean;
+  /** Chapter 3.2, research R8: the environment's FIRST key, present only when
+   * this call created the tenant. With no console session, nothing else can
+   * bootstrap a credential — a brand-new organisation cannot authenticate a
+   * request to ask for one. A returning owner gets no key, because the old
+   * secret is unrecoverable and the answer to a lost secret is rotation. */
+  apiKey?: { prefix: string; secret: string };
 }
 
 /** Signup (chapter 3.1, FR-TEN-01/02). The admin surface's second entrance:
@@ -229,12 +384,20 @@ export async function provisionOrganisation(
       role: "owner", // FR-TEN-07's vocabulary; management of it is later
     });
 
+    // The first credential, inside the same transaction as the tenant it
+    // belongs to (chapter 3.2). A key written outside this transaction could
+    // outlive a rolled-back organisation and authenticate against nothing.
+    // FR-DSH-01 wants a development key on the first screen after signup; this
+    // is where it comes from.
+    const key = await createApiKey(tx, { environmentId });
+
     return {
       organisation: { id: organisationId, name: organisationName },
       application: { id: applicationId, name: organisationName },
       environment: { id: environmentId, kind: "development" as const },
       human,
       created: true,
+      apiKey: { prefix: key.prefix, secret: key.credential },
     };
   });
 }

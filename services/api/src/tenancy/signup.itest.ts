@@ -283,11 +283,11 @@ describe("signup", () => {
     const before = await db.execute(
       `SELECT count(*)::int AS n FROM organisations`,
     );
-    await fetch(`${url}/internal/memberships`, {
-      headers: {
-        "x-relay-environment": "00000000-0000-0000-0000-000000000000",
-      },
-    });
+    // Chapter 3.2: there is no header left to forge here. The assertion is
+    // unchanged — no route but signup creates a tenant — and a credential-free
+    // internal call is now refused before it reaches a handler, which is a
+    // stronger form of the same guarantee.
+    await fetch(`${url}/internal/memberships`);
     const after = await db.execute(
       `SELECT count(*)::int AS n FROM organisations`,
     );

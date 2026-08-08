@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
 import { createDb, createPool } from "../db/client";
-import { createEnvironment, Repository } from "../db/repository";
+import { createApiKey, createEnvironment, Repository } from "../db/repository";
 
 // The endpoint path (chapter 2.2): guard → pipe → service → repository →
 // filter, over real HTTP against the compose Postgres. Its own environment,
@@ -17,6 +17,10 @@ describe("POST /v1/channels/:channelId/messages", () => {
   let app: INestApplication;
   let url: string;
   let env: { id: string };
+  // Chapter 3.2: the tenant arrives as a CREDENTIAL now, not as a header. The
+  // suite mints its own key the same way signup does — through the repository's
+  // admin surface — so nothing here needs a test-only route to exist.
+  let credential: string;
   let channelId: string;
   let foreignChannelId: string;
 
@@ -26,6 +30,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
     channelId = (
       await new Repository(db, env.id).createChannel("general", "public")
     ).id;
+    credential = (await createApiKey(db, { environmentId: env.id })).credential;
     const other = await createEnvironment(db, { name: "messages-itest-other" });
     foreignChannelId = (
       await new Repository(db, other.id).createChannel("theirs", "public")
@@ -41,12 +46,12 @@ describe("POST /v1/channels/:channelId/messages", () => {
     await app.close();
   });
 
-  const send = (body: unknown, channel = channelId, environment = env.id) =>
+  const send = (body: unknown, channel = channelId, key = credential) =>
     fetch(`${url}/v1/channels/${channel}/messages`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-relay-environment": environment,
+        authorization: `Bearer ${key}`,
       },
       body: JSON.stringify(body),
     });
@@ -75,11 +80,11 @@ describe("POST /v1/channels/:channelId/messages", () => {
     // not answer two ways depending on the verb.
     const foreign = await fetch(
       `${url}/v1/channels/${foreignChannelId}/messages?limit=10`,
-      { headers: { "x-relay-environment": env.id } },
+      { headers: { authorization: `Bearer ${credential}` } },
     );
     const missing = await fetch(
       `${url}/v1/channels/${crypto.randomUUID()}/messages?limit=10`,
-      { headers: { "x-relay-environment": env.id } },
+      { headers: { authorization: `Bearer ${credential}` } },
     );
     expect(foreign.status).toBe(404);
     expect(missing.status).toBe(404);

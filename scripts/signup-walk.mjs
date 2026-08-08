@@ -57,6 +57,12 @@ async function signUp(label) {
   console.log(`    application  ${body.application?.id}`);
   console.log(
     `    environment  ${body.environment?.id} (${body.environment?.kind})\n`,
+    // Chapter 3.2: the first API key, shown exactly once. Truncated here —
+    // this transcript ends up in a chapter, and NFR-SEC-06 does not make an
+    // exception for documentation.
+    body.api_key
+      ? `    api key      ${body.api_key.secret.slice(0, 18)}… (shown once)\n`
+      : `    api key      none — the secret was shown at creation and is gone\n`,
   );
   return body;
 }

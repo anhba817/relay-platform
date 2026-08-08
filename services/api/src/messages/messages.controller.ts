@@ -8,7 +8,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 
-import { EnvironmentContextGuard } from "./environment-context.guard";
+import { CredentialGuard } from "../auth/credential.guard";
 import { MessagesService } from "./messages.service";
 import { historyQuerySchema, sendMessageBodySchema } from "./messages.schema";
 // `import type` is required, not stylistic: with isolatedModules and
@@ -21,8 +21,14 @@ import { ZodValidationPipe } from "./zod-validation.pipe";
 // The api's first product endpoint (chapter 2.2). Validation is zod at the
 // boundary — the same schema family as @relay/protocol, so the REST body
 // and the WebSocket frame payload cannot drift (1.3's payoff, again).
+//
+// Chapter 3.2 swapped the guard. `EnvironmentContextGuard` resolved a tenant
+// from a header the caller asserted; `CredentialGuard` only asks whether the
+// principal the middleware already resolved is allowed here. Both classes are
+// (FR-MSG-13 lets a server send on a user's behalf, and FR-AUT-10 does not
+// reserve these routes), so this one declares nothing narrower.
 @Controller("v1/channels/:channelId/messages")
-@UseGuards(EnvironmentContextGuard)
+@UseGuards(CredentialGuard)
 export class MessagesController {
   constructor(private readonly messages: MessagesService) {}
 
