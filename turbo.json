@@ -28,6 +28,8 @@
         "RELAY_NATS_URL",
         "RELAY_NATS_PORT",
         "RELAY_OUTBOX_RELAY",
+        "RELAY_EVENT_CONSUMER",
+        "RELAY_NATS_REPLICAS",
         "RELAY_E2E_API_PORT"
       ]
     },

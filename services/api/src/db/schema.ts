@@ -325,3 +325,37 @@ export const outbox = pgTable(
       .where(sql`${t.publishedAt} IS NULL`),
   ],
 );
+
+// The consumer's deduplication ledger.
+//
+// DECISION: no source document defines a table for this. SAD risk
+// R5 requires the BEHAVIOUR — "consumer template with dedup built in", so that
+// "a future consumer forgets to dedupe → double webhooks / double metering"
+// cannot happen — and leaves the shape open. This is therefore a chapter
+// derivation, recorded here the way 2.1 recorded `members`, the credentials chapter recorded
+// `api_keys` and the outbox chapter recorded the outbox's index.
+//
+// The PRIMARY KEY is the deduplication. Not a SELECT-then-INSERT: the insert
+// itself is the check, so two instances fetching the same message concurrently
+// cannot both decide they were first. 2.3 learned that on idempotency keys and
+// the tenancy chapter learned it again on signup.
+//
+// Keyed per CONSUMER, not globally. The dispatcher and the ingester must each
+// receive every event; one ledger shared between them would let whichever
+// arrived first silence the other.
+//
+// No environment_id, for the reason the outbox has none: this is the platform's
+// own bookkeeping rather than tenant data (constitution I, the outbox chapter's data model).
+// No event body either — recording that an event was handled needs none of a
+// tenant's message text (NFR-SEC-06).
+export const consumedEvents = pgTable(
+  "consumed_events",
+  {
+    consumer: text("consumer").notNull(),
+    eventId: uuid("event_id").notNull(),
+    handledAt: timestamp("handled_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.consumer, t.eventId] })],
+);
