@@ -10,6 +10,7 @@ import { AuthenticateMiddleware } from "./auth/authenticate.middleware";
 import { HealthController } from "./health.controller";
 import { InternalModule } from "./internal/internal.module";
 import { MessagesModule } from "./messages/messages.module";
+import { ConsumerModule } from "./consumer/consumer.module";
 import { OutboxModule } from "./outbox/outbox.module";
 import { TenancyModule } from "./tenancy/tenancy.module";
 import { LOGGER, apiLogger } from "./logger";
@@ -27,6 +28,7 @@ import { RequestContextMiddleware } from "./request-context.middleware";
     InternalModule,
     TenancyModule,
     OutboxModule,
+    ConsumerModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -1,5 +1,8 @@
 import {
   connect,
+  DiscardPolicy,
+  RetentionPolicy,
+  StorageType,
   type JetStreamClient,
   type NatsConnection,
 } from "nats";
@@ -15,15 +18,81 @@ import type { Publisher, PublishedMessage } from "./publisher";
 
 export const DEFAULT_NATS_URL = "nats://localhost:4222";
 
-/** One stream over `events.>`, file-backed. This is the MINIMUM a publisher
- * needs in order to be provable — publishing into a broker with no stream is
- * fire-and-forget, and the chapter's claim would be false at the last hop.
+/** One stream over `events.>`, file-backed.
  *
- * The real design of the subject space — FR-WHK-02's full event-type list,
- * per-environment sharding, retention, replicas — belongs to chapter 3.4 along
- * with every consumer. */
+ * Chapter 3.3 created this with a name, its subjects and file storage, and left
+ * everything else at whatever NATS defaults to — which on a development broker
+ * meant no age limit, no size limit, and a two-minute duplicate window nobody
+ * had chosen. Chapter 3.4 makes every setting a decision (research R2).
+ *
+ * Two of them can never be changed again, and both happen to be right:
+ * `retention` and `storage` are immutable on an existing stream (measured, R1).
+ * Had 3.3 taken memory storage as a convenience, applying this configuration
+ * would have meant deleting the stream and every event in it. */
 const STREAM = "EVENTS";
 const SUBJECTS = ["events.>"];
+
+const SECOND_NS = 1_000_000_000;
+
+/** NFR-REL-08 asks the queue to retain events for at least 24 hours so that a
+ * consumer outage is absorbed. Seven days is chosen over the floor for a reason
+ * the floor does not cover: an outage that starts on a Friday evening is not
+ * noticed until Monday. The floor protects a process crash; this protects a
+ * weekend. */
+const MAX_AGE_NS = 7 * 24 * 60 * 60 * SECOND_NS;
+
+/** An unbounded stream is a full disk with extra steps. The bound turns that
+ * into a number an operator can watch — and with `discard: old`, hitting it
+ * loses the OLDEST events rather than refusing new publishes. Refusing
+ * publishes would take the write path down with the event spine, which is the
+ * inversion chapter 3.3's outbox exists to prevent. */
+const MAX_BYTES = 1024 * 1024 * 1024;
+
+/** ADR-02 specifies R3 replication. The compose stack is a single node, so this
+ * is environment-derived rather than hardcoded to either value: a chapter that
+ * wrote `3` would not run locally, and one that wrote `1` would ship a
+ * single-replica event spine to production. */
+function replicaCount(): number {
+  const configured = Number(process.env.RELAY_NATS_REPLICAS ?? "");
+  if (Number.isInteger(configured) && configured > 0) return configured;
+  return process.env.NODE_ENV === "production" ? 3 : 1;
+}
+
+/** Apply the stream's configuration, whether or not it exists yet.
+ *
+ * Idempotent on purpose: two api instances starting together both run this, and
+ * the second must be a no-op rather than an error. On an existing stream the
+ * MUTABLE settings are merged onto whatever is there, and the immutable ones are
+ * carried through untouched — attempting to change `retention` or `storage` is
+ * an error the broker refuses rather than a difference it reconciles (R1).
+ *
+ * `duplicate_window` is deliberately left where 3.3 found it. Raising it looks
+ * like the fix for a republished event and is not: the outbox can republish
+ * hours after an outage, no window is a safe guess about the longest one, and a
+ * window measured in hours would hold that dedupe index in the broker's memory
+ * for hours. The guarantee belongs where the work happens — at the consumer
+ * (research R3, SAD risk R5). */
+export async function ensureStream(nc: NatsConnection): Promise<void> {
+  const jsm = await nc.jetstreamManager();
+  const mutable = {
+    subjects: [...SUBJECTS],
+    max_age: MAX_AGE_NS,
+    max_bytes: MAX_BYTES,
+    discard: DiscardPolicy.Old,
+    num_replicas: replicaCount(),
+  };
+  const existing = await jsm.streams.info(STREAM).catch(() => null);
+  if (existing === null) {
+    await jsm.streams.add({
+      name: STREAM,
+      retention: RetentionPolicy.Limits,
+      storage: StorageType.File,
+      ...mutable,
+    });
+    return;
+  }
+  await jsm.streams.update(STREAM, { ...existing.config, ...mutable });
+}
 
 export function createJetStreamPublisher({
   url = process.env.RELAY_NATS_URL ?? DEFAULT_NATS_URL,
@@ -38,16 +107,7 @@ export function createJetStreamPublisher({
   async function client(): Promise<JetStreamClient> {
     if (js && connection && !connection.isClosed()) return js;
     const nc = await connect({ servers: url });
-    const jsm = await nc.jetstreamManager();
-    // Created if absent, left alone if present: two api instances starting
-    // together must not fight over it.
-    const existing = await jsm.streams
-      .info(STREAM)
-      .then(() => true)
-      .catch(() => false);
-    if (!existing) {
-      await jsm.streams.add({ name: STREAM, subjects: [...SUBJECTS] });
-    }
+    await ensureStream(nc);
     connection = nc;
     js = nc.jetstream();
     return js;

@@ -342,6 +342,11 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     // files, not a property of the system. The relay has its own suite, which
     // drives it explicitly.
     RELAY_OUTBOX_RELAY: "off",
+    // Chapter 3.4: no event consumer in these children either, for the reason
+    // the line above exists — this journey asserts message delivery, and a
+    // background consumer writing to a table 3.4's suite asserts on is a race
+    // between test files rather than a property of the system.
+    RELAY_EVENT_CONSUMER: "off",
   };
 
   const apiPort = Number(process.env.RELAY_E2E_API_PORT ?? 4100);

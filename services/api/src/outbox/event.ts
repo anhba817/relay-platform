@@ -1,3 +1,6 @@
+import { subjectFor } from "@relay/protocol";
+import { z } from "zod";
+
 // The event envelope (chapter 3.3). Built in ONE place, complete, inside the
 // transaction that caused it — so the relay is a mover of bytes and never an
 // author of them (ADR-04, research R7).
@@ -36,13 +39,10 @@ export interface PendingEvent {
   payload: OutboxEvent;
 }
 
-/** `events.msg.created.{environment_id}` — the shape SAD §6.1's own comment
- * gives. The full subject taxonomy for FR-WHK-02's other seven types, and any
- * per-environment sharding, belongs to chapter 3.4. */
-export function subjectFor(type: string, environmentId: string): string {
-  const leaf = type.replace(/^message\./, "msg.");
-  return `events.${leaf}.${environmentId}`;
-}
+// The subject grammar moved to @relay/protocol in chapter 3.4, because a
+// consumer needs it too and both sides must agree on it. Imported for use
+// below and re-exported so 3.3's callers keep working.
+export { subjectFor };
 
 export function messageCreatedEvent({
   eventId,
@@ -69,3 +69,26 @@ export function messageCreatedEvent({
     },
   };
 }
+
+/** The envelope as a CONSUMER receives it (chapter 3.4).
+ *
+ * The producing side builds this object and knows it is well formed; the
+ * consuming side reads bytes off a broker and knows nothing. Chapter 2.5 made
+ * the same argument about the internal HTTP hop — an internal caller has no
+ * more right to assume a payload's shape than an external one does — and a
+ * message that has been sitting in a stream for six days has had even longer to
+ * stop matching what the code expects. */
+export const outboxEventSchema = z.strictObject({
+  id: z.string().uuid(),
+  type: z.literal("message.created"),
+  environment_id: z.string().min(1),
+  occurred_at: z.iso.datetime(),
+  data: z.strictObject({
+    id: z.string().min(1),
+    channel_id: z.string().min(1),
+    seq: z.number().int().positive(),
+    user: z.string().nullable(),
+    text: z.string().nullable(),
+    created_at: z.iso.datetime(),
+  }),
+});

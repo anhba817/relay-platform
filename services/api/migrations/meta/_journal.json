@@ -36,6 +36,13 @@
       "when": 1786202371832,
       "tag": "0004_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786335879776,
+      "tag": "0005_consumed_events",
+      "breakpoints": true
     }
   ]
 }

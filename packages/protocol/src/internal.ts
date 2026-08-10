@@ -82,6 +82,41 @@ export const internalBackfillResponseSchema = z.strictObject({
   ),
 });
 
+// ---------------------------------------------------------------------------
+// Event subjects (chapter 3.4, ADR-02).
+//
+// The grammar is `events.{domain}.{action}.{env}` — ADR-02's, verbatim. It lived
+// inside the api's outbox module in 3.3 because nothing else needed it. A
+// consumer needs it now, and the package whose whole job is the shapes both
+// sides share is where a shape shared by both sides belongs (1.3's premise).
+//
+// Built here and nowhere else. A consumer that filters on a subject it
+// assembled itself is a consumer that silently receives nothing the day the
+// grammar changes — no error, no warning, just an empty stream position.
+// ---------------------------------------------------------------------------
+
+/** Every subject the platform publishes on, and the wildcard that reads them
+ * all. One entry today; FR-WHK-02 names seven more, each arriving with the
+ * feature that can produce it. */
+export const EVENT_SUBJECT_PREFIX = "events";
+export const ALL_EVENTS_SUBJECT = `${EVENT_SUBJECT_PREFIX}.>`;
+
+/** `message.created` → `msg.created`: the domain abbreviation ADR-02's example
+ * uses (`events.msg.created.{env}`). Kept as a mapping rather than a string
+ * operation so that a type whose subject form is NOT its dotted name has an
+ * obvious place to be added. */
+const DOMAIN_ABBREVIATION: Record<string, string> = {
+  message: "msg",
+};
+
+export function subjectFor(type: string, environmentId: string): string {
+  if (!type) throw new Error("an event type is required");
+  if (!environmentId) throw new Error("an environment id is required");
+  const [domain, ...rest] = type.split(".");
+  const abbreviated = DOMAIN_ABBREVIATION[domain!] ?? domain!;
+  return [EVENT_SUBJECT_PREFIX, abbreviated, ...rest, environmentId].join(".");
+}
+
 /** api → gateway: the channels this user may hear (FR-RTM-01). */
 export const internalMembershipsResponseSchema = z.strictObject({
   channel_ids: z.array(z.string().min(1)),

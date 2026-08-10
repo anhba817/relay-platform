@@ -7,6 +7,7 @@ import {
   apiKeys,
   applications,
   channels,
+  consumedEvents,
   environments,
   humans,
   members,
@@ -299,6 +300,77 @@ export async function outboxDepth(db: Db): Promise<number> {
     sql`SELECT count(*)::int AS pending FROM outbox WHERE published_at IS NULL`,
   )) as unknown as { rows: { pending: number }[] };
   return result.rows[0]?.pending ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// The consumer's deduplication ledger (chapter 3.4, SAD risk R5). Admin surface
+// for the same reason the outbox drain is: it runs on behalf of the platform
+// rather than of a tenant, and one consumer reads every environment's events.
+// ---------------------------------------------------------------------------
+
+/** What happened when a consumer tried to take an event. */
+export type ClaimResult = "handled" | "duplicate";
+
+/** Claim an event for a consumer and run its effect — **in one transaction**.
+ *
+ * This is the shape chapter 3.3 used for the outbox row and the message it
+ * describes, pointed the other way: the ledger row and the effect share a fate.
+ * A handler that throws rolls the claim back with it, so the redelivery finds no
+ * claim and runs again. Claiming outside the transaction would mean a failed
+ * handler leaves a claim behind, and the redelivery would be waved through as a
+ * duplicate — an event silently never handled, which is worse than one handled
+ * twice.
+ *
+ * The INSERT is the check. `ON CONFLICT DO NOTHING` with a `RETURNING` tells us
+ * whether this call won the row; a SELECT-then-INSERT would let two instances
+ * fetching the same message both believe they were first (2.3's lesson on
+ * idempotency keys, 3.1's on signup).
+ *
+ * **The limit of this, stated because chapter 3.5 will meet it**: the effect has
+ * to be transactional for the fate to be shared, which means it has to be in
+ * Postgres. A handler whose effect is an HTTP call to a customer cannot be
+ * rolled back, and no ledger makes it so. That consumer must choose which way to
+ * be wrong, and choosing is its chapter's work.
+ */
+export async function claimEvent(
+  db: Db,
+  consumer: string,
+  eventId: string,
+  effect: () => Promise<void>,
+): Promise<ClaimResult> {
+  return db.transaction(async (tx) => {
+    const claimed = await tx
+      .insert(consumedEvents)
+      .values({ consumer, eventId })
+      .onConflictDoNothing({
+        target: [consumedEvents.consumer, consumedEvents.eventId],
+      })
+      .returning({ eventId: consumedEvents.eventId });
+
+    if (claimed.length === 0) return "duplicate";
+    await effect();
+    return "handled";
+  });
+}
+
+/** How many times a consumer has handled a given event. Zero or one, always —
+ * which is the assertion the redelivery test makes, and the reason this exists
+ * rather than the test reaching into the table itself. */
+export async function timesHandled(
+  db: Db,
+  consumer: string,
+  eventId: string,
+): Promise<number> {
+  const rows = await db
+    .select({ eventId: consumedEvents.eventId })
+    .from(consumedEvents)
+    .where(
+      and(
+        eq(consumedEvents.consumer, consumer),
+        eq(consumedEvents.eventId, eventId),
+      ),
+    );
+  return rows.length;
 }
 
 /** What a signup produced — or found. `created` answers "was an organisation

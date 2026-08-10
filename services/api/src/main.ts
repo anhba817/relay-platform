@@ -4,6 +4,7 @@ import { NestFactory } from "@nestjs/core";
 import { createLogger } from "@relay/service-kit";
 
 import { AppModule } from "./app.module";
+import { EventConsumerService } from "./consumer/consumer.module";
 import { OutboxRelayService } from "./outbox/outbox.module";
 
 // Nest's own banner logger stays off: this workspace already decided what a
@@ -18,6 +19,10 @@ async function bootstrap(): Promise<void> {
   // accumulating in Postgres instead of preventing the api from serving writes
   // (chapter 3.3, research R9).
   app.get(OutboxRelayService).start();
+  // And the first thing that reads what the relay publishes (chapter 3.4).
+  // Same placement, same reason, same lazy connection: an unreachable broker
+  // leaves the api serving writes.
+  app.get(EventConsumerService).start();
   // Nest calls onModuleDestroy on shutdown hooks; without this the relay's loop
   // would outlive the process's intent to stop.
   app.enableShutdownHooks();
