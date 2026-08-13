@@ -47,7 +47,14 @@ export const EXPAND_DURABLE = "dispatcher-expand";
 export const DELIVER_DURABLE = "dispatcher-deliver";
 
 const BATCH = 25;
-const ACK_WAIT_NS = 30 * 1_000_000_000;
+/** How long the broker waits for an acknowledgement before deciding the
+ * dispatcher died and handing the message to someone else. Overridable ONLY so
+ * tests can observe redelivery: at thirty seconds, an assertion that an
+ * unacknowledged message comes back has to wait thirty seconds, so in practice
+ * it is written with a short window, never observes anything, and passes no
+ * matter what the code does. That is how the `term` decision below went
+ * unmeasured — the test looked right and proved nothing. */
+export const ACK_WAIT_MS = 30_000;
 
 /** The DELIVERY attempt budget lives in the api's tier table, not here. This
  * bound is only about how many times the BROKER redelivers a job the dispatcher
@@ -77,6 +84,7 @@ export function createDispatcher({
   attemptTimeoutMs = ATTEMPT_TIMEOUT_MS,
   durables = { expand: EXPAND_DURABLE, deliver: DELIVER_DURABLE },
   deliverPolicy = DeliverPolicy.All,
+  ackWaitMs = { expand: ACK_WAIT_MS, deliver: ACK_WAIT_MS },
 }: {
   natsUrl?: string;
   apiUrl?: string;
@@ -86,6 +94,15 @@ export function createDispatcher({
   attemptTimeoutMs?: number;
   durables?: { expand: string; deliver: string };
   deliverPolicy?: DeliverPolicy;
+  /** PER CONSUMER, and the split is load-bearing. Shortening this for the whole
+   * dispatcher to make one expand assertion observable also shortened it for
+   * the DELIVER consumer, whose attempts run to a timeout — so under coverage
+   * instrumentation a batch outlived its acknowledgement window, the broker
+   * decided the dispatcher had died, and redelivered work that was in fact in
+   * progress. Two customers received the same webhook twice and two unrelated
+   * tests failed. One knob for two consumers with different time budgets is the
+   * bug; this is the fix. */
+  ackWaitMs?: { expand: number; deliver: number };
 } = {}): Dispatcher {
   let connection: NatsConnection | null = null;
   let running = false;
@@ -105,16 +122,16 @@ export function createDispatcher({
     // Consumer creation below simply fails until the api has been up once, and
     // the poll loop retries; nothing is lost, because nothing is due yet either.
 
-    for (const [stream, durable] of [
-      [EVENTS_STREAM, durables.expand],
-      [DELIVERIES_STREAM, durables.deliver],
+    for (const [stream, durable, ackWait] of [
+      [EVENTS_STREAM, durables.expand, ackWaitMs.expand],
+      [DELIVERIES_STREAM, durables.deliver, ackWaitMs.deliver],
     ] as const) {
       await jsm.consumers
         .add(stream, {
           durable_name: durable,
           ack_policy: AckPolicy.Explicit,
           deliver_policy: deliverPolicy,
-          ack_wait: ACK_WAIT_NS,
+          ack_wait: ackWait * 1_000_000,
           max_deliver: MAX_DELIVER,
           max_ack_pending: MAX_ACK_PENDING,
           ...(stream === EVENTS_STREAM

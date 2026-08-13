@@ -337,10 +337,15 @@ describe("credentials", () => {
   // --- chapter 3.5: the third principal ----------------------------------
 
   describe("the internal platform credential", () => {
-    const PLATFORM = process.env.RELAY_INTERNAL_CREDENTIAL;
+    // SET, not read. This began as `process.env.RELAY_INTERNAL_CREDENTIAL` with
+    // an early return when it was absent — and CI never set it, so the one
+    // assertion standing between a platform credential and a public route
+    // silently did nothing on every build. A security test that skips itself is
+    // worse than no test: it reports green about a question it never asked.
+    const PLATFORM = "rk_svc_credentials_itest_0123456789abcdef01234";
+    process.env["RELAY_INTERNAL_CREDENTIAL"] = PLATFORM;
 
     it("is refused on a public route, whatever else it can do", async () => {
-      if (!PLATFORM) return; // not configured in this lane; the internal suite covers it
 
       // The whole point of the kind. It reaches every environment, so a public
       // route accepting it would be a cross-tenant hole with a valid credential

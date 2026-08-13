@@ -63,7 +63,7 @@ export default defineConfig({
         // isolation MUST have 100% BRANCH coverage (NFR-MNT-02).
         //
         // They do not. `repository.ts` — which holds all three — measures
-        // 85.91%. These per-file numbers are therefore a RATCHET pinned at
+        // 89.51%. These per-file numbers are therefore a RATCHET pinned at
         // today's measurement, not the bar: they stop the figure sliding
         // backwards while the gap is closed, and they are deliberately not the
         // 100% the constitution asks for, because a threshold nothing can pass
@@ -72,11 +72,41 @@ export default defineConfig({
         // The gap is recorded in specs/024-coverage-and-ci/notes.md with the
         // uncovered branches named. Raising these to 100 is the work; this
         // feature is the instrument that made the number sayable at all.
+        //
+        // CHAPTER 3.5 RAISED THESE, and only after earning it. The webhook work
+        // added six operations to this file and the ratchet immediately went
+        // red — branches fell from 85.91% to 78.22%, because `deliveryMaterial`
+        // and `pendingDeliveryDepth` were called only by the dispatcher, whose
+        // suite runs the api as a CHILD PROCESS whose coverage is not
+        // attributable. The instrument was right and the code was not tested.
+        // Lowering the numbers to match would have been the whole point of a
+        // ratchet, thrown away; the tests in `webhooks/deliveries.itest.ts` were
+        // written instead, and these are the measurement that followed.
         "services/api/src/db/repository.ts": {
-          branches: 85,
+          branches: 89,
           functions: 100,
           lines: 98,
-          statements: 95,
+          statements: 97,
+        },
+
+        // The dispatcher's two decision-bearing files (chapter 3.5). `expand.ts`
+        // decides whether a redelivered event produces a second set of webhooks
+        // — constitution VI names idempotency explicitly — and `deliver.ts`
+        // holds the post-then-report ordering that chooses a duplicate over a
+        // silent loss. Pinned here because they measured 0% and 87.5% when the
+        // service arrived, which is exactly what research R12 warned a new
+        // deployable would do to a green instrument.
+        "services/dispatcher/src/expand.ts": {
+          branches: 92,
+          functions: 100,
+          lines: 100,
+          statements: 92,
+        },
+        "services/dispatcher/src/deliver.ts": {
+          branches: 90,
+          functions: 100,
+          lines: 100,
+          statements: 100,
         },
         "services/gateway/src/resume.ts": {
           branches: 93,

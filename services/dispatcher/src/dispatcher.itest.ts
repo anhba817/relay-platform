@@ -7,9 +7,10 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { DeliverPolicy } from "nats";
+import { connect, DeliverPolicy, type NatsConnection } from "nats";
+import { subjectFor } from "@relay/protocol";
 
-import { createDispatcher, type Dispatcher } from "./main.js";
+import { ACK_WAIT_MS, createDispatcher, type Dispatcher } from "./main.js";
 
 // The dispatcher against a real api, a real broker and a real customer endpoint
 // (chapter 3.5). Invariant 7 lives here; 11, 13, 15 and 16 join it.
@@ -20,6 +21,7 @@ import { createDispatcher, type Dispatcher } from "./main.js";
 // through a database client, and a suite that imported the api's modules would
 // prove that over a function call instead of over HTTP.
 
+const encoder = new TextEncoder();
 const require_ = createRequire(import.meta.url);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..", "..", "..");
@@ -147,6 +149,7 @@ describe("the dispatcher", () => {
    * endpoint waits behind a hanging one, and ten real seconds per assertion buys
    * nothing but a slower suite. */
   const TEST_TIMEOUT_MS = 2_000;
+  const ACK_WAIT_TEST_MS = 4_000;
   let seeder: {
     createEnvironment: (db: unknown, o: { name: string }) => Promise<{ id: string }>;
     Repository: new (db: unknown, envId: string) => {
@@ -176,6 +179,10 @@ describe("the dispatcher", () => {
   };
   let secrets: { encryptSecret: (s: string) => string; mintSigningSecret: () => string };
   let db: unknown;
+  /** Only the expansion tests need one, so it is opened lazily and drained in
+   * `afterAll` — an undrained connection keeps the process alive past the run. */
+  let nats: NatsConnection | null = null;
+  const NATS_URL = process.env["RELAY_NATS_URL"] ?? "nats://localhost:4222";
 
   const seed = async (eventTypes: string[], url?: string): Promise<Seeded> => {
     const env = await seeder.createEnvironment(db, {
@@ -197,13 +204,39 @@ describe("the dispatcher", () => {
    * genuine failure is a failure rather than a hang — and a negative assertion
    * ("nothing should arrive") simply spends the whole budget and moves on. */
   const pollUntil = async (
-    done: () => boolean,
+    done: () => boolean | Promise<boolean>,
     timeoutMs = 8_000,
   ): Promise<void> => {
     const deadline = Date.now() + timeoutMs;
-    while (!done() && Date.now() < deadline) {
+    // Awaited, so a predicate that has to ASK the database — "are the delivery
+    // rows there yet?" — works as naturally as one that reads an array.
+    while (!(await done()) && Date.now() < deadline) {
       await dispatcher.pollOnce();
     }
+  };
+
+  /** The captured log lines are JSON strings; this is the read side. */
+  const logged = (msg: string): Record<string, unknown>[] =>
+    captured.lines
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l["msg"] === msg);
+
+  /** Publish a real event onto the EVENTS stream, exactly as chapter 3.3's
+   * outbox relay does.
+   *
+   * WHY THIS EXISTS. Every other helper in this file reaches expansion by
+   * calling `expandEventToDeliveries` against the database directly — fine for a
+   * suite about DELIVERY, which is what those tests are about, but it meant the
+   * dispatcher's own expand consumer was never once executed by its own suite.
+   * Coverage said so plainly: `expand.ts`, 0%. The tests below go in through the
+   * broker instead, so the consumer that decodes an event, asks the api to
+   * expand it, and decides ack-or-terminate is actually the thing under test. */
+  const publishEvent = async (
+    subject: string,
+    bytes: Uint8Array,
+  ): Promise<void> => {
+    nats ??= await connect({ servers: NATS_URL });
+    await nats.jetstream().publish(subject, bytes);
   };
 
   /** Run the api's delivery relay once: everything due goes onto the stream.
@@ -322,6 +355,13 @@ describe("the dispatcher", () => {
       attemptTimeoutMs: TEST_TIMEOUT_MS,
       durables,
       deliverPolicy: DeliverPolicy.New,
+      // ONLY the expand consumer is shortened, so "an unacknowledged message
+      // comes back" is observable inside a test's patience. The deliver
+      // consumer keeps the production window: its attempts run to a timeout,
+      // and a short window there makes the broker redeliver work that is still
+      // in progress — which is how this suite briefly delivered two webhooks to
+      // one customer under the coverage lane's slower clock.
+      ackWaitMs: { expand: ACK_WAIT_TEST_MS, deliver: ACK_WAIT_MS },
       logger: captured.logger,
     });
     // Created BEFORE anything is published, or "New" would skip the first event.
@@ -330,6 +370,7 @@ describe("the dispatcher", () => {
 
   afterAll(async () => {
     await dispatcher?.stop();
+    if (nats && !nats.isClosed()) await nats.drain();
     child?.kill();
     endpoint?.close();
     second?.close();
@@ -595,4 +636,132 @@ describe("the dispatcher", () => {
       events.length,
     );
   }, 90_000);
+  // ---------------------------------------------------------------------------
+  // The EXPAND consumer, driven through the broker.
+  //
+  // These three are the reason `publishEvent` exists. Everything above reaches
+  // the delivery path by seeding rows; nothing above ever ran `expand.ts`.
+  // ---------------------------------------------------------------------------
+
+  it("invariant 8: one event becomes one delivery per matching endpoint", async () => {
+    endpoint.answerWith(200);
+    // Two endpoints in ONE environment, subscribed to the same type. The
+    // fan-out is the property: N endpoints, N delivery rows, one event.
+    const seeded = await seed(["message.created"]);
+    const repo = new seeder.Repository(db, seeded.environmentId);
+    await repo.createEndpoint({
+      url: `${secondUrl}/hook`,
+      eventTypes: ["message.created"],
+      secretCiphertext: secrets.encryptSecret(secrets.mintSigningSecret()),
+    });
+    // A third endpoint that subscribes to something else, so "matching" is
+    // doing work rather than being satisfied by every endpoint in the row.
+    await repo.createEndpoint({
+      url: `${secondUrl}/unwanted`,
+      eventTypes: ["channel.created"],
+      secretCiphertext: secrets.encryptSecret(secrets.mintSigningSecret()),
+    });
+
+    const eventId = randomUUID();
+    await publishEvent(
+      subjectFor("message.created", seeded.environmentId),
+      encoder.encode(
+        JSON.stringify({
+          id: eventId,
+          type: "message.created",
+          environment_id: seeded.environmentId,
+          occurred_at: new Date().toISOString(),
+          data: { id: randomUUID(), seq: 1, user: "tuan", text: "north ramp" },
+        }),
+      ),
+    );
+
+    // The DISPATCHER expands it — no direct database write anywhere in this test.
+    let rows: Awaited<ReturnType<typeof repo.listDeliveriesForEvent>> = [];
+    await pollUntil(async () => {
+      rows = await repo.listDeliveriesForEvent(eventId);
+      return rows.length >= 2;
+    });
+
+    expect(rows).toHaveLength(2);
+  }, 60_000);
+
+  it("invariant 9: a redelivered event does not double the customer's webhooks", async () => {
+    endpoint.answerWith(200);
+    const seeded = await seed(["message.created"]);
+    const repo = new seeder.Repository(db, seeded.environmentId);
+
+    const eventId = randomUUID();
+    const bytes = encoder.encode(
+      JSON.stringify({
+        id: eventId,
+        type: "message.created",
+        environment_id: seeded.environmentId,
+        occurred_at: new Date().toISOString(),
+        data: { id: randomUUID(), seq: 1, user: "tuan", text: "B2" },
+      }),
+    );
+    const subject = subjectFor("message.created", seeded.environmentId);
+
+    // The SAME event id, twice. This is what a broker redelivery looks like from
+    // the consumer's side, and research R2's claim is that the api's claim
+    // transaction absorbs it: the second expansion creates nothing.
+    await publishEvent(subject, bytes);
+    let rows: Awaited<ReturnType<typeof repo.listDeliveriesForEvent>> = [];
+    await pollUntil(async () => {
+      rows = await repo.listDeliveriesForEvent(eventId);
+      return rows.length >= 1;
+    });
+    expect(rows).toHaveLength(1);
+
+    await publishEvent(subject, bytes);
+    await pollUntil(() => false, 2_000); // spend the budget; nothing to wait for
+
+    // Still one. A second row here would be a second webhook to a customer who
+    // was promised one, which is the failure this whole design is built around.
+    expect(await repo.listDeliveriesForEvent(eventId)).toHaveLength(1);
+    expect(logged("expand.done").some((l) => l["duplicate"] === true)).toBe(true);
+  }, 60_000);
+
+  it("bytes that can never parse are terminated on the first attempt", async () => {
+    const seeded = await seed(["message.created"]);
+    // Not JSON at all. `msg.json()` throws, and the consumer must TERMINATE
+    // rather than leave it unacknowledged — the same bytes fail the same way
+    // every time, so redelivering them spends the broker's attempt budget to
+    // reach a conclusion that was available on the first pass (chapter 3.4).
+    await publishEvent(
+      subjectFor("message.created", seeded.environmentId),
+      encoder.encode("{ this is not json"),
+    );
+
+    await pollUntil(() => logged("expand.undecodable").length > 0);
+    expect(logged("expand.undecodable").length).toBeGreaterThan(0);
+
+    // Terminated, so it does not come back — and the window below outlasts
+    // `ackWaitMs`, which is the only reason this assertion can fail. Left
+    // unacknowledged, the broker would hand it back and the count would climb.
+    const seen = logged("expand.undecodable").length;
+    await pollUntil(() => false, ACK_WAIT_TEST_MS + 3_000);
+    expect(logged("expand.undecodable").length).toBe(seen);
+  }, 60_000);
+  it("JSON that is not an envelope is terminated too, not retried", async () => {
+    const seeded = await seed(["message.created"]);
+    // Parses cleanly, so it gets past `msg.json()` — and then fails the SHAPE
+    // check inside `parseEventEnvelope`, which is a different rejection at a
+    // different layer. Chapter 2.5's reason for parsing rather than trusting: a
+    // message that has been sitting in a stream has had time to stop matching
+    // the code that reads it, and "it was valid JSON" is not the same as "it is
+    // still an event".
+    await publishEvent(
+      subjectFor("message.created", seeded.environmentId),
+      encoder.encode(JSON.stringify({ id: randomUUID(), type: "message.created" })),
+    );
+
+    await pollUntil(() => logged("expand.unparseable").length > 0);
+    expect(logged("expand.unparseable").length).toBeGreaterThan(0);
+
+    const seen = logged("expand.unparseable").length;
+    await pollUntil(() => false, ACK_WAIT_TEST_MS + 3_000);
+    expect(logged("expand.unparseable").length).toBe(seen);
+  }, 60_000);
 });
