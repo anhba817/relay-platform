@@ -113,6 +113,21 @@ function spawnApi(port: number, credential: string): ChildProcess {
   });
 }
 
+/** Keeps every line the dispatcher writes, so invariant 15 can assert on the
+ * logs themselves rather than on the request that went out. A secret leaks into
+ * an operator's terminal through a log line, not through a header. */
+function capturingLogger() {
+  const lines: string[] = [];
+  return {
+    lines,
+    logger: {
+      log(level: "info" | "error", msg: string, fields?: Record<string, unknown>) {
+        lines.push(JSON.stringify({ level, msg, ...(fields ?? {}) }));
+      },
+    },
+  };
+}
+
 describe("the dispatcher", () => {
   let child: ChildProcess;
   let apiUrl: string;
@@ -121,6 +136,7 @@ describe("the dispatcher", () => {
    * durable IS a position, and taking a new name would be starting over rather
    * than resuming. */
   let durables: { expand: string; deliver: string };
+  const captured = capturingLogger();
   let dispatcher: Dispatcher;
   let endpoint: ReturnType<typeof customerEndpoint>;
   /** A second customer, so "does not delay deliveries to OTHER endpoints" has an
@@ -177,6 +193,19 @@ describe("the dispatcher", () => {
 
   let endpointUrl: Promise<string>;
 
+  /** Poll until the expectation holds, or the deadline passes. Bounded, so a
+   * genuine failure is a failure rather than a hang — and a negative assertion
+   * ("nothing should arrive") simply spends the whole budget and moves on. */
+  const pollUntil = async (
+    done: () => boolean,
+    timeoutMs = 8_000,
+  ): Promise<void> => {
+    const deadline = Date.now() + timeoutMs;
+    while (!done() && Date.now() < deadline) {
+      await dispatcher.pollOnce();
+    }
+  };
+
   /** Run the api's delivery relay once: everything due goes onto the stream.
    * The real loop, driven explicitly — this suite turns the background copy off
    * so the two cannot race (chapter 3.3's finding 4, third occurrence). */
@@ -201,12 +230,36 @@ describe("the dispatcher", () => {
     return r.drainOnce();
   };
 
+  /** As `deliverEvent`, but with a tenant's message text in the payload — so
+   * invariant 15 has something that must NOT appear in a log line. */
+  const deliverEventWithText = async (
+    seeded: Seeded,
+    text: string,
+  ): Promise<void> => {
+    const seenBefore = endpoint.received.length;
+    const eventId = randomUUID();
+    await seeder.expandEventToDeliveries(db, {
+      eventId,
+      environmentId: seeded.environmentId,
+      type: "message.created",
+      payload: {
+        id: eventId,
+        type: "message.created",
+        environment_id: seeded.environmentId,
+        data: { id: randomUUID(), seq: 1, user: "tuan", text },
+      },
+    });
+    await publishDue();
+    await pollUntil(() => endpoint.received.length > seenBefore);
+  };
+
   /** Publish an event, let the relay put its due deliveries on the stream, then
    * run one dispatcher pass — the same code path `start()` runs. */
   const deliverEvent = async (
     seeded: Seeded,
     type: string,
   ): Promise<{ eventId: string }> => {
+    const seenBefore = endpoint.received.length;
     const eventId = randomUUID();
     await seeder.expandEventToDeliveries(db, {
       eventId,
@@ -221,7 +274,12 @@ describe("the dispatcher", () => {
       },
     });
     await publishDue();
-    await dispatcher.pollOnce();
+    // POLL, don't peek. A single pass races the broker: `fetch` returns whatever
+    // is available at that instant, and a message published a moment earlier may
+    // not be yet. Production polls in a loop, so a test that polls once is
+    // testing something the service never does — and it fails intermittently,
+    // which is worse than failing.
+    await pollUntil(() => endpoint.received.length > seenBefore);
     return { eventId };
   };
 
@@ -264,6 +322,7 @@ describe("the dispatcher", () => {
       attemptTimeoutMs: TEST_TIMEOUT_MS,
       durables,
       deliverPolicy: DeliverPolicy.New,
+      logger: captured.logger,
     });
     // Created BEFORE anything is published, or "New" would skip the first event.
     await dispatcher.ready();
@@ -313,7 +372,43 @@ describe("the dispatcher", () => {
     expect(body.type).toBe("message.created");
   });
 
-  it("invariant 15: no log line and no header leaks the signing secret", async () => {
+  it("invariant 15: no log line carries a signing secret or a message body", async () => {
+    // NFR-SEC-06, and the reason it is asserted against the LOGS rather than the
+    // outgoing request: a secret reaches an operator's terminal through a log
+    // line. The header assertion below is the easy half; the log line is the one
+    // a well-meaning "just for debugging" change would break.
+    //
+    // Driven through the ERROR PATHS on purpose — a success path rarely prints
+    // what it was working with, and an error path frequently does.
+    const body = "B2, north ramp — a tenant's message text";
+
+    // 1. a success
+    endpoint.answerWith(200);
+    const ok = await seed(["message.created"]);
+    await deliverEventWithText(ok, body);
+
+    // 2. a customer failure
+    endpoint.answerWith(500);
+    const failing = await seed(["message.created"]);
+    await deliverEventWithText(failing, body);
+
+    // 3. a customer that hangs, so the timeout path logs too
+    endpoint.answerWith("hang");
+    const hanging = await seed(["message.created"]);
+    await deliverEventWithText(hanging, body);
+    endpoint.answerWith(200);
+
+    expect(captured.lines.length).toBeGreaterThan(0);
+    const all = captured.lines.join("\n");
+    for (const seeded of [ok, failing, hanging]) {
+      expect(all).not.toContain(seeded.secret);
+    }
+    // Nor a tenant's message text. Identifiers, counts and durations are the
+    // whole vocabulary of these lines.
+    expect(all).not.toContain(body);
+  });
+
+  it("invariant 15: no request header carries the secret either", async () => {
     endpoint.answerWith(200);
     const seeded = await seed(["message.created"]);
 
@@ -455,7 +550,49 @@ describe("the dispatcher", () => {
       attemptTimeoutMs: TEST_TIMEOUT_MS,
       durables,
       deliverPolicy: DeliverPolicy.New,
+      logger: captured.logger,
     });
     await dispatcher.ready();
   });
+
+  it("invariant 14: a backlog accumulated while not consuming drains when it resumes", async () => {
+    // The other half of invariant 14. The e2e journey shows end users are served
+    // while the dispatcher does not exist; this shows the work it was not doing
+    // was WAITING rather than lost.
+    //
+    // "Absent" is modelled as NOT CONSUMING, which is what absence means to a
+    // durable consumer: the position stays where it is and the stream keeps the
+    // messages. Process lifecycle — killing and restarting both services — is
+    // invariant 11's subject, and it holds the schedule rather than the stream.
+    endpoint.answerWith(200);
+    const seeded = await seed(["message.created"]);
+    const before = endpoint.received.length;
+
+    // Three events expand and become due, and the relay puts them on the stream.
+    // Nothing consumes in this stretch.
+    const events = [randomUUID(), randomUUID(), randomUUID()];
+    for (const eventId of events) {
+      await seeder.expandEventToDeliveries(db, {
+        eventId,
+        environmentId: seeded.environmentId,
+        type: "message.created",
+        payload: { id: eventId, type: "message.created" },
+      });
+    }
+    await publishDue();
+
+    // Consuming resumes. The backlog is on the stream and the deliveries are
+    // rows; neither needed the dispatcher to be watching.
+    const deadline = Date.now() + 30_000;
+    while (
+      endpoint.received.length - before < events.length &&
+      Date.now() < deadline
+    ) {
+      await dispatcher.pollOnce();
+    }
+
+    expect(endpoint.received.length - before).toBeGreaterThanOrEqual(
+      events.length,
+    );
+  }, 90_000);
 });
