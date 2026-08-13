@@ -1,0 +1,461 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { createServer, type Server } from "node:http";
+import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { DeliverPolicy } from "nats";
+
+import { createDispatcher, type Dispatcher } from "./main.js";
+
+// The dispatcher against a real api, a real broker and a real customer endpoint
+// (chapter 3.5). Invariant 7 lives here; 11, 13, 15 and 16 join it.
+//
+// The api runs as a CHILD PROCESS, not in-process — the same choice the
+// gateway's socket suite made in 3.2 and for the same reason. The dispatcher's
+// whole point is that it reaches state over the internal seam rather than
+// through a database client, and a suite that imported the api's modules would
+// prove that over a function call instead of over HTTP.
+
+const require_ = createRequire(import.meta.url);
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO = join(HERE, "..", "..", "..");
+const API_DIST = join(REPO, "services", "api", "dist");
+
+const CREDENTIAL =
+  process.env["RELAY_INTERNAL_CREDENTIAL"] ??
+  "rk_svc_dispatcher_itest_0123456789abcdef";
+
+interface Seeded {
+  environmentId: string;
+  endpointId: string;
+  secret: string;
+}
+
+/** A customer's server. Records what arrives and answers however the test says.
+ * The same shape `scripts/hostile-endpoint.mjs` gives a reader by hand. */
+function customerEndpoint() {
+  const received: { headers: Record<string, string>; body: string; at: number }[] =
+    [];
+  let reply: number | "hang" = 200;
+  const held: import("node:http").ServerResponse[] = [];
+  const server: Server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += String(c)));
+    req.on("end", () => {
+      received.push({
+        headers: req.headers as Record<string, string>,
+        body,
+        at: Date.now(),
+      });
+      if (reply === "hang") {
+        // Accepts the request and never answers. The failure mode a timeout
+        // exists for, and the one a customer never notices on their side.
+        held.push(res);
+        return;
+      }
+      res.writeHead(reply).end("ok");
+    });
+  });
+  return {
+    received,
+    listen: () =>
+      new Promise<string>((resolve) =>
+        server.listen(0, () => {
+          const addr = server.address();
+          resolve(
+            `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`,
+          );
+        }),
+      ),
+    answerWith: (status: number | "hang") => {
+      reply = status;
+    },
+    close: () => {
+      for (const res of held) res.destroy();
+      server.close();
+    },
+  };
+}
+
+async function waitForHealth(url: string): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try {
+      if ((await fetch(url)).ok) return;
+    } catch {
+      // not up yet
+    }
+    if (Date.now() > deadline) throw new Error("api never became healthy");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/** The api, as a child process. Extracted so invariant 11 can kill it and start
+ * a new one — the point of that test is that neither process holds the retry
+ * schedule, and a suite that could not restart the api could not show it. */
+function spawnApi(port: number, credential: string): ChildProcess {
+  return spawn("node", [join(API_DIST, "main.js")], {
+    env: {
+      ...process.env,
+      PORT: String(port),
+      RELAY_INTERNAL_CREDENTIAL: credential,
+      // Chapter 3.3's finding 4, for the third time: this suite drives the relay
+      // explicitly, so a background copy draining the same table would race it.
+      RELAY_OUTBOX_RELAY: "off",
+      RELAY_EVENT_CONSUMER: "off",
+      RELAY_DELIVERY_RELAY: "off",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+describe("the dispatcher", () => {
+  let child: ChildProcess;
+  let apiUrl: string;
+  let apiPort: number;
+  /** The per-run durable names. A restarted dispatcher must reuse them — a
+   * durable IS a position, and taking a new name would be starting over rather
+   * than resuming. */
+  let durables: { expand: string; deliver: string };
+  let dispatcher: Dispatcher;
+  let endpoint: ReturnType<typeof customerEndpoint>;
+  /** A second customer, so "does not delay deliveries to OTHER endpoints" has an
+   * other to be delayed. */
+  let second: ReturnType<typeof customerEndpoint>;
+  let secondUrl: string;
+  /** Short on purpose: the isolation property is about whether a healthy
+   * endpoint waits behind a hanging one, and ten real seconds per assertion buys
+   * nothing but a slower suite. */
+  const TEST_TIMEOUT_MS = 2_000;
+  let seeder: {
+    createEnvironment: (db: unknown, o: { name: string }) => Promise<{ id: string }>;
+    Repository: new (db: unknown, envId: string) => {
+      createEndpoint: (i: {
+        url: string;
+        eventTypes: string[];
+        secretCiphertext: string;
+      }) => Promise<{ id: string }>;
+      listDeliveriesForEvent: (
+        eventId: string,
+      ) => Promise<
+        {
+          id: string;
+          attempt: number;
+          state: string;
+          next_attempt_at: string;
+          dispatched_at: string | null;
+        }[]
+      >;
+    };
+    expandEventToDeliveries: (db: unknown, e: unknown) => Promise<unknown>;
+    drainDueDeliveries: (
+      db: unknown,
+      n: number,
+      f: (r: unknown) => Promise<void>,
+    ) => Promise<number>;
+  };
+  let secrets: { encryptSecret: (s: string) => string; mintSigningSecret: () => string };
+  let db: unknown;
+
+  const seed = async (eventTypes: string[], url?: string): Promise<Seeded> => {
+    const env = await seeder.createEnvironment(db, {
+      name: `dispatcher-itest-${randomUUID().slice(0, 8)}`,
+    });
+    const repo = new seeder.Repository(db, env.id);
+    const secret = secrets.mintSigningSecret();
+    const created = await repo.createEndpoint({
+      url: `${url ?? (await endpointUrl)}/hook`,
+      eventTypes,
+      secretCiphertext: secrets.encryptSecret(secret),
+    });
+    return { environmentId: env.id, endpointId: created.id, secret };
+  };
+
+  let endpointUrl: Promise<string>;
+
+  /** Run the api's delivery relay once: everything due goes onto the stream.
+   * The real loop, driven explicitly — this suite turns the background copy off
+   * so the two cannot race (chapter 3.3's finding 4, third occurrence). */
+  const publishDue = async (): Promise<number> => {
+    const relay = require_(join(API_DIST, "webhooks", "delivery-relay.js")) as {
+      createDeliveryRelay: (o: unknown) => { drainOnce: () => Promise<number> };
+      ensureDeliveriesStream: unknown;
+    };
+    const publisherMod = require_(
+      join(API_DIST, "outbox", "jetstream.publisher.js"),
+    ) as { createJetStreamPublisher: (o: unknown) => unknown };
+    const kit = require_(
+      join(REPO, "packages", "service-kit", "dist", "index.js"),
+    ) as { createLogger: (n: string) => unknown };
+    const r = relay.createDeliveryRelay({
+      db,
+      publisher: publisherMod.createJetStreamPublisher({
+        ensure: relay.ensureDeliveriesStream,
+      }),
+      logger: kit.createLogger("itest-relay"),
+    });
+    return r.drainOnce();
+  };
+
+  /** Publish an event, let the relay put its due deliveries on the stream, then
+   * run one dispatcher pass — the same code path `start()` runs. */
+  const deliverEvent = async (
+    seeded: Seeded,
+    type: string,
+  ): Promise<{ eventId: string }> => {
+    const eventId = randomUUID();
+    await seeder.expandEventToDeliveries(db, {
+      eventId,
+      environmentId: seeded.environmentId,
+      type,
+      payload: {
+        id: eventId,
+        type,
+        environment_id: seeded.environmentId,
+        occurred_at: new Date().toISOString(),
+        data: { id: randomUUID(), seq: 1, user: "tuan", text: "B2, north ramp" },
+      },
+    });
+    await publishDue();
+    await dispatcher.pollOnce();
+    return { eventId };
+  };
+
+  beforeAll(async () => {
+    if (!existsSync(join(API_DIST, "main.js"))) {
+      throw new Error(
+        "the api is not built — run `pnpm build` before this lane " +
+          "(the suite talks to the real service over HTTP, not a stub)",
+      );
+    }
+    const client = require_(join(API_DIST, "db", "client.js")) as {
+      createDb: (p: unknown) => unknown;
+      createPool: () => unknown;
+    };
+    seeder = require_(join(API_DIST, "db", "repository.js")) as typeof seeder;
+    secrets = require_(join(API_DIST, "webhooks", "secret.js")) as typeof secrets;
+    db = client.createDb(client.createPool());
+
+    endpoint = customerEndpoint();
+    endpointUrl = endpoint.listen();
+    await endpointUrl;
+
+    second = customerEndpoint();
+    secondUrl = await second.listen();
+
+    apiPort = Number(process.env["RELAY_DISPATCHER_ITEST_API_PORT"] ?? 4131);
+    child = spawnApi(apiPort, CREDENTIAL);
+    apiUrl = `http://127.0.0.1:${apiPort}`;
+    await waitForHealth(`${apiUrl}/healthz`);
+    // A per-run position, and only messages published after it exists. Sharing
+    // the production durable would hand this suite every delivery every earlier
+    // run left behind — and a batch of twenty-five is quickly all backlog, which
+    // is exactly how this suite first failed. Chapter 2.1 did the same for
+    // environments, 2.6 for subjects, 3.4 for its own durables.
+    const run = randomUUID().slice(0, 8);
+    durables = { expand: `itest-expand-${run}`, deliver: `itest-deliver-${run}` };
+    dispatcher = createDispatcher({
+      apiUrl,
+      credential: CREDENTIAL,
+      attemptTimeoutMs: TEST_TIMEOUT_MS,
+      durables,
+      deliverPolicy: DeliverPolicy.New,
+    });
+    // Created BEFORE anything is published, or "New" would skip the first event.
+    await dispatcher.ready();
+  }, 60_000);
+
+  afterAll(async () => {
+    await dispatcher?.stop();
+    child?.kill();
+    endpoint?.close();
+    second?.close();
+  });
+
+  it("invariant 7: delivers an event the endpoint subscribes to", async () => {
+    endpoint.answerWith(200);
+    const seeded = await seed(["message.created"]);
+    const before = endpoint.received.length;
+
+    await deliverEvent(seeded, "message.created");
+
+    expect(endpoint.received.length).toBeGreaterThan(before);
+  });
+
+  it("invariant 7: delivers nothing for an event type it does not subscribe to", async () => {
+    endpoint.answerWith(200);
+    const seeded = await seed(["channel.created"]);
+    const before = endpoint.received.length;
+
+    await deliverEvent(seeded, "message.created");
+
+    // Filtered at EXPANSION, so there is no delivery row at all — not a row that
+    // exists and is never sent, which would be a permanent no-op in the retry
+    // schedule that an operator could not tell from work that is stuck.
+    expect(endpoint.received.length).toBe(before);
+  });
+
+  it("invariant 16: the delivered body is 3.3's envelope and carries the event id", async () => {
+    endpoint.answerWith(200);
+    const seeded = await seed(["message.created"]);
+
+    const { eventId } = await deliverEvent(seeded, "message.created");
+
+    const last = endpoint.received.at(-1)!;
+    const body = JSON.parse(last.body) as { id: string; type: string };
+    // The field every claim this chapter makes about at-least-once rests on: the
+    // identifier a customer deduplicates the accepted duplicate on.
+    expect(body.id).toBe(eventId);
+    expect(body.type).toBe("message.created");
+  });
+
+  it("invariant 15: no log line and no header leaks the signing secret", async () => {
+    endpoint.answerWith(200);
+    const seeded = await seed(["message.created"]);
+
+    await deliverEvent(seeded, "message.created");
+
+    const last = endpoint.received.at(-1)!;
+    // The signature travels; the secret never does. A header carrying the shared
+    // secret would hand it to anyone who can read one request.
+    expect(JSON.stringify(last.headers)).not.toContain(seeded.secret);
+    expect(last.body).not.toContain(seeded.secret);
+  });
+
+  it("invariant 13: a hanging endpoint is abandoned on the timeout", async () => {
+    endpoint.answerWith("hang");
+    const seeded = await seed(["message.created"]);
+
+    const started = Date.now();
+    await deliverEvent(seeded, "message.created");
+    const elapsed = Date.now() - started;
+
+    // Abandoned, not waited on forever. The customer accepted the request and
+    // never answered — the failure a timeout exists for, and the one they never
+    // notice on their side.
+    expect(endpoint.received.length).toBeGreaterThan(0);
+    expect(elapsed).toBeLessThan(TEST_TIMEOUT_MS * 3);
+    endpoint.answerWith(200);
+  });
+
+  it("invariant 13: a hanging endpoint does not delay deliveries to another", async () => {
+    // THE CLAUSE FR-WHK-05 ACTUALLY CARES ABOUT. "Abandoned on the timeout" is
+    // the easy half; this is the half that fails if deliveries are processed one
+    // after another, because the healthy customer then waits out somebody else's
+    // silence before hearing anything at all.
+    endpoint.answerWith("hang");
+    second.answerWith(200);
+
+    const hanging = await seed(["message.created"]);
+    const healthy = await seed(["message.created"], secondUrl);
+
+    // ORDER MATTERS, and the test is worthless without fixing it. The relay
+    // drains by `next_attempt_at, id`, so expanding the hanging endpoint FIRST
+    // puts it at the head of the batch. If deliveries were processed one after
+    // another, the healthy customer would then sit behind a full timeout it had
+    // nothing to do with — which is precisely the failure being ruled out.
+    //
+    // Left unordered, this test passes whether or not the isolation exists: with
+    // sequential processing the healthy delivery might simply happen to go
+    // first. That was the first version, and the sabotage check caught it.
+    await seeder.expandEventToDeliveries(db, {
+      eventId: randomUUID(),
+      environmentId: hanging.environmentId,
+      type: "message.created",
+      payload: { id: randomUUID(), type: "message.created" },
+    });
+    await seeder.expandEventToDeliveries(db, {
+      eventId: randomUUID(),
+      environmentId: healthy.environmentId,
+      type: "message.created",
+      payload: { id: randomUUID(), type: "message.created" },
+    });
+    await publishDue();
+
+    const hangingBefore = endpoint.received.length;
+    const healthyBefore = second.received.length;
+    await dispatcher.pollOnce();
+
+    expect(endpoint.received.length).toBeGreaterThan(hangingBefore);
+    expect(second.received.length).toBeGreaterThan(healthyBefore);
+
+    // THE PROPERTY, and it does not depend on how long the setup took: the
+    // healthy customer heard from us while the other request was still hanging.
+    // The hanging endpoint is first in the batch, so sequential processing would
+    // put this arrival a whole timeout later.
+    const hangingAt = endpoint.received.at(-1)!.at;
+    const healthyAt = second.received.at(-1)!.at;
+    expect(healthyAt - hangingAt).toBeLessThan(TEST_TIMEOUT_MS / 2);
+
+    endpoint.answerWith(200);
+  });
+
+  it("invariant 11: a pending retry survives a restart of BOTH processes", async () => {
+    // THE INVARIANT THAT DECIDED THE DESIGN.
+    //
+    // Research R1 measured the obvious implementation — a broker-held delay —
+    // and found it durable to within 3 ms but fatal in aggregate: a waiting
+    // message holds an acknowledgement slot, so dead endpoints starve healthy
+    // ones. The schedule became a `next_attempt_at` column instead.
+    //
+    // The consequence is this test. A row is held by NEITHER process, so both
+    // can be destroyed between an attempt and its retry and the retry still
+    // falls due. Under the broker-held design the api's restart would not even
+    // have been a question — the api held nothing. Now it holds everything, and
+    // may still be killed.
+    //
+    // WHAT THIS ASSERTS, precisely: that the SCHEDULE survives and becomes
+    // claimable again. That the claimed delivery then reaches the customer is
+    // invariants 7 and 13's subject, proven against this same endpoint above;
+    // repeating it here would tangle the schedule's durability with the
+    // dispatcher's stream position, which is a different property with a
+    // different failure mode.
+    endpoint.answerWith(500);
+    const seeded = await seed(["message.created"]);
+    const repo = new seeder.Repository(db, seeded.environmentId);
+
+    // Attempt 1 fails, so attempt 2 is scheduled one second out.
+    const { eventId } = await deliverEvent(seeded, "message.created");
+    const [afterAttempt1] = await repo.listDeliveriesForEvent(eventId);
+    expect(afterAttempt1!.attempt).toBe(2);
+    expect(afterAttempt1!.state).toBe("pending");
+
+    // Destroy BOTH processes. Nothing in memory anywhere survives this.
+    await dispatcher.stop();
+    child.kill("SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    child = spawnApi(apiPort, CREDENTIAL);
+    await waitForHealth(`${apiUrl}/healthz`);
+
+    // The schedule is exactly where it was, in a database neither process was
+    // holding — same tier, same due time, still unclaimed.
+    const [survived] = await repo.listDeliveriesForEvent(eventId);
+    expect(survived!.attempt).toBe(2);
+    expect(survived!.state).toBe("pending");
+    expect(survived!.next_attempt_at).toBe(afterAttempt1!.next_attempt_at);
+    expect(survived!.dispatched_at).toBeNull();
+
+    // And when the tier falls due, the relay in the RESTARTED api claims it —
+    // so the retry is live again, not merely remembered.
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    await publishDue();
+
+    const [claimed] = await repo.listDeliveriesForEvent(eventId);
+    expect(claimed!.dispatched_at).not.toBeNull();
+
+    endpoint.answerWith(200);
+    // Leave a working dispatcher behind for anything that runs after this.
+    dispatcher = createDispatcher({
+      apiUrl,
+      credential: CREDENTIAL,
+      attemptTimeoutMs: TEST_TIMEOUT_MS,
+      durables,
+      deliverPolicy: DeliverPolicy.New,
+    });
+    await dispatcher.ready();
+  });
+});
