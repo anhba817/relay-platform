@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigserial,
   bigint,
+  boolean,
   check,
   index,
   integer,
@@ -358,4 +359,157 @@ export const consumedEvents = pgTable(
       .defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.consumer, t.eventId] })],
+);
+
+// ---------------------------------------------------------------------------
+// Webhooks (chapter 3.5). Three tables, and all three carry `environment_id`.
+//
+// DECISION (chapter 3.5): 3.3's `outbox` and 3.4's `consumed_events` each
+// omitted the tenant column and each recorded it as a deliberate exception. Two
+// exceptions in consecutive chapters is a pattern, and a pattern without a
+// stated rule is how a third chapter gets it wrong by resemblance. THE RULE: a
+// table below the tenant boundary may omit `environment_id` only when it holds
+// the platform's own bookkeeping AND no tenant-visible content. An endpoint is
+// customer configuration; a dead letter holds a payload that was being sent to a
+// customer. Both fail the test on both halves, so both are scoped and both join
+// chapter 3.7's cross-tenant gauntlet as targets.
+// ---------------------------------------------------------------------------
+
+// DECISION (chapter 3.5): no source document defines this table. FR-WHK-01 and
+// FR-WHK-08 require the behaviour — up to five endpoints per environment, each
+// with an independently rotatable signing secret — and leave the shape open.
+//
+// The secret is stored ENCRYPTED, not hashed, and the difference is the point.
+// An API key (3.2) is VERIFIED: a caller presents it, we hash what arrived and
+// compare. A signing secret is USED: we must compute an HMAC with it, which
+// needs the secret itself. A hash cannot be used, only compared. NFR-SEC-02
+// permits "salted hashes OR envelope encryption" and this is the branch that
+// applies — two credentials, one requirement, two mechanisms, because the verbs
+// differ (research R3).
+export const webhookEndpoints = pgTable(
+  "webhook_endpoints",
+  {
+    id: uuid("id").primaryKey(),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    url: text("url").notNull(),
+    // The subscription set. An endpoint receives only these (FR-WHK-02).
+    eventTypes: jsonb("event_types").notNull(),
+    secretCiphertext: text("secret_ciphertext").notNull(),
+    // Non-null only during a rotation window: both secrets sign, so a recipient
+    // accepting either is correct throughout (contracts/webhooks.md §Rotation).
+    secretPreviousCiphertext: text("secret_previous_ciphertext"),
+    secretRotatedAt: timestamp("secret_rotated_at", { withTimezone: true }),
+    // An owner can pause an endpoint. What disables one AUTOMATICALLY after
+    // continuous failure is FR-WHK-07's, in the follow-on chapter — the column
+    // exists now so that chapter adds a rule rather than a migration.
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    // DELETION IS SOFT, and this column is why. Chapter 3.2 made the same
+    // choice for `api_keys.revokedAt` and gave the reason: "a deleted row loses
+    // the record of what once had access". Here the stakes are higher — a hard
+    // delete would have to cascade, and cascading would erase the customer's
+    // dead letters, which FR-WHK-04 says to retain for seven days. So a deleted
+    // endpoint stops receiving deliveries and stops appearing in listings, and
+    // the record of what it was survives its deletion.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [index("webhook_endpoints_environment_idx").on(t.environmentId)],
+);
+
+// The retry schedule — and it is chapter 3.3's outbox with one more column.
+//
+// DECISION (chapter 3.5, research R1, MEASURED): the obvious implementation is
+// to let the broker hold the delay between attempts. It was measured against a
+// real broker and disqualified: a delayed redelivery survives a restart to
+// within 3 ms, but a message waiting out its delay HOLDS AN ACKNOWLEDGEMENT
+// SLOT the whole time. With `max_ack_pending=3`, three messages nak'd for five
+// minutes made two available messages unfetchable. Scaled up, a handful of dead
+// customer endpoints starve deliveries to healthy ones — exactly what FR-WHK-05
+// forbids, and invisible until an incident.
+//
+// So a delivery that is not due yet is a ROW, not a message the broker holds.
+// The whole schedule is `next_attempt_at`; the api's relay publishes a delivery
+// only once it is already due. Nothing waits in the broker.
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: uuid("id").primaryKey(),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    endpointId: uuid("endpoint_id")
+      .notNull()
+      .references(() => webhookEndpoints.id),
+    // Chapter 3.3's envelope id — the customer's deduplication key, stable
+    // across every attempt and across a dead-letter replay (spec FR-018).
+    eventId: uuid("event_id").notNull(),
+    payload: jsonb("payload").notNull(),
+    // 1..7 — the INDEX INTO THE TIER TABLE, not a free-running counter.
+    // `attempt = 5` means "the 5-minute tier", which is what makes recomputing
+    // `next_attempt_at` total rather than incremental. Seven, not six: FR-WHK-03
+    // names six retry delays and the initial delivery makes seven requests —
+    // see webhooks/schedule.ts's DECISION for why the delay list won.
+    attempt: integer("attempt").notNull().default(1),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    // Set when the relay publishes it; cleared when the next attempt is
+    // scheduled. The relay's claim, in the shape `outbox.published_at` has.
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    state: text("state").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // One event produces at most one delivery per endpoint. This is what makes
+    // expansion idempotent at the database rather than by care (research R2).
+    unique("webhook_deliveries_event_endpoint_unique").on(t.eventId, t.endpointId),
+    check(
+      "webhook_deliveries_state_check",
+      sql`${t.state} IN ('pending','delivered','dead')`,
+    ),
+    // The relay's only query: pending rows that are due, oldest first. Partial,
+    // for the reason 3.3's outbox index is partial — it covers only what the
+    // relay reads, so delivered rows cost nothing to keep.
+    index("webhook_deliveries_due_idx")
+      .on(t.nextAttemptAt)
+      .where(sql`${t.state} = 'pending'`),
+  ],
+);
+
+// DECISION (chapter 3.5): FR-WHK-04 requires exhausted events to be retained
+// for seven days, inspectable and replayable, and leaves the shape open.
+//
+// This is the first store in the platform whose PURPOSE is retaining data that
+// failed to leave. Retention is therefore a liability rather than a feature: a
+// dead-letter table with no expiry is a place tenant data accumulates until an
+// audit finds it. Pruning is named and deferred; the chapter says what happens
+// on day eight and means it.
+export const webhookDeadLetters = pgTable(
+  "webhook_dead_letters",
+  {
+    id: uuid("id").primaryKey(),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    endpointId: uuid("endpoint_id")
+      .notNull()
+      .references(() => webhookEndpoints.id),
+    // Reused on replay, so a customer who deduplicates correctly is unharmed by
+    // an operator replaying something they already received.
+    eventId: uuid("event_id").notNull(),
+    payload: jsonb("payload").notNull(),
+    lastStatus: integer("last_status"),
+    lastError: text("last_error"),
+    attempts: integer("attempts").notNull(),
+    deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("webhook_dead_letters_environment_idx").on(t.environmentId)],
 );

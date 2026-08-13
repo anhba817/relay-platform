@@ -12,6 +12,7 @@ import { InternalModule } from "./internal/internal.module";
 import { MessagesModule } from "./messages/messages.module";
 import { ConsumerModule } from "./consumer/consumer.module";
 import { OutboxModule } from "./outbox/outbox.module";
+import { WebhooksModule } from "./webhooks/webhooks.module";
 import { TenancyModule } from "./tenancy/tenancy.module";
 import { LOGGER, apiLogger } from "./logger";
 import { ProtocolErrorFilter } from "./protocol-error.filter";
@@ -29,6 +30,7 @@ import { RequestContextMiddleware } from "./request-context.middleware";
     TenancyModule,
     OutboxModule,
     ConsumerModule,
+    WebhooksModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -139,6 +139,118 @@ export const internalSessionResponseSchema = z.strictObject({
   channel_ids: z.array(z.string().min(1)),
 });
 
+/** The deliveries stream (chapter 3.5), and its subject grammar.
+ *
+ * Here rather than in either service, for the reason chapter 3.4 moved the event
+ * grammar here: a consumer that assembles its own subject filter receives
+ * nothing the day the grammar changes — no error, no warning, just an empty
+ * stream position. Two sides, one definition.
+ *
+ * The stream carries only work that is ALREADY DUE. A delivery waiting out a
+ * retry tier is a row in Postgres, not a message the broker is holding — which
+ * is what keeps a dead endpoint from occupying an acknowledgement slot for two
+ * hours (research R1, measured). */
+export const DELIVERIES_STREAM = "DELIVERIES";
+export const DELIVERY_SUBJECT_PREFIX = "deliveries";
+export const ALL_DELIVERIES_SUBJECT = `${DELIVERY_SUBJECT_PREFIX}.>`;
+
+/** One subject per environment, so a future per-tenant dispatcher shard is a
+ * filter change rather than a redesign. */
+export function deliverySubjectFor(environmentId: string): string {
+  if (!environmentId) throw new Error("an environment id is required");
+  return `${DELIVERY_SUBJECT_PREFIX}.${environmentId}`;
+}
+
+// ---------------------------------------------------------------------------
+// The dispatch contract (chapter 3.5, constitution IV).
+//
+// The dispatcher owns no database. "Only the API service writes to PostgreSQL…
+// Other services obtain writes and backfill reads via the API service's internal
+// endpoints." These are those endpoints, and they live here for the reason
+// chapter 2.5 put the gateway's here: both sides validate against ONE definition,
+// so the day a field is renamed the other side fails loudly instead of reading
+// `undefined` three layers away.
+// ---------------------------------------------------------------------------
+
+/** dispatcher → api: turn one event into one delivery per matching endpoint.
+ *
+ * A CLAIMED write: the api reuses chapter 3.4's deduplication ledger, so an event
+ * expanded twice would double every webhook it produced and cannot. The claim and
+ * all N delivery rows commit in one transaction (research R2). */
+export const internalExpandRequestSchema = z.strictObject({
+  event_id: z.string().uuid(),
+  environment_id: z.string().min(1),
+  type: z.string().min(1),
+  /** The envelope as it will be delivered, byte-identical to what 3.3 published.
+   * The dispatcher does not author payloads; it moves them. */
+  payload: z.unknown(),
+});
+
+export const internalExpandResponseSchema = z.strictObject({
+  /** How many deliveries this event produced. Zero is normal and not an error:
+   * no endpoint in that environment subscribes to this type. */
+  created: z.number().int().nonnegative(),
+  /** True when the ledger recognised the event as already expanded. The
+   * dispatcher acknowledges either way — that is what makes a redelivery safe. */
+  duplicate: z.boolean(),
+});
+
+/** dispatcher → api: everything needed to sign and post one delivery.
+ *
+ * The response carries DECRYPTED signing secrets, which is a real widening of
+ * where a customer credential exists. Internal network only, never logged, held
+ * for the signature and no longer (contracts/dispatcher.md). */
+export const internalDeliveryMaterialSchema = z.strictObject({
+  delivery_id: z.string().uuid(),
+  endpoint_id: z.string().uuid(),
+  environment_id: z.string().min(1),
+  event_id: z.string().uuid(),
+  url: z.string().url(),
+  attempt: z.number().int().positive(),
+  /** One or two: two during a 24-hour rotation window, so a recipient holding
+   * either can verify (contracts/webhooks.md §Rotation). */
+  secrets: z.array(z.string().min(1)).min(1).max(2),
+  payload: z.unknown(),
+});
+
+/** dispatcher → api: what happened when we posted.
+ *
+ * NOT a claim — the POST already happened on somebody else's machine and cannot
+ * be undone. Idempotent on `(delivery_id, attempt)`, so a redelivery arriving
+ * after a successful report is recognised and simply acknowledged rather than
+ * posted again (research R5). */
+export const internalDeliveryOutcomeRequestSchema = z.strictObject({
+  delivery_id: z.string().uuid(),
+  attempt: z.number().int().positive(),
+  /** Absent when the attempt never got a response — a timeout or a refused
+   * connection. The platform can only believe a status code it received. */
+  status: z.number().int().optional(),
+  error: z.string().max(2000).optional(),
+  latency_ms: z.number().int().nonnegative(),
+});
+
+export const internalDeliveryOutcomeResponseSchema = z.strictObject({
+  /** What the api did with it: delivered, scheduled for another tier, or moved
+   * to the dead-letter store because the attempts are exhausted. */
+  outcome: z.enum(["delivered", "rescheduled", "dead_lettered"]),
+  /** Present when rescheduled — when the next attempt falls due. */
+  next_attempt_at: z.iso.datetime().optional(),
+});
+
+export type InternalExpandRequest = z.infer<typeof internalExpandRequestSchema>;
+export type InternalExpandResponse = z.infer<
+  typeof internalExpandResponseSchema
+>;
+export type InternalDeliveryMaterial = z.infer<
+  typeof internalDeliveryMaterialSchema
+>;
+export type InternalDeliveryOutcomeRequest = z.infer<
+  typeof internalDeliveryOutcomeRequestSchema
+>;
+export type InternalDeliveryOutcomeResponse = z.infer<
+  typeof internalDeliveryOutcomeResponseSchema
+>;
+
 export type InternalSendRequest = z.infer<typeof internalSendRequestSchema>;
 export type InternalSessionResponse = z.infer<
   typeof internalSessionResponseSchema

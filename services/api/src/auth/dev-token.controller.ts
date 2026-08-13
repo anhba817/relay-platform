@@ -55,6 +55,14 @@ export class DevTokenController {
     @Req() req: RequestWithPrincipal,
   ): Promise<{ token: string; expires_at: string }> {
     const principal = req.principal!;
+    // The guard above already refused anything but an API key, so this is
+    // unreachable — but chapter 3.5 added a third principal kind that carries no
+    // environment at all, and an assumption the compiler cannot see is one a
+    // later refactor can quietly break. Narrowing here costs a line and makes
+    // `@Accepts("application")` a fact rather than a promise.
+    if (principal.kind !== "application") {
+      throw new BadRequestException("an API key is required");
+    }
     const environment = await environmentSigningSecret(
       this.db,
       principal.environmentId,

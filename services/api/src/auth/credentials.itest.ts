@@ -333,4 +333,26 @@ describe("credentials", () => {
         .status,
     ).toBe(201);
   });
+
+  // --- chapter 3.5: the third principal ----------------------------------
+
+  describe("the internal platform credential", () => {
+    const PLATFORM = process.env.RELAY_INTERNAL_CREDENTIAL;
+
+    it("is refused on a public route, whatever else it can do", async () => {
+      if (!PLATFORM) return; // not configured in this lane; the internal suite covers it
+
+      // The whole point of the kind. It reaches every environment, so a public
+      // route accepting it would be a cross-tenant hole with a valid credential
+      // in front of it. 403 `wrong_credential_type` — the route's default is
+      // application-or-user, and platform is neither.
+      const res = await post({ text: "should never land" }, PLATFORM);
+
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("wrong_credential_type");
+      // And it must not quote the credential back (NFR-SEC-06).
+      expect(JSON.stringify(body)).not.toContain(PLATFORM);
+    });
+  });
 });

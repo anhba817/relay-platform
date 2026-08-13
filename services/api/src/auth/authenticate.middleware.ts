@@ -22,10 +22,43 @@ export const AUTH_DB = "AUTH_DB";
  * key; the signature decides whether to believe the claim. Getting that order
  * backwards is how a token from environment A gets accepted for environment B.
  */
+/** The internal platform credential (chapter 3.5). Configuration, never a
+ * database row and never tenant data — it authenticates a SERVICE, and services
+ * are deployed, not provisioned.
+ *
+ * Absent by default, which is the safe direction: with nothing configured, no
+ * request can ever present a platform principal, and the internal routes that
+ * require one simply refuse everybody. */
+export const PLATFORM_CREDENTIAL_ENV = "RELAY_INTERNAL_CREDENTIAL";
+const PLATFORM_PREFIX = "rk_svc_";
+
+function resolvePlatformCredential(credential: string): Principal | null {
+  const configured = process.env[PLATFORM_CREDENTIAL_ENV];
+  if (!configured || configured.length < 32) return null;
+  // Constant-time-ish: compare lengths first, then every byte. A platform
+  // credential is a shared secret, and an early-exit compare on a shared secret
+  // is the one place a timing signal is worth the two lines to remove.
+  if (credential.length !== configured.length) return null;
+  let mismatch = 0;
+  for (let i = 0; i < credential.length; i++) {
+    mismatch |= credential.charCodeAt(i) ^ configured.charCodeAt(i);
+  }
+  if (mismatch !== 0) return null;
+  return { kind: "platform", service: "dispatcher" };
+}
+
 export async function resolvePrincipal(
   db: Db,
   credential: string,
 ): Promise<Principal | null> {
+  // Checked before the key path, and recognised by prefix so a mistyped API key
+  // never accidentally lands here. Note there is no database lookup: a platform
+  // credential belongs to a deployment, not to a tenant, so resolving it must
+  // not depend on a table any tenant appears in.
+  if (credential.startsWith(PLATFORM_PREFIX)) {
+    return resolvePlatformCredential(credential);
+  }
+
   if (looksLikeApiKey(credential)) {
     const key = await authenticateApiKey(db, credential);
     return key

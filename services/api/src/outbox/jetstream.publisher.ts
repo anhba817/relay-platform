@@ -96,7 +96,16 @@ export async function ensureStream(nc: NatsConnection): Promise<void> {
 
 export function createJetStreamPublisher({
   url = process.env.RELAY_NATS_URL ?? DEFAULT_NATS_URL,
-}: { url?: string } = {}): Publisher {
+  ensure = ensureStream,
+}: {
+  url?: string;
+  /** Which stream this publisher is responsible for bringing into existence.
+   * Defaults to the EVENTS stream this chapter created. Chapter 3.5 passes its
+   * own: a publisher that ensures the wrong stream publishes into nothing and
+   * gets a 503 back, which is a confusing way to learn that streams are not
+   * created on demand. */
+  ensure?: (nc: NatsConnection) => Promise<void>;
+} = {}): Publisher {
   let connection: NatsConnection | null = null;
   let js: JetStreamClient | null = null;
 
@@ -107,7 +116,7 @@ export function createJetStreamPublisher({
   async function client(): Promise<JetStreamClient> {
     if (js && connection && !connection.isClosed()) return js;
     const nc = await connect({ servers: url });
-    await ensureStream(nc);
+    await ensure(nc);
     connection = nc;
     js = nc.jetstream();
     return js;

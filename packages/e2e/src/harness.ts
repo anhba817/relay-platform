@@ -335,6 +335,11 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       // source of truth, which is exactly how this suite first failed.
       "RELAY_NATS_URL",
       "RELAY_NATS_PORT",
+      // Chapter 3.5: the api decrypts webhook signing secrets and authenticates
+      // the dispatcher. Both are configuration, and a child that invents either
+      // would be a second source of truth for a credential.
+      "RELAY_WEBHOOK_SECRET_KEY",
+      "RELAY_INTERNAL_CREDENTIAL",
     ),
     // Chapter 3.3: the api children run WITHOUT the outbox relay. This journey
     // asserts message delivery, and a background loop draining the outbox while
@@ -347,6 +352,11 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     // background consumer writing to a table 3.4's suite asserts on is a race
     // between test files rather than a property of the system.
     RELAY_EVENT_CONSUMER: "off",
+    // Chapter 3.5: nor the delivery relay, for the third time and the same
+    // reason. Three background loops now share tables that other suites assert
+    // on, and each one had to be silenced here the moment it existed — which is
+    // the general form of 3.3's finding 4 rather than a coincidence.
+    RELAY_DELIVERY_RELAY: "off",
   };
 
   const apiPort = Number(process.env.RELAY_E2E_API_PORT ?? 4100);

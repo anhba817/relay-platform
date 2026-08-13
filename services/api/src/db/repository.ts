@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, gt, lt, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "./client";
 import {
@@ -16,8 +16,13 @@ import {
   organisations,
   outbox,
   users,
+  webhookDeadLetters,
+  webhookDeliveries,
+  webhookEndpoints,
 } from "./schema";
 import { messageCreatedEvent } from "../outbox/event";
+import { nextAttemptAt } from "../webhooks/schedule";
+import { activeSigningSecrets } from "../webhooks/secret";
 import {
   mintApiKey,
   parseApiKeyCredential,
@@ -295,6 +300,387 @@ export async function drainOutbox(
 
 /** How far behind the relay is. The single number worth alarming on later, and
  * the one the chapter shows going up while the broker is down. */
+/** The name this consumer claims events under. One name, because the ledger is
+ * keyed per consumer and the dispatcher is one consumer however many processes
+ * run it (chapter 3.4's data model). */
+export const DISPATCHER_CONSUMER = "dispatcher";
+
+/** Turn one event into one delivery per matching endpoint — **in one
+ * transaction** (chapter 3.5, research R2).
+ *
+ * Admin surface, like `drainOutbox`: one dispatcher serves every environment, so
+ * this cannot go through the scoped Repository. It is still safe, because the
+ * environment comes from the EVENT rather than from a caller's parameter.
+ *
+ * The claim is chapter 3.4's, unchanged, and it is doing more work here than it
+ * did there. The broker will redeliver — that is what at-least-once means — and
+ * an event expanded twice would double every webhook it produced. Because the
+ * claim and the N inserts share a transaction, "expansion runs exactly once"
+ * stops being something the code must be careful about and becomes a property of
+ * the database.
+ *
+ * An event no endpoint subscribes to is still CLAIMED, with zero rows created.
+ * Leaving it unclaimed would make every redelivery re-ask the same question
+ * forever. */
+export async function expandEventToDeliveries(
+  db: Db,
+  event: {
+    eventId: string;
+    environmentId: string;
+    type: string;
+    payload: unknown;
+  },
+): Promise<{ created: number; duplicate: boolean }> {
+  let created = 0;
+  const result = await claimEvent(
+    db,
+    DISPATCHER_CONSUMER,
+    event.eventId,
+    async () => {
+      const endpoints = await db
+        .select({
+          id: webhookEndpoints.id,
+          eventTypes: webhookEndpoints.eventTypes,
+        })
+        .from(webhookEndpoints)
+        .where(
+          and(
+            eq(webhookEndpoints.environmentId, event.environmentId),
+            eq(webhookEndpoints.enabled, true),
+            isNull(webhookEndpoints.deletedAt),
+          ),
+        );
+
+      // Subscription filtering happens HERE rather than at delivery time: a
+      // delivery row that exists and is never sent is a retry schedule with a
+      // permanent no-op in it, and an operator reading the table would have no
+      // way to tell it from work that is stuck.
+      const matching = endpoints.filter((e) =>
+        (e.eventTypes as string[]).includes(event.type),
+      );
+      if (matching.length === 0) return;
+
+      await db.insert(webhookDeliveries).values(
+        matching.map((endpoint) => ({
+          id: randomUUID(),
+          environmentId: event.environmentId,
+          endpointId: endpoint.id,
+          eventId: event.eventId,
+          payload: event.payload,
+        })),
+      );
+      created = matching.length;
+    },
+  );
+  return { created, duplicate: result === "duplicate" };
+}
+
+/** What the api did with an attempt's outcome. */
+export type DeliveryOutcome = "delivered" | "rescheduled" | "dead_lettered";
+
+/** Record one attempt's result, and decide what happens next — **in one
+ * transaction** (chapter 3.5).
+ *
+ * The three terminal paths are here together on purpose. Splitting "record the
+ * failure" from "schedule the next attempt" would allow a delivery marked failed
+ * with no next attempt scheduled: a webhook that stops without anyone being
+ * told, which is the failure mode a retry system exists to prevent.
+ *
+ * IDEMPOTENT on `(delivery_id, attempt)`. The dispatcher posts, then reports,
+ * then acknowledges; a crash between the POST and the acknowledgement means the
+ * delivery is redelivered and reported again. Recognising the repeat and
+ * returning the same answer is what makes that redelivery harmless — the POST
+ * itself may duplicate, and the customer absorbs it on the event id, but the
+ * SCHEDULE must not advance twice for one attempt or the tiers would collapse.
+ */
+export async function recordAttemptOutcome(
+  db: Db,
+  input: {
+    deliveryId: string;
+    attempt: number;
+    status?: number;
+    error?: string;
+  },
+): Promise<{ outcome: DeliveryOutcome; nextAttemptAt: Date | null }> {
+  return db.transaction(async (tx) => {
+    const [delivery] = await tx
+      .select({
+        id: webhookDeliveries.id,
+        environmentId: webhookDeliveries.environmentId,
+        endpointId: webhookDeliveries.endpointId,
+        eventId: webhookDeliveries.eventId,
+        payload: webhookDeliveries.payload,
+        attempt: webhookDeliveries.attempt,
+        state: webhookDeliveries.state,
+        nextAttemptAt: webhookDeliveries.nextAttemptAt,
+        dispatchedAt: webhookDeliveries.dispatchedAt,
+      })
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.id, input.deliveryId))
+      .for("update");
+
+    if (!delivery) throw new DeliveryNotFoundError(input.deliveryId);
+
+    // The idempotence check. A report for an attempt this delivery has already
+    // moved past is a repeat: answer with what was decided the first time and
+    // change nothing.
+    if (delivery.state !== "pending" || delivery.attempt !== input.attempt) {
+      return {
+        outcome:
+          delivery.state === "delivered"
+            ? ("delivered" as const)
+            : delivery.state === "dead"
+              ? ("dead_lettered" as const)
+              : ("rescheduled" as const),
+        nextAttemptAt:
+          delivery.state === "pending" ? delivery.nextAttemptAt : null,
+      };
+    }
+
+    const succeeded =
+      input.status !== undefined && input.status >= 200 && input.status < 300;
+
+    if (succeeded) {
+      await tx
+        .update(webhookDeliveries)
+        .set({ state: "delivered", dispatchedAt: null })
+        .where(eq(webhookDeliveries.id, delivery.id));
+      return { outcome: "delivered" as const, nextAttemptAt: null };
+    }
+
+    const next = nextAttemptAt(delivery.attempt + 1);
+    if (next) {
+      await tx
+        .update(webhookDeliveries)
+        .set({
+          attempt: delivery.attempt + 1,
+          nextAttemptAt: next,
+          // Cleared so the relay can pick it up again when it falls due.
+          dispatchedAt: null,
+        })
+        .where(eq(webhookDeliveries.id, delivery.id));
+      return { outcome: "rescheduled" as const, nextAttemptAt: next };
+    }
+
+    // Attempts exhausted. The dead letter and the state change commit together —
+    // a delivery marked dead with no dead letter behind it would be a failure
+    // with no record, which is exactly what FR-WHK-04's seven days are for.
+    await tx.insert(webhookDeadLetters).values({
+      id: randomUUID(),
+      environmentId: delivery.environmentId,
+      endpointId: delivery.endpointId,
+      eventId: delivery.eventId,
+      payload: delivery.payload,
+      lastStatus: input.status ?? null,
+      lastError: input.error ?? null,
+      attempts: delivery.attempt,
+    });
+    await tx
+      .update(webhookDeliveries)
+      .set({ state: "dead", dispatchedAt: null })
+      .where(eq(webhookDeliveries.id, delivery.id));
+    return { outcome: "dead_lettered" as const, nextAttemptAt: null };
+  });
+}
+
+/** Everything the dispatcher needs to sign and post one delivery.
+ *
+ * Admin surface: one dispatcher serves every environment. The environment is
+ * read from the DELIVERY rather than supplied by the caller, so this cannot be
+ * pointed at a tenant by anyone who does not already hold a delivery id.
+ *
+ * Returns DECRYPTED secrets — one, or two inside a 24-hour rotation window. This
+ * is the only place in the platform that hands a customer credential back in
+ * plaintext, and the obligations that come with it are stated in
+ * contracts/dispatcher.md rather than assumed. */
+export async function deliveryMaterial(
+  db: Db,
+  deliveryId: string,
+): Promise<{
+  delivery_id: string;
+  endpoint_id: string;
+  environment_id: string;
+  event_id: string;
+  url: string;
+  attempt: number;
+  secrets: string[];
+  payload: unknown;
+} | null> {
+  const [row] = await db
+    .select({
+      id: webhookDeliveries.id,
+      environmentId: webhookDeliveries.environmentId,
+      endpointId: webhookDeliveries.endpointId,
+      eventId: webhookDeliveries.eventId,
+      attempt: webhookDeliveries.attempt,
+      payload: webhookDeliveries.payload,
+      url: webhookEndpoints.url,
+      enabled: webhookEndpoints.enabled,
+      deletedAt: webhookEndpoints.deletedAt,
+      secretCiphertext: webhookEndpoints.secretCiphertext,
+      secretPreviousCiphertext: webhookEndpoints.secretPreviousCiphertext,
+      secretRotatedAt: webhookEndpoints.secretRotatedAt,
+    })
+    .from(webhookDeliveries)
+    .innerJoin(
+      webhookEndpoints,
+      eq(webhookDeliveries.endpointId, webhookEndpoints.id),
+    )
+    .where(eq(webhookDeliveries.id, deliveryId));
+
+  if (!row) return null;
+  // An endpoint paused or removed after the delivery was scheduled gets nothing.
+  // The spec's edge case: events already in the retry schedule for a removed
+  // endpoint must not be delivered.
+  if (!row.enabled || row.deletedAt) return null;
+
+  return {
+    delivery_id: row.id,
+    endpoint_id: row.endpointId,
+    environment_id: row.environmentId,
+    event_id: row.eventId,
+    url: row.url,
+    attempt: row.attempt,
+    secrets: activeSigningSecrets({
+      secretCiphertext: row.secretCiphertext,
+      secretPreviousCiphertext: row.secretPreviousCiphertext,
+      secretRotatedAt: row.secretRotatedAt,
+    }),
+    payload: row.payload,
+  };
+}
+
+/** A delivery that is due, as the relay claims it. */
+export interface DueDeliveryRow {
+  id: string;
+  environment_id: string;
+  endpoint_id: string;
+  event_id: string;
+  attempt: number;
+}
+
+/** Claim the deliveries that are due and hand each to `publish` — chapter 3.3's
+ * `drainOutbox` with ONE MORE PREDICATE (research R13).
+ *
+ * That is the whole point, and it is worth not obscuring: the reader built this
+ * loop two chapters ago. `SELECT … FOR UPDATE SKIP LOCKED`, publish, mark. The
+ * only difference is `AND next_attempt_at <= now()`, and that difference is the
+ * entire retry schedule.
+ *
+ * `SKIP LOCKED` matters here for the reason it mattered there: the api runs more
+ * than once, so two relays draining one table is the ordinary deployment rather
+ * than an edge case.
+ *
+ * NOTHING WAITS IN THE BROKER. A delivery enters the stream only once it is
+ * already due — which is the property research R1 measured the alternative
+ * against and found it wanting: a broker-held delay holds an acknowledgement
+ * slot the whole time it waits, so dead endpoints starve healthy ones. */
+export async function drainDueDeliveries(
+  db: Db,
+  limit: number,
+  publish: (row: DueDeliveryRow) => Promise<void>,
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    const claimed = (await tx.execute(
+      sql`SELECT id, environment_id, endpoint_id, event_id, attempt
+            FROM webhook_deliveries
+           WHERE state = 'pending'
+             AND dispatched_at IS NULL
+             AND next_attempt_at <= now()
+           ORDER BY next_attempt_at, id
+           LIMIT ${limit}
+             FOR UPDATE SKIP LOCKED`,
+    )) as unknown as { rows: DueDeliveryRow[] };
+
+    const dispatched: string[] = [];
+    try {
+      for (const row of claimed.rows) {
+        await publish(row);
+        dispatched.push(row.id);
+      }
+    } finally {
+      // In the `finally` for 3.3's reason: whatever went wrong with row N+1,
+      // rows 1..N really did reach the broker and must not be published twice by
+      // this instance's next pass.
+      if (dispatched.length > 0) {
+        await tx.execute(
+          sql`UPDATE webhook_deliveries SET dispatched_at = now()
+               WHERE id = ANY(${sql.raw(
+                 `ARRAY[${dispatched.map((id) => `'${id}'`).join(",")}]::uuid[]`,
+               )})`,
+        );
+      }
+    }
+    return dispatched.length;
+  });
+}
+
+/** How many deliveries are waiting to become due. The number an operator watches
+ * when a customer says "we stopped receiving webhooks". */
+export async function pendingDeliveryDepth(db: Db): Promise<number> {
+  const result = (await db.execute(
+    sql`SELECT count(*)::int AS pending
+          FROM webhook_deliveries
+         WHERE state = 'pending'`,
+  )) as unknown as { rows: { pending: number }[] };
+  return result.rows[0]?.pending ?? 0;
+}
+
+/** Put a dead-lettered delivery back on the schedule.
+ *
+ * Resets the EXISTING delivery row rather than inserting a new one, and that is
+ * forced by the shape of the data rather than chosen: `UNIQUE (event_id,
+ * endpoint_id)` is what makes expansion idempotent, so a second row for the same
+ * pair cannot exist. Reusing the row therefore preserves the original
+ * `event_id` — the identifier the customer deduplicates on — by construction
+ * instead of by remembering to copy it.
+ *
+ * **Current configuration, automatically.** The URL and the signing secrets are
+ * read from the endpoint at SEND time by `deliveryMaterial`, never stored on the
+ * delivery. So a replay of something that failed against a broken URL goes to
+ * whatever the endpoint says today, which is the whole reason anyone asks for a
+ * replay. Nothing here has to arrange that.
+ *
+ * **The dead-letter record is left alone.** FR-WHK-04 retains it for seven days,
+ * and a replay is a new attempt rather than an erasure of the fact that the
+ * attempts once ran out. Deleting it would remove the only evidence a customer's
+ * endpoint was broken at the moment somebody retried it.
+ *
+ * Returns false when there is no such dead letter — the controller's 404. */
+export async function replayDeadLetter(
+  db: Db,
+  deadLetterId: string,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [dead] = await tx
+      .select({
+        eventId: webhookDeadLetters.eventId,
+        endpointId: webhookDeadLetters.endpointId,
+      })
+      .from(webhookDeadLetters)
+      .where(eq(webhookDeadLetters.id, deadLetterId));
+    if (!dead) return false;
+
+    await tx
+      .update(webhookDeliveries)
+      .set({
+        state: "pending",
+        // Tier 1: a replay is a fresh chance, not a continuation of a schedule
+        // that has already run out.
+        attempt: 1,
+        nextAttemptAt: new Date(),
+        dispatchedAt: null,
+      })
+      .where(
+        and(
+          eq(webhookDeliveries.eventId, dead.eventId),
+          eq(webhookDeliveries.endpointId, dead.endpointId),
+        ),
+      );
+    return true;
+  });
+}
+
 export async function outboxDepth(db: Db): Promise<number> {
   const result = (await db.execute(
     sql`SELECT count(*)::int AS pending FROM outbox WHERE published_at IS NULL`,
@@ -611,6 +997,51 @@ function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : String(value);
 }
 
+/** A webhook endpoint as the management surface returns it. The ciphertext is
+ * absent by construction rather than by filtering — a read path that can return
+ * it is one refactor away from a response that does. */
+export interface WebhookEndpointRow {
+  id: string;
+  url: string;
+  event_types: string[];
+  enabled: boolean;
+  secret_rotated_at: string | null;
+  created_at: string;
+}
+
+/** Raised when an outcome names a delivery that is not there. A caller error,
+ * not a platform one — the controller turns it into a 404. */
+export class DeliveryNotFoundError extends Error {
+  constructor(id: string) {
+    super(`no such delivery: ${id}`);
+    this.name = "DeliveryNotFoundError";
+  }
+}
+
+export interface WebhookDeliveryRow {
+  id: string;
+  endpoint_id: string;
+  event_id: string;
+  attempt: number;
+  state: string;
+  next_attempt_at: string;
+  /** Non-null once the relay has published it. Exposed because the drain is
+   * GLOBAL — one dispatcher serves every environment — so a test that asserts on
+   * what ITS call to the drain returned is asserting on which suite got there
+   * first. Chapter 3.3's finding 3, in its third chapter. */
+  dispatched_at: string | null;
+}
+
+export interface WebhookDeadLetterRow {
+  id: string;
+  endpoint_id: string;
+  event_id: string;
+  last_status: number | null;
+  last_error: string | null;
+  attempts: number;
+  dead_lettered_at: string;
+}
+
 export class Repository {
   // Constructor parameter properties — the shorthand chapter 1.4 released
   // for this service when ADR-15 spent erasableSyntaxOnly on decorator
@@ -619,6 +1050,197 @@ export class Repository {
     private readonly db: Db,
     private readonly environmentId: string,
   ) {}
+
+  // ---------------------------------------------------------------------
+  // Webhook endpoints (chapter 3.5). Scoped like everything else on this class:
+  // the environment comes from the constructor and never from a caller, so a
+  // handler cannot ask for another tenant's endpoints even by accident
+  // (constitution I).
+  //
+  // Every read here excludes soft-deleted rows. That is the whole contract of
+  // `deleted_at`: the row survives so its dead letters can, and it is invisible
+  // to everything else.
+  // ---------------------------------------------------------------------
+
+  private get liveEndpoints() {
+    return and(
+      eq(webhookEndpoints.environmentId, this.environmentId),
+      isNull(webhookEndpoints.deletedAt),
+    );
+  }
+
+  async countEndpoints(): Promise<number> {
+    const rows = await this.db
+      .select({ id: webhookEndpoints.id })
+      .from(webhookEndpoints)
+      .where(this.liveEndpoints);
+    return rows.length;
+  }
+
+  async createEndpoint(input: {
+    url: string;
+    eventTypes: string[];
+    secretCiphertext: string;
+  }): Promise<WebhookEndpointRow> {
+    const id = randomUUID();
+    await this.db.insert(webhookEndpoints).values({
+      id,
+      environmentId: this.environmentId,
+      url: input.url,
+      eventTypes: input.eventTypes,
+      secretCiphertext: input.secretCiphertext,
+    });
+    const row = await this.getEndpoint(id);
+    if (!row) throw new Error("endpoint vanished immediately after insert");
+    return row;
+  }
+
+  async listEndpoints(): Promise<WebhookEndpointRow[]> {
+    return this.selectEndpoints(this.liveEndpoints);
+  }
+
+  async getEndpoint(id: string): Promise<WebhookEndpointRow | null> {
+    const rows = await this.selectEndpoints(
+      and(eq(webhookEndpoints.id, id), this.liveEndpoints),
+    );
+    return rows[0] ?? null;
+  }
+
+  /** Opens a 24-hour rotation window: the outgoing secret keeps signing until it
+   * closes, so a recipient accepting either is correct throughout
+   * (contracts/webhooks.md §Rotation). */
+  async rotateEndpointSecret(
+    id: string,
+    secretCiphertext: string,
+  ): Promise<WebhookEndpointRow | null> {
+    const current = await this.getEndpoint(id);
+    if (!current) return null;
+    const [previous] = await this.db
+      .select({ secretCiphertext: webhookEndpoints.secretCiphertext })
+      .from(webhookEndpoints)
+      .where(and(eq(webhookEndpoints.id, id), this.liveEndpoints));
+    await this.db
+      .update(webhookEndpoints)
+      .set({
+        secretCiphertext,
+        secretPreviousCiphertext: previous?.secretCiphertext ?? null,
+        secretRotatedAt: new Date(),
+      })
+      .where(and(eq(webhookEndpoints.id, id), this.liveEndpoints));
+    return this.getEndpoint(id);
+  }
+
+  async setEndpointEnabled(
+    id: string,
+    enabled: boolean,
+  ): Promise<WebhookEndpointRow | null> {
+    await this.db
+      .update(webhookEndpoints)
+      .set({ enabled })
+      .where(and(eq(webhookEndpoints.id, id), this.liveEndpoints));
+    return this.getEndpoint(id);
+  }
+
+  /** SOFT. A hard delete would have to cascade, and cascading would erase the
+   * customer's dead letters — which FR-WHK-04 says to retain for seven days.
+   * Returns false when there was nothing live to delete, which the controller
+   * turns into the same 404 a foreign tenant gets. */
+  async deleteEndpoint(id: string): Promise<boolean> {
+    const existing = await this.getEndpoint(id);
+    if (!existing) return false;
+    await this.db
+      .update(webhookEndpoints)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(webhookEndpoints.id, id), this.liveEndpoints));
+    return true;
+  }
+
+  /** Every delivery this event produced, for this environment. Scoped like
+   * everything else on this class — the drain is global, but a tenant's view of
+   * its own deliveries is not. */
+  async listDeliveriesForEvent(eventId: string): Promise<WebhookDeliveryRow[]> {
+    const rows = await this.db
+      .select({
+        id: webhookDeliveries.id,
+        endpointId: webhookDeliveries.endpointId,
+        eventId: webhookDeliveries.eventId,
+        attempt: webhookDeliveries.attempt,
+        state: webhookDeliveries.state,
+        nextAttemptAt: webhookDeliveries.nextAttemptAt,
+        dispatchedAt: webhookDeliveries.dispatchedAt,
+      })
+      .from(webhookDeliveries)
+      .where(
+        and(
+          eq(webhookDeliveries.environmentId, this.environmentId),
+          eq(webhookDeliveries.eventId, eventId),
+        ),
+      )
+      .orderBy(asc(webhookDeliveries.id));
+    return rows.map((r) => ({
+      id: r.id,
+      endpoint_id: r.endpointId,
+      event_id: r.eventId,
+      attempt: r.attempt,
+      state: r.state,
+      next_attempt_at: r.nextAttemptAt.toISOString(),
+      dispatched_at: r.dispatchedAt?.toISOString() ?? null,
+    }));
+  }
+
+  /** A tenant's dead letters, newest first. Scoped: a dead letter holds a
+   * payload that was being sent to this customer, which is why the table carries
+   * `environment_id` where 3.3's outbox and 3.4's ledger did not. */
+  async listDeadLetters(): Promise<WebhookDeadLetterRow[]> {
+    const rows = await this.db
+      .select({
+        id: webhookDeadLetters.id,
+        endpointId: webhookDeadLetters.endpointId,
+        eventId: webhookDeadLetters.eventId,
+        lastStatus: webhookDeadLetters.lastStatus,
+        lastError: webhookDeadLetters.lastError,
+        attempts: webhookDeadLetters.attempts,
+        deadLetteredAt: webhookDeadLetters.deadLetteredAt,
+      })
+      .from(webhookDeadLetters)
+      .where(eq(webhookDeadLetters.environmentId, this.environmentId))
+      .orderBy(desc(webhookDeadLetters.deadLetteredAt));
+    return rows.map((r) => ({
+      id: r.id,
+      endpoint_id: r.endpointId,
+      event_id: r.eventId,
+      last_status: r.lastStatus,
+      last_error: r.lastError,
+      attempts: r.attempts,
+      dead_lettered_at: r.deadLetteredAt.toISOString(),
+    }));
+  }
+
+  private async selectEndpoints(
+    where: ReturnType<typeof and>,
+  ): Promise<WebhookEndpointRow[]> {
+    const rows = await this.db
+      .select({
+        id: webhookEndpoints.id,
+        url: webhookEndpoints.url,
+        eventTypes: webhookEndpoints.eventTypes,
+        enabled: webhookEndpoints.enabled,
+        secretRotatedAt: webhookEndpoints.secretRotatedAt,
+        createdAt: webhookEndpoints.createdAt,
+      })
+      .from(webhookEndpoints)
+      .where(where);
+    // Never the ciphertext. A read path that can return it is one refactor away
+    // from a response that does.
+    return rows.map((r) => ({
+      id: r.id,
+      url: r.url,
+      event_types: r.eventTypes as string[],
+      enabled: r.enabled,
+      secret_rotated_at: r.secretRotatedAt?.toISOString() ?? null,
+      created_at: r.createdAt.toISOString(),
+    }));
+  }
 
   async createUser(externalId: string, displayName?: string): Promise<UserRow> {
     const id = randomUUID();
