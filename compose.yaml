@@ -1,6 +1,13 @@
 # The whole local world, one command:  docker compose up -d --wait
-# Four stores, each here by a recorded decision (SAD §9). Host ports are env
-# knobs with the standard defaults; the container side never changes.
+# Four stores, each here by a recorded decision (SAD §9), and — since chapter
+# 3.5 — the three services themselves. Host ports are env knobs with the
+# standard defaults; the container side never changes.
+#
+# The services are in a PROFILE. `docker compose up -d --wait` still brings up
+# only the stores, which is what every chapter from 1.2 onwards tells a reader to
+# run and what the test lanes expect: the suites start their own api and their
+# own gateways, and a second copy holding the same tables would race them
+# (chapter 3.3's finding 4). `--profile services` runs the platform instead.
 name: relay
 
 services:
@@ -65,6 +72,63 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
+
+
+  # --- the services (chapter 3.5) -----------------------------------------
+  # Behind `--profile services`, for the reason above.
+
+  api:
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      DATABASE_URL: postgres://relay:relay@postgres:5432/relay
+      RELAY_NATS_URL: nats://nats:4222
+      # Development values. Both are secrets in anything that is not a laptop,
+      # and the api refuses to start in production without the first.
+      RELAY_WEBHOOK_SECRET_KEY: ${RELAY_WEBHOOK_SECRET_KEY:-}
+      RELAY_INTERNAL_CREDENTIAL: ${RELAY_INTERNAL_CREDENTIAL:-rk_svc_local_development_credential_0000}
+      PORT: "4000"
+    ports:
+      - "${RELAY_API_PORT:-4000}:4000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4000/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  gateway:
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    environment:
+      RELAY_API_URL: http://api:4000
+      RELAY_REDIS_URL: redis://redis:6379
+      PORT: "4001"
+    ports:
+      - "${RELAY_GATEWAY_PORT:-4001}:4001"
+    depends_on:
+      api: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  dispatcher:
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/dispatcher/Dockerfile
+    environment:
+      RELAY_API_URL: http://api:4000
+      RELAY_NATS_URL: nats://nats:4222
+      RELAY_INTERNAL_CREDENTIAL: ${RELAY_INTERNAL_CREDENTIAL:-rk_svc_local_development_credential_0000}
+    depends_on:
+      api: { condition: service_healthy }
+      nats: { condition: service_healthy }
 
 volumes:
   postgres-data:
