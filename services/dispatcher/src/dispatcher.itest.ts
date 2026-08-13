@@ -158,6 +158,7 @@ describe("the dispatcher", () => {
         eventTypes: string[];
         secretCiphertext: string;
       }) => Promise<{ id: string }>;
+      deleteEndpoint: (id: string) => Promise<boolean>;
       listDeliveriesForEvent: (
         eventId: string,
       ) => Promise<
@@ -178,6 +179,10 @@ describe("the dispatcher", () => {
     ) => Promise<number>;
   };
   let secrets: { encryptSecret: (s: string) => string; mintSigningSecret: () => string };
+  /** The real tier table, loaded from the api's build like everything else here
+   * — the api is CommonJS and this package is ESM (ADR-15's dialect split), so
+   * importing its source directly is not available to us. */
+  let retryTiersMs: number[];
   let db: unknown;
   /** Only the expansion tests need one, so it is opened lazily and drained in
    * `afterAll` — an undrained connection keeps the process alive past the run. */
@@ -329,6 +334,9 @@ describe("the dispatcher", () => {
     };
     seeder = require_(join(API_DIST, "db", "repository.js")) as typeof seeder;
     secrets = require_(join(API_DIST, "webhooks", "secret.js")) as typeof secrets;
+    retryTiersMs = (
+      require_(join(API_DIST, "webhooks", "schedule.js")) as { RETRY_TIERS_MS: number[] }
+    ).RETRY_TIERS_MS;
     db = client.createDb(client.createPool());
 
     endpoint = customerEndpoint();
@@ -763,5 +771,87 @@ describe("the dispatcher", () => {
     const seen = logged("expand.unparseable").length;
     await pollUntil(() => false, ACK_WAIT_TEST_MS + 3_000);
     expect(logged("expand.unparseable").length).toBe(seen);
+  }, 60_000);
+  it("invariant 10: a FAILED delivery is retried — the same row, a second attempt", async () => {
+    // THE REGRESSION TEST FOR THE BUG THIS SUITE DID NOT HAVE.
+    //
+    // Every other case here uses a fresh delivery, so nothing ever published the
+    // SAME delivery to the broker twice — and the relay's deduplication key was
+    // the delivery id, which is stable across all seven attempts. JetStream
+    // collapsed every retry into the first attempt's message, the publish
+    // reported success, and the delivery sat `pending` with a `dispatched_at`
+    // that only an outcome report clears. Failing endpoints were never retried
+    // at all, and the entire schedule in FR-WHK-03 was unreachable.
+    //
+    // A walk against `--mode=fail` found it. This is that walk, made to run in CI.
+    endpoint.answerWith(500);
+    const seeded = await seed(["message.created"]);
+    const repo = new seeder.Repository(db, seeded.environmentId);
+
+    const eventId = randomUUID();
+    await seeder.expandEventToDeliveries(db, {
+      eventId,
+      environmentId: seeded.environmentId,
+      type: "message.created",
+      payload: { id: eventId, type: "message.created" },
+    });
+
+    const before = endpoint.received.length;
+    await publishDue();
+    await pollUntil(() => endpoint.received.length > before);
+
+    const [afterFirst] = await repo.listDeliveriesForEvent(eventId);
+    expect(afterFirst!.attempt).toBe(2); // rescheduled, not abandoned
+    expect(afterFirst!.state).toBe("pending");
+
+    // The second tier is one second away, so this waits it out rather than
+    // rewriting the clock — the schedule under test is the real one.
+    await new Promise((resolve) => setTimeout(resolve, retryTiersMs[1]! + 300));
+
+    const beforeSecond = endpoint.received.length;
+    await publishDue();
+    await pollUntil(() => endpoint.received.length > beforeSecond);
+
+    // The customer was contacted a SECOND time about the same delivery. Without
+    // the attempt in the deduplication key this is where it stops forever.
+    expect(endpoint.received.length).toBeGreaterThan(beforeSecond);
+    const [afterSecond] = await repo.listDeliveriesForEvent(eventId);
+    expect(afterSecond!.attempt).toBe(3);
+  }, 60_000);
+  it("a delivery for a REMOVED endpoint is skipped, not delivered", async () => {
+    // The spec's edge case: events already in the retry schedule for an endpoint
+    // the customer removed must not be delivered, and must not accumulate.
+    //
+    // Covered deliberately because it was covered ACCIDENTALLY before — by
+    // leftover deliveries other suites had left pointing at endpoints they had
+    // deleted. That made `deliver.ts`'s coverage a function of which suites ran
+    // first, and a ratchet pinned on it moved on its own.
+    endpoint.answerWith(200);
+    const seeded = await seed(["message.created"]);
+    const repo = new seeder.Repository(db, seeded.environmentId);
+
+    const eventId = randomUUID();
+    await seeder.expandEventToDeliveries(db, {
+      eventId,
+      environmentId: seeded.environmentId,
+      type: "message.created",
+      payload: { id: eventId, type: "message.created" },
+    });
+
+    // Removed AFTER the delivery was scheduled — the whole point. Soft-deleted,
+    // so the row is still joinable and the check has to be explicit.
+    await repo.deleteEndpoint(seeded.endpointId);
+
+    const before = endpoint.received.length;
+    await publishDue();
+    await pollUntil(() =>
+      logged("delivery.skipped").some((l) => l["reason"] === "endpoint_unavailable"),
+    );
+
+    expect(
+      logged("delivery.skipped").some((l) => l["reason"] === "endpoint_unavailable"),
+    ).toBe(true);
+    // And nothing was posted to the customer who asked to stop hearing from us.
+    expect(endpoint.received.length).toBe(before);
   }, 60_000);
 });
