@@ -7,6 +7,7 @@
 //
 //   --port=4555      fixed port (default). --port=0 asks the OS for a free one.
 //   --quiet          one line per request instead of the full envelope
+//   --host=0.0.0.0   bind beyond loopback, so a container can reach it
 //   --secret=SECRET  verify every signature, the way a customer would
 //   --reserialize    verify against a RE-SERIALISED body, and watch it fail
 //
@@ -36,6 +37,10 @@ const SECRET = arg("secret", "");
 const RESERIALIZE = flag("reserialize");
 const PORT = Number(arg("port", "4555"));
 const QUIET = flag("quiet");
+/** Loopback by default — this is a toy server that prints request bodies, and it
+ * should not be on the network unless somebody asks. `--host=0.0.0.0` is what the
+ * quickstart's V6 needs, where the dispatcher is in a container. */
+const HOST = arg("host", "127.0.0.1");
 
 if (!["ok", "fail", "hang", "flaky"].includes(MODE)) {
   console.error(`unknown --mode=${MODE} (expected ok, fail, hang or flaky)`);
@@ -158,12 +163,12 @@ server.on("error", (error) => {
   throw error;
 });
 
-server.listen(PORT, "127.0.0.1", () => {
+server.listen(PORT, HOST, () => {
   const { port } = server.address();
   // Printed in a fixed shape so a parent can read the port back when --port=0
   // handed the choice to the OS.
-  console.log(`MARKER listening url=http://127.0.0.1:${port}/hook mode=${MODE}`);
-  console.log(`hostile endpoint on http://127.0.0.1:${port}/hook  (mode: ${MODE})`);
+  console.log(`MARKER listening url=http://${HOST}:${port}/hook mode=${MODE}`);
+  console.log(`hostile endpoint on http://${HOST}:${port}/hook  (mode: ${MODE})`);
   console.log("ctrl-c to stop\n");
 });
 

@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -853,5 +853,33 @@ describe("the dispatcher", () => {
     ).toBe(true);
     // And nothing was posted to the customer who asked to stop hearing from us.
     expect(endpoint.received.length).toBe(before);
+  }, 60_000);
+  it("invariants 4 and 5: the signature ON THE WIRE verifies, over the bytes as sent", async () => {
+    // The unit tests prove `signDelivery` is correct. They cannot prove that
+    // `deliverOnce` calls it over the RIGHT BYTES and puts the result on the
+    // wire — and that gap is exactly where the re-serialisation trap lives, so
+    // the one mutation the sabotage list aims at it would have passed.
+    //
+    // Verified here the way a customer verifies: `node:crypto`, the documented
+    // recipe, and the raw body as received. Nothing from the signing path.
+    endpoint.answerWith(200);
+    const seeded = await seed(["message.created"]);
+    const { eventId } = await deliverEvent(seeded, "message.created");
+
+    const request = endpoint.received.find((r) => r.body.includes(eventId));
+    expect(request).toBeDefined();
+
+    const timestamp = request!.headers["relay-webhook-timestamp"];
+    const offered = String(request!.headers["relay-webhook-signature"])
+      .split(",")
+      .map((part) => part.trim().replace(/^v1=/, ""));
+
+    // The RAW body, byte for byte as it arrived. Parsing it and re-serialising
+    // would be the customer making the same mistake the platform must not.
+    const expected = createHmac("sha256", seeded.secret)
+      .update(`v1:${timestamp}:${request!.body}`)
+      .digest("hex");
+
+    expect(offered).toContain(expected);
   }, 60_000);
 });
