@@ -67,6 +67,23 @@ export class WebhooksController {
     return this.webhooks.setEnabled(id, false);
   }
 
+  /** Send a synthetic event to this endpoint and report what it answered
+   * (chapter 3.6, FR-013, FR-016).
+   *
+   * ALWAYS 200 when the test ran, whatever the endpoint said. A non-2xx from the
+   * customer's server is reported as `delivered: false` with the status, because
+   * the TEST succeeded — it found out. Answering 502 here would conflate "we could
+   * not run the test" with "your endpoint is unhealthy", and a customer debugging
+   * at 3 a.m. would read the second.
+   *
+   * 404 for an endpoint in another environment, the same answer a missing one
+   * gets. */
+  @Post(":id/test")
+  @HttpCode(200)
+  test(@Param("id") id: string) {
+    return this.webhooks.sendTestEvent(id);
+  }
+
   /** SOFT delete. The endpoint stops receiving deliveries and disappears from
    * every read; the row survives because its dead letters must (FR-WHK-04). */
   @Delete(":id")

@@ -1,10 +1,17 @@
 import {
+  Inject,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
 } from "@nestjs/common";
 
-import { Repository, type WebhookEndpointRow } from "../db/repository";
+import type { Db } from "../db/client";
+import {
+  createTestDelivery,
+  Repository,
+  testDeliveryResult,
+  type WebhookEndpointRow,
+} from "../db/repository";
 import { encryptSecret, mintSigningSecret } from "./secret";
 
 // The management surface's rules (chapter 3.5). Two of them are worth stating
@@ -46,9 +53,31 @@ export interface EndpointWithSecret extends WebhookEndpointRow {
   secret: string;
 }
 
+/** How long a caller waits for a test event to come back.
+ *
+ * The attempt happens in the dispatcher's process, so this route can only watch
+ * the row. Ten seconds is above the dispatcher's own attempt timeout, so a
+ * customer whose server hangs gets the honest answer — "no response" — rather than
+ * this bound firing first and reporting an inconclusive result for a conclusive
+ * failure. */
+const TEST_EVENT_TIMEOUT_MS = 10_000;
+const TEST_EVENT_POLL_MS = 100;
+
+/** What a test event answered, or why there is no answer yet. */
+export interface TestEventResult {
+  delivered: boolean;
+  status: number | null;
+  latency_ms: number | null;
+  error: string | null;
+  event_id: string;
+}
+
 @Injectable()
 export class WebhooksService {
-  constructor(private readonly repo: Repository) {}
+  constructor(
+    private readonly repo: Repository,
+    @Inject("DB") private readonly db: Db,
+  ) {}
 
   async create(input: CreateEndpointInput): Promise<EndpointWithSecret> {
     this.assertDeliverableUrl(input.url);
@@ -96,6 +125,59 @@ export class WebhooksService {
     const row = await this.repo.setEndpointEnabled(id, enabled);
     if (!row) throw new NotFoundException("no such webhook endpoint");
     return row;
+  }
+
+  /** Send one synthetic event to one endpoint and report what it answered
+   * (chapter 3.6, FR-013…FR-016, research R8).
+   *
+   * The delivery is REAL: a row on the ordinary schedule, published by the
+   * ordinary relay, posted and signed by the ordinary dispatcher, its outcome
+   * recorded by the ordinary seam. This method creates it and then WATCHES,
+   * because the attempt happens in another process and constitution IV does not
+   * let that process write its own answer anywhere else.
+   *
+   * That is why FR-014 is met rather than approximated. A route that posted the
+   * request itself would need a second copy of the signing code, and a test signed
+   * by a second copy proves nothing about real deliveries — which is the one thing
+   * a test event exists to prove. */
+  async sendTestEvent(endpointId: string): Promise<TestEventResult> {
+    const created = await createTestDelivery(this.db, {
+      endpointId,
+      environmentId: this.repo.environment,
+    });
+    // The same 404 a missing endpoint gets, so a probe cannot tell "no such
+    // endpoint" from "not yours" (FR-TEN-05).
+    if (!created) throw new NotFoundException("no such webhook endpoint");
+
+    const deadline = Date.now() + TEST_EVENT_TIMEOUT_MS;
+    for (;;) {
+      const result = await testDeliveryResult(this.db, created.deliveryId);
+      if (result?.settled) {
+        return {
+          delivered: result.delivered,
+          status: result.status,
+          latency_ms: result.latencyMs,
+          error: result.error,
+          event_id: created.eventId,
+        };
+      }
+      if (Date.now() >= deadline) {
+        // NOT an HTTP error, and the distinction is the contract's. A non-2xx from
+        // the customer means the test succeeded in finding out; this means the
+        // platform did not find out, and the `error` says which. Answering 500
+        // would conflate "we could not run the test" with "your endpoint is
+        // unhealthy", and the second is what a customer would read.
+        return {
+          delivered: false,
+          status: null,
+          latency_ms: null,
+          error:
+            "no attempt was reported within 10s — is the dispatcher running?",
+          event_id: created.eventId,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, TEST_EVENT_POLL_MS));
+    }
   }
 
   async remove(id: string): Promise<void> {

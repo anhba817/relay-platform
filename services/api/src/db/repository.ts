@@ -781,6 +781,118 @@ export async function recordAttemptOutcome(
   });
 }
 
+/** Create the one delivery a test event needs (chapter 3.6, FR-013, research R8).
+ *
+ * THREE DELIBERATE DEVIATIONS from `expandEventToDeliveries`, each with a reason,
+ * and they are the whole difference between a test event and a real one:
+ *
+ *   * ONE ENDPOINT, named by the caller, rather than every endpoint whose
+ *     subscription matches. A test is aimed. Fanning it out would send every other
+ *     endpoint in the environment a surprise event they did not ask for.
+ *   * DELIVERED EVEN WHEN DISABLED — `enabled` is not in the predicate below.
+ *     Testing is how a customer establishes their endpoint is fixed BEFORE
+ *     re-enabling it, and refusing here would make the disable-repair-re-enable
+ *     loop unclosable, which is the whole point of FR-WHK-09.
+ *   * NO CLAIM LEDGER. Expansion claims the event so a broker redelivery cannot
+ *     double a customer's webhooks; nothing redelivers a test, because a person
+ *     asked for it once over HTTP.
+ *
+ * Soft-deleted endpoints are still refused. A deleted endpoint is gone as far as
+ * the customer's own API is concerned, and delivering to one would be the platform
+ * reaching a url the customer believes it has forgotten.
+ *
+ * Everything else is ordinary: a real row, on the real schedule, delivered by the
+ * real dispatcher, signed by the real signing path. That is FR-014 — a test whose
+ * delivery worked differently would prove nothing about real deliveries. */
+export async function createTestDelivery(
+  db: Db,
+  input: { endpointId: string; environmentId: string },
+): Promise<{ deliveryId: string; eventId: string; payload: unknown } | null> {
+  const [endpoint] = await db
+    .select({ id: webhookEndpoints.id })
+    .from(webhookEndpoints)
+    .where(
+      and(
+        eq(webhookEndpoints.id, input.endpointId),
+        eq(webhookEndpoints.environmentId, input.environmentId),
+        isNull(webhookEndpoints.deletedAt),
+      ),
+    );
+  if (!endpoint) return null;
+
+  const eventId = randomUUID();
+  // MARKED TWICE, for two different readers (FR-015). A recipient switching on
+  // `type` and a recipient inspecting the body should each be able to tell this is
+  // synthetic without knowing about the other — and neither should have to know
+  // about `webhook_deliveries.synthetic`, which is the platform's own marker and
+  // not part of the contract.
+  const payload = {
+    id: eventId,
+    type: TEST_EVENT_TYPE,
+    environment_id: input.environmentId,
+    occurred_at: new Date().toISOString(),
+    test: true,
+    data: { message: "This is a test event from Relay." },
+  };
+
+  const deliveryId = randomUUID();
+  await db.insert(webhookDeliveries).values({
+    id: deliveryId,
+    environmentId: input.environmentId,
+    endpointId: endpoint.id,
+    eventId,
+    payload,
+    // Due immediately: a caller is waiting.
+    attempt: 1,
+    synthetic: true,
+  });
+
+  return { deliveryId, eventId, payload };
+}
+
+/** What a test event's envelope calls itself. Exported because the contract names
+ * it and a recipient may switch on it. */
+export const TEST_EVENT_TYPE = "webhook.test";
+
+/** What the endpoint answered, read back off the delivery the test created.
+ *
+ * The attempt happens in the DISPATCHER's process, so the route that is holding a
+ * customer's request cannot observe it directly — it waits for the row to move.
+ * `state` is the signal: `pending` means no outcome has been recorded yet. */
+export async function testDeliveryResult(
+  db: Db,
+  deliveryId: string,
+): Promise<{
+  settled: boolean;
+  delivered: boolean;
+  status: number | null;
+  error: string | null;
+  latencyMs: number | null;
+} | null> {
+  const [row] = await db
+    .select({
+      state: webhookDeliveries.state,
+      lastStatus: webhookDeliveries.lastStatus,
+      lastError: webhookDeliveries.lastError,
+      lastLatencyMs: webhookDeliveries.lastLatencyMs,
+    })
+    .from(webhookDeliveries)
+    .where(eq(webhookDeliveries.id, deliveryId));
+  if (!row) return null;
+
+  return {
+    settled: row.state !== "pending",
+    // A test event gets one attempt, so `delivered` and "the state is delivered"
+    // are the same fact. Reading the state rather than the status keeps that
+    // decision in one place — `recordAttemptOutcome` already decided what 2xx
+    // means, and a second opinion here is a second thing to get wrong.
+    delivered: row.state === "delivered",
+    status: row.lastStatus,
+    error: row.lastError,
+    latencyMs: row.lastLatencyMs,
+  };
+}
+
 /** Disable every endpoint whose failure run has outrun the hour (chapter 3.6,
  * research R1, contract invariant 12).
  *
@@ -915,6 +1027,7 @@ export async function deliveryMaterial(
       url: webhookEndpoints.url,
       enabled: webhookEndpoints.enabled,
       deletedAt: webhookEndpoints.deletedAt,
+      synthetic: webhookDeliveries.synthetic,
       secretCiphertext: webhookEndpoints.secretCiphertext,
       secretPreviousCiphertext: webhookEndpoints.secretPreviousCiphertext,
       secretRotatedAt: webhookEndpoints.secretRotatedAt,
@@ -930,7 +1043,19 @@ export async function deliveryMaterial(
   // An endpoint paused or removed after the delivery was scheduled gets nothing.
   // The spec's edge case: events already in the retry schedule for a removed
   // endpoint must not be delivered.
-  if (!row.enabled || row.deletedAt) return null;
+  //
+  // A TEST EVENT IS THE EXCEPTION, and it is the only one (chapter 3.6, FR-013).
+  // Two requirements meet exactly here and pull opposite ways: invariant 9 says a
+  // disabled endpoint receives no attempts, and FR-013 says a customer may test a
+  // disabled endpoint — which is how they establish it is fixed BEFORE re-enabling
+  // it. `synthetic` is what tells them apart, and it is the reason that column is a
+  // column rather than a string comparison against a customer-visible payload.
+  //
+  // DELETED IS STILL DELETED. A soft-deleted endpoint is gone as far as the
+  // customer's own API is concerned, and delivering to one — test or not — would be
+  // the platform reaching a url the customer believes it has forgotten.
+  if (row.deletedAt) return null;
+  if (!row.enabled && !row.synthetic) return null;
 
   return {
     delivery_id: row.id,
@@ -1460,6 +1585,18 @@ export class Repository {
     private readonly environmentId: string,
   ) {}
 
+  /** The tenant this repository is scoped to, readable but not settable.
+   *
+   * Added in chapter 3.6 for the test event, which needs an UNSCOPED operation —
+   * `createTestDelivery` ignores subscriptions and `enabled`, so it cannot be a
+   * method here — but must still be told which environment is asking. Exposing the
+   * id rather than widening the operation keeps constitution I's shape: the
+   * environment still comes from a verified principal, never from a request body.
+   */
+  get environment(): string {
+    return this.environmentId;
+  }
+
   // ---------------------------------------------------------------------
   // Webhook endpoints (chapter 3.5). Scoped like everything else on this class:
   // the environment comes from the constructor and never from a caller, so a
@@ -1545,7 +1682,31 @@ export class Repository {
   ): Promise<WebhookEndpointRow | null> {
     await this.db
       .update(webhookEndpoints)
-      .set({ enabled })
+      .set({
+        enabled,
+        // RE-ENABLING CLEARS THE RUN, all four columns, in this one statement
+        // (chapter 3.6, FR-017). The hour is measured from the NEXT failure, not
+        // resumed from the old one — otherwise a customer who fixed their server
+        // and switched it back on would be disabled again by the first failure
+        // after that, on the strength of an outage they had already repaired.
+        //
+        // `disabled_at` and `disabled_reason` go too, because FR-009 reads them as
+        // "the platform switched this off" and after a re-enable that is no longer
+        // true. A schema CHECK requires those two to agree, so they must move
+        // together whatever else happens here.
+        //
+        // DISABLING clears nothing. A customer pausing their own endpoint has said
+        // nothing about whether it is healthy, and throwing away the run would let
+        // a disable/enable cycle launder an hour of failures.
+        ...(enabled
+          ? {
+              failureRunStartedAt: null,
+              failureRunAttempts: null,
+              disabledAt: null,
+              disabledReason: null,
+            }
+          : {}),
+      })
       .where(and(eq(webhookEndpoints.id, id), this.liveEndpoints));
     return this.getEndpoint(id);
   }
