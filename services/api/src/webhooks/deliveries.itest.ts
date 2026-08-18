@@ -15,6 +15,9 @@ import {
   sweepDisabledEndpoints,
   timesHandled,
 } from "../db/repository";
+import { createLogger } from "@relay/service-kit";
+
+import { createDeliveryRelay } from "./delivery-relay";
 import { MAX_ATTEMPTS, RETRY_TIERS_MS } from "./schedule";
 import { encryptSecret, mintSigningSecret } from "./secret";
 
@@ -766,6 +769,28 @@ describe("the failure run", () => {
   let env: { id: string };
   let repo: Repository;
 
+  /** Every environment these tests mint, so their leftovers can be settled.
+   *
+   * THE RELAY'S DRAIN IS GLOBAL and takes 50 due rows at a time, oldest first.
+   * These tests report failures, so their deliveries are RESCHEDULED — they fall
+   * due again a second later and stay due for ever, because nothing here delivers
+   * them. Left behind, a few hundred of them sit at the front of that 50-row
+   * window and starve a later suite's own delivery out of it entirely.
+   *
+   * That is not hypothetical: it failed four tests in `dispatcher.itest.ts` under
+   * the coverage lane, which runs every suite in one process, and it failed them
+   * with `expected 0 to be greater than 0` — nothing delivered, no error anywhere.
+   * The suite that caused it passed.
+   *
+   * Chapter 3.6's baseline drew the rule twice already: clean up what you created,
+   * and only what you created. */
+  const minted: string[] = [];
+  const mintEnvironment = async (name: string) => {
+    const created = await createEnvironment(db, { name });
+    minted.push(created.id);
+    return created;
+  };
+
   const seedEndpoint = async (scope = repo) => {
     const secret = mintSigningSecret();
     return scope.createEndpoint({
@@ -862,11 +887,24 @@ describe("the failure run", () => {
   beforeAll(async () => {
     db = createDb(createPool());
     env = await createEnvironment(db, { name: "disable-itest" });
+    minted.push(env.id);
     repo = new Repository(db, env.id);
   });
 
+  afterAll(async () => {
+    // Settle every delivery these environments left pending. `dead` rather than
+    // deleted: the rows are evidence a later reader of this database may want, and
+    // a state the relay does not look at costs nothing to keep.
+    if (minted.length === 0) return;
+    const list = minted.map((id) => `'${id}'`).join(",");
+    await db.execute(
+      `UPDATE webhook_deliveries SET state = 'dead'
+        WHERE state = 'pending' AND environment_id IN (${list})`,
+    );
+  }, 60_000);
+
   it("invariant 6: a failure opens the run, and further failures extend it", async () => {
-    const scoped = await createEnvironment(db, { name: "disable-itest-open" });
+    const scoped = await mintEnvironment("disable-itest-open");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -889,7 +927,7 @@ describe("the failure run", () => {
   }, 60_000);
 
   it("invariant 7: any success clears the run", async () => {
-    const scoped = await createEnvironment(db, { name: "disable-itest-clear" });
+    const scoped = await mintEnvironment("disable-itest-clear");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -908,7 +946,7 @@ describe("the failure run", () => {
     // off endpoints which sometimes work is a worse failure than one that keeps
     // trying. Four failures over an aged window, then one success, repeated — the
     // run never reaches both conditions at once because the success resets it.
-    const scoped = await createEnvironment(db, { name: "disable-itest-flaky" });
+    const scoped = await mintEnvironment("disable-itest-flaky");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -926,7 +964,7 @@ describe("the failure run", () => {
   }, 120_000);
 
   it("invariants 6 and 11: an hour of failures past the floor disables it, once, with one notification", async () => {
-    const scoped = await createEnvironment(db, { name: "disable-itest-disable" });
+    const scoped = await mintEnvironment("disable-itest-disable");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -959,7 +997,7 @@ describe("the failure run", () => {
   }, 120_000);
 
   it("invariant 8: further failures do not disable it again or notify again", async () => {
-    const scoped = await createEnvironment(db, { name: "disable-itest-once" });
+    const scoped = await mintEnvironment("disable-itest-once");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -984,7 +1022,7 @@ describe("the failure run", () => {
     // outcomes for two deliveries to the same endpoint in the same moment. Without
     // `FOR UPDATE` both read four, both write five, and both decide to disable —
     // two disablements and two notifications for one outage.
-    const scoped = await createEnvironment(db, { name: "disable-itest-race" });
+    const scoped = await mintEnvironment("disable-itest-race");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -1020,7 +1058,7 @@ describe("the failure run", () => {
   }, 120_000);
 
   it("invariant 9: a disabled endpoint receives no new deliveries", async () => {
-    const scoped = await createEnvironment(db, { name: "disable-itest-nonew" });
+    const scoped = await mintEnvironment("disable-itest-nonew");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
     const healthy = await seedEndpoint(scopedRepo);
@@ -1047,8 +1085,8 @@ describe("the failure run", () => {
   it("invariant 10: disabling one endpoint changes nothing for any other", async () => {
     // FR-012 and SC-004. One endpoint in the same environment, one in another —
     // neither loses its run state, its `enabled`, or its deliveries.
-    const scoped = await createEnvironment(db, { name: "disable-itest-iso-a" });
-    const other = await createEnvironment(db, { name: "disable-itest-iso-b" });
+    const scoped = await mintEnvironment("disable-itest-iso-a");
+    const other = await mintEnvironment("disable-itest-iso-b");
     const scopedRepo = new Repository(db, scoped.id);
     const otherRepo = new Repository(db, other.id);
 
@@ -1083,7 +1121,7 @@ describe("the failure run", () => {
     // and no further outcome will ever arrive — the delivery dead-lettered, or the
     // environment simply went quiet. An outcome-only check never fires again and
     // the endpoint stays enabled and failing for ever.
-    const scoped = await createEnvironment(db, { name: "disable-itest-sweep" });
+    const scoped = await mintEnvironment("disable-itest-sweep");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -1115,7 +1153,7 @@ describe("the failure run", () => {
     // at-most-once rule rather than reimplementing it. Running it twice must not
     // produce a second notification — and running it against an endpoint the
     // on-outcome path already disabled must find nothing to do.
-    const scoped = await createEnvironment(db, { name: "disable-itest-sweep2" });
+    const scoped = await mintEnvironment("disable-itest-sweep2");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -1132,7 +1170,7 @@ describe("the failure run", () => {
   it("the sweep leaves a healthy endpoint and one still inside the hour alone", async () => {
     // The sweep runs several times a second in a live service, so what it does NOT
     // touch matters as much as what it does.
-    const scoped = await createEnvironment(db, { name: "disable-itest-sweep3" });
+    const scoped = await mintEnvironment("disable-itest-sweep3");
     const scopedRepo = new Repository(db, scoped.id);
     const healthy = await seedEndpoint(scopedRepo);
     const recent = await seedEndpoint(scopedRepo);
@@ -1154,7 +1192,7 @@ describe("the failure run", () => {
     // clear a run. A failed test must not push an endpoint toward disablement, and
     // a successful one must not let a customer mask a real outage by testing until
     // it passes.
-    const scoped = await createEnvironment(db, { name: "disable-itest-synthetic" });
+    const scoped = await mintEnvironment("disable-itest-synthetic");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -1200,7 +1238,7 @@ describe("the failure run", () => {
     // A test event is a diagnostic the customer already has the answer to, so
     // putting one there would offer an operator a "replay" button that re-sends a
     // test.
-    const scoped = await createEnvironment(db, { name: "disable-itest-nodl" });
+    const scoped = await mintEnvironment("disable-itest-nodl");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -1224,4 +1262,176 @@ describe("the failure run", () => {
     );
     expect(mine).toHaveLength(0);
   }, 60_000);
+});
+
+// The sweep as the RELAY runs it (chapter 3.6, T033's reason for existing).
+//
+// Everything above calls `sweepDisabledEndpoints` directly, which leaves the
+// wrapper around it — the flag, the count log, the swallowed failure — measured by
+// nothing. Research R11 predicted exactly this: "the sweep runs in the relay loop
+// … easy to exercise in a way the instrument cannot see". Chapter 3.5 ignored the
+// equivalent warning and found four red thresholds with the chapter otherwise
+// finished.
+describe("the sweep, through the relay that runs it", () => {
+  let db: Db;
+
+  /** A publisher that goes nowhere. The sweep does not publish, so a real one
+   * would only give this test a broker to be flaky about. */
+  const silentPublisher = {
+    async publish() {},
+    async close() {},
+  };
+
+  const captured = () => {
+    const lines: Record<string, unknown>[] = [];
+    return {
+      lines,
+      logger: createLogger("sweep-itest", (line) =>
+        lines.push(JSON.parse(String(line)) as Record<string, unknown>),
+      ),
+    };
+  };
+
+  /** Same bookkeeping as the describe above, for the same reason: these tests
+   * report failures, so the deliveries they create fall due again for ever. */
+  const minted: string[] = [];
+
+  beforeAll(() => {
+    db = createDb(createPool());
+  });
+
+  afterAll(async () => {
+    if (minted.length === 0) return;
+    const list = minted.map((id) => `'${id}'`).join(",");
+    await db.execute(
+      `UPDATE webhook_deliveries SET state = 'dead'
+        WHERE state = 'pending' AND environment_id IN (${list})`,
+    );
+  }, 60_000);
+
+  const doomedEndpoint = async () => {
+    const env = await createEnvironment(db, { name: `sweep-relay-${randomUUID().slice(0, 8)}` });
+    minted.push(env.id);
+    const repo = new Repository(db, env.id);
+    const secret = mintSigningSecret();
+    const endpoint = await repo.createEndpoint({
+      url: `https://example.test/${randomUUID()}`,
+      eventTypes: ["message.created"],
+      secretCiphertext: encryptSecret(secret),
+    });
+    // Five failures against fresh deliveries, then age the run past the hour.
+    for (let i = 0; i < 5; i++) {
+      const eventId = randomUUID();
+      await expandEventToDeliveries(db, {
+        eventId,
+        environmentId: env.id,
+        type: "message.created",
+        payload: { id: eventId, type: "message.created" },
+      });
+      const rows = await repo.listDeliveriesForEvent(eventId);
+      const mine = rows.find((r) => r.endpoint_id === endpoint.id)!;
+      await recordAttemptOutcome(db, {
+        deliveryId: mine.id,
+        attempt: mine.attempt,
+        status: 500,
+        latencyMs: 4,
+      });
+    }
+    await db.execute(
+      `UPDATE webhook_endpoints
+          SET failure_run_started_at = now() - interval '64 minutes'
+        WHERE id = '${endpoint.id}'`,
+    );
+    return endpoint;
+  };
+
+  const enabledOf = async (id: string) => {
+    const { rows } = (await db.execute(
+      `SELECT enabled FROM webhook_endpoints WHERE id = '${id}'`,
+    )) as unknown as { rows: { enabled: boolean }[] };
+    return rows[0]!.enabled;
+  };
+
+  it("disables through the relay and logs a count", async () => {
+    const endpoint = await doomedEndpoint();
+    const { logger, lines } = captured();
+    const relay = createDeliveryRelay({
+      db,
+      publisher: silentPublisher,
+      logger,
+      sweepEnabled: true,
+    });
+
+    const disabled = await relay.sweepOnce();
+
+    expect(disabled).toBeGreaterThanOrEqual(1);
+    expect(await enabledOf(endpoint.id)).toBe(false);
+    const logged = lines.filter((l) => l["msg"] === "webhooks.endpoints_disabled");
+    expect(logged).toHaveLength(1);
+    // A COUNT, never an endpoint id or a url — the log discipline every relay in
+    // this workspace keeps (NFR-SEC-06).
+    expect(logged[0]!["count"]).toBe(disabled);
+    expect(JSON.stringify(logged)).not.toContain(endpoint.id);
+  }, 120_000);
+
+  it("does nothing at all with RELAY_DISABLE_SWEEP off", async () => {
+    // Quickstart V6's first half. This is what an outcome-only check ships, and
+    // reading it is the only way the second half means anything.
+    const endpoint = await doomedEndpoint();
+    const { logger, lines } = captured();
+    const relay = createDeliveryRelay({
+      db,
+      publisher: silentPublisher,
+      logger,
+      sweepEnabled: false,
+    });
+
+    expect(await relay.sweepOnce()).toBe(0);
+    // Still enabled, still failing, hours past the threshold. That is the bug.
+    expect(await enabledOf(endpoint.id)).toBe(true);
+    expect(lines).toHaveLength(0);
+  }, 120_000);
+
+  it("logs and swallows a sweep failure rather than stopping the loop", async () => {
+    // An endpoint that should have been disabled and was not costs one more failed
+    // delivery. A relay that stopped draining costs every customer's webhooks. So
+    // the sweep's failure is logged and dropped, exactly as the drain's is.
+    const { logger, lines } = captured();
+    const relay = createDeliveryRelay({
+      // A db whose every query fails. Closing a real pool would be a slower way to
+      // say the same thing and would take the other tests' pool with it.
+      db: {
+        transaction: async () => {
+          throw new Error("connection terminated unexpectedly");
+        },
+      } as unknown as Db,
+      publisher: silentPublisher,
+      logger,
+      sweepEnabled: true,
+    });
+
+    expect(await relay.sweepOnce()).toBe(0);
+    const failed = lines.filter((l) => l["msg"] === "webhooks.disable_sweep_failed");
+    expect(failed).toHaveLength(1);
+    expect(String(failed[0]!["error"])).toContain("connection terminated");
+  });
+
+  it("logs nothing when there is nothing to disable", async () => {
+    // This runs several times a second in a live service. A line per pass would
+    // bury every other line the api writes.
+    const { logger, lines } = captured();
+    const relay = createDeliveryRelay({
+      db,
+      publisher: silentPublisher,
+      logger,
+      sweepEnabled: true,
+    });
+
+    // Whatever the shared database holds, a second sweep immediately after a first
+    // has nothing left that is both eligible and enabled.
+    await relay.sweepOnce();
+    lines.length = 0;
+    expect(await relay.sweepOnce()).toBe(0);
+    expect(lines).toHaveLength(0);
+  }, 120_000);
 });

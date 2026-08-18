@@ -157,10 +157,26 @@ describe("the attempt record", () => {
     return inbox.get(environmentId) ?? [];
   };
 
+  /** Every environment this suite mints, so its leftovers can be settled.
+   *
+   * The relay's drain is GLOBAL and claims 50 due rows at a time, oldest first.
+   * Reports of failure reschedule their delivery, so a suite that reports failures
+   * and never delivers them leaves rows that are due again a second later and stay
+   * that way. Enough of them starve a later suite's own delivery out of the window
+   * — which is exactly how four `dispatcher.itest.ts` tests failed under the
+   * coverage lane, with nothing delivered and no error anywhere. */
+  const minted: string[] = [];
+  const mintEnvironment = async (name: string) => {
+    const created = await createEnvironment(db, { name });
+    minted.push(created.id);
+    return created;
+  };
+
   beforeAll(async () => {
     process.env["RELAY_INTERNAL_CREDENTIAL"] = CREDENTIAL;
     db = createDb(createPool());
     env = await createEnvironment(db, { name: "attempts-itest" });
+    minted.push(env.id);
     repo = new Repository(db, env.id);
 
     app = (
@@ -224,6 +240,13 @@ describe("the attempt record", () => {
         .catch(() => undefined);
       await nats.drain();
     }
+    if (minted.length > 0) {
+      const list = minted.map((id) => `'${id}'`).join(",");
+      await db.execute(
+        `UPDATE webhook_deliveries SET state = 'dead'
+          WHERE state = 'pending' AND environment_id IN (${list})`,
+      );
+    }
     await app?.close();
   }, 60_000);
 
@@ -238,7 +261,7 @@ describe("the attempt record", () => {
   });
 
   it("invariants 1, 2, 3: a recorded outcome publishes one event carrying the four identifiers", async () => {
-    const scoped = await createEnvironment(db, { name: "attempts-itest-one" });
+    const scoped = await mintEnvironment("attempts-itest-one");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
     const { eventId, delivery } = await deliveryFor(scoped.id, scopedRepo);
@@ -285,7 +308,7 @@ describe("the attempt record", () => {
     // FR-001's hardest case. Nothing answered, so there is no status to report —
     // and the attempt still happened, which is exactly what a customer asking
     // "what did you do on my behalf" needs to see.
-    const scoped = await createEnvironment(db, { name: "attempts-itest-timeout" });
+    const scoped = await mintEnvironment("attempts-itest-timeout");
     const scopedRepo = new Repository(db, scoped.id);
     await seedEndpoint(scopedRepo);
     const { delivery } = await deliveryFor(scoped.id, scopedRepo);
@@ -314,7 +337,7 @@ describe("the attempt record", () => {
     // for attempts 2..7 and the schedule's clock is irrelevant to what gets
     // published. Waiting for the real 2h tier would make this test unrunnable,
     // and the thing under test is the record, not the delay.
-    const scoped = await createEnvironment(db, { name: "attempts-itest-full" });
+    const scoped = await mintEnvironment("attempts-itest-full");
     const scopedRepo = new Repository(db, scoped.id);
     await seedEndpoint(scopedRepo);
     const { delivery } = await deliveryFor(scoped.id, scopedRepo);
@@ -358,7 +381,7 @@ describe("the attempt record", () => {
     // gap makes a second report ordinary. It changes no row — and nothing on the
     // analytical path deduplicates, so a second event here would show a customer
     // a retry that never happened.
-    const scoped = await createEnvironment(db, { name: "attempts-itest-repeat" });
+    const scoped = await mintEnvironment("attempts-itest-repeat");
     const scopedRepo = new Repository(db, scoped.id);
     await seedEndpoint(scopedRepo);
     const { delivery } = await deliveryFor(scoped.id, scopedRepo);
@@ -386,8 +409,8 @@ describe("the attempt record", () => {
     // between subject and payload is the shape a cross-tenant leak would take
     // here — nothing would error, and one customer's dashboard would show
     // another's traffic.
-    const a = await createEnvironment(db, { name: "attempts-itest-tenant-a" });
-    const b = await createEnvironment(db, { name: "attempts-itest-tenant-b" });
+    const a = await mintEnvironment("attempts-itest-tenant-a");
+    const b = await mintEnvironment("attempts-itest-tenant-b");
     const repoA = new Repository(db, a.id);
     const repoB = new Repository(db, b.id);
     await seedEndpoint(repoA);
@@ -423,7 +446,7 @@ describe("the attempt record", () => {
     // SC-006 end to end. The unit test proves `shape` is an allow-list; this
     // proves the thing actually on the stream contains none of a real delivery's
     // sensitive parts, including the endpoint's url and the event body.
-    const scoped = await createEnvironment(db, { name: "attempts-itest-secrets" });
+    const scoped = await mintEnvironment("attempts-itest-secrets");
     const scopedRepo = new Repository(db, scoped.id);
     const secret = mintSigningSecret();
     const endpoint = await scopedRepo.createEndpoint({
@@ -468,7 +491,7 @@ describe("the attempt record", () => {
     // The other half of the distinction the disable columns exist to draw, and it
     // is testable before auto-disable exists: `setEndpointEnabled(false)` must
     // leave `disabled_at` null.
-    const scoped = await createEnvironment(db, { name: "attempts-itest-manual" });
+    const scoped = await mintEnvironment("attempts-itest-manual");
     const scopedRepo = new Repository(db, scoped.id);
     const endpoint = await seedEndpoint(scopedRepo);
 
@@ -499,7 +522,7 @@ describe("the attempt record", () => {
     // The state the test event and the sweep both read (data-model.md). Chapter
     // 3.5 recorded an attempt by moving the delivery and discarded the answer;
     // this is the column that stops the sweep having to write "cause unknown".
-    const scoped = await createEnvironment(db, { name: "attempts-itest-last" });
+    const scoped = await mintEnvironment("attempts-itest-last");
     const scopedRepo = new Repository(db, scoped.id);
     await seedEndpoint(scopedRepo);
     const { delivery } = await deliveryFor(scoped.id, scopedRepo);
@@ -541,7 +564,7 @@ describe("the attempt record", () => {
     // in the chapter rather than papered over here: an operator who deletes this
     // stream loses attempt records until the api restarts. Nothing after this test
     // may depend on the stream, so nothing is.
-    const scoped = await createEnvironment(db, { name: "attempts-itest-nostream" });
+    const scoped = await mintEnvironment("attempts-itest-nostream");
     const scopedRepo = new Repository(db, scoped.id);
     await seedEndpoint(scopedRepo);
     const { delivery } = await deliveryFor(scoped.id, scopedRepo);
