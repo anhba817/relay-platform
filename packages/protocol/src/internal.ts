@@ -162,6 +162,66 @@ export function deliverySubjectFor(environmentId: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Analytical events (chapter 3.6, constitution III).
+//
+// The THIRD grammar in this file, and it is here for the reason the other two
+// are: a consumer that assembles its own subject filter receives nothing the day
+// the grammar changes — no error, no warning, just an empty stream position. Part
+// 4's ingester is that consumer, and it does not exist yet, which is exactly when
+// a shared definition is cheapest to establish.
+//
+// `analytics.{domain}.{action}.{environment_id}` extends chapter 3.4's
+// `events.{domain}.{action}.{env}` rather than inventing a second convention.
+//
+// The stream is SEPARATE from `EVENTS` and `DELIVERIES`, and that is a decision
+// rather than tidiness (research R4). `EVENTS` carries tenant domain events whose
+// consumers must not miss one; `DELIVERIES` carries work. Attempt records are
+// neither: high volume, deliberately lossy (research R5), and a consumer that
+// wants them does not want every message event alongside.
+// ---------------------------------------------------------------------------
+
+export const ANALYTICS_STREAM = "ANALYTICS";
+export const ANALYTICS_SUBJECT_PREFIX = "analytics";
+export const ALL_ANALYTICS_SUBJECT = `${ANALYTICS_SUBJECT_PREFIX}.>`;
+
+/** A UUID, checked rather than trusted.
+ *
+ * The environment id becomes a SUBJECT TOKEN, and NATS subjects are
+ * dot-delimited: a value containing a dot silently creates a deeper subject than
+ * intended, and one containing `*` or `>` creates a wildcard. Neither fails at
+ * publish time. Both would put one tenant's attempt records where another
+ * tenant's filter can reach them, which is constitution I stated as a parsing
+ * problem. Every caller in this platform holds a uuid already, so refusing
+ * anything else costs nothing. */
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function analyticsSubjectFor(
+  domain: string,
+  action: string,
+  environmentId: string,
+): string {
+  if (!domain) throw new Error("a domain is required");
+  if (!action) throw new Error("an action is required");
+  if (!UUID.test(environmentId)) {
+    throw new Error("an environment id must be a uuid");
+  }
+  return [ANALYTICS_SUBJECT_PREFIX, domain, action, environmentId].join(".");
+}
+
+/** The one action this chapter publishes. Named so a consumer filters on a
+ * constant rather than on a string it typed. */
+export const WEBHOOK_ATTEMPT_ACTION = { domain: "webhook", action: "attempt" };
+
+export function webhookAttemptSubject(environmentId: string): string {
+  return analyticsSubjectFor(
+    WEBHOOK_ATTEMPT_ACTION.domain,
+    WEBHOOK_ATTEMPT_ACTION.action,
+    environmentId,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The dispatch contract (chapter 3.5, constitution IV).
 //
 // The dispatcher owns no database. "Only the API service writes to PostgreSQL…

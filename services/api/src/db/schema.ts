@@ -401,10 +401,29 @@ export const webhookEndpoints = pgTable(
     // accepting either is correct throughout (contracts/webhooks.md §Rotation).
     secretPreviousCiphertext: text("secret_previous_ciphertext"),
     secretRotatedAt: timestamp("secret_rotated_at", { withTimezone: true }),
-    // An owner can pause an endpoint. What disables one AUTOMATICALLY after
-    // continuous failure is FR-WHK-07's, in the follow-on chapter — the column
-    // exists now so that chapter adds a rule rather than a migration.
+    // An owner can pause an endpoint. Chapter 3.6 is the follow-on chapter 3.5
+    // named here, and the prediction held: automatic disablement added a rule and
+    // four columns, and did not have to change this one.
     enabled: boolean("enabled").notNull().default(true),
+    // THE FAILURE RUN (chapter 3.6, FR-006). The current unbroken sequence of
+    // failures, and nothing more — history is the attempt event stream, not this.
+    //
+    // Two columns rather than a table, because a run is one row per endpoint BY
+    // DEFINITION: it is the *current* run, and there is only ever one. A table
+    // would need a "which row is current" rule, and that rule is the bug
+    // (research R2). Both null when the endpoint is healthy, and any delivered
+    // outcome sets them back to null.
+    failureRunStartedAt: timestamp("failure_run_started_at", {
+      withTimezone: true,
+    }),
+    failureRunAttempts: integer("failure_run_attempts"),
+    // WHO SWITCHED IT OFF, which `enabled` alone cannot say. Auto-disable sets
+    // `enabled = false` AND stamps these; a customer pausing their own endpoint
+    // sets `enabled = false` and leaves them null. That asymmetry IS FR-009: a
+    // customer can tell a platform disablement from their own by whether the
+    // platform left its fingerprints.
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    disabledReason: text("disabled_reason"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -417,7 +436,33 @@ export const webhookEndpoints = pgTable(
     // the record of what it was survives its deletion.
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
-  (t) => [index("webhook_endpoints_environment_idx").on(t.environmentId)],
+  (t) => [
+    index("webhook_endpoints_environment_idx").on(t.environmentId),
+    // The SWEEP's only query (chapter 3.6, research R1): enabled endpoints with
+    // an open failure run, so the one that has outrun the hour can be found
+    // without reading every endpoint in the platform. Partial, for the reason
+    // 3.3's outbox index and 3.5's delivery index are partial — a healthy
+    // endpoint has a null run and costs nothing to keep out of it.
+    index("webhook_endpoints_failure_run_idx")
+      .on(t.failureRunStartedAt)
+      .where(sql`${t.enabled} AND ${t.failureRunStartedAt} IS NOT NULL`),
+    // The two halves of a run travel together, and the database says so rather
+    // than four call sites remembering to. A run with a start and no count, or a
+    // count and no start, is not a state this platform has a meaning for — and
+    // `shouldDisable` would read the missing half as zero, which is the shape of
+    // a bug that disables nothing and looks like a policy decision.
+    check(
+      "webhook_endpoints_failure_run_check",
+      sql`(${t.failureRunStartedAt} IS NULL) = (${t.failureRunAttempts} IS NULL)`,
+    ),
+    // Same argument for the disable stamp. FR-009 rests on `disabled_at` being
+    // the platform's fingerprint, so a reason without a timestamp would make the
+    // one distinction a customer needs unreadable.
+    check(
+      "webhook_endpoints_disabled_check",
+      sql`(${t.disabledAt} IS NULL) = (${t.disabledReason} IS NULL)`,
+    ),
+  ],
 );
 
 // The retry schedule — and it is chapter 3.3's outbox with one more column.
@@ -461,6 +506,34 @@ export const webhookDeliveries = pgTable(
     // scheduled. The relay's claim, in the shape `outbox.published_at` has.
     dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
     state: text("state").notNull().default("pending"),
+    // WHAT THE ENDPOINT ACTUALLY SAID on the most recent attempt (chapter 3.6).
+    //
+    // Chapter 3.5 recorded an attempt by MOVING the delivery — state, attempt,
+    // next_attempt_at — and threw the answer away, which was enough while the
+    // only reader was the retry schedule. Two things here need it back, and
+    // neither can get it from the attempt event: that publish is at-most-once by
+    // design (research R5).
+    //
+    //   * the test event reports what the endpoint answered to a caller who is
+    //     WAITING, and the attempt happens in the dispatcher's process (FR-016);
+    //   * the sweep writes a disablement's last observed error, and the sweep
+    //     fires precisely when no outcome is arriving — that is the whole of
+    //     research R1. Without this it could only write null, and "disabled,
+    //     cause unknown" is the notification a support engineer receives.
+    //
+    // `lastLatencyMs` is the third thing in this chapter to pick `latency_ms` up
+    // off the floor: it has crossed the internal seam on every attempt since 3.5
+    // and been discarded (research R6).
+    lastStatus: integer("last_status"),
+    lastError: text("last_error"),
+    lastLatencyMs: integer("last_latency_ms"),
+    // A TEST EVENT's delivery (chapter 3.6, FR-013). Three decisions branch on
+    // it — no retry schedule, no failure-run update, and delivery even to a
+    // disabled endpoint — which is why it is a column and not a `payload->>'type'`
+    // comparison against a customer-visible document. It also keeps the marker
+    // for the RECIPIENT (the envelope's `type` and `test`) separate from the
+    // marker for the PLATFORM, two audiences that happen to agree today.
+    synthetic: boolean("synthetic").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -512,4 +585,63 @@ export const webhookDeadLetters = pgTable(
       .defaultNow(),
   },
   (t) => [index("webhook_dead_letters_environment_idx").on(t.environmentId)],
+);
+
+// DECISION (chapter 3.6, FR-011, research R7): one row per automatic
+// disablement — an OUTBOUND OBLIGATION the platform has not yet met.
+//
+// `deliveredAt` is the honest column, and it exists in this chapter solely in
+// order to be null. FR-WHK-07 asks for the endpoint to be disabled "and the
+// organisation notified by email", and this platform has no email transport of
+// any kind. Chapter 3.7 needs the same transport for quotas, so building one here
+// would mean building it for its second consumer first.
+//
+// A schema that recorded only the disablement would let a future reader believe
+// the requirement was finished. This one says, in a column, which half is
+// missing.
+//
+// Why a table rather than more columns on the endpoint: the endpoint gains
+// `disabledAt` and `disabledReason` regardless, because FR-009 needs a customer
+// to tell a platform disablement from their own. The notification is a different
+// kind of thing — a record with a lifecycle, which is what `deliveredAt` makes
+// visible.
+export const webhookDisableNotifications = pgTable(
+  "webhook_disable_notifications",
+  {
+    id: uuid("id").primaryKey(),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    // DENORMALISED on purpose. The joins are available —
+    // environments.application_id → applications.organisation_id — so storing it
+    // looks redundant. It is stored because this row records an obligation AS IT
+    // STOOD when the endpoint was disabled, and an application moving between
+    // organisations later must not silently retarget a notification that was
+    // already owed to somebody else.
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    endpointId: uuid("endpoint_id")
+      .notNull()
+      .references(() => webhookEndpoints.id),
+    disabledAt: timestamp("disabled_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    // The window that triggered it, copied rather than referenced: the endpoint's
+    // own run columns are cleared the moment a customer re-enables it, and a
+    // notification that lost its evidence on re-enablement would be unanswerable
+    // by the time anybody read it.
+    runStartedAt: timestamp("run_started_at", { withTimezone: true }).notNull(),
+    runAttempts: integer("run_attempts").notNull(),
+    lastStatus: integer("last_status"),
+    lastError: text("last_error"),
+    // NULL THROUGHOUT THIS CHAPTER. Set by whatever chapter builds a transport.
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  },
+  (t) => [
+    // Nothing beyond the primary key and the tenant. Volume is one row per
+    // endpoint per outage, so an index for any other access pattern would be
+    // guessing at a query nobody has written.
+    index("webhook_disable_notifications_environment_idx").on(t.environmentId),
+  ],
 );

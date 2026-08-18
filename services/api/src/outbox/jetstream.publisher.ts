@@ -7,6 +7,8 @@ import {
   type NatsConnection,
 } from "nats";
 
+import { ALL_ANALYTICS_SUBJECT, ANALYTICS_STREAM } from "@relay/protocol";
+
 import type { Publisher, PublishedMessage } from "./publisher";
 
 // The one adapter that knows what a broker is (chapter 3.3, ADR-02).
@@ -40,6 +42,13 @@ const SECOND_NS = 1_000_000_000;
  * noticed until Monday. The floor protects a process crash; this protects a
  * weekend. */
 const MAX_AGE_NS = 7 * 24 * 60 * 60 * SECOND_NS;
+
+/** The analytics stream's own bound (chapter 3.6). The same seven days as
+ * `EVENTS`, for a different reason: there it absorbs a consumer outage without
+ * losing a tenant's events, here it absorbs an ingester outage without letting
+ * the stream become a database. Named separately so the two can diverge when
+ * Part 4 has an opinion, rather than one changing the other by accident. */
+const ANALYTICS_MAX_AGE_NS = 7 * 24 * 60 * 60 * SECOND_NS;
 
 /** An unbounded stream is a full disk with extra steps. The bound turns that
  * into a number an operator can watch — and with `discard: old`, hitting it
@@ -92,6 +101,50 @@ export async function ensureStream(nc: NatsConnection): Promise<void> {
     return;
   }
   await jsm.streams.update(STREAM, { ...existing.config, ...mutable });
+}
+
+/** The ANALYTICS stream (chapter 3.6, constitution III).
+ *
+ * A THIRD stream rather than a third use of `EVENTS`, and the reasons are all
+ * about the difference between an operational event and an analytical one
+ * (research R4): different volume, different retention, and a Part 4 ingester
+ * that should be able to consume attempt records without also consuming every
+ * message event in the platform.
+ *
+ * Reuses the `ensure` parameter chapter 3.5 added rather than introducing a
+ * second mechanism — the publisher already knows how to bring one stream into
+ * existence, and "which stream" has been a parameter since a delivery published
+ * to `deliveries.*` came back 503.
+ *
+ * SEVEN DAYS, `discard: old`, and no acknowledgement anywhere: nothing consumes
+ * this stream in this chapter. Seven days is long enough for an ingester to be
+ * down over a long weekend and short enough that the stream does not quietly
+ * become the analytical database it is supposed to feed. At the bound the oldest
+ * analytics is the least interesting, which is the one case where dropping the
+ * old data is the right answer — the opposite choice on `EVENTS` would lose a
+ * tenant's events, and there `discard: old` is a bound on a liability instead. */
+export async function ensureAnalyticsStream(nc: NatsConnection): Promise<void> {
+  const jsm = await nc.jetstreamManager();
+  const mutable = {
+    subjects: [ALL_ANALYTICS_SUBJECT],
+    max_age: ANALYTICS_MAX_AGE_NS,
+    max_bytes: MAX_BYTES,
+    discard: DiscardPolicy.Old,
+    num_replicas: replicaCount(),
+  };
+  const existing = await jsm.streams.info(ANALYTICS_STREAM).catch(() => null);
+  if (existing === null) {
+    await jsm.streams.add({
+      name: ANALYTICS_STREAM,
+      retention: RetentionPolicy.Limits,
+      storage: StorageType.File,
+      ...mutable,
+    });
+    return;
+  }
+  // Retention and storage are immutable on an existing stream — chapter 3.4
+  // measured that (its research R1), and the lesson transfers unchanged.
+  await jsm.streams.update(ANALYTICS_STREAM, { ...existing.config, ...mutable });
 }
 
 export function createJetStreamPublisher({
