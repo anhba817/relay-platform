@@ -18,10 +18,18 @@ import {
   users,
   webhookDeadLetters,
   webhookDeliveries,
+  webhookDisableNotifications,
   webhookEndpoints,
 } from "./schema";
 import { messageCreatedEvent } from "../outbox/event";
 import { nextAttemptAt } from "../webhooks/schedule";
+import {
+  DISABLE_AFTER_MS,
+  DISABLE_MIN_ATTEMPTS,
+  disableReason,
+  runWindowMs,
+  shouldDisable,
+} from "../webhooks/disable";
 import { activeSigningSecrets } from "../webhooks/secret";
 import {
   mintApiKey,
@@ -393,6 +401,215 @@ export type DeliveryOutcome = "delivered" | "rescheduled" | "dead_lettered";
  * itself may duplicate, and the customer absorbs it on the event id, but the
  * SCHEDULE must not advance twice for one attempt or the tiers would collapse.
  */
+/** Open, extend or clear an endpoint's failure run, and disable it if the run has
+ * gone on long enough (chapter 3.6, FR-006, FR-007).
+ *
+ * Runs INSIDE the transaction that records the outcome, and takes
+ * `SELECT … FOR UPDATE` on the endpoint row. That lock is the whole of FR-008's
+ * concurrency story: two dispatcher instances can report outcomes for two
+ * deliveries to the SAME endpoint in the same moment, and without it both would
+ * read `runAttempts = 4`, both would write 5, and both would decide to disable —
+ * two disablements and two notifications for one outage (research R2). The lock is
+ * per endpoint and held for one small update, so two customers never contend.
+ *
+ * Lock ORDER is delivery-then-endpoint, everywhere, without exception. The caller
+ * has already locked the delivery row; anything that took these two in the other
+ * order would deadlock against this under concurrency, and a deadlock found in
+ * production is a deadlock found by a customer.
+ *
+ * Returns what it did, so the caller can report it and the tests can assert on it
+ * without reading the row back. */
+async function applyFailureRun(
+  tx: Db,
+  input: {
+    endpointId: string;
+    /** Did this attempt fail? A success clears the run outright. */
+    failed: boolean;
+    status: number | null;
+    error: string | null;
+  },
+): Promise<{ disabled: boolean }> {
+  const [endpoint] = await tx
+    .select({
+      id: webhookEndpoints.id,
+      environmentId: webhookEndpoints.environmentId,
+      enabled: webhookEndpoints.enabled,
+      runStartedAt: webhookEndpoints.failureRunStartedAt,
+      runAttempts: webhookEndpoints.failureRunAttempts,
+    })
+    .from(webhookEndpoints)
+    .where(eq(webhookEndpoints.id, input.endpointId))
+    .for("update");
+
+  // The endpoint was deleted between the delivery being claimed and its outcome
+  // being reported. Nothing to track and nothing to disable; the delivery's own
+  // state has already been settled by the caller.
+  if (!endpoint) return { disabled: false };
+
+  if (!input.failed) {
+    // ANY SUCCESS CLEARS THE RUN (FR-006). This is why an endpoint that succeeds
+    // once an hour is never disabled, and it is deliberately generous: a platform
+    // that switches off endpoints which sometimes work is a worse failure than one
+    // that keeps trying. Written unconditionally rather than behind a "was there a
+    // run" check — the update is the same cost either way, and the check is one
+    // more thing to get wrong.
+    await tx
+      .update(webhookEndpoints)
+      .set({ failureRunStartedAt: null, failureRunAttempts: null })
+      .where(eq(webhookEndpoints.id, endpoint.id));
+    return { disabled: false };
+  }
+
+  // Read the clock ONCE, from the database, so the window and the timestamps it is
+  // compared against come from the same source. An api process whose clock differs
+  // from Postgres's would otherwise measure a window against somebody else's idea
+  // of now.
+  // Coerced, not trusted. A raw `execute` hands back whatever the driver made of
+  // the column, and for `timestamptz` that is a string here rather than a Date —
+  // which drizzle then refuses to write back, with `value.toISOString is not a
+  // function` from deep inside its timestamp mapper and no mention of this line.
+  const [clock] = (await tx.execute(sql`SELECT now() AS now`))
+    .rows as { now: string | Date }[];
+  const now = new Date(clock!.now);
+
+  const runStartedAt = endpoint.runStartedAt ?? now;
+  const runAttempts = (endpoint.runAttempts ?? 0) + 1;
+
+  await tx
+    .update(webhookEndpoints)
+    .set({ failureRunStartedAt: runStartedAt, failureRunAttempts: runAttempts })
+    .where(eq(webhookEndpoints.id, endpoint.id));
+
+  if (!shouldDisable({ runStartedAt, runAttempts, now })) {
+    return { disabled: false };
+  }
+
+  return disableEndpoint(tx, {
+    endpointId: endpoint.id,
+    environmentId: endpoint.environmentId,
+    runStartedAt,
+    runAttempts,
+    now,
+    status: input.status,
+    error: input.error,
+  });
+}
+
+/** Switch an endpoint off, once, and record the obligation to tell somebody
+ * (FR-007, FR-008, FR-011).
+ *
+ * AT MOST ONCE PER RUN, and it is the STATEMENT that enforces it rather than a
+ * check somebody has to remember to write: the update carries `enabled = true` in
+ * its predicate, so a second disable matches zero rows and the notification below
+ * is never reached. Both triggers call this, so both inherit the property — which
+ * is contract invariant 12, and the reason there can safely be two of them. */
+async function disableEndpoint(
+  tx: Db,
+  input: {
+    endpointId: string;
+    environmentId: string;
+    runStartedAt: Date;
+    runAttempts: number;
+    now: Date;
+    status: number | null;
+    error: string | null;
+  },
+): Promise<{ disabled: boolean }> {
+  const windowMs = runWindowMs({ runStartedAt: input.runStartedAt, now: input.now });
+  const reason = disableReason({
+    runAttempts: input.runAttempts,
+    windowMs,
+    lastStatus: input.status,
+    lastError: input.error,
+  });
+
+  const updated = (await tx.execute(sql`
+    UPDATE webhook_endpoints
+       SET enabled = false,
+           disabled_at = ${input.now},
+           disabled_reason = ${reason}
+     WHERE id = ${input.endpointId}
+       AND enabled = true
+     RETURNING id`)) as unknown as { rows: { id: string }[] };
+
+  // Zero rows means somebody else got there first — a concurrent outcome report,
+  // or the sweep, or a customer who happened to pause the endpoint themselves. In
+  // every case the answer is the same: this call disabled nothing, so it owes no
+  // notification.
+  if (updated.rows.length === 0) return { disabled: false };
+
+  // The organisation is resolved HERE, at write time, through the two hops that
+  // already exist: environments.application_id → applications.organisation_id. It
+  // is stored rather than joined for later because this row records an obligation
+  // AS IT STOOD, and an application moving between organisations afterwards must
+  // not silently retarget a notification already owed to somebody else.
+  const [owner] = await tx
+    .select({ organisationId: applications.organisationId })
+    .from(environments)
+    .innerJoin(applications, eq(environments.applicationId, applications.id))
+    .where(eq(environments.id, input.environmentId));
+
+  await tx.insert(webhookDisableNotifications).values({
+    id: randomUUID(),
+    environmentId: input.environmentId,
+    organisationId: owner!.organisationId,
+    endpointId: input.endpointId,
+    disabledAt: input.now,
+    runStartedAt: input.runStartedAt,
+    runAttempts: input.runAttempts,
+    lastStatus: input.status,
+    lastError: input.error,
+    // NOT SET, and that is the point. FR-WHK-07 asks for the organisation to be
+    // notified by email and this platform has no email; `delivered_at` exists in
+    // order to be null until a transport does.
+  });
+
+  return { disabled: true };
+}
+
+/** What one recorded outcome yields its caller.
+ *
+ * The four identifiers are here because the ATTEMPT EVENT needs them and the
+ * dispatcher does not hold them: it knows a delivery id, a status and a latency,
+ * and nothing about which environment or event that delivery belongs to. Reading
+ * them back out with a second query would be a second query for data this
+ * transaction already had in hand.
+ *
+ * `recorded` is the field the analytics publish is conditional on. See the
+ * idempotent-replay branch below. */
+export interface RecordedOutcome {
+  outcome: DeliveryOutcome;
+  nextAttemptAt: Date | null;
+  /** True when this call actually moved the delivery. False when it recognised a
+   * report it had already processed. */
+  recorded: boolean;
+  endpointId: string;
+  environmentId: string;
+  eventId: string;
+  attempt: number;
+  synthetic: boolean;
+}
+
+/** The identifiers, lifted off the locked row so both return paths agree. */
+function identity(delivery: {
+  endpointId: string;
+  environmentId: string;
+  eventId: string;
+  attempt: number;
+  synthetic: boolean;
+}): Pick<
+  RecordedOutcome,
+  "endpointId" | "environmentId" | "eventId" | "attempt" | "synthetic"
+> {
+  return {
+    endpointId: delivery.endpointId,
+    environmentId: delivery.environmentId,
+    eventId: delivery.eventId,
+    attempt: delivery.attempt,
+    synthetic: delivery.synthetic,
+  };
+}
+
 export async function recordAttemptOutcome(
   db: Db,
   input: {
@@ -400,8 +617,13 @@ export async function recordAttemptOutcome(
     attempt: number;
     status?: number;
     error?: string;
+    /** How long the customer took to answer. Carried across the internal seam on
+     * every attempt since chapter 3.5 and discarded until 3.6 wanted it (research
+     * R6). Optional only so that callers written before it existed still compile;
+     * every real caller has it. */
+    latencyMs?: number;
   },
-): Promise<{ outcome: DeliveryOutcome; nextAttemptAt: Date | null }> {
+): Promise<RecordedOutcome> {
   return db.transaction(async (tx) => {
     const [delivery] = await tx
       .select({
@@ -414,6 +636,7 @@ export async function recordAttemptOutcome(
         state: webhookDeliveries.state,
         nextAttemptAt: webhookDeliveries.nextAttemptAt,
         dispatchedAt: webhookDeliveries.dispatchedAt,
+        synthetic: webhookDeliveries.synthetic,
       })
       .from(webhookDeliveries)
       .where(eq(webhookDeliveries.id, input.deliveryId))
@@ -434,21 +657,65 @@ export async function recordAttemptOutcome(
               : ("rescheduled" as const),
         nextAttemptAt:
           delivery.state === "pending" ? delivery.nextAttemptAt : null,
+        // NOT RECORDED. This branch changed no row, so nothing new happened and
+        // the caller must not publish an attempt event for it (contract invariant
+        // 1). The dispatcher posts, reports, then acknowledges, so a crash in the
+        // last gap makes a second report ordinary rather than exceptional — and
+        // nothing on the analytical path deduplicates, so publishing here would
+        // put a retry that never happened on a customer's dashboard.
+        recorded: false,
+        ...identity(delivery),
       };
     }
 
     const succeeded =
       input.status !== undefined && input.status >= 200 && input.status < 300;
 
+    // WHAT THE ENDPOINT SAID, kept on every recorded attempt whichever branch
+    // follows. Two things need it and neither can get it from the attempt event,
+    // whose publish is at-most-once by design: the test event answers a caller who
+    // is waiting (FR-016), and the sweep names a disablement's last error at a
+    // moment when no outcome is arriving (FR-009, research R1).
+    const lastOutcome = {
+      lastStatus: input.status ?? null,
+      lastError: input.error ?? null,
+      lastLatencyMs: input.latencyMs ?? null,
+    };
+
+    // THE FAILURE RUN, and a test event is exempt from it (contract invariant 13,
+    // research R8). A test event is a diagnostic rather than traffic: letting a
+    // failed test push an endpoint toward disablement would punish a customer for
+    // checking, and letting a successful one CLEAR the run would let a customer
+    // mask a real outage by testing until it passed. Both directions matter, which
+    // is why the exemption is on the call and not inside it.
+    if (!delivery.synthetic) {
+      await applyFailureRun(tx, {
+        endpointId: delivery.endpointId,
+        failed: !succeeded,
+        status: input.status ?? null,
+        error: input.error ?? null,
+      });
+    }
+
     if (succeeded) {
       await tx
         .update(webhookDeliveries)
-        .set({ state: "delivered", dispatchedAt: null })
+        .set({ state: "delivered", dispatchedAt: null, ...lastOutcome })
         .where(eq(webhookDeliveries.id, delivery.id));
-      return { outcome: "delivered" as const, nextAttemptAt: null };
+      return {
+        outcome: "delivered" as const,
+        nextAttemptAt: null,
+        recorded: true,
+        ...identity(delivery),
+      };
     }
 
-    const next = nextAttemptAt(delivery.attempt + 1);
+    // A TEST EVENT GETS ONE ATTEMPT AND NO SCHEDULE (research R8, FR-013). A
+    // caller is standing at their terminal waiting for the answer; a test that
+    // quietly retried for two hours would report a stale one, and a test event
+    // that kept coming back would be indistinguishable from real traffic to the
+    // customer trying to read their logs.
+    const next = delivery.synthetic ? null : nextAttemptAt(delivery.attempt + 1);
     if (next) {
       await tx
         .update(webhookDeliveries)
@@ -457,14 +724,40 @@ export async function recordAttemptOutcome(
           nextAttemptAt: next,
           // Cleared so the relay can pick it up again when it falls due.
           dispatchedAt: null,
+          ...lastOutcome,
         })
         .where(eq(webhookDeliveries.id, delivery.id));
-      return { outcome: "rescheduled" as const, nextAttemptAt: next };
+      return {
+        outcome: "rescheduled" as const,
+        nextAttemptAt: next,
+        recorded: true,
+        ...identity(delivery),
+      };
     }
 
     // Attempts exhausted. The dead letter and the state change commit together —
     // a delivery marked dead with no dead letter behind it would be a failure
     // with no record, which is exactly what FR-WHK-04's seven days are for.
+    // …unless it was a test. A dead letter is a customer-visible record retained
+    // for seven days and replayable (FR-WHK-04), and a test event is a diagnostic
+    // the customer asked for and already has the answer to. Writing one would put
+    // synthetic traffic in the store whose whole purpose is real traffic that
+    // failed to leave, and offer an operator a "replay" button that re-sends a
+    // test. The delivery is still marked dead, and the record of what happened is
+    // the response the caller received plus `last_status` on the row.
+    if (delivery.synthetic) {
+      await tx
+        .update(webhookDeliveries)
+        .set({ state: "dead", dispatchedAt: null, ...lastOutcome })
+        .where(eq(webhookDeliveries.id, delivery.id));
+      return {
+        outcome: "dead_lettered" as const,
+        nextAttemptAt: null,
+        recorded: true,
+        ...identity(delivery),
+      };
+    }
+
     await tx.insert(webhookDeadLetters).values({
       id: randomUUID(),
       environmentId: delivery.environmentId,
@@ -477,9 +770,114 @@ export async function recordAttemptOutcome(
     });
     await tx
       .update(webhookDeliveries)
-      .set({ state: "dead", dispatchedAt: null })
+      .set({ state: "dead", dispatchedAt: null, ...lastOutcome })
       .where(eq(webhookDeliveries.id, delivery.id));
-    return { outcome: "dead_lettered" as const, nextAttemptAt: null };
+    return {
+      outcome: "dead_lettered" as const,
+      nextAttemptAt: null,
+      recorded: true,
+      ...identity(delivery),
+    };
+  });
+}
+
+/** Disable every endpoint whose failure run has outrun the hour (chapter 3.6,
+ * research R1, contract invariant 12).
+ *
+ * THE SECOND TRIGGER, and it is not belt-and-braces. The on-outcome check catches
+ * every endpoint that is still receiving attempts, and research R1 measured that
+ * this is not all of them. Against chapter 3.5's tier table, one failing delivery
+ * attempts at +35m36s and then not again until +2h35m36s — so nothing happens AT
+ * the hour, and a check that only runs when an outcome is recorded fires
+ * ninety-five minutes late. Worse: if that last attempt dead-letters and no
+ * further events arrive for the environment, no outcome is ever recorded again and
+ * the endpoint is never disabled at all. It sits enabled and failing for ever,
+ * which is the state FR-WHK-07 exists to end.
+ *
+ * The endpoint that stays broken silently is the QUIET one — the low-traffic
+ * customer, who is also the customer least likely to be watching.
+ *
+ * Rides the delivery relay's existing loop rather than adding a scheduler: one
+ * more statement per drain, in a worker that is already awake and already holds a
+ * connection (constitution VII). Its per-endpoint work goes through the same
+ * `disableEndpoint` the on-outcome path uses, so the at-most-once rule is one rule
+ * and not two implementations of it.
+ *
+ * Returns how many it disabled, so the relay can log a number rather than a claim.
+ */
+export async function sweepDisabledEndpoints(
+  db: Db,
+  limit = 100,
+): Promise<number> {
+  // An INTERVAL built from the same constant the pure policy uses, so the sweep and
+  // `shouldDisable` can never disagree about how long an hour is. Milliseconds
+  // rather than a literal `'1 hour'`: one definition, in `disable.ts`.
+  const disableCutoff = sql`now() - make_interval(secs => ${DISABLE_AFTER_MS / 1000})`;
+
+  return db.transaction(async (tx) => {
+    // The candidates, and the LAST THING each endpoint heard. `disableReason` and
+    // the notification both want a status the sweep does not have in hand — it
+    // fires precisely when no outcome is arriving — so it is read off the
+    // endpoint's most recent attempted delivery. LEFT JOIN LATERAL, because an
+    // endpoint whose deliveries have all been pruned still deserves to be switched
+    // off; it just gets "no response" as its reason.
+    //
+    // `FOR UPDATE OF e SKIP LOCKED` is chapter 3.3's pattern and here it does two
+    // jobs: it serialises the sweep against a concurrent outcome report on the same
+    // endpoint, and it lets two api instances sweep at once without either waiting
+    // — whichever skips simply finds nothing to do, which is correct.
+    const candidates = (await tx.execute(sql`
+      SELECT e.id,
+             e.environment_id,
+             e.failure_run_started_at AS run_started_at,
+             e.failure_run_attempts   AS run_attempts,
+             now()                    AS now,
+             last.last_status,
+             last.last_error
+        FROM webhook_endpoints e
+        LEFT JOIN LATERAL (
+          SELECT d.last_status, d.last_error
+            FROM webhook_deliveries d
+           WHERE d.endpoint_id = e.id
+             AND d.synthetic = false
+             AND d.last_latency_ms IS NOT NULL
+           ORDER BY d.next_attempt_at DESC, d.id DESC
+           LIMIT 1
+        ) last ON true
+       WHERE e.enabled = true
+         AND e.deleted_at IS NULL
+         AND e.failure_run_started_at IS NOT NULL
+         AND e.failure_run_attempts >= ${DISABLE_MIN_ATTEMPTS}
+         AND e.failure_run_started_at < ${disableCutoff}
+       ORDER BY e.failure_run_started_at
+       LIMIT ${limit}
+         FOR UPDATE OF e SKIP LOCKED`)) as unknown as {
+      rows: {
+        id: string;
+        environment_id: string;
+        run_started_at: string | Date;
+        run_attempts: number;
+        now: string | Date;
+        last_status: number | null;
+        last_error: string | null;
+      }[];
+    };
+
+    let disabled = 0;
+    for (const row of candidates.rows) {
+      const result = await disableEndpoint(tx, {
+        endpointId: row.id,
+        environmentId: row.environment_id,
+        // Same coercion, same reason as `applyFailureRun`'s clock read.
+        runStartedAt: new Date(row.run_started_at),
+        runAttempts: row.run_attempts,
+        now: new Date(row.now),
+        status: row.last_status,
+        error: row.last_error,
+      });
+      if (result.disabled) disabled++;
+    }
+    return disabled;
   });
 }
 
@@ -1007,6 +1405,17 @@ export interface WebhookEndpointRow {
   enabled: boolean;
   secret_rotated_at: string | null;
   created_at: string;
+  /** Chapter 3.6, FR-009. `enabled: false` with `disabled_at: null` means the
+   * customer paused it themselves; both set means the platform did. Without this
+   * pair a customer looking at a disabled endpoint has no way to tell whether they
+   * are looking at their own decision or ours, and the support conversation starts
+   * from zero. */
+  disabled_at: string | null;
+  disabled_reason: string | null;
+  /** The run as it stands, so a customer can see a disablement COMING rather than
+   * only after it lands. Both null when the endpoint is healthy. */
+  failure_run_started_at: string | null;
+  failure_run_attempts: number | null;
 }
 
 /** Raised when an outcome names a delivery that is not there. A caller error,
@@ -1227,6 +1636,10 @@ export class Repository {
         enabled: webhookEndpoints.enabled,
         secretRotatedAt: webhookEndpoints.secretRotatedAt,
         createdAt: webhookEndpoints.createdAt,
+        disabledAt: webhookEndpoints.disabledAt,
+        disabledReason: webhookEndpoints.disabledReason,
+        failureRunStartedAt: webhookEndpoints.failureRunStartedAt,
+        failureRunAttempts: webhookEndpoints.failureRunAttempts,
       })
       .from(webhookEndpoints)
       .where(where);
@@ -1239,6 +1652,10 @@ export class Repository {
       enabled: r.enabled,
       secret_rotated_at: r.secretRotatedAt?.toISOString() ?? null,
       created_at: r.createdAt.toISOString(),
+      disabled_at: r.disabledAt?.toISOString() ?? null,
+      disabled_reason: r.disabledReason,
+      failure_run_started_at: r.failureRunStartedAt?.toISOString() ?? null,
+      failure_run_attempts: r.failureRunAttempts,
     }));
   }
 

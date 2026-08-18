@@ -8,9 +8,13 @@
 //   node scripts/webhook-walk.mjs --print-signing-material
 //   node scripts/webhook-walk.mjs --fast-forward     # against --mode=fail
 //   node scripts/webhook-walk.mjs --send-only        # leave it for the real dispatcher
+//   node scripts/webhook-walk.mjs --fast-forward --watch-disable   # chapter 3.6
 //
 //   --url=http://127.0.0.1:4555/hook   where to point the endpoint
 //   --api-port=4141                    the api this walk spawns for itself
+//   --watch-disable                    chapter 3.6: print the failure run as it
+//                                      grows and the disablement when it lands.
+//                                      Ages the run rather than waiting an hour.
 //   --secret=SECRET                    pin the signing secret instead of minting
 //                                      one, so the endpoint can be started with
 //                                      the same value and verify what arrives:
@@ -59,6 +63,9 @@ const { createDispatcher } = await import(
 const { SIGNATURE_SCHEME } = await import(
   join(ROOT, "services", "dispatcher", "dist", "signature.js")
 );
+const { DISABLE_AFTER_MS, DISABLE_MIN_ATTEMPTS } = await import(
+  join(API_DIST, "webhooks", "disable.js")
+);
 const { RETRY_TIERS_MS, MAX_ATTEMPTS } = await import(
   join(API_DIST, "webhooks", "schedule.js")
 );
@@ -77,6 +84,7 @@ const API_PORT = Number(arg("api-port", "4141"));
 const PRINT_MATERIAL = flag("print-signing-material");
 const SEND_ONLY = flag("send-only");
 const FAST_FORWARD = flag("fast-forward");
+const WATCH_DISABLE = flag("watch-disable");
 const PINNED_SECRET = arg("secret", "");
 const CREDENTIAL = "rk_svc_walk_0123456789abcdef0123456789abcd";
 
@@ -292,6 +300,21 @@ await dispatcher.pollOnce();
 console.log("");
 await report();
 
+/** The endpoint's failure run, straight from the row auto-disable reads.
+ *
+ * Read with plain SQL because this script is a reader's tool and the columns are
+ * the point: `enabled` is what stops deliveries, and `disabled_at` is how a
+ * customer tells a platform disablement from their own (FR-009). */
+const runOf = async () => {
+  const { rows } = await pool.query(
+    `SELECT enabled, disabled_at, disabled_reason,
+            failure_run_started_at, failure_run_attempts
+       FROM webhook_endpoints WHERE id = $1`,
+    [endpoint.id],
+  );
+  return rows[0];
+};
+
 // ---------------------------------------------------------------------------
 if (FAST_FORWARD) {
   rule("5. the whole schedule, without waiting for it");
@@ -314,6 +337,7 @@ if (FAST_FORWARD) {
   };
 
   const stateOf = async () => (await repo.listDeliveriesForEvent(eventId))[0];
+
 
   for (let i = 0; i < MAX_ATTEMPTS + 2; i++) {
     const before = await stateOf();
@@ -343,6 +367,16 @@ if (FAST_FORWARD) {
         ? `failed → rescheduled as attempt ${after.attempt}`
         : `failed → ${after ? after.state : "gone"}`,
     );
+
+    if (WATCH_DISABLE) {
+      const run = await runOf();
+      show(
+        "    endpoint",
+        run.failure_run_started_at
+          ? `run open · ${run.failure_run_attempts} failures · enabled=${run.enabled}`
+          : `no run · enabled=${run.enabled}`,
+      );
+    }
   }
 
   console.log("");
@@ -353,6 +387,75 @@ if (FAST_FORWARD) {
   show("dead letters", dead.length);
   for (const d of dead) {
     show(`  ${d.id.slice(0, 8)}`, `attempts=${d.attempts} last_status=${d.last_status ?? "none"}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+if (WATCH_DISABLE) {
+  rule("6. when to stop trying");
+
+  console.log("  The run above is what auto-disable reads — two columns on the endpoint,");
+  console.log("  never the attempt stream. A backlogged analytics path cannot delay a");
+  console.log("  disablement, and a broker being unwell cannot block one.\n");
+  console.log(`  The rule: longer than ${DISABLE_AFTER_MS / 60000} minutes AND at least`);
+  console.log(`  ${DISABLE_MIN_ATTEMPTS} failures. Both, never either — the hour alone would let one`);
+  console.log("  failure followed by a two-hour retry gap disable an endpoint.\n");
+
+  const before = await runOf();
+  show("failures in the run", before.failure_run_attempts ?? 0);
+  show("enabled", before.enabled);
+
+  if (!before.failure_run_started_at) {
+    console.log("\n  No open run — the endpoint answered 2xx at some point, which CLEARS it.");
+    console.log("  Point this at --mode=fail to watch a run survive long enough to matter.\n");
+  } else {
+    // AGED, not waited out. Same honesty as --fast-forward above: the clock moves,
+    // the logic does not. An hour and four minutes of real time would make this
+    // demonstration one nobody runs.
+    console.log("  aging the run past the hour (the clock moves, the rule does not)...\n");
+    await pool.query(
+      `UPDATE webhook_endpoints
+          SET failure_run_started_at = now() - interval '64 minutes'
+        WHERE id = $1`,
+      [endpoint.id],
+    );
+
+    // THE SWEEP, which is the trigger this endpoint needs. Its last attempt has
+    // already been made — the delivery dead-lettered above — so no further outcome
+    // will ever be reported and an on-outcome check would never fire again. That is
+    // research R1's quiet endpoint, and it is the reason there are two triggers.
+    const disabled = await relay.sweepOnce();
+    show("endpoints the sweep disabled", disabled);
+
+    const after = await runOf();
+    console.log("");
+    show("enabled", after.enabled);
+    show("disabled_at", after.disabled_at ? after.disabled_at.toISOString() : "null");
+    show("disabled_reason", after.disabled_reason ?? "null");
+
+    const { rows: notes } = await pool.query(
+      `SELECT run_attempts, last_status, last_error, delivered_at
+         FROM webhook_disable_notifications WHERE endpoint_id = $1`,
+      [endpoint.id],
+    );
+    console.log("");
+    show("notification rows", notes.length);
+    for (const n of notes) {
+      show(
+        `  run of ${n.run_attempts}`,
+        `last_status=${n.last_status ?? "none"} delivered_at=${n.delivered_at ?? "null"}`,
+      );
+    }
+    console.log("");
+    console.log("  `delivered_at` is null and stays null. FR-WHK-07 asks for the");
+    console.log("  organisation to be notified BY EMAIL, and this platform has no email");
+    console.log("  transport of any kind. The row is the obligation; the null is the");
+    console.log("  admission. Chapter 3.7 needs the same transport for quotas.\n");
+
+    // Running it again must change nothing. At most once per run, enforced by the
+    // `enabled = true` predicate in the update rather than by a check.
+    const second = await relay.sweepOnce();
+    show("a second sweep disables", second);
   }
 }
 

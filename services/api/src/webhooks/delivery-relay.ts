@@ -12,7 +12,11 @@ import {
 } from "nats";
 
 import type { Db } from "../db/client";
-import { drainDueDeliveries, type DueDeliveryRow } from "../db/repository";
+import {
+  drainDueDeliveries,
+  sweepDisabledEndpoints,
+  type DueDeliveryRow,
+} from "../db/repository";
 import type { Publisher } from "../outbox/publisher";
 
 // The second relay (chapter 3.5, research R13).
@@ -84,6 +88,8 @@ export interface DeliveryRelay {
   /** One pass, for tests and for the walk script — the same code path `start`
    * runs, so nothing is proven about a loop only tests exercise. */
   drainOnce(): Promise<number>;
+  /** One sweep, same argument. Returns how many endpoints it disabled. */
+  sweepOnce(): Promise<number>;
 }
 
 export function createDeliveryRelay({
@@ -92,12 +98,22 @@ export function createDeliveryRelay({
   logger,
   batchSize = BATCH_SIZE,
   intervalMs = IDLE_INTERVAL_MS,
+  sweepEnabled = process.env["RELAY_DISABLE_SWEEP"] !== "off",
 }: {
   db: Db;
   publisher: Publisher;
   logger: Logger;
   batchSize?: number;
   intervalMs?: number;
+  /** `RELAY_DISABLE_SWEEP=off` turns the second trigger off, and it exists for one
+   * purpose: quickstart V6 asks a reader to watch a quiet endpoint stay enabled
+   * and failing with the sweep off, and then be disabled with it on. The first
+   * half is what an outcome-only check ships, and reading it is the only way the
+   * second half means anything.
+   *
+   * DEFAULT ON. A flag whose default disabled a requirement would be a
+   * requirement nobody had built. */
+  sweepEnabled?: boolean;
 }): DeliveryRelay {
   let running = false;
   let loop: Promise<void> = Promise.resolve();
@@ -135,6 +151,35 @@ export function createDeliveryRelay({
     });
   }
 
+  /** The auto-disable sweep, riding this loop (chapter 3.6, research R1).
+   *
+   * Here rather than in a scheduler of its own because this worker is already
+   * awake, already owns a database connection, and already runs in the one service
+   * permitted to write (constitution VII, constitution IV). A third background
+   * process would be a third thing to deploy, monitor and reason about, for one
+   * statement.
+   *
+   * Its failure is logged and dropped for the same reason the drain's is: an
+   * endpoint that should have been disabled and was not is a cost measured in one
+   * more failed delivery, while a relay that stops draining is a cost measured in
+   * every customer's webhooks. */
+  async function sweepOnce(): Promise<number> {
+    if (!sweepEnabled) return 0;
+    try {
+      const disabled = await sweepDisabledEndpoints(db);
+      if (disabled > 0) {
+        // A COUNT, and only when it is not zero. This runs several times a second
+        // when the platform is idle, and a line per pass would bury every other
+        // line in the service.
+        logger.log("info", "webhooks.endpoints_disabled", { count: disabled });
+      }
+      return disabled;
+    } catch (error) {
+      logger.log("error", "webhooks.disable_sweep_failed", { error: String(error) });
+      return 0;
+    }
+  }
+
   async function run(): Promise<void> {
     while (running) {
       try {
@@ -151,6 +196,11 @@ export function createDeliveryRelay({
         // buffering 3.3's relay promises for events.
         logger.log("error", "deliveries.drain_failed", { error: String(error) });
       }
+      // AFTER the drain and only when there was nothing due, so a backlog is never
+      // made to wait behind a housekeeping query. An endpoint that has been failing
+      // for an hour can wait another quarter of a second; a customer's webhook
+      // cannot.
+      await sweepOnce();
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
   }
@@ -166,5 +216,6 @@ export function createDeliveryRelay({
       await loop;
     },
     drainOnce,
+    sweepOnce,
   };
 }

@@ -3,6 +3,13 @@ import { Module, Scope } from "@nestjs/common";
 import { MessagesModule } from "../messages/messages.module";
 import { AuthModule } from "../auth/auth.module";
 import { createDb, createPool, type Db } from "../db/client";
+import { LOGGER, apiLogger } from "../logger";
+import {
+  createJetStreamPublisher,
+  ensureAnalyticsStream,
+} from "../outbox/jetstream.publisher";
+import type { Publisher } from "../outbox/publisher";
+import { ANALYTICS_PUBLISHER } from "../webhooks/analytics";
 import { BackfillController } from "./backfill.controller";
 import { InternalController } from "./internal.controller";
 import { DispatchController } from "./dispatch.controller";
@@ -31,6 +38,29 @@ import { SessionController } from "./session.controller";
     {
       provide: "DB",
       useFactory: (): Db => createDb(createPool()),
+      scope: Scope.DEFAULT,
+    },
+    // Chapter 3.6: the attempt record's way onto the analytical path. Its own
+    // publisher, ensuring its own stream — see ANALYTICS_PUBLISHER's note.
+    //
+    // The connection is LAZY, as every broker client in this workspace is, and
+    // here that property is load-bearing rather than tidy: the api must accept
+    // outcome reports with the broker unreachable. If this connected eagerly, a
+    // dead broker would take the dispatch seam down with it, which is the exact
+    // inversion constitution III forbids.
+    {
+      provide: ANALYTICS_PUBLISHER,
+      useFactory: (): Publisher =>
+        createJetStreamPublisher({ ensure: ensureAnalyticsStream }),
+      scope: Scope.DEFAULT,
+    },
+    // `AppModule` provides this too, but a provider is visible to the module that
+    // declares it and to nothing it imports — so the controllers here would have
+    // nothing to inject. Same factory, so the service name in a log line stays
+    // `api` and the log stream does not sprout a second identity for one line.
+    {
+      provide: LOGGER,
+      useFactory: apiLogger,
       scope: Scope.DEFAULT,
     },
   ],

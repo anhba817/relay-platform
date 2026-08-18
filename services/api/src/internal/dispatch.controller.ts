@@ -17,6 +17,8 @@ import {
   type InternalExpandResponse,
 } from "@relay/protocol";
 
+import type { Logger } from "@relay/service-kit";
+
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import type { Db } from "../db/client";
 import {
@@ -27,6 +29,9 @@ import {
   replayDeadLetter,
 } from "../db/repository";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
+import { LOGGER } from "../logger";
+import { ANALYTICS_PUBLISHER, publishAttempt } from "../webhooks/analytics";
+import type { Publisher } from "../outbox/publisher";
 
 // The dispatcher's only road to state (chapter 3.5, constitution IV).
 //
@@ -45,7 +50,11 @@ import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 @UseGuards(CredentialGuard)
 @Accepts("platform")
 export class DispatchController {
-  constructor(@Inject("DB") private readonly db: Db) {}
+  constructor(
+    @Inject("DB") private readonly db: Db,
+    @Inject(ANALYTICS_PUBLISHER) private readonly analytics: Publisher,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
 
   /** One event becomes one delivery per matching endpoint — claimed, so it
    * happens exactly once however often the broker redelivers (research R2). */
@@ -100,7 +109,43 @@ export class DispatchController {
         attempt: body.attempt,
         ...(body.status !== undefined ? { status: body.status } : {}),
         ...(body.error !== undefined ? { error: body.error } : {}),
+        latencyMs: body.latency_ms,
       });
+
+      // THE ATTEMPT RECORD, and everything about this call's POSITION is the
+      // decision (chapter 3.6, research R5, constitution III).
+      //
+      // AFTER the transaction, not inside it: `recordAttemptOutcome` has already
+      // returned, so its row locks are released and its work is durable. A publish
+      // inside would hold a lock on the delivery while waiting on a broker, and a
+      // slow analytics path would become a slow delivery path — the coupling
+      // constitution III exists to forbid. `publishAttempt` cannot throw, so this
+      // line cannot change the answer below it either.
+      //
+      // BEFORE the response rather than after it, because there is no "after":
+      // returning ends the request. The cost is that the dispatcher waits for one
+      // publish, which is why that publish has no retry and no timeout of its own
+      // beyond the client's.
+      //
+      // Only when something was RECORDED. A repeat report — the dispatcher
+      // crashed between reporting and acknowledging — changed no row, and
+      // publishing for it would put an attempt on the stream that never happened
+      // (contract invariant 1).
+      if (result.recorded) {
+        await publishAttempt(this.analytics, this.logger, {
+          deliveryId: body.delivery_id,
+          endpointId: result.endpointId,
+          environmentId: result.environmentId,
+          eventId: result.eventId,
+          attempt: result.attempt,
+          ...(body.status !== undefined ? { status: body.status } : {}),
+          ...(body.error !== undefined ? { error: body.error } : {}),
+          latencyMs: body.latency_ms,
+          outcome: result.outcome,
+          attemptedAt: new Date(),
+        });
+      }
+
       return {
         outcome: result.outcome,
         ...(result.nextAttemptAt

@@ -12,6 +12,7 @@ import {
   recordAttemptOutcome,
   replayDeadLetter,
   Repository,
+  sweepDisabledEndpoints,
   timesHandled,
 } from "../db/repository";
 import { MAX_ATTEMPTS, RETRY_TIERS_MS } from "./schedule";
@@ -747,4 +748,480 @@ describe("the outcome of an attempt, off the happy path", () => {
     // tenant gets, so a probe cannot tell "no such record" from "not yours".
     expect(await replayDeadLetter(db, randomUUID())).toBe(false);
   });
+});
+
+// The failure run and automatic disablement (chapter 3.6, FR-006…FR-012).
+//
+// Invariants 6, 7, 8, 9, 10, 11 and 12 of contracts/webhooks.md live here. The
+// policy's arithmetic is pure and lives in `disable.test.ts`; what these need a
+// database for is the locking, the at-most-once rule and the sweep.
+//
+// THE HOUR IS MOVED, NOT WAITED OUT. `failure_run_started_at` is pushed into the
+// past with one statement, which is the same thing the walk script's
+// `--fast-forward` does for the retry schedule. Waiting sixty-one real minutes
+// would make these tests unrunnable, and the thing under test is the decision, not
+// the clock.
+describe("the failure run", () => {
+  let db: Db;
+  let env: { id: string };
+  let repo: Repository;
+
+  const seedEndpoint = async (scope = repo) => {
+    const secret = mintSigningSecret();
+    return scope.createEndpoint({
+      url: `https://example.test/${randomUUID()}`,
+      eventTypes: ["message.created"],
+      secretCiphertext: encryptSecret(secret),
+    });
+  };
+
+  /** One claimed delivery for this endpoint, ready to have an outcome reported. */
+  const deliveryFor = async (environmentId: string, scope: Repository) => {
+    const eventId = randomUUID();
+    await expandEventToDeliveries(db, {
+      eventId,
+      environmentId,
+      type: "message.created",
+      payload: { id: eventId, type: "message.created" },
+    });
+    await drainDueDeliveries(db, 50, async () => {});
+    const rows = await scope.listDeliveriesForEvent(eventId);
+    return rows;
+  };
+
+  /** The endpoint's run and disable columns, read with plain SQL — the query
+   * engine lives in the repository layer and nowhere else (constitution I,
+   * ADR-16), and the lint rule that says so makes no exception for tests. */
+  const runOf = async (endpointId: string) => {
+    const { rows } = (await db.execute(
+      `SELECT enabled, disabled_at, disabled_reason,
+              failure_run_started_at, failure_run_attempts
+         FROM webhook_endpoints WHERE id = '${endpointId}'`,
+    )) as unknown as {
+      rows: {
+        enabled: boolean;
+        disabled_at: Date | null;
+        disabled_reason: string | null;
+        failure_run_started_at: Date | null;
+        failure_run_attempts: number | null;
+      }[];
+    };
+    return rows[0]!;
+  };
+
+  const notificationsFor = async (endpointId: string) => {
+    const { rows } = (await db.execute(
+      `SELECT environment_id, organisation_id, endpoint_id, run_attempts,
+              last_status, last_error, delivered_at
+         FROM webhook_disable_notifications WHERE endpoint_id = '${endpointId}'`,
+    )) as unknown as {
+      rows: {
+        environment_id: string;
+        organisation_id: string;
+        endpoint_id: string;
+        run_attempts: number;
+        last_status: number | null;
+        last_error: string | null;
+        delivered_at: Date | null;
+      }[];
+    };
+    return rows;
+  };
+
+  /** Move this endpoint's run start into the past. The equivalent of waiting. */
+  const ageRun = (endpointId: string, minutes: number) =>
+    db.execute(
+      `UPDATE webhook_endpoints
+          SET failure_run_started_at = now() - interval '${minutes} minutes'
+        WHERE id = '${endpointId}'`,
+    );
+
+  /** Report `count` failures against fresh deliveries to one endpoint. Fresh
+   * deliveries rather than one row retried, because the run counts FAILURES
+   * against an endpoint and must not care which delivery produced them. */
+  const failTimes = async (
+    environmentId: string,
+    scope: Repository,
+    endpointId: string,
+    count: number,
+    status: number | undefined = 500,
+  ) => {
+    for (let i = 0; i < count; i++) {
+      const rows = await deliveryFor(environmentId, scope);
+      const mine = rows.find((r) => r.endpoint_id === endpointId);
+      if (!mine) continue;
+      await recordAttemptOutcome(db, {
+        deliveryId: mine.id,
+        attempt: mine.attempt,
+        ...(status !== undefined ? { status } : { error: "connection refused" }),
+        latencyMs: 12,
+      });
+    }
+  };
+
+  beforeAll(async () => {
+    db = createDb(createPool());
+    env = await createEnvironment(db, { name: "disable-itest" });
+    repo = new Repository(db, env.id);
+  });
+
+  it("invariant 6: a failure opens the run, and further failures extend it", async () => {
+    const scoped = await createEnvironment(db, { name: "disable-itest-open" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+
+    expect((await runOf(endpoint.id)).failure_run_started_at).toBeNull();
+
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 1);
+    const opened = await runOf(endpoint.id);
+    expect(opened.failure_run_started_at).not.toBeNull();
+    expect(opened.failure_run_attempts).toBe(1);
+    // One failure is not a disablement, however long ago it was.
+    expect(opened.enabled).toBe(true);
+
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 2);
+    const grown = await runOf(endpoint.id);
+    expect(grown.failure_run_attempts).toBe(3);
+    // The START does not move as the run grows — the window is measured from the
+    // first failure, and a start that crept forward would mean an endpoint failing
+    // steadily was never an hour old.
+    expect(grown.failure_run_started_at).toEqual(opened.failure_run_started_at);
+  }, 60_000);
+
+  it("invariant 7: any success clears the run", async () => {
+    const scoped = await createEnvironment(db, { name: "disable-itest-clear" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 3);
+    expect((await runOf(endpoint.id)).failure_run_attempts).toBe(3);
+
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 1, 200);
+
+    const cleared = await runOf(endpoint.id);
+    expect(cleared.failure_run_started_at).toBeNull();
+    expect(cleared.failure_run_attempts).toBeNull();
+  }, 60_000);
+
+  it("SC-003: an endpoint that succeeds once an hour is never disabled", async () => {
+    // The generous case, and it is generous on purpose: a platform that switches
+    // off endpoints which sometimes work is a worse failure than one that keeps
+    // trying. Four failures over an aged window, then one success, repeated — the
+    // run never reaches both conditions at once because the success resets it.
+    const scoped = await createEnvironment(db, { name: "disable-itest-flaky" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await failTimes(scoped.id, scopedRepo, endpoint.id, 4);
+      // Age it well past the threshold: even so, four failures are below the floor.
+      await ageRun(endpoint.id, 120);
+      await failTimes(scoped.id, scopedRepo, endpoint.id, 1, 200);
+      expect((await runOf(endpoint.id)).failure_run_started_at).toBeNull();
+    }
+
+    const final = await runOf(endpoint.id);
+    expect(final.enabled).toBe(true);
+    expect(final.disabled_at).toBeNull();
+  }, 120_000);
+
+  it("invariants 6 and 11: an hour of failures past the floor disables it, once, with one notification", async () => {
+    const scoped = await createEnvironment(db, { name: "disable-itest-disable" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+
+    // Four failures, then age the run past the hour: still below the floor.
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 4);
+    await ageRun(endpoint.id, 64);
+    expect((await runOf(endpoint.id)).enabled).toBe(true);
+
+    // The fifth crosses both conditions at once.
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 1, 503);
+
+    const disabled = await runOf(endpoint.id);
+    expect(disabled.enabled).toBe(false);
+    expect(disabled.disabled_at).not.toBeNull();
+    // FR-009: the reason names the count, the window and what the endpoint said.
+    expect(disabled.disabled_reason).toMatch(
+      /^5 consecutive failures over 1h0\dm; last status 503$/,
+    );
+
+    const notifications = await notificationsFor(endpoint.id);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]!.environment_id).toBe(scoped.id);
+    expect(notifications[0]!.run_attempts).toBe(5);
+    expect(notifications[0]!.last_status).toBe(503);
+    // THE HONEST COLUMN. FR-WHK-07 asks for the organisation to be notified by
+    // email; this platform has no email, and the null says so.
+    expect(notifications[0]!.delivered_at).toBeNull();
+    // The organisation was resolved at write time rather than left to a join.
+    expect(notifications[0]!.organisation_id).toBeTruthy();
+  }, 120_000);
+
+  it("invariant 8: further failures do not disable it again or notify again", async () => {
+    const scoped = await createEnvironment(db, { name: "disable-itest-once" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 4);
+    await ageRun(endpoint.id, 64);
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 1, 503);
+    const first = await runOf(endpoint.id);
+    expect(first.enabled).toBe(false);
+
+    // More failures arrive — deliveries already on the schedule from before the
+    // disablement, which is exactly the edge case the spec names.
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 3, 500);
+
+    expect(await notificationsFor(endpoint.id)).toHaveLength(1);
+    // And the disable timestamp is the FIRST one: a second disable would move it,
+    // which would quietly rewrite when the customer's outage began.
+    expect((await runOf(endpoint.id)).disabled_at).toEqual(first.disabled_at);
+  }, 120_000);
+
+  it("invariant 8 under concurrency: two overlapping reports disable once", async () => {
+    // THE REASON THE ENDPOINT ROW IS LOCKED. Two dispatcher instances can report
+    // outcomes for two deliveries to the same endpoint in the same moment. Without
+    // `FOR UPDATE` both read four, both write five, and both decide to disable —
+    // two disablements and two notifications for one outage.
+    const scoped = await createEnvironment(db, { name: "disable-itest-race" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 4);
+    await ageRun(endpoint.id, 64);
+
+    // Two deliveries, both due, both reported at once.
+    const first = (await deliveryFor(scoped.id, scopedRepo)).find(
+      (r) => r.endpoint_id === endpoint.id,
+    )!;
+    const second = (await deliveryFor(scoped.id, scopedRepo)).find(
+      (r) => r.endpoint_id === endpoint.id,
+    )!;
+
+    await Promise.all([
+      recordAttemptOutcome(db, {
+        deliveryId: first.id,
+        attempt: first.attempt,
+        status: 500,
+        latencyMs: 5,
+      }),
+      recordAttemptOutcome(db, {
+        deliveryId: second.id,
+        attempt: second.attempt,
+        status: 500,
+        latencyMs: 5,
+      }),
+    ]);
+
+    expect((await runOf(endpoint.id)).enabled).toBe(false);
+    // ONE. This is the assertion the lock exists for.
+    expect(await notificationsFor(endpoint.id)).toHaveLength(1);
+  }, 120_000);
+
+  it("invariant 9: a disabled endpoint receives no new deliveries", async () => {
+    const scoped = await createEnvironment(db, { name: "disable-itest-nonew" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+    const healthy = await seedEndpoint(scopedRepo);
+
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 4);
+    await ageRun(endpoint.id, 64);
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 1, 503);
+    expect((await runOf(endpoint.id)).enabled).toBe(false);
+
+    // A new event arrives for the environment. Expansion is where `enabled` is
+    // read, so the disabled endpoint simply is not among the rows produced.
+    const eventId = randomUUID();
+    await expandEventToDeliveries(db, {
+      eventId,
+      environmentId: scoped.id,
+      type: "message.created",
+      payload: { id: eventId, type: "message.created" },
+    });
+    const rows = await scopedRepo.listDeliveriesForEvent(eventId);
+
+    expect(rows.map((r) => r.endpoint_id)).toEqual([healthy.id]);
+  }, 120_000);
+
+  it("invariant 10: disabling one endpoint changes nothing for any other", async () => {
+    // FR-012 and SC-004. One endpoint in the same environment, one in another —
+    // neither loses its run state, its `enabled`, or its deliveries.
+    const scoped = await createEnvironment(db, { name: "disable-itest-iso-a" });
+    const other = await createEnvironment(db, { name: "disable-itest-iso-b" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const otherRepo = new Repository(db, other.id);
+
+    const doomed = await seedEndpoint(scopedRepo);
+    const sibling = await seedEndpoint(scopedRepo);
+    const stranger = await seedEndpoint(otherRepo);
+
+    // The sibling and the stranger are mid-run when the disablement happens, so
+    // this asserts their state is not merely absent but UNCHANGED.
+    await failTimes(scoped.id, scopedRepo, sibling.id, 2);
+    await failTimes(other.id, otherRepo, stranger.id, 2);
+    const siblingBefore = await runOf(sibling.id);
+    const strangerBefore = await runOf(stranger.id);
+
+    await failTimes(scoped.id, scopedRepo, doomed.id, 4);
+    await ageRun(doomed.id, 64);
+    await failTimes(scoped.id, scopedRepo, doomed.id, 1, 503);
+    expect((await runOf(doomed.id)).enabled).toBe(false);
+
+    expect(await runOf(sibling.id)).toEqual(siblingBefore);
+    expect(await runOf(stranger.id)).toEqual(strangerBefore);
+    expect(await notificationsFor(sibling.id)).toHaveLength(0);
+    expect(await notificationsFor(stranger.id)).toHaveLength(0);
+  }, 180_000);
+
+  it("invariant 12: the SWEEP disables the quiet endpoint no outcome ever revisits", async () => {
+    // THE TEST RESEARCH R1 EXISTS FOR, and the one most likely to be dropped as
+    // redundant next to the on-outcome check above. It is not redundant: it is the
+    // only test that covers the customer the requirement is actually about.
+    //
+    // Five failures, then SILENCE. The endpoint has crossed the floor and the hour,
+    // and no further outcome will ever arrive — the delivery dead-lettered, or the
+    // environment simply went quiet. An outcome-only check never fires again and
+    // the endpoint stays enabled and failing for ever.
+    const scoped = await createEnvironment(db, { name: "disable-itest-sweep" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 5, 503);
+    await ageRun(endpoint.id, 64);
+
+    // Still enabled: nothing has happened since, which is the whole point.
+    expect((await runOf(endpoint.id)).enabled).toBe(true);
+
+    const disabled = await sweepDisabledEndpoints(db);
+    expect(disabled).toBeGreaterThanOrEqual(1);
+
+    const after = await runOf(endpoint.id);
+    expect(after.enabled).toBe(false);
+    expect(after.disabled_at).not.toBeNull();
+    // The sweep has no outcome in hand, so it read the last status off the
+    // endpoint's most recent delivery. Without that it could only say "cause
+    // unknown", which is the notification a support engineer would receive.
+    expect(after.disabled_reason).toContain("last status 503");
+
+    const notifications = await notificationsFor(endpoint.id);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]!.last_status).toBe(503);
+    expect(notifications[0]!.delivered_at).toBeNull();
+  }, 120_000);
+
+  it("invariant 12: the sweep is idempotent against invariant 8", async () => {
+    // Both triggers go through the same statement, so the sweep inherits the
+    // at-most-once rule rather than reimplementing it. Running it twice must not
+    // produce a second notification — and running it against an endpoint the
+    // on-outcome path already disabled must find nothing to do.
+    const scoped = await createEnvironment(db, { name: "disable-itest-sweep2" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 5, 503);
+    await ageRun(endpoint.id, 64);
+
+    await sweepDisabledEndpoints(db);
+    await sweepDisabledEndpoints(db);
+    await sweepDisabledEndpoints(db);
+
+    expect(await notificationsFor(endpoint.id)).toHaveLength(1);
+  }, 120_000);
+
+  it("the sweep leaves a healthy endpoint and one still inside the hour alone", async () => {
+    // The sweep runs several times a second in a live service, so what it does NOT
+    // touch matters as much as what it does.
+    const scoped = await createEnvironment(db, { name: "disable-itest-sweep3" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const healthy = await seedEndpoint(scopedRepo);
+    const recent = await seedEndpoint(scopedRepo);
+
+    await failTimes(scoped.id, scopedRepo, recent.id, 5, 500);
+    // Inside the hour: five failures, but the window has not elapsed.
+    await ageRun(recent.id, 30);
+
+    await sweepDisabledEndpoints(db);
+
+    expect((await runOf(healthy.id)).enabled).toBe(true);
+    expect((await runOf(recent.id)).enabled).toBe(true);
+    expect(await notificationsFor(recent.id)).toHaveLength(0);
+  }, 120_000);
+
+  it("invariant 13: a test event's outcome never touches the run", async () => {
+    // Written here rather than with the test-event route, because the property is
+    // the repository's: a synthetic delivery's outcome must not open, extend or
+    // clear a run. A failed test must not push an endpoint toward disablement, and
+    // a successful one must not let a customer mask a real outage by testing until
+    // it passes.
+    const scoped = await createEnvironment(db, { name: "disable-itest-synthetic" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+
+    await failTimes(scoped.id, scopedRepo, endpoint.id, 3, 500);
+    const before = await runOf(endpoint.id);
+    expect(before.failure_run_attempts).toBe(3);
+
+    // A synthetic delivery that FAILS: the run must not grow.
+    const failing = (await deliveryFor(scoped.id, scopedRepo)).find(
+      (r) => r.endpoint_id === endpoint.id,
+    )!;
+    await db.execute(
+      `UPDATE webhook_deliveries SET synthetic = true WHERE id = '${failing.id}'`,
+    );
+    await recordAttemptOutcome(db, {
+      deliveryId: failing.id,
+      attempt: failing.attempt,
+      status: 500,
+      latencyMs: 7,
+    });
+    expect((await runOf(endpoint.id)).failure_run_attempts).toBe(3);
+
+    // And one that SUCCEEDS: the run must not clear.
+    const passing = (await deliveryFor(scoped.id, scopedRepo)).find(
+      (r) => r.endpoint_id === endpoint.id,
+    )!;
+    await db.execute(
+      `UPDATE webhook_deliveries SET synthetic = true WHERE id = '${passing.id}'`,
+    );
+    await recordAttemptOutcome(db, {
+      deliveryId: passing.id,
+      attempt: passing.attempt,
+      status: 200,
+      latencyMs: 7,
+    });
+    const after = await runOf(endpoint.id);
+    expect(after.failure_run_attempts).toBe(3);
+    expect(after.failure_run_started_at).toEqual(before.failure_run_started_at);
+  }, 120_000);
+
+  it("a failed test event writes no dead letter", async () => {
+    // A dead letter is customer-visible, retained for seven days and replayable.
+    // A test event is a diagnostic the customer already has the answer to, so
+    // putting one there would offer an operator a "replay" button that re-sends a
+    // test.
+    const scoped = await createEnvironment(db, { name: "disable-itest-nodl" });
+    const scopedRepo = new Repository(db, scoped.id);
+    const endpoint = await seedEndpoint(scopedRepo);
+
+    const rows = await deliveryFor(scoped.id, scopedRepo);
+    const delivery = rows.find((r) => r.endpoint_id === endpoint.id)!;
+    await db.execute(
+      `UPDATE webhook_deliveries SET synthetic = true WHERE id = '${delivery.id}'`,
+    );
+
+    // One attempt and no schedule, so the first failure is the last.
+    const result = await recordAttemptOutcome(db, {
+      deliveryId: delivery.id,
+      attempt: delivery.attempt,
+      status: 500,
+      latencyMs: 7,
+    });
+    expect(result.outcome).toBe("dead_lettered");
+
+    const mine = (await scopedRepo.listDeadLetters()).filter(
+      (d) => d.event_id === delivery.event_id,
+    );
+    expect(mine).toHaveLength(0);
+  }, 60_000);
 });
