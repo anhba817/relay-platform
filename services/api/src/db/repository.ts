@@ -405,12 +405,26 @@ export type DeliveryOutcome = "delivered" | "rescheduled" | "dead_lettered";
  * gone on long enough (chapter 3.6, FR-006, FR-007).
  *
  * Runs INSIDE the transaction that records the outcome, and takes
- * `SELECT … FOR UPDATE` on the endpoint row. That lock is the whole of FR-008's
- * concurrency story: two dispatcher instances can report outcomes for two
- * deliveries to the SAME endpoint in the same moment, and without it both would
- * read `runAttempts = 4`, both would write 5, and both would decide to disable —
- * two disablements and two notifications for one outage (research R2). The lock is
- * per endpoint and held for one small update, so two customers never contend.
+ * `SELECT … FOR UPDATE` on the endpoint row.
+ *
+ * WHAT THAT LOCK IS ACTUALLY FOR, corrected by the sabotage battery. The comment
+ * here used to say it was "the whole of FR-008's concurrency story" — that without
+ * it, two dispatcher instances reporting outcomes for the same endpoint at the same
+ * moment would both decide to disable and produce two notifications. Dropping the
+ * lock and running the whole suite produced 46 passes. The claim was wrong: the
+ * `enabled = true` predicate in `disableEndpoint`'s update is sufficient for
+ * at-most-once on its own, and the lock was being credited for the predicate's
+ * work.
+ *
+ * The lock protects the COUNTER. Under READ COMMITTED both transactions read
+ * `runAttempts = 4`, both compute 5, and the second UPDATE waits for the first and
+ * then overwrites it with 5. That is a lost update, and the run undercounts by one
+ * per collision. Nothing reports it, nothing fails, and the endpoint quietly needs
+ * an extra failure to reach FR-007's floor of five — a threshold harder to reach
+ * than the requirement says, which is the kind of defect that survives for years.
+ *
+ * The lock is per endpoint and held for one small update, so two customers never
+ * contend (research R2).
  *
  * Lock ORDER is delivery-then-endpoint, everywhere, without exception. The caller
  * has already locked the delivery row; anything that took these two in the other

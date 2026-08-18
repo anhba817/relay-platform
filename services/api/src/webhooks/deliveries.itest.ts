@@ -1435,3 +1435,193 @@ describe("the sweep, through the relay that runs it", () => {
     expect(lines).toHaveLength(0);
   }, 120_000);
 });
+
+// What the LOCK protects, as opposed to what the predicate protects (chapter 3.6).
+//
+// These two tests exist because the sabotage battery contradicted a comment. The
+// claim was that `SELECT … FOR UPDATE` on the endpoint row is what stops a
+// concurrent pair of failures producing two disablements and two notifications.
+// Dropping the lock and running the whole suite produced 46 passes: the
+// `enabled = true` predicate in the disable statement is sufficient for that on its
+// own, and the lock was not the mechanism being credited.
+//
+// The lock's real job is the COUNTER. Under READ COMMITTED, two transactions both
+// read `failure_run_attempts = 4`, both compute 5, and the second UPDATE waits for
+// the first and then overwrites it with 5 — a lost update, and the run undercounts.
+// An undercount does not disable anything wrongly; it delays a disablement, which
+// is FR-007's floor being quietly harder to reach than it says.
+describe("the failure run under concurrency", () => {
+  let db: Db;
+  const minted: string[] = [];
+
+  beforeAll(() => {
+    db = createDb(createPool());
+  });
+
+  afterAll(async () => {
+    if (minted.length === 0) return;
+    const list = minted.map((id) => `'${id}'`).join(",");
+    await db.execute(
+      `UPDATE webhook_deliveries SET state = 'dead'
+        WHERE state = 'pending' AND environment_id IN (${list})`,
+    );
+  }, 60_000);
+
+  const twoPendingDeliveries = async () => {
+    const env = await createEnvironment(db, {
+      name: `run-concurrency-${randomUUID().slice(0, 8)}`,
+    });
+    minted.push(env.id);
+    const repo = new Repository(db, env.id);
+    const endpoint = await repo.createEndpoint({
+      url: `https://example.test/${randomUUID()}`,
+      eventTypes: ["message.created"],
+      secretCiphertext: encryptSecret(mintSigningSecret()),
+    });
+    const made: { id: string; attempt: number }[] = [];
+    for (let i = 0; i < 2; i++) {
+      const eventId = randomUUID();
+      await expandEventToDeliveries(db, {
+        eventId,
+        environmentId: env.id,
+        type: "message.created",
+        payload: { id: eventId, type: "message.created" },
+      });
+      const rows = await repo.listDeliveriesForEvent(eventId);
+      const mine = rows.find((r) => r.endpoint_id === endpoint.id)!;
+      made.push({ id: mine.id, attempt: mine.attempt });
+    }
+    return { endpoint, deliveries: made };
+  };
+
+  const attemptsOf = async (endpointId: string) => {
+    const { rows } = (await db.execute(
+      `SELECT failure_run_attempts FROM webhook_endpoints WHERE id = '${endpointId}'`,
+    )) as unknown as { rows: { failure_run_attempts: number | null }[] };
+    return rows[0]!.failure_run_attempts;
+  };
+
+  it("counts BOTH of two overlapping failures — the lost update the lock prevents", async () => {
+    const { endpoint, deliveries } = await twoPendingDeliveries();
+
+    await Promise.all(
+      deliveries.map((d) =>
+        recordAttemptOutcome(db, {
+          deliveryId: d.id,
+          attempt: d.attempt,
+          status: 500,
+          latencyMs: 3,
+        }),
+      ),
+    );
+
+    // TWO, not one. Without `FOR UPDATE` this reads 1: both transactions see a null
+    // run, both compute 1, and the second write overwrites the first. The endpoint
+    // then needs an extra failure to reach the floor, for ever, and nothing
+    // anywhere reports that the count is wrong.
+    expect(await attemptsOf(endpoint.id)).toBe(2);
+  }, 60_000);
+
+  it("still disables only once when the pair crosses the threshold together", async () => {
+    // The other half, and the one the battery showed is NOT the lock's doing: the
+    // `enabled = true` predicate in the disable statement means the second
+    // transaction updates zero rows and writes no notification, lock or no lock.
+    // Kept as a test because the property is required (invariant 8) whatever
+    // enforces it — and the battery is how we found out which mechanism does.
+    const { endpoint, deliveries } = await twoPendingDeliveries();
+    await db.execute(
+      `UPDATE webhook_endpoints
+          SET failure_run_started_at = now() - interval '64 minutes',
+              failure_run_attempts = 4
+        WHERE id = '${endpoint.id}'`,
+    );
+
+    await Promise.all(
+      deliveries.map((d) =>
+        recordAttemptOutcome(db, {
+          deliveryId: d.id,
+          attempt: d.attempt,
+          status: 503,
+          latencyMs: 3,
+        }),
+      ),
+    );
+
+    const { rows } = (await db.execute(
+      `SELECT count(*)::int AS n FROM webhook_disable_notifications
+        WHERE endpoint_id = '${endpoint.id}'`,
+    )) as unknown as { rows: { n: number }[] };
+    expect(rows[0]!.n).toBe(1);
+  }, 60_000);
+});
+
+// That the LOOP calls the sweep (chapter 3.6, T026).
+//
+// Also a finding of the sabotage battery: deleting the `await sweepOnce()` line
+// from the relay's `run()` loop broke nothing, because every test above calls
+// `sweepOnce` or `sweepDisabledEndpoints` directly. The sweep was tested and its
+// PLACE in the loop was not, which is the same shape as chapter 3.5's vacuous
+// "terminated, not retried" assertion — the mechanism was covered and the wiring
+// was not.
+describe("the relay's loop sweeps without being asked", () => {
+  let db: Db;
+  const minted: string[] = [];
+
+  beforeAll(() => {
+    db = createDb(createPool());
+  });
+
+  afterAll(async () => {
+    if (minted.length === 0) return;
+    const list = minted.map((id) => `'${id}'`).join(",");
+    await db.execute(
+      `UPDATE webhook_deliveries SET state = 'dead'
+        WHERE state = 'pending' AND environment_id IN (${list})`,
+    );
+  }, 60_000);
+
+  it("disables an endpoint with nothing but start() and time", async () => {
+    const env = await createEnvironment(db, {
+      name: `loop-sweep-${randomUUID().slice(0, 8)}`,
+    });
+    minted.push(env.id);
+    const repo = new Repository(db, env.id);
+    const endpoint = await repo.createEndpoint({
+      url: `https://example.test/${randomUUID()}`,
+      eventTypes: ["message.created"],
+      secretCiphertext: encryptSecret(mintSigningSecret()),
+    });
+    await db.execute(
+      `UPDATE webhook_endpoints
+          SET failure_run_started_at = now() - interval '64 minutes',
+              failure_run_attempts = 6
+        WHERE id = '${endpoint.id}'`,
+    );
+
+    const relay = createDeliveryRelay({
+      db,
+      publisher: { async publish() {}, async close() {} },
+      logger: createLogger("loop-sweep-itest", () => {}),
+      // Fast, because this test waits on a real timer rather than pretending.
+      intervalMs: 50,
+    });
+
+    // START, and then nothing. No `sweepOnce`, no `drainOnce` — the loop is the
+    // only thing that can disable this endpoint, which is the point.
+    relay.start();
+    try {
+      const deadline = Date.now() + 20_000;
+      let enabled = true;
+      while (enabled && Date.now() < deadline) {
+        const { rows } = (await db.execute(
+          `SELECT enabled FROM webhook_endpoints WHERE id = '${endpoint.id}'`,
+        )) as unknown as { rows: { enabled: boolean }[] };
+        enabled = rows[0]!.enabled;
+        if (enabled) await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(enabled).toBe(false);
+    } finally {
+      await relay.stop();
+    }
+  }, 60_000);
+});
