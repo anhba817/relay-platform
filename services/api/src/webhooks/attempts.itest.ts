@@ -4,21 +4,14 @@ import { randomUUID } from "node:crypto";
 
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
-import {
-  AckPolicy,
-  connect,
-  DeliverPolicy,
-  DiscardPolicy,
-  RetentionPolicy,
-  StorageType,
-  type NatsConnection,
-} from "nats";
+import { AckPolicy, connect, DeliverPolicy, type NatsConnection } from "nats";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ALL_ANALYTICS_SUBJECT, ANALYTICS_STREAM } from "@relay/protocol";
 
 import { AppModule } from "../app.module";
 import { createDb, createPool, type Db } from "../db/client";
+import { ensureAnalyticsStream } from "../outbox/jetstream.publisher";
 import {
   createEnvironment,
   drainDueDeliveries,
@@ -228,16 +221,15 @@ describe("the attempt record", () => {
       // instances quietly recording nothing. The api cannot restore it itself: its
       // publisher ensures the stream when it opens a connection, and that
       // connection is cached for the process's life.
-      await jsm.streams
-        .add({
-          name: ANALYTICS_STREAM,
-          subjects: [ALL_ANALYTICS_SUBJECT],
-          retention: RetentionPolicy.Limits,
-          storage: StorageType.File,
-          max_age: 7 * 24 * 60 * 60 * 1_000_000_000,
-          discard: DiscardPolicy.Old,
-        })
-        .catch(() => undefined);
+      //
+      // Restored by calling THE API'S OWN `ensureAnalyticsStream`, not by declaring
+      // the configuration again here. The first version of this teardown wrote its
+      // own `streams.add` and left out `max_bytes`, so the stream a reader then
+      // inspected with `stream-info.mjs` was the TEST's stream wearing the api's
+      // name — unbounded where the api bounds it at a gigabyte. Two definitions of
+      // one stream is a drift waiting for the day they disagree, and it took two
+      // hours to arrive.
+      await ensureAnalyticsStream(nats).catch(() => undefined);
       await nats.drain();
     }
     if (minted.length > 0) {
