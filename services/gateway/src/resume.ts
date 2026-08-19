@@ -107,7 +107,7 @@ export function flushable(
   return buffer.filter((frame) => frame.seq > (marks[frame.channel] ?? 0));
 }
 
-/** Step 5's half, and the reason this chapter exists (FR-001, FR-003).
+/** Step 5's half, and the reason this chapter exists (FR-RTM-03).
  *
  * `flushable` answers this question for frames sitting in the buffer. This answers
  * it for frames arriving AFTER the connection has gone live, which is the case
@@ -132,7 +132,7 @@ export function suppressed(
 }
 
 /** The marks a connection keeps, bounded to the channels it actually presented
- * cursors for (FR-007).
+ * cursors for.
  *
  * `highWaterMarks` seeds from the cursors and then adds a key for every channel
  * the backfill answered with, so on its own it bounds nothing. The api derives its

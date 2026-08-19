@@ -497,7 +497,8 @@ describe("the socket (chapter 2.5)", () => {
   });
 
   it("a frame above the mark, arriving after the resume, IS delivered", async () => {
-    // The half that stops a duplicate fix becoming a gap (FR-002).
+    // The half that stops a duplicate fix becoming a gap (FR-RTM-03 is one
+    // property, not two: no gap AND no double).
     const fanout = stubFanout();
     harness = await boot(
       stubApi({
@@ -522,7 +523,7 @@ describe("the socket (chapter 2.5)", () => {
 
   it("a connection that never resumed suppresses nothing", async () => {
     // A fresh connect presents no cursor, so it holds no marks and behaves
-    // exactly as chapter 2.6 left it (FR-006).
+    // exactly as chapter 2.6 left it.
     const fanout = stubFanout();
     harness = await boot(stubApi({}), undefined, fanout);
     const socket = new WebSocket(`${harness.url}?token=${await token()}`);

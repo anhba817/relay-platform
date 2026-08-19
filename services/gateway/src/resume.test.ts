@@ -191,7 +191,7 @@ describe("scopeMarks", () => {
     // `highWaterMarks` adds a key for every channel the BACKFILL answered with.
     // The api derives its response from the cursors it was given, so this cannot
     // happen today — and a bound this service claims should not depend on another
-    // service's response shape (FR-007).
+    // service's response shape.
     expect(scopeMarks({ a: 42, surprise: 9 }, { a: 41 })).toEqual({ a: 42 });
   });
 
