@@ -7,6 +7,8 @@ import {
   highWaterMarks,
   parseCursors,
   scopeCursors,
+  scopeMarks,
+  suppressed,
   withDeadline,
 } from "./resume.js";
 
@@ -132,5 +134,87 @@ describe("withDeadline", () => {
     expect(await withDeadline(Promise.reject(new Error("redis down")), 50)).toBe(
       false,
     );
+  });
+});
+
+// Chapter 3.7. `flushable` decides what a resuming connection may hand over from
+// its buffer; `suppressed` decides what a LIVE connection must still refuse. The
+// two comparisons are the same and the second one did not exist, which is the
+// whole of the defect.
+describe("suppressed", () => {
+  const at = (channel: string, seq: number): Message => ({
+    id: `id-${seq}`,
+    channel,
+    seq,
+    user: "dispatcher",
+    text: `m${seq}`,
+    created_at: "2026-08-19T00:00:00.000Z",
+  });
+
+  it("suppresses a frame at the mark", () => {
+    // `<=`, not `<`: the mark IS a sequence the backfill delivered.
+    expect(suppressed({ a: 42 }, at("a", 42))).toBe(true);
+  });
+
+  it("suppresses a frame below the mark", () => {
+    expect(suppressed({ a: 42 }, at("a", 7))).toBe(true);
+  });
+
+  it("delivers a frame above the mark", () => {
+    // The half that matters most: suppression must never become a gap.
+    expect(suppressed({ a: 42 }, at("a", 43))).toBe(false);
+  });
+
+  it("delivers on a channel with no mark", () => {
+    expect(suppressed({ a: 42 }, at("b", 1))).toBe(false);
+  });
+
+  it("suppresses nothing when the connection never resumed", () => {
+    expect(suppressed(null, at("a", 1))).toBe(false);
+  });
+
+  it("suppresses nothing when the mark set is empty", () => {
+    expect(suppressed({}, at("a", 1))).toBe(false);
+  });
+
+  it("keeps channels apart", () => {
+    // A mark on one channel must never silence another. Two connections' worth of
+    // confusion would look exactly like message loss.
+    const marks = { a: 42, b: 1 };
+    expect(suppressed(marks, at("a", 40))).toBe(true);
+    expect(suppressed(marks, at("b", 40))).toBe(false);
+  });
+});
+
+describe("scopeMarks", () => {
+  it("drops a channel the cursors never named", () => {
+    // `highWaterMarks` adds a key for every channel the BACKFILL answered with.
+    // The api derives its response from the cursors it was given, so this cannot
+    // happen today — and a bound this service claims should not depend on another
+    // service's response shape (FR-007).
+    expect(scopeMarks({ a: 42, surprise: 9 }, { a: 41 })).toEqual({ a: 42 });
+  });
+
+  it("keeps every channel the cursors did name", () => {
+    expect(scopeMarks({ a: 42, b: 7 }, { a: 41, b: 1 })).toEqual({ a: 42, b: 7 });
+  });
+
+  it("never exceeds the cursor set, which the resume contract already caps", () => {
+    const cursors = Object.fromEntries(
+      Array.from({ length: 200 }, (_, i) => [`c${i}`, i]),
+    );
+    const marks = { ...cursors, extra: 1 };
+    expect(Object.keys(scopeMarks(marks, cursors))).toHaveLength(200);
+  });
+
+  it("keeps a cursor far above anything the channel holds", () => {
+    // A client-supplied cursor is checked only for being a non-negative integer.
+    // A nonsense value seeds a mark rather than being clamped, and that is the
+    // documented consequence rather than a defect: the client asserted it holds
+    // those sequences, and the backfill has always taken that at face value.
+    // The blast radius is one connection and reconnecting recovers it.
+    expect(scopeMarks({ a: 999_999_999 }, { a: 999_999_999 })).toEqual({
+      a: 999_999_999,
+    });
   });
 });

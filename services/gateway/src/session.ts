@@ -19,6 +19,8 @@ import {
   SUBSCRIBE_DEADLINE_MS,
   flushable,
   highWaterMarks,
+  scopeMarks,
+  suppressed,
   parseCursors,
   scopeCursors,
   withDeadline,
@@ -94,6 +96,13 @@ export function attachSessions({
         connection.buffer.push(message);
         continue;
       }
+      // Chapter 3.7. A live connection is not necessarily a connection with
+      // nothing to remember: a frame at or below what its backfill already
+      // delivered is one it has, however long ago the resume finished. Before
+      // this, delivery consulted `phase` and nothing else, and the marks were
+      // discarded the moment the connection went live — which is precisely when
+      // the fabric could still be catching up.
+      if (suppressed(connection.marks, message)) continue;
       send(connection.socket, { type: "message.created", payload: message });
     }
   }
@@ -161,6 +170,9 @@ export function attachSessions({
       phase: presented === undefined ? "live" : "buffering",
       buffer: [],
       overflowed: false,
+      // A fresh connect suppresses nothing; a resume fills this in when it
+      // succeeds, and leaves it null when it degrades.
+      marks: null,
     };
 
     registry.add(connection);
@@ -263,6 +275,11 @@ export function attachSessions({
      * fragment of a stream the client is about to refetch in full. */
     const degrade = (reason: string): void => {
       connection.buffer = [];
+      // AND THE MARKS. A degraded resume tells the client to page history for
+      // every channel, so the backfill behind these marks is a fragment or
+      // nothing at all — suppressing on them would turn this chapter's duplicate
+      // into a gap, which constitution II ranks worse (FR-005).
+      connection.marks = null;
       connection.phase = "live";
       ack(connection, {
         cursor: cursors,
@@ -337,6 +354,10 @@ export function attachSessions({
       send(connection.socket, { type: "message.created", payload: message });
     }
     connection.buffer = [];
+    // KEPT, where chapter 2.7 discarded them. Scoped to the cursors this
+    // connection actually presented, so the bound is this service's rather than
+    // one inherited from the shape of the api's response.
+    connection.marks = scopeMarks(marks, cursors);
     // Step 5.
     connection.phase = "live";
     logger.log("info", "resume.completed", {

@@ -467,6 +467,72 @@ describe("the socket (chapter 2.5)", () => {
     socket.close();
   });
 
+  it("chapter 3.7: a frame at the mark, arriving after the resume, is not delivered", async () => {
+    // The same property `resume.itest.ts` proves against a real broker, held here
+    // against a stubbed one so it fails fast and without Redis. This is the wiring
+    // rather than the predicate: that `deliver()` consults the marks at all.
+    const fanout = stubFanout();
+    harness = await boot(
+      stubApi({
+        backfill: async () => ({
+          [CHANNEL]: { messages: [frame(42)], truncated: false },
+        }),
+      }),
+      undefined,
+      fanout,
+    );
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+    // The resume is over. The fabric catches up with what the backfill sent.
+    fanout.emit(frame(42));
+    await settle();
+    expect(created(frames)).toEqual([42]);
+    socket.close();
+  });
+
+  it("chapter 3.7: a frame above the mark, arriving after the resume, IS delivered", async () => {
+    // The half that stops a duplicate fix becoming a gap (FR-002).
+    const fanout = stubFanout();
+    harness = await boot(
+      stubApi({
+        backfill: async () => ({
+          [CHANNEL]: { messages: [frame(42)], truncated: false },
+        }),
+      }),
+      undefined,
+      fanout,
+    );
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+    fanout.emit(frame(43));
+    await settle();
+    expect(created(frames)).toEqual([42, 43]);
+    socket.close();
+  });
+
+  it("chapter 3.7: a connection that never resumed suppresses nothing", async () => {
+    // A fresh connect presents no cursor, so it holds no marks and behaves
+    // exactly as chapter 2.6 left it (FR-006).
+    const fanout = stubFanout();
+    harness = await boot(stubApi({}), undefined, fanout);
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+    fanout.emit(frame(1));
+    await settle();
+    expect(created(frames)).toEqual([1]);
+    socket.close();
+  });
+
   it("stages the other interleaving: published during backfill, absent from it", async () => {
     // Same window, the other order: seq 43 committed AFTER the backfill
     // query's snapshot, so it exists ONLY in the buffer. This is the

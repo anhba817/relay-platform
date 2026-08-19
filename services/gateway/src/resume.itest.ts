@@ -192,4 +192,118 @@ describe("resume across a real fabric", () => {
     expect(created(frames)).toEqual([42, 44]);
     socket.close();
   });
+
+  it("suppresses a frame the backfill already delivered, published after the resume", async () => {
+    // THE FOURTH QUADRANT, and the defect this chapter exists to close.
+    //
+    // The three tests above cover: published while buffering and in the backfill
+    // (deduplicated by `flushable`); published while buffering and NOT in the
+    // backfill (delivered by the flush); published after going live with a
+    // sequence ABOVE the mark (delivered). The cell they leave empty is this one —
+    // published after going live, with a sequence the backfill already sent.
+    //
+    // It is not a contrived case. A message is durable at one instant and
+    // announced at another: the gateway commits through the api and only then
+    // publishes to Redis. A backfill query landing between those two instants
+    // returns a message the fabric has not yet delivered, and the delivery arrives
+    // after the resume has finished — when chapter 2.7's dedup window has already
+    // closed, because `marks` was a local variable that `resume()` discarded.
+    //
+    // One number different from the test above it. That is the whole bug.
+    harness = await boot({
+      session: async () => ({
+        environment_id: "env-1",
+        user: "tuan",
+        channel_ids: [CHANNEL],
+      }),
+      backfill: async () => ({
+        [CHANNEL]: { messages: [frame(42)], truncated: false },
+      }),
+      sendMessage: async () => {
+        throw new Error("not used");
+      },
+    });
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await settle(400);
+    // The resume has completed. NOW the fabric catches up with a message the
+    // backfill already delivered — the publish that was still in flight while the
+    // backfill query ran.
+    await publishFromElsewhere(frame(42));
+    await settle(300);
+
+    expect(created(frames)).toEqual([42]);
+    socket.close();
+  });
+
+  it("still suppresses when two instances publish out of order", async () => {
+    // Sequences COMMIT in order under a channel row lock; they are PUBLISHED by
+    // whichever gateway instance handled each send, and those do not coordinate.
+    // A prompt publish of 43 can precede a stalled publish of 42.
+    //
+    // This is the case that made the spec's first design unsafe. It proposed
+    // retiring the mark once a higher sequence arrived — which would see the 43,
+    // drop the mark, and then deliver the 42 (research R3).
+    harness = await boot({
+      session: async () => ({
+        environment_id: "env-1",
+        user: "tuan",
+        channel_ids: [CHANNEL],
+      }),
+      backfill: async () => ({
+        [CHANNEL]: { messages: [frame(42), frame(43)], truncated: false },
+      }),
+      sendMessage: async () => {
+        throw new Error("not used");
+      },
+    });
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await settle(400);
+    // The higher one first, then the delayed lower one. Both are at or below the
+    // mark, so neither may be delivered.
+    await publishFromElsewhere(frame(43));
+    await settle(150);
+    await publishFromElsewhere(frame(42));
+    await settle(300);
+
+    expect(created(frames)).toEqual([42, 43]);
+    socket.close();
+  });
+
+  it("suppresses nothing when the resume degraded", async () => {
+    // A degraded resume tells the client to page history for every channel, so the
+    // backfill it received is a fragment or nothing at all. A mark taken from it
+    // would suppress messages the client never got — turning this chapter's
+    // duplicate into a gap, which constitution II ranks worse.
+    harness = await boot({
+      session: async () => ({
+        environment_id: "env-1",
+        user: "tuan",
+        channel_ids: [CHANNEL],
+      }),
+      backfill: async () => {
+        throw new Error("backfill unavailable");
+      },
+      sendMessage: async () => {
+        throw new Error("not used");
+      },
+    });
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await settle(400);
+    // A sequence at or below the presented cursor. With no mark retained it must
+    // still arrive: the client was told to page history, not to expect silence.
+    await publishFromElsewhere(frame(41));
+    await settle(300);
+
+    expect(created(frames)).toEqual([41]);
+    socket.close();
+  });
 });

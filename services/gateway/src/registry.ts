@@ -29,6 +29,24 @@ export interface Connection {
   /** Set when the buffer hit its ceiling. The frames are gone, so the
    * client must be told to page history instead of trusting the stream. */
   overflowed: boolean;
+  /** Chapter 3.7. Per channel, the highest sequence this connection's backfill
+   * delivered — kept for the connection's life so that a frame the fabric
+   * announces AFTER the resume has finished can still be recognised as one the
+   * client already holds.
+   *
+   * Three states, and the middle one is not the same as the first:
+   *
+   *   null            a fresh connect, or a resume that degraded — suppress nothing
+   *   {}              a resume whose cursor set was empty after scoping
+   *   { chan: 42 }    suppress at or below 42 on that channel
+   *
+   * NEVER RETIRED while the connection lives. Retiring on a higher sequence looks
+   * like the natural way to bound this and hands the duplicate straight back:
+   * sequences commit in order under a channel row lock but are published by
+   * whichever gateway instance handled each send, so a prompt 43 can beat a stalled
+   * 42. Bounded instead by `MAX_RESUME_CHANNELS`, which already caps the cursors
+   * these are scoped to. */
+  marks: Record<string, number> | null;
 }
 
 export class Registry {
