@@ -277,20 +277,25 @@ describe("signup", () => {
       const text = await res.text();
       expect(text).not.toContain("organisation");
     }
-    const before = await db.execute(
-      `SELECT count(*)::int AS n FROM organisations`,
-    );
-    // Chapter 3.2: there is no header left to forge here. The assertion is
+    // Chapter 3.2: there is no header left to forge here. The property is
     // unchanged — no route but signup creates a tenant — and a credential-free
     // internal call is now refused before it reaches a handler, which is a
     // stronger form of the same guarantee.
-    await fetch(`${url}/internal/memberships`);
-    const after = await db.execute(
-      `SELECT count(*)::int AS n FROM organisations`,
-    );
-    expect((after.rows[0] as { n: number }).n).toBe(
-      (before.rows[0] as { n: number }).n,
-    );
+    //
+    // THIS USED TO COMPARE `count(*) FROM organisations` BEFORE AND AFTER, and
+    // that assertion was not about this request. The count is global, every other
+    // suite in the lane signs organisations up while this runs, and vitest runs
+    // these files in parallel — so it asserted that nobody anywhere created a
+    // tenant during one `fetch`. Chapter 3.7's lane runs caught it at 9,917
+    // organisations: `expected 9918 to be 9917`.
+    //
+    // What is left is the property itself, asserted where it can be attributed to
+    // this call: the route refuses, and a request refused before it reaches a
+    // handler has created nothing. Same reasoning as `test-event.itest.ts`, which
+    // finds its own row rather than calling a global drain.
+    const refused = await fetch(`${url}/internal/memberships`);
+    expect(refused.status).not.toBe(200);
+    expect(await refused.text()).not.toContain("organisation");
   });
 
   it("refuses a callback whose state does not match the cookie (invariant 5, over HTTP)", async () => {
