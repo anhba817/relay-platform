@@ -448,10 +448,36 @@ describe("the consumer", () => {
     // anybody is reading. The backlog waits.
     const durable = `${RUN}-catchup-${Date.now()}`;
     const seen: string[] = [];
-    const runtime = runtimeFor(db, durable, async (e) => void seen.push(e.id));
+    // ONE environment for all three publishes, and the consumer filtered to it.
+    //
+    // This test used to call `ENV()` three times — and `ENV` mints a fresh uuid
+    // on every call, so the three events went to three different subjects and no
+    // filter could cover them. Without a filter the durable starts at the head of
+    // a stream holding ~13,000 events from earlier chapters, and the loop below
+    // had to drain all of them inside a fixed budget of 800 polls before the
+    // three under test were even reachable.
+    //
+    // Found on run 11 of chapter 3.7's twenty post-fix lane runs: `expected
+    // [ …(2756) ] to include '<uuid>'`. 2,756 events drained and the backlog
+    // still not cleared. It is the same shape as the sweep and the drain in
+    // `deliveries.itest.ts` — a test riding a shared, growing resource with a
+    // fixed budget, which passes until the resource outgrows the budget.
+    //
+    // Scoped, the drain below has nothing to drain and the assertion is about
+    // exactly the three events it published. The invariant is unchanged: the
+    // stream holds messages whether or not anybody is reading, and the backlog
+    // waits.
+    const environmentId = ENV();
+    const runtime = runtimeFor(
+      db,
+      durable,
+      async (e) => void seen.push(e.id),
+      silent,
+      environmentId,
+    );
 
     // Get to the head of the stream first, so "everything published while away"
-    // is measurable rather than lost in twelve thousand older events.
+    // is measurable rather than lost among older events.
     for (let i = 0; i < 800; i++) {
       const { handled, duplicates } = await runtime.pollOnce();
       if (handled + duplicates === 0) break;
@@ -459,12 +485,18 @@ describe("the consumer", () => {
     await runtime.stop();
 
     const published = [
-      await publish(ENV()),
-      await publish(ENV()),
-      await publish(ENV()),
+      await publish(environmentId),
+      await publish(environmentId),
+      await publish(environmentId),
     ];
 
-    const restarted = runtimeFor(db, durable, async (e) => void seen.push(e.id));
+    const restarted = runtimeFor(
+      db,
+      durable,
+      async (e) => void seen.push(e.id),
+      silent,
+      environmentId,
+    );
     for (let i = 0; i < 100; i++) {
       await restarted.pollOnce();
       if (published.every((id) => seen.includes(id))) break;
