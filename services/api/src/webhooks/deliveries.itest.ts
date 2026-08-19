@@ -285,7 +285,37 @@ describe("the relay drains only what is due", () => {
    * observer. Whoever claims the row, a due delivery ends up dispatched and a
    * not-yet-due one does not. */
   const drainEverythingDue = async (): Promise<void> => {
-    await drainDueDeliveries(db, 500, async () => {});
+    await drainDueDeliveries(db, 50_000, async () => {});
+  };
+
+  /** The same drain, retried until a row this suite owns has settled.
+   *
+   * FOUND AT CHAPTER 3.7'S POST-FIX MEASUREMENT, on run 2 of 20: "expected null
+   * not to be null" for a delivery that was unambiguously due. The comment above
+   * had the principle right and the implementation one call short.
+   *
+   * `drainDueDeliveries` claims `FOR UPDATE SKIP LOCKED`. When a suite running in
+   * a parallel worker holds this row inside its own open transaction, this call
+   * SKIPS it and returns having done nothing about it — and one call is then
+   * indistinguishable from "the relay declined to publish a due delivery", which
+   * is the failure this test is meant to report. Draining again once the other
+   * transaction has ended finds the row either already dispatched by that suite
+   * or free to claim here. Either outcome satisfies the invariant; neither is
+   * visible to a single call.
+   *
+   * Bounded rather than open-ended: if the property is genuinely false the row is
+   * never dispatched and this fails after the budget with the same message, one
+   * second later. */
+  const drainUntilSettled = async (delivery: {
+    id: string;
+    event_id: string;
+  }): Promise<void> => {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await drainEverythingDue();
+      const rows = await repo.listDeliveriesForEvent(delivery.event_id);
+      if (rows.find((r) => r.id === delivery.id)?.dispatched_at !== null) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   };
 
   const stateOf = async (delivery: { id: string; event_id: string }) => {
@@ -319,7 +349,7 @@ describe("the relay drains only what is due", () => {
   it("invariant 10: publishes a delivery that is due", async () => {
     const delivery = await seed();
 
-    await drainEverythingDue();
+    await drainUntilSettled(delivery);
 
     expect((await stateOf(delivery)).dispatched_at).not.toBeNull();
   });
@@ -361,7 +391,7 @@ describe("the relay drains only what is due", () => {
     }
 
     const healthy = await seed();
-    await drainEverythingDue();
+    await drainUntilSettled(healthy);
 
     expect((await stateOf(healthy)).dispatched_at).not.toBeNull();
     for (const s of sleeping) {
@@ -372,7 +402,7 @@ describe("the relay drains only what is due", () => {
   it("invariant 9: a claimed delivery is not claimed twice", async () => {
     const delivery = await seed();
 
-    await drainEverythingDue();
+    await drainUntilSettled(delivery);
     const first = await stateOf(delivery);
     await drainEverythingDue();
     const second = await stateOf(delivery);
@@ -400,7 +430,7 @@ describe("the relay drains only what is due", () => {
 
     // Tier 2 is one second out.
     await new Promise((resolve) => setTimeout(resolve, 1_500));
-    await drainEverythingDue();
+    await drainUntilSettled(delivery);
 
     expect((await stateOf(delivery)).dispatched_at).not.toBeNull();
   });
