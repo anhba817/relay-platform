@@ -278,7 +278,7 @@ export function attachSessions({
       // AND THE MARKS. A degraded resume tells the client to page history for
       // every channel, so the backfill behind these marks is a fragment or
       // nothing at all — suppressing on them would turn this chapter's duplicate
-      // into a gap, which constitution II ranks worse (FR-005).
+      // into a gap, which constitution II ranks worse.
       connection.marks = null;
       connection.phase = "live";
       ack(connection, {
