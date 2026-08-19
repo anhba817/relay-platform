@@ -107,6 +107,51 @@ export function flushable(
   return buffer.filter((frame) => frame.seq > (marks[frame.channel] ?? 0));
 }
 
+/** Step 5's half, and the reason this chapter exists (FR-001, FR-003).
+ *
+ * `flushable` answers this question for frames sitting in the buffer. This answers
+ * it for frames arriving AFTER the connection has gone live, which is the case
+ * chapter 2.7 did not have — its marks were a local variable that `resume()`
+ * discarded the moment it flushed.
+ *
+ * A message is durable at one instant and announced at another: the gateway
+ * commits through the api and only then publishes to the fabric. A backfill query
+ * landing between those two instants returns a message the fabric has not yet
+ * delivered, so the delivery arrives once the resume is over — and before this
+ * function there was nothing left to compare it against.
+ *
+ * `<=`, not `<`. The mark IS a sequence the backfill delivered rather than the one
+ * after it, which is the same off-by-one `flushable` documents one screen up. */
+export function suppressed(
+  marks: Record<string, number> | null,
+  frame: Message,
+): boolean {
+  if (marks === null) return false;
+  const mark = marks[frame.channel];
+  return mark !== undefined && frame.seq <= mark;
+}
+
+/** The marks a connection keeps, bounded to the channels it actually presented
+ * cursors for (FR-007).
+ *
+ * `highWaterMarks` seeds from the cursors and then adds a key for every channel
+ * the backfill answered with, so on its own it bounds nothing. The api derives its
+ * response from the cursors it was given, so the two agree today — but a bound
+ * this service claims should not live in another service's response shape. This is
+ * `scopeCursors` applied one step later, and it is here rather than in `session.ts`
+ * so that a unit test can reach it.
+ *
+ * At most `MAX_RESUME_CHANNELS` entries, because that is what the resume contract
+ * already caps the cursor map at. */
+export function scopeMarks(
+  marks: Record<string, number>,
+  cursors: Record<string, number>,
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(marks).filter(([channelId]) => channelId in cursors),
+  );
+}
+
 /** A promise that resolves false instead of hanging forever. */
 export async function withDeadline(
   work: Promise<unknown>,

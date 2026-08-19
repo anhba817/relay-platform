@@ -78,8 +78,18 @@ export default defineConfig({
           lines: 98,
           statements: 95,
         },
+        // THE DEDUPLICATION CHAPTER RAISED THIS, 93 -> 95. The chapter added two pure functions
+        // to this file — the live-path suppression predicate and the scoping that
+        // bounds the marks — and both are fully covered.
+        //
+        // Not 100, and the missing branch is named rather than chased: it is
+        // `if (timer)` in chapter 2.7's `withDeadline`, whose falsy arm cannot be
+        // reached because a Promise executor runs synchronously and always assigns
+        // the timer before the `finally` can see it. Pinning 100 here would pin a
+        // number the file cannot reach without deleting a defensive check that
+        // costs nothing.
         "services/gateway/src/resume.ts": {
-          branches: 93,
+          branches: 95,
           functions: 100,
           lines: 100,
           statements: 100,
