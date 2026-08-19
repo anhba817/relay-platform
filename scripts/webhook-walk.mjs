@@ -450,7 +450,7 @@ if (WATCH_DISABLE) {
     console.log("  `delivered_at` is null and stays null. FR-WHK-07 asks for the");
     console.log("  organisation to be notified BY EMAIL, and this platform has no email");
     console.log("  transport of any kind. The row is the obligation; the null is the");
-    console.log("  admission. Chapter 3.7 needs the same transport for quotas.\n");
+    console.log("  admission. A later chapter needs the same transport for quotas.\n");
 
     // Running it again must change nothing. At most once per run, enforced by the
     // `enabled = true` predicate in the update rather than by a check.
