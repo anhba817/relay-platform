@@ -253,7 +253,7 @@ describe("resume across a real fabric", () => {
         channel_ids: [CHANNEL],
       }),
       backfill: async () => ({
-        [CHANNEL]: { messages: [frame(42), frame(43)], truncated: false },
+        [CHANNEL]: { messages: [frame(42)], truncated: false },
       }),
       sendMessage: async () => {
         throw new Error("not used");
@@ -264,10 +264,12 @@ describe("resume across a real fabric", () => {
     );
     const frames = record(socket);
     await settle(400);
-    // The higher one first, then the delayed lower one. Both are at or below the
-    // mark, so neither may be delivered.
+    // 43 is ABOVE the mark and must be delivered. A rule that retired the mark on
+    // seeing it would then have nothing left to compare the delayed 42 against.
     await publishFromElsewhere(frame(43));
     await settle(150);
+    // 42 is the mark itself, arriving late from an instance that stalled between
+    // its api call and its publish. It must still be suppressed.
     await publishFromElsewhere(frame(42));
     await settle(300);
 
