@@ -8,7 +8,7 @@ import { createLogger } from "@relay/service-kit";
 
 import { createDb, createPool, type Db } from "../db/client";
 import { migrate } from "../db/migrate";
-import { sweepDisabledEndpoints } from "../db/repository";
+import { recordAttemptOutcome } from "../db/repository";
 import { createMailer } from "./mailer";
 import { createNotificationRelay } from "./notification-relay";
 
@@ -132,11 +132,44 @@ describe("the disablement notification, end to end", () => {
     return { organisationId, environmentId, endpointId, name };
   };
 
-  /** Drive the REAL disablement path. The row under test has to be the row the
-   * product writes, not one this file invented — a suite that inserted its own
-   * notifications would prove the relay reads a table and nothing about whether
-   * anything fills it. */
-  const disable = async () => sweepDisabledEndpoints(db);
+  /** Drive the REAL disablement path, through the ON-OUTCOME door rather than the
+   * sweep. The row under test has to be the row the product writes — a suite that
+   * inserted its own notifications would prove the relay reads a table and nothing
+   * about whether anything fills it.
+   *
+   * NOT `sweepDisabledEndpoints`, which is what this used first. That function is
+   * GLOBAL: it disables the hundred oldest eligible endpoints in the database,
+   * belonging to anybody. Run from here it reached into
+   * `deliveries.itest.ts`'s fixture and disabled the endpoint whose whole test is
+   * that the sweep disables it — so that suite failed beside this one and passed
+   * alone. The sixth instance of this chapter's recurring fault, and the first one
+   * this chapter CAUSED rather than found (research R46).
+   *
+   * `recordAttemptOutcome` is scoped to one delivery. The seed leaves the endpoint
+   * one failure short of the floor, so a single failed outcome trips the same
+   * `disableEndpoint` the sweep would have, writing the same notification row. */
+  const disable = async (endpointId: string, environmentId: string) => {
+    const deliveryId = randomUUID();
+    await pool.query(
+      "INSERT INTO webhook_deliveries (id, environment_id, endpoint_id, event_id, " +
+        "payload, attempt, state, next_attempt_at) " +
+        "VALUES ($1, $2, $3, $4, '{}'::jsonb, 1, 'pending', now())",
+      [deliveryId, environmentId, endpointId, randomUUID()],
+    );
+    await recordAttemptOutcome(db, {
+      deliveryId,
+      attempt: 1,
+      status: 503,
+      error: "down",
+      latencyMs: 5,
+    });
+    const { rows } = await pool.query(
+      "SELECT count(*)::int AS n FROM webhook_disable_notifications " +
+        "WHERE endpoint_id = $1",
+      [endpointId],
+    );
+    return (rows as { n: number }[])[0]!.n;
+  };
 
   /** Is THIS endpoint's notification still claimable?
    *
@@ -185,8 +218,8 @@ describe("the disablement notification, end to end", () => {
 
   it("sends what the organisation needs, and Mailpit confirms the contents (FR-WHK-07)", async () => {
     const address = `owner-${randomUUID().slice(0, 8)}@example.test`;
-    const { name } = await seed([address]);
-    expect(await disable()).toBeGreaterThan(0);
+    const { name, endpointId, environmentId } = await seed([address]);
+    expect(await disable(endpointId, environmentId)).toBeGreaterThan(0);
 
     const r = relay();
     expect(await r.drainOnce()).toBeGreaterThan(0);
@@ -215,8 +248,8 @@ describe("the disablement notification, end to end", () => {
 
   it("sets delivered_at only AFTER the send returns (FR-WHK-07)", async () => {
     const address = `fail-${randomUUID().slice(0, 8)}@example.test`;
-    const { endpointId } = await seed([address]);
-    await disable();
+    const { endpointId, environmentId } = await seed([address]);
+    await disable(endpointId, environmentId);
 
     // A mailer pointed at a port that answers nothing. The send throws, the
     // batch aborts, and the row must still be claimable — a notification marked
@@ -245,8 +278,8 @@ describe("the disablement notification, end to end", () => {
 
   it("does not send a delivered row twice (FR-WHK-07)", async () => {
     const address = `once-${randomUUID().slice(0, 8)}@example.test`;
-    await seed([address]);
-    await disable();
+    const { endpointId, environmentId } = await seed([address]);
+    await disable(endpointId, environmentId);
 
     const first = relay();
     await first.drainOnce();
@@ -268,8 +301,8 @@ describe("the disablement notification, end to end", () => {
     // edge case, and the reason `delivered_at` is per row rather than per
     // endpoint.
     const address = `flap-${randomUUID().slice(0, 8)}@example.test`;
-    const { endpointId } = await seed([address]);
-    await disable();
+    const { endpointId, environmentId } = await seed([address]);
+    await disable(endpointId, environmentId);
     const first = relay();
     await first.drainOnce();
     await first.stop();
@@ -282,7 +315,7 @@ describe("the disablement notification, end to end", () => {
       [endpointId],
     );
     // …and it fails again.
-    await disable();
+    await disable(endpointId, environmentId);
     const second = relay();
     expect(await second.drainOnce()).toBeGreaterThan(0);
     await second.stop();
@@ -300,8 +333,8 @@ describe("the disablement notification, end to end", () => {
     const capturing = createLogger("notifications-itest", (line) => {
       lines.push(line);
     });
-    const { endpointId } = await seed([null, null]);
-    await disable();
+    const { endpointId, environmentId } = await seed([null, null]);
+    await disable(endpointId, environmentId);
 
     const r = createNotificationRelay({
       db,
@@ -325,8 +358,8 @@ describe("the disablement notification, end to end", () => {
     const tag = randomUUID().slice(0, 8);
     const one = `a-${tag}@example.test`;
     const two = `b-${tag}@example.test`;
-    await seed([one, null, two]);
-    await disable();
+    const { endpointId, environmentId } = await seed([one, null, two]);
+    await disable(endpointId, environmentId);
 
     const r = relay();
     await r.drainOnce();
@@ -348,10 +381,10 @@ describe("the disablement notification, end to end", () => {
     // writes a row and returns, and whether anybody can be emailed is somebody
     // else's problem entirely.
     const address = `outage-${randomUUID().slice(0, 8)}@example.test`;
-    const { endpointId } = await seed([address]);
+    const { endpointId, environmentId } = await seed([address]);
 
     // Disablement itself, with no mail server in the picture at all.
-    expect(await disable()).toBeGreaterThan(0);
+    expect(await disable(endpointId, environmentId)).toBeGreaterThan(0);
     const [row] = (
       await pool.query(
         "SELECT delivered_at FROM webhook_disable_notifications " +
@@ -376,7 +409,9 @@ describe("the disablement notification, end to end", () => {
     // Everything else still works: a second endpoint disables normally while the
     // mail server is down, because nothing on that path talks to it.
     const other = await seed([`other-${randomUUID().slice(0, 8)}@example.test`]);
-    expect(await disable()).toBeGreaterThan(0);
+    expect(
+      await disable(other.endpointId, other.environmentId),
+    ).toBeGreaterThan(0);
     const rows = (
       await pool.query(
         "SELECT enabled FROM webhook_endpoints WHERE id = $1",
@@ -396,10 +431,11 @@ describe("the disablement notification, end to end", () => {
     // The bad address here is one Mailpit rejects at RCPT time. Its own
     // behaviour, not a stub's: this is the shape of the thing in production.
     const tag = randomUUID().slice(0, 8);
-    await seed(["not a valid address at all"]);
+    const bad = await seed(["not a valid address at all"]);
+    await disable(bad.endpointId, bad.environmentId);
     const good = `behind-${tag}@example.test`;
-    await seed([good]);
-    await disable();
+    const ok = await seed([good]);
+    await disable(ok.endpointId, ok.environmentId);
 
     const r = relay();
     // The good one goes out. The bad one does not, and does not take it down.
@@ -416,9 +452,9 @@ describe("the disablement notification, end to end", () => {
     const tag = randomUUID().slice(0, 8);
     const addresses = [0, 1, 2].map((i) => `backlog-${i}-${tag}@example.test`);
     for (const address of addresses) {
-      await seed([address]);
+      const seeded = await seed([address]);
+      expect(await disable(seeded.endpointId, seeded.environmentId)).toBe(1);
     }
-    expect(await disable()).toBeGreaterThanOrEqual(3);
 
     const r = relay();
     expect(await r.drainOnce()).toBeGreaterThanOrEqual(3);
