@@ -178,7 +178,20 @@ describe("the outbox", () => {
 
     // Every event this environment produced reached the destination with its
     // own id as the deduplication key.
-    const ids = publisher.sent.map((m) => m.id);
+    //
+    // SCOPED, and it was not (feature 030, instance 9). `publisher.sent` holds
+    // every row this relay moved out of a table it drains globally, so the
+    // unfiltered version asserted that no row anywhere in the outbox is ever
+    // published twice by anybody — which is a claim about the whole platform
+    // dressed up as a claim about three messages. It failed once in a full lane
+    // run, `expected 3001 to be 4800`, and passed when the file ran alone: the
+    // recurring fault's signature. The scoped idiom is the one this file already
+    // uses forty lines down, and the sentence above the assertion was describing
+    // it all along.
+    const ids = publisher.sent
+      .filter((m) => m.subject.endsWith(env.id))
+      .map((m) => m.id);
+    expect(ids.length).toBeGreaterThan(0);
     expect(new Set(ids).size).toBe(ids.length);
 
     // A second pass has nothing of OURS to do — marked rows are done.

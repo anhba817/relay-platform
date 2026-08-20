@@ -32,6 +32,7 @@ export default defineConfig({
     // The exemption handling stays: the trigger is database state and outlives
     // whichever lane installed it, so every lane pointed at that database meets it.
     env: {
+      RELAY_HARNESS_BAIT: "on",
       RELAY_OUTBOX_RELAY: "off",
       RELAY_DELIVERY_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",

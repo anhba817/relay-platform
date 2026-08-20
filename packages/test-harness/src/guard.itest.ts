@@ -106,10 +106,10 @@ describe("a connection carrying the exemption", () => {
     // Children before parents — the same order `plant()` uses, and the same order
     // the delete has to take because the schema means it.
     for (const sql of [
-      "delete from webhook_disable_notifications where endpoint_id = $1",
-      "delete from webhook_deliveries where endpoint_id = $1",
+      "delete from webhook_disable_notifications where environment_id = $1",
+      "delete from webhook_deliveries where environment_id = $1",
     ]) {
-      await permitted.query(sql, [s.endpointId]);
+      await permitted.query(sql, [s.environmentId]);
     }
     await permitted.query("delete from webhook_endpoints where id = $1", [
       s.endpointId,
@@ -145,7 +145,9 @@ describe("an exemption that names one table", () => {
   it("may write the table it names", async () => {
     const r = await narrow.query(
       "update webhook_disable_notifications set delivered_at = now() where endpoint_id = $1",
-      [n.endpointId],
+      // The notifications hang off the DISABLED endpoint, which is what a
+      // disablement notification is about — see `plant()`.
+      [n.deliveryEndpointId],
     );
     expect(r.rowCount).toBeGreaterThan(0);
   });

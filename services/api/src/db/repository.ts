@@ -416,7 +416,19 @@ export async function drainDisableNotifications(
   db: Db,
   limit: number,
   deliver: (row: DisableNotificationRow) => Promise<void>,
-  onError: (row: DisableNotificationRow, error: unknown) => void = () => {},
+  /** REQUIRED, as of feature 030, and for a sharper reason than `limit`'s.
+   *
+   * It carried `= () => {}`, a default that DISCARDS a row's failure without a
+   * log line — the swallowed-refusal shape twice over (research R13, R39). No
+   * caller in the tree has ever used it: `notification-relay.ts` is the only one
+   * and it has always passed a handler. So the default was dead code that existed
+   * only to make forgetting the handler silent.
+   *
+   * It also had a second life as the file's last uncovered function, which is how
+   * it was found: `repository.ts` measures 98.7% functions against a ratchet of
+   * 100, and it measured that before this feature touched anything (research
+   * R47). */
+  onError: (row: DisableNotificationRow, error: unknown) => void,
 ): Promise<number> {
   return db.transaction(async (tx) => {
     const claimed = (await tx.execute(

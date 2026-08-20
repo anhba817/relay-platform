@@ -43,6 +43,11 @@ export interface Sentinel {
   applicationId: string;
   environmentId: string;
   endpointId: string;
+  /** The DISABLED endpoint the due-delivery bait hangs off. Separate from
+   * `endpointId` because the two baits want opposite states: the sweep only
+   * considers ENABLED endpoints, and the dispatcher only does real work for one.
+   * See `plant()` for the measurement that forced the split. */
+  deliveryEndpointId: string;
   /** `__sentinel__:<owner>`, on every row, so a failure says whose it is. */
   name: string;
 }
@@ -68,6 +73,7 @@ export function sentinelFor(owner: string): Sentinel {
     applicationId: id("application"),
     environmentId: id("environment"),
     endpointId: id("endpoint"),
+    deliveryEndpointId: id("delivery-endpoint"),
     name: `__sentinel__:${owner}`,
   };
 }
@@ -161,9 +167,8 @@ export async function plant(
   //
   // So the endpoint bait is sized by the same rule as the other three: BAIT_ROWS,
   // which is twice the largest batch any product reader takes. The first of them
-  // keeps `s.endpointId`, because the deliveries and the notifications hang off a
-  // known id and a refusal that names a stable row is easier to read than one
-  // that names a random one.
+  // keeps `s.endpointId`, so a refusal names a stable row rather than a random
+  // one.
   //
   // `disabled_at` and `disabled_reason` must be null together, and
   // `failure_run_started_at` and `failure_run_attempts` must be non-null together
@@ -188,14 +193,56 @@ export async function plant(
     ],
   );
 
-  // bait 2: due deliveries.
+  // bait 2: due deliveries — on a DISABLED endpoint, which is the difference
+  // between bait and sabotage.
+  //
+  // MEASURED TWICE. With these rows on the enabled endpoint, the dispatcher does
+  // real work for every one of them: fetch the material, sign, send, record the
+  // attempt. Two hundred jobs at roughly forty milliseconds is eight seconds, and
+  // `dispatcher.itest.ts` waits eight seconds for its own row to come out the far
+  // end of a shared FIFO stream. It failed 10 of 16 tests in its own lane
+  // (research R44) and 9 of 16 again in the coverage lane, which shares the
+  // database with the api lane and so meets the bait wherever it was planted.
+  //
+  // A DISABLED ENDPOINT WAS THE SECOND ATTEMPT AND IT WAS NOT ENOUGH.
+  // `deliveryMaterial` returns null for a disabled endpoint, so the dispatcher
+  // logs `delivery.skipped` and acks without signing or sending — but the api
+  // round-trip is itself the forty milliseconds. Measured: 10 failures became 2
+  // and 155 seconds became 72, with the first two tests still losing their
+  // eight-second poll to two hundred skips. Better, and still sabotage.
+  //
+  // SO THE DELIVERY BAIT IS NOT DUE. `next_attempt_at` is an hour in the FUTURE,
+  // which takes these rows out of every drain's claim window. They are still two
+  // hundred pending deliveries for anything that counts rows — `pendingDeliveryDepth`
+  // is instance 4's shape and the lint rule's second target — and they are no
+  // longer bait for a drain.
+  //
+  // That loss is real and it is the same one R44 already recorded: bait for a
+  // reader that performs work IS that work, and there is no version of it that a
+  // suite waiting on end-to-end dispatcher latency can survive. The drain's reader
+  // shape is covered by the required batch size and by the lint rule instead.
+  // The endpoint stays disabled anyway: if one of these rows ever does come due
+  // through some path not anticipated here, a skip is the cheapest thing it can
+  // cost.
+  await q(
+    `INSERT INTO webhook_endpoints
+       (id, environment_id, url, event_types, secret_ciphertext, enabled,
+        failure_run_started_at, failure_run_attempts, disabled_at, disabled_reason)
+     VALUES ($1, $2, $3, '["message.created"]'::jsonb, 'sentinel-not-a-ciphertext',
+             false, NULL, NULL, now() - interval '3 hours', 'sentinel bait')`,
+    [
+      s.deliveryEndpointId,
+      s.environmentId,
+      `https://sentinel.invalid/${s.owner}/disabled`,
+    ],
+  );
   await q(
     `INSERT INTO webhook_deliveries
        (id, environment_id, endpoint_id, event_id, payload, attempt, state, next_attempt_at)
      SELECT gen_random_uuid(), $1, $2, gen_random_uuid(), '{}'::jsonb, 1, 'pending',
-            now() - interval '1 hour'
+            now() + interval '1 hour'
        FROM generate_series(1, $3)`,
-    [s.environmentId, s.endpointId, BAIT_ROWS],
+    [s.environmentId, s.deliveryEndpointId, BAIT_ROWS],
   );
 
   // bait 3: unpublished events. `outbox` carries no environment_id — it is
@@ -223,6 +270,6 @@ export async function plant(
      SELECT gen_random_uuid(), $1, $2, $3, now() - interval '3 hours',
             now() - interval '4 hours', 25, 503
        FROM generate_series(1, $4)`,
-    [s.environmentId, s.organisationId, s.endpointId, BAIT_ROWS],
+    [s.environmentId, s.organisationId, s.deliveryEndpointId, BAIT_ROWS],
   );
 }
