@@ -1137,9 +1137,37 @@ export async function testDeliveryResult(
  *
  * Returns how many it disabled, so the relay can log a number rather than a claim.
  */
+/*
+ * THE FOUR CATEGORIES OF CROSS-ENVIRONMENT FUNCTION IN THIS FILE (feature 030,
+ * FR-012b). Three documents asserted there were five batch-taking functions; the
+ * answer is four, and the reason the count kept slipping is that the third
+ * category below has no home in a sentence about batch sizes:
+ *
+ *   1. TAKE A BATCH SIZE, and now all four REQUIRE one:
+ *      drainOutbox, drainDueDeliveries, drainDisableNotifications,
+ *      sweepDisabledEndpoints.
+ *   2. RETURN A GLOBAL COUNT and have nothing to bound: outboxDepth,
+ *      pendingDeliveryDepth. A count is one row; there is no batch to size. These
+ *      are restricted from tests by lint instead (FR-012a) — a global count(*)
+ *      compared against itself is instance 4, twice in one file.
+ *   3. CROSS ENVIRONMENTS BUT TAKE AN ID, so they are bounded by construction:
+ *      recordAttemptOutcome, disableEndpoint. Nothing to require and nothing to
+ *      restrict.
+ *
+ * Whoever adds the next cross-environment function reads this file, not the spec.
+ */
 export async function sweepDisabledEndpoints(
   db: Db,
-  limit = 100,
+  /** REQUIRED, as of feature 030 — the last of the four to carry a default.
+   *
+   * This would not have prevented instance 6 (research R8). The call that damaged
+   * a neighbour's fixture was `sweepDisabledEndpoints(db)`, and
+   * `sweepDisabledEndpoints(db, 10_000)` is worse rather than better: a bigger
+   * batch reaches further into other people's rows. The required argument is a
+   * prompt to think about WHOSE rows are in scope. The control is the trigger in
+   * `packages/test-harness/src/sentinel.sql`, and a comment here claiming
+   * otherwise would teach the wrong lesson. */
+  limit: number,
 ): Promise<number> {
   // An INTERVAL built from the same constant the pure policy uses, so the sweep and
   // `shouldDisable` can never disagree about how long an hour is. Milliseconds

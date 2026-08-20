@@ -166,7 +166,8 @@ export function createDeliveryRelay({
   async function sweepOnce(): Promise<number> {
     if (!sweepEnabled) return 0;
     try {
-      const disabled = await sweepDisabledEndpoints(db);
+      // The batch the default used to supply, now said out loud (feature 030).
+      const disabled = await sweepDisabledEndpoints(db, 100);
       if (disabled > 0) {
         // A COUNT, and only when it is not zero. This runs several times a second
         // when the platform is idle, and a line per pass would bury every other

@@ -25,14 +25,26 @@ function defaultsIn(file: string): number[] {
   ].map((m) => Number(m[1]!.replace(/_/g, "")));
 }
 
+/** `repository.ts` used to declare `limit = 100` and no longer declares anything:
+ * T022 removed the last default, which is the point of T022. So it is watched for
+ * the opposite property — that no default has come back — while the three relays
+ * are watched for having one. The file stayed on the list because a default
+ * reintroduced there is exactly the regression worth catching. */
+const NO_DEFAULT_EXPECTED = "services/api/src/db/repository.ts";
+
 describe("the bait bound still dominates every product default", () => {
   it("finds a default in each file it claims to watch", () => {
     // A grep that matches nothing passes vacuously. If a file stops declaring a
     // default — or is renamed — this test must fail rather than fall silent.
     for (const file of BATCH_SOURCES) {
+      if (file === NO_DEFAULT_EXPECTED) continue;
       expect(defaultsIn(file).length, `no batch default found in ${file}`)
         .toBeGreaterThan(0);
     }
+  });
+
+  it("still finds no batch default in the file feature 030 emptied", () => {
+    expect(defaultsIn(NO_DEFAULT_EXPECTED)).toEqual([]);
   });
 
   it("is at least as large as the largest of them", () => {
