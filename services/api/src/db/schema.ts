@@ -120,7 +120,28 @@ export const environments = pgTable(
     // envelope-encrypted (NFR-SEC-02)
     signingSecret: text("signing_secret").notNull(),
     retentionDays: integer("retention_days"),
+    // DECLARED IN 2.1 AND STILL EMPTY. Named in SRS §6.1's Environment entity
+    // and SAD §338, read by nothing in seventeen chapters. Chapter 3.8
+    // deliberately did NOT put rate-limit policy here: the column is named for
+    // quotas, quotas are chapter 3.9, and the distinction between a limit that
+    // may be lost and a quota that is money is the thing 3.8 is about. Putting
+    // one in a field named for the other would collapse in the schema what the
+    // prose spends a chapter drawing (research R31).
     quotaConfig: jsonb("quota_config").notNull().default({}),
+    // Chapter 3.8: per-environment rate limits (FR-RTL-04, FR-007).
+    //
+    // NULLABLE, AND NULL IS NOT ZERO. Null means "no override, use the
+    // documented default", resolved at read time. Zero means "refuse
+    // everything", which must stay expressible — an environment can be switched
+    // off deliberately — so the two states cannot share a representation.
+    //
+    // Three integers rather than a document, and a slot for an environment with
+    // NONE FOR A ROUTE. That forecloses SRS Appendix C question 5 — whether the
+    // dev-token endpoint should be limited more aggressively than the rest of
+    // its environment — and the question stays open because of it (R30).
+    restLimitPerMinute: integer("rest_limit_per_minute"),
+    sendLimitPerMinute: integer("send_limit_per_minute"),
+    connectLimitPerMinute: integer("connect_limit_per_minute"),
   },
   (t) => [
     check(
@@ -131,6 +152,18 @@ export const environments = pgTable(
     // above, this unique index IS that rule: two legal kinds, one row each.
     // No trigger, no counting query, nothing to lose a race to.
     unique("environments_application_kind_unique").on(t.applicationId, t.kind),
+    check(
+      "environments_rest_limit_non_negative",
+      sql`${t.restLimitPerMinute} IS NULL OR ${t.restLimitPerMinute} >= 0`,
+    ),
+    check(
+      "environments_send_limit_non_negative",
+      sql`${t.sendLimitPerMinute} IS NULL OR ${t.sendLimitPerMinute} >= 0`,
+    ),
+    check(
+      "environments_connect_limit_non_negative",
+      sql`${t.connectLimitPerMinute} IS NULL OR ${t.connectLimitPerMinute} >= 0`,
+    ),
   ],
 );
 

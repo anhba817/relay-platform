@@ -100,6 +100,9 @@ importers:
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.20.3)(pg@8.22.0)
+      ioredis:
+        specifier: ^6.0.0
+        version: 6.0.0
       jose:
         specifier: ^6.2.7
         version: 6.2.7
