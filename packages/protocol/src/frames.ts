@@ -102,14 +102,26 @@ export const typingSchema = z.strictObject({
 });
 
 /** Protocol-level error — EIR-API-04's error shape, reused on the socket
- * (this chapter's recorded decision). `request_id` joins in Part 2, when a
- * gateway exists to mint one. */
+ * (chapter 1.3's recorded decision).
+ *
+ * `request_id` ARRIVED IN CHAPTER 3.8, not in Part 2. The comment here promised
+ * it "joins in Part 2, when a gateway exists to mint one"; Part 2 came and went,
+ * the gateway existed, and the field did not. Constitution V asks for four fields
+ * and the platform sent three for twenty-two chapters.
+ *
+ * REQUIRED, not optional, and that was a decision rather than an oversight. A
+ * server-initiated frame is arguably not a response to a request, so optional
+ * would have been defensible — and it would have been the fourth instance of the
+ * habit this chapter is about: `rate_limited`, close code 4008 and this field
+ * were all declared here and left unenforced. The gateway mints one per answered
+ * frame instead (research R13). */
 export const errorFrameSchema = z.strictObject({
   type: z.literal("error"),
   payload: z.strictObject({
     code: z.string().min(1),
     message: z.string().min(1),
     docs_url: z.string().min(1),
+    request_id: z.string().min(1),
     field: z.string().min(1).optional(),
   }),
 });

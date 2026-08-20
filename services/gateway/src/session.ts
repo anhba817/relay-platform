@@ -7,7 +7,7 @@ import {
   type Frame,
   type Message,
 } from "@relay/protocol";
-import type { Logger } from "@relay/service-kit";
+import { newRequestId, type Logger } from "@relay/service-kit";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { ApiError, type ApiClient } from "./api-client.js";
@@ -39,14 +39,33 @@ function send(socket: WebSocket, frame: Frame): void {
   socket.send(JSON.stringify(frame));
 }
 
-/** EIR-API-04's envelope, wearing its WebSocket clothes. */
-function sendError(socket: WebSocket, code: string, message: string): void {
+/** EIR-API-04's envelope, wearing its WebSocket clothes.
+ *
+ * `request_id` ARRIVED IN CHAPTER 3.8, and the gateway had none to give — it
+ * minted no ids at all. The field is required on the frame rather than optional,
+ * because an optional fourth field would have been the fourth instance of the
+ * habit that chapter is about: `rate_limited`, close code 4008 and this field
+ * were all declared in 1.3 and left unenforced (research R13).
+ *
+ * WHAT THE ID IS FOR decides its shape. A developer quoting one in a support
+ * ticket needs it to find a single server-side log line, and on a socket the
+ * useful unit is the frame that failed — a client whose tenth `message.send` was
+ * refused needs to point at that refusal, not at the connection. So callers pass
+ * the id of the frame they are answering, and `sendError` mints one only for a
+ * frame nobody asked for. */
+function sendError(
+  socket: WebSocket,
+  code: string,
+  message: string,
+  requestId: string = newRequestId(),
+): void {
   send(socket, {
     type: "error",
     payload: {
       code,
       message,
       docs_url: `https://relay.example/docs/errors/${code}`,
+      request_id: requestId,
     },
   });
 }

@@ -43,6 +43,11 @@ const valid: Record<string, unknown> = {
       code: "invalid_frame",
       message: "no",
       docs_url: "https://docs.example/errors/invalid_frame",
+      // Chapter 3.8: the fourth field, required rather than optional. The
+      // comment above this schema promised it "joins in Part 2, when a gateway
+      // exists to mint one" — Part 2 came and went, and constitution V has asked
+      // for four fields since 1.3.
+      request_id: "01JABCDEFGHJKMNPQRSTVWXYZ",
     },
   },
 };

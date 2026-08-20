@@ -268,6 +268,34 @@ describe("the limiter", () => {
     expect(other.headers.get(HEADERS.limit)).toBe("600");
   });
 
+  it("carries the fourth field on EVERY error, not only the 429", async () => {
+    // Constitution V has asked for `code`, `message`, `docs_url` and
+    // `request_id` since chapter 1.3. The platform sent three for twenty-two
+    // chapters, above a comment promising the fourth would "join in Part 2, when
+    // a gateway exists to mint one".
+    //
+    // Four fields on one status and three on the others would be worse than
+    // either consistent answer, so this checks the statuses nobody was thinking
+    // about when the rate limiter was specified.
+    const notFound = await fetch(`${url}/v1/nope`);
+    const unauthorized = await fetch(`${url}/v1/channels/x/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    for (const res of [notFound, unauthorized]) {
+      const body = (await res.json()) as Record<string, unknown>;
+      // TOP-LEVEL, not nested under an `error` key — EIR-API-04's example showed
+      // it nested until this chapter checked, and the SRS is amended to 1.3.
+      expect(body["error"]).toBeUndefined();
+      expect(typeof body["code"]).toBe("string");
+      expect(typeof body["message"]).toBe("string");
+      expect(typeof body["docs_url"]).toBe("string");
+      expect(body["request_id"]).toBe(res.headers.get("x-request-id"));
+    }
+  });
+
   it("two environments carry DIFFERENT configured limits, each at its own number", async () => {
     // Independent counters are half of what the journey map asks for. The other
     // half is "separate keys and separate quotas": a developer raises her dev
