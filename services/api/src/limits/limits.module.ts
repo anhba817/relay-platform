@@ -1,5 +1,6 @@
 import { Inject, Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
 
+import { createDb, createPool, type Db } from "../db/client";
 import { createCounterStore, type CounterStore } from "./store";
 
 // The counter store's home (chapter 3.8).
@@ -15,6 +16,10 @@ import { createCounterStore, type CounterStore } from "./store";
 // clearing one (research R20).
 
 export const COUNTER_STORE = "COUNTER_STORE";
+/** The limiter's own pool. Its own rather than the auth middleware's, because a
+ * middleware that had to be handed another middleware's connection would couple
+ * two things that only share a request. */
+export const LIMITS_DB = "LIMITS_DB";
 
 @Injectable()
 export class CounterStoreLifecycle implements OnModuleDestroy {
@@ -28,8 +33,9 @@ export class CounterStoreLifecycle implements OnModuleDestroy {
 @Module({
   providers: [
     { provide: COUNTER_STORE, useFactory: (): CounterStore => createCounterStore() },
+    { provide: LIMITS_DB, useFactory: (): Db => createDb(createPool()) },
     CounterStoreLifecycle,
   ],
-  exports: [COUNTER_STORE],
+  exports: [COUNTER_STORE, LIMITS_DB],
 })
 export class LimitsModule {}

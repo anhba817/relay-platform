@@ -16,6 +16,8 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
 import { TenancyModule } from "./tenancy/tenancy.module";
 import { LOGGER, apiLogger } from "./logger";
 import { ProtocolErrorFilter } from "./protocol-error.filter";
+import { LimitsModule } from "./limits/limits.module";
+import { RateLimitMiddleware } from "./limits/rate-limit.middleware";
 import { RequestContextMiddleware } from "./request-context.middleware";
 
 // The application described as a module graph — ADR-15's convention for the
@@ -31,22 +33,27 @@ import { RequestContextMiddleware } from "./request-context.middleware";
     OutboxModule,
     ConsumerModule,
     WebhooksModule,
+    LimitsModule,
   ],
   controllers: [HealthController],
   providers: [
     { provide: LOGGER, useFactory: apiLogger },
     { provide: APP_FILTER, useClass: ProtocolErrorFilter },
     RequestContextMiddleware,
+    RateLimitMiddleware,
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    // Order is the chain: the request gets its id first, then its principal.
+    // Order is the chain: the request gets its id first, then its principal,
+    // then its allowance. The limiter is LAST and that is forced (chapter 3.8):
+    // it counts per environment and the environment comes from the credential,
+    // so nothing earlier in the chain knows which tenant is asking.
     // Chapter 3.2 put authentication HERE rather than in a guard because Nest
     // constructs request-scoped providers before the enhancer chain runs — the
     // finding 2.6 paid for, measured again on this path in T004.
     consumer
-      .apply(RequestContextMiddleware, AuthenticateMiddleware)
+      .apply(RequestContextMiddleware, AuthenticateMiddleware, RateLimitMiddleware)
       .forRoutes("{*path}");
   }
 }

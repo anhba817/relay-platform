@@ -17,11 +17,22 @@ export class RequestContextMiddleware implements NestMiddleware {
   use(req: IncomingMessage, res: ServerResponse, next: () => void): void {
     const requestId = newRequestId();
     res.setHeader("X-Request-Id", requestId);
+    // `originalUrl` first, and this line was WRONG from chapter 2.2 until 3.8.
+    // Express rewrites `req.url` relative to the mount point, and this middleware
+    // is applied through `forRoutes("{*path}")`, so `req.url` is `/` — every
+    // request this api has logged recorded `/` as its path. NFR-OBS-06 asks for
+    // one structured line per request that an operator can grep; a line whose
+    // path is always `/` is one they cannot.
+    //
+    // Found by probe while wiring the rate limiter, which reads the same value
+    // to decide which routes it counts and would have counted nothing.
+    const path =
+      (req as { originalUrl?: string }).originalUrl ?? req.url ?? "/";
     res.on("finish", () => {
       this.logger.log("info", "request", {
         request_id: requestId,
         method: req.method,
-        path: req.url,
+        path,
         status: res.statusCode,
       });
     });
