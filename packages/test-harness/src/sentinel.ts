@@ -201,9 +201,17 @@ export async function plant(
   // bait 3: unpublished events. `outbox` carries no environment_id — it is
   // platform bookkeeping — so the subject is what identifies these, and it is
   // also why the trigger cannot guard them (data-model.md).
+  //
+  // EACH ROW CARRIES ITS OWN `id`, because the relay publishes `payload.id` as the
+  // deduplication key and `outbox.itest.ts` asserts the ids it sent are distinct.
+  // With `'{}'` the bait published two hundred messages whose id was undefined,
+  // they collapsed into one set entry, and a correct dedup assertion failed with
+  // `expected 5 to be 204` (research R45). Bait has to look like the work it
+  // stands in for.
   await q(
     `INSERT INTO outbox (subject, payload)
-     SELECT $1, '{}'::jsonb FROM generate_series(1, $2)`,
+     SELECT $1, jsonb_build_object('id', gen_random_uuid())
+       FROM generate_series(1, $2)`,
     [`${s.name}.bait`, BAIT_ROWS],
   );
 

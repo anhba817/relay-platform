@@ -22,8 +22,16 @@ export default defineConfig({
     // A relay catches and logs its own errors, so the guard's refusal inside one is
     // a log line and a green lane. Setting the flags here makes the quiet database
     // a property of the lane rather than a convention nobody applied.
+    // NO BAIT IN THIS LANE (feature 030, research R44). Measured: 200 bait
+    // deliveries alone, on a freshly migrated database, fail 10 of this suite's 16
+    // tests — with instance 5's fix in place. The suite waits 8 seconds for the
+    // dispatcher process to deliver its own row, and the dispatcher consumes a
+    // shared FIFO stream, so 200 jobs ahead of it exhaust the poll. Bait that fails
+    // the suite whether or not the fault is present carries no information.
+    //
+    // The exemption handling stays: the trigger is database state and outlives
+    // whichever lane installed it, so every lane pointed at that database meets it.
     env: {
-      RELAY_HARNESS_BAIT: "on",
       RELAY_OUTBOX_RELAY: "off",
       RELAY_DELIVERY_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",
