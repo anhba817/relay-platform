@@ -413,12 +413,15 @@ export const consumedEvents = pgTable(
 // the cross-tenant gauntlet as targets.
 //
 // NAMED, NOT NUMBERED. This line used to say "chapter 3.7's cross-tenant
-// gauntlet". The gauntlet was 3.7 when that was written, became 3.8 when a chapter
-// was inserted ahead of it, and is now 3.9 after a second insertion — and the
-// comment was carried neither time. A chapter number in a source comment is a
-// reference that ages every time the plan changes, and this file is fenced
-// byte-exact into a published chapter, so correcting it costs a fence amendment.
-// The subject does not move; the ordinal does.
+// gauntlet", and the gauntlet has moved three times since — carried by the
+// comment none of them. A chapter number in a source comment is a reference that
+// ages every time the plan changes, and this file is fenced byte-exact into a
+// published chapter, so correcting it costs a fence amendment.
+//
+// The sentence you are reading replaced one that stated the ordinals and went
+// stale in the very next chapter, which is the rule proving itself on its own
+// explanation. It now names no numbers at all. The subject does not move; the
+// ordinal does.
 // ---------------------------------------------------------------------------
 
 // DECISION (chapter 3.5): no source document defines this table. FR-WHK-01 and
