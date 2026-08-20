@@ -3,7 +3,7 @@ import { relative } from "node:path";
 import pg from "pg";
 import { beforeAll, expect } from "vitest";
 
-import { isExempt, EXEMPT_FILES } from "./exempt.js";
+import { EXEMPT_FILES, exemptTables } from "./exempt.js";
 import { plant, sentinelFor } from "./sentinel.js";
 
 // Runs once per test file, before the test file is imported (feature 030).
@@ -39,7 +39,8 @@ function testFile(): string {
 }
 
 const FILE = testFile();
-const EXEMPT = isExempt(FILE);
+const TABLES = exemptTables(FILE);
+const EXEMPT = TABLES !== null;
 
 // ---------------------------------------------------------------------------
 // Module scope, part 1: the exemption.
@@ -53,15 +54,16 @@ const EXEMPT = isExempt(FILE);
  *
  * The connection string rather than the pool's config object, because that needs no
  * change to `createPool()`, a product function every service calls. */
-function withExemption(url: string): string {
+function withExemption(url: string, tables: readonly string[] | "all"): string {
   const u = new URL(url);
-  u.searchParams.set("options", "-c relay.allow_global=on");
+  const value = tables === "all" ? "all" : tables.join(",");
+  u.searchParams.set("options", `-c relay.allow_global=${value}`);
   return u.toString();
 }
 
 const BASE_URL = process.env["DATABASE_URL"];
-if (EXEMPT && BASE_URL !== undefined) {
-  process.env["DATABASE_URL"] = withExemption(BASE_URL);
+if (TABLES !== null && TABLES.length > 0 && BASE_URL !== undefined) {
+  process.env["DATABASE_URL"] = withExemption(BASE_URL, TABLES);
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +111,11 @@ beforeAll(async () => {
   // is exactly what the guard forbids, so planting needs the exemption — and a
   // connection carrying it that a test later reused would leave that test unguarded
   // (FR-024, research R12).
-  const seeder = new pg.Client({ connectionString: withExemption(BASE_URL) });
+  // `all`: planting deletes across every guarded table, which is the one job that
+  // genuinely needs a blanket.
+  const seeder = new pg.Client({
+    connectionString: withExemption(BASE_URL, "all"),
+  });
   await seeder.connect();
   try {
     await plant(seeder, sentinelFor(FILE));

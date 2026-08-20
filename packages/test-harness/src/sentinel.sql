@@ -46,6 +46,7 @@ CREATE OR REPLACE FUNCTION __sentinel_guard() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
   who text;
+  allowed text;
 BEGIN
   -- Refusal is the default: current_setting(..., true) returns NULL in a
   -- connection that never carried the option, and NULL is not 'on'.
@@ -58,7 +59,17 @@ BEGIN
   -- on the next pass, and never runs out, because every disable was reverted by
   -- the trigger that claimed to permit it. The exemption has to hand back NEW on
   -- an UPDATE and OLD on a DELETE, which is the only row each has.
-  IF current_setting('relay.allow_global', true) = 'on' THEN
+  --
+  -- THE EXEMPTION NAMES TABLES, NOT FILES. `notifications.itest.ts` drives the
+  -- notification relay, which is global over webhook_disable_notifications and
+  -- nothing else; a file-wide pass let the same file sweep webhook_endpoints, and
+  -- sweeping webhook_endpoints from there is instance 6 (research R41). `all` is
+  -- for the planting connection, which deletes across every guarded table by
+  -- definition.
+  allowed := current_setting('relay.allow_global', true);
+  IF allowed = 'all'
+     OR (allowed IS NOT NULL
+         AND TG_TABLE_NAME = ANY (string_to_array(allowed, ','))) THEN
     IF TG_OP = 'DELETE' THEN
       RETURN OLD;
     END IF;

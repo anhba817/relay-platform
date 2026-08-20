@@ -18,9 +18,9 @@ import { plant, sentinelFor } from "./sentinel.js";
 const URL_ = process.env["DATABASE_URL"];
 if (URL_ === undefined) throw new Error("DATABASE_URL is required");
 
-function exempt(url: string): string {
+function exempt(url: string, tables = "all"): string {
   const u = new URL(url);
-  u.searchParams.set("options", "-c relay.allow_global=on");
+  u.searchParams.set("options", `-c relay.allow_global=${tables}`);
   return u.toString();
 }
 
@@ -118,5 +118,43 @@ describe("a connection carrying the exemption", () => {
       s.endpointId,
     ]);
     expect(r.rowCount).toBe(0);
+  });
+});
+
+describe("an exemption that names one table", () => {
+  // The reason the exemption is not a per-file boolean. `notifications.itest.ts`
+  // is on the list because it drives the notification relay, which is global over
+  // `webhook_disable_notifications`. Under a file-wide pass the same file could
+  // sweep `webhook_endpoints`, and that sweep is instance 6 — the fault this
+  // feature exists for, in a file the guard had excused.
+  let narrow: pg.Client;
+  const n = sentinelFor("packages/test-harness/src/guard.itest.ts#narrow");
+
+  beforeAll(async () => {
+    narrow = new pg.Client({
+      connectionString: exempt(URL_, "webhook_disable_notifications"),
+    });
+    await narrow.connect();
+    await plant(permitted, n);
+  }, 60_000);
+
+  afterAll(async () => {
+    await narrow.end();
+  });
+
+  it("may write the table it names", async () => {
+    const r = await narrow.query(
+      "update webhook_disable_notifications set delivered_at = now() where endpoint_id = $1",
+      [n.endpointId],
+    );
+    expect(r.rowCount).toBeGreaterThan(0);
+  });
+
+  it("is refused on a table it does not name", async () => {
+    await expect(
+      narrow.query("update webhook_endpoints set enabled = false where id = $1", [
+        n.endpointId,
+      ]),
+    ).rejects.toThrow(/global-operation guard.*public\.webhook_endpoints/s);
   });
 });
