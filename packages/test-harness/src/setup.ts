@@ -24,6 +24,15 @@ import { plant, sentinelFor } from "./sentinel.js";
 // (FR-026, research R14).
 //
 // Bait planting stays in `beforeAll`, because it is asynchronous database work.
+//
+// PER-FILE PLANTING AND A PER-FILE SENTINEL ARE ONE DECISION, NOT TWO. No
+// integration config overrides `fileParallelism`, so files in this lane run at the
+// same time; planting into a shared sentinel would delete rows another file is
+// mid-test against (research R12). And a one-shot `globalSetup` seeder protects
+// whichever suite runs first and nothing after it — research R2 measured three of
+// the four baits eaten in a single pass. The trigger is what makes the bait durable
+// for a non-exempt file, so only the exempt suites can consume it, and they consume
+// only the tables their entry names.
 
 const PLATFORM = new URL("../../../", import.meta.url).pathname;
 

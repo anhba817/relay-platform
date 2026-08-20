@@ -73,6 +73,10 @@ export default defineConfig({
         // a test happened to touch, which is not what "business logic" means.
         "**/main.ts",
         "**/*.module.ts",
+        // The lane's own scaffolding (feature 030). Same argument one step out:
+        // counting how much of the harness a test touched measures the harness,
+        // not the product.
+        "packages/test-harness/src/**",
       ],
       thresholds: {
         // Constitution VI, first clause: 70% of business logic. Set to what the
