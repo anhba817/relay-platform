@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
+import type { Duplex } from "node:stream";
 
 import {
   CLOSE_CODES,
@@ -13,6 +14,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { ApiError, type ApiClient } from "./api-client.js";
 import { authenticate, type Identity } from "./auth.js";
 import type { Fanout } from "./fanout.js";
+import type { Decision, GatewayLimits } from "./limits.js";
 import { Registry, type Connection } from "./registry.js";
 import {
   MAX_BUFFERED_FRAMES,
@@ -53,6 +55,39 @@ function send(socket: WebSocket, frame: Frame): void {
  * refused needs to point at that refusal, not at the connection. So callers pass
  * the id of the frame they are answering, and `sendError` mints one only for a
  * frame nobody asked for. */
+/** The handshake refusal (chapter 3.8, FR-005). Written onto the raw upgrade
+ * socket by hand, because there is no `res` here — `server.on("upgrade")` hands
+ * over the socket and the unparsed head, and anything sent on it has to be a
+ * complete HTTP response including the blank line before the body.
+ *
+ * The same three headers the api sends on a 429, from the same numbers, plus
+ * `Retry-After` — a client should not have to learn a second dialect for the
+ * socket door. `Connection: close` because this socket is not becoming a
+ * WebSocket and is not being kept alive for a second request either. */
+function refuseUpgrade(socket: Duplex, decision: Decision): void {
+  const body = JSON.stringify({
+    code: "rate_limited",
+    message: "too many connections; retry after the window resets",
+    docs_url: "https://relay.example/docs/errors/rate_limited",
+    request_id: newRequestId(),
+  });
+  socket.write(
+    [
+      "HTTP/1.1 429 Too Many Requests",
+      "Content-Type: application/json",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      `Retry-After: ${decision.retryAfterSeconds}`,
+      `X-RateLimit-Limit: ${decision.limit}`,
+      `X-RateLimit-Remaining: ${decision.remaining}`,
+      `X-RateLimit-Reset: ${decision.resetSeconds}`,
+      "Connection: close",
+      "",
+      body,
+    ].join("\r\n"),
+  );
+  socket.destroy();
+}
+
 function sendError(
   socket: WebSocket,
   code: string,
@@ -87,6 +122,12 @@ export interface SessionServerOptions {
    * (chapter 2.7): the degrade branch is a contract, and a test should not
    * have to sit through half a second to see it. */
   resumeDeadlineMs?: number;
+  /** The shared counter (chapter 3.8). Optional for the same reason `fanout`
+   * is: 2.5's tests and a single-process dev run have no Redis, and a socket
+   * server that refused to start without one would be a worse default than an
+   * uncounted one. `main.ts` always supplies it, so the optionality is a test
+   * affordance rather than a deployment mode. */
+  limits?: GatewayLimits;
 }
 
 export function attachSessions({
@@ -96,6 +137,7 @@ export function attachSessions({
   fanout,
   pingIntervalMs = PING_INTERVAL_MS,
   resumeDeadlineMs = SUBSCRIBE_DEADLINE_MS,
+  limits,
 }: SessionServerOptions): { registry: Registry; close: () => void } {
   const registry = new Registry();
 
@@ -144,6 +186,43 @@ export function attachSessions({
       // memberships. This is the same one call the connect path already made —
       // it just asks a better question than "what may this user hear".
       const result = await authenticate(api, token);
+      // Chapter 3.8. THE ESTABLISHMENT LIMIT IS SPENT HERE, before
+      // `handleUpgrade`, and that placement is the whole difference between
+      // this refusal and the one below it.
+      //
+      // A refusal needs to say WHEN to come back. `Retry-After` is an HTTP
+      // header and a close frame has nowhere to put one — a close code and a
+      // short reason string is all the protocol offers, and "4008, try later"
+      // is not an instruction a client can schedule against. So an over-limit
+      // handshake is refused with an HTTP 429 on the upgrade request, which
+      // still has a response to write headers onto (research R7).
+      //
+      // That makes it deliberately unlike the 4001 path immediately below,
+      // which COMPLETES the handshake in order to close it — because EIR-WS-05
+      // asks for a close code on a bad token, and a close code needs a socket
+      // to arrive on. Two refusals, two shapes, each because of what it has to
+      // carry.
+      //
+      // AFTER authentication, not before: the limit belongs to an environment
+      // and nothing knows which environment this is until the api has said so.
+      // The cost is that an unauthenticated flood still reaches the api — which
+      // is what the auth limiter there is for, and why that one counts by
+      // source address instead.
+      if (result.outcome === "ok" && limits !== undefined) {
+        const decision = await limits.spend(
+          result.identity.environmentId,
+          "connect",
+          result.limits.connect,
+        );
+        if (decision.over) {
+          refuseUpgrade(socket, decision);
+          logger.log("info", "connection.rejected", {
+            reason: "rate_limited",
+            environment_id: result.identity.environmentId,
+          });
+          return;
+        }
+      }
       wss.handleUpgrade(req, socket, head, (ws) => {
         if (result.outcome === "refused") {
           // 4001: "invalid or expired token" (EIR-WS-05). The close code is
@@ -162,7 +241,13 @@ export function attachSessions({
           });
           return;
         }
-        void open(ws, result.identity, result.channelIds, req.url ?? "/");
+        void open(
+          ws,
+          result.identity,
+          result.channelIds,
+          req.url ?? "/",
+          result.limits.send,
+        );
       });
     })();
   });
@@ -172,6 +257,7 @@ export function attachSessions({
     identity: Identity,
     channelIds: string[],
     url: string,
+    sendLimit: number,
   ): Promise<void> {
     // Cursors are read BEFORE anything else, because their presence decides
     // whether this connection is born buffering or born live.
@@ -192,6 +278,7 @@ export function attachSessions({
       // A fresh connect suppresses nothing; a resume fills this in when it
       // succeeds, and leaves it null when it degrades.
       marks: null,
+      sendLimit,
     };
 
     registry.add(connection);
@@ -416,6 +503,46 @@ export function attachSessions({
       );
       connection.socket.close(4002, CLOSE_CODES[4002]);
       return;
+    }
+
+    // Chapter 3.8. THE SEND LIMIT IS SPENT ON THE FRAME, not on the api call
+    // it becomes — a socket send and a REST send count against one budget
+    // (FR-002), or a client could double its allowance by opening a socket.
+    //
+    // AND THE CONNECTION STAYS OPEN. Closing it would be the obvious move and
+    // the wrong one: a closed socket makes the client reconnect, a reconnect
+    // costs a handshake, and a handshake spends the ESTABLISHMENT allowance —
+    // a limiter that punishes the limited into hitting a second limit. The
+    // error frame says no to this frame and nothing more; the next one, after
+    // the window turns over, goes through on the connection that is still there.
+    //
+    // The limit is the one this socket was born with (`connection.sendLimit`),
+    // not one re-read per frame: the gateway has no database, and a Postgres
+    // read on the hot path of the thing the limit protects would be a strange
+    // way to protect it. A policy changed mid-connection reaches the client
+    // when it reconnects (research R12).
+    if (limits !== undefined) {
+      const decision = await limits.spend(
+        connection.identity.environmentId,
+        "send",
+        connection.sendLimit,
+      );
+      if (decision.over) {
+        // `rate_limited` — declared in chapter 1.3, emitted here for the first
+        // time. The numbers a 429 would carry in headers have nowhere to live
+        // on a frame, so the retry window goes in the message text; the code is
+        // what a client branches on.
+        sendError(
+          connection.socket,
+          "rate_limited",
+          `send rate limit exceeded; retry in ${decision.retryAfterSeconds}s`,
+        );
+        logger.log("info", "send.rate_limited", {
+          connection_id: connection.id,
+          environment_id: connection.identity.environmentId,
+        });
+        return;
+      }
     }
 
     const { channel, text, idem_key } = frame.data.payload;

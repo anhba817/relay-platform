@@ -3,6 +3,7 @@ import { createLogger, serve, type Logger } from "@relay/service-kit";
 
 import { createApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
+import { createGatewayLimits } from "./limits.js";
 import { attachSessions } from "./session.js";
 
 // The gateway — SAD §4.1: terminates WebSockets and never writes to the
@@ -33,15 +34,22 @@ export function createServer(logger?: Logger) {
   // here, and no instance knows how many others exist (ADR-07). Scaling
   // out is adding a process.
   const fanout = createFanout({ logger: log });
+  // Chapter 3.8. A SECOND Redis client, not fanout's — one of fanout's two is a
+  // subscriber, and a connection in subscribe mode cannot run `INCR`. It is
+  // created here rather than inside `attachSessions` so the tests that call
+  // that function directly stay Redis-free, and so its close has an owner.
+  const limits = createGatewayLimits();
   const sessions = attachSessions({
     server,
     api: createApiClient(process.env.RELAY_API_URL ?? DEFAULT_API_URL),
     logger: log,
     fanout,
+    limits,
   });
   server.on("close", () => {
     sessions.close();
     void fanout.close();
+    void limits.close();
   });
   return server;
 }

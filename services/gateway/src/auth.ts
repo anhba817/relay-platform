@@ -26,7 +26,16 @@ export type { Identity } from "./api-client.js";
  * 1011 tells it we are broken (retrying will). 2.5 drew that line for the
  * memberships lookup; moving verification here must not erase it. */
 export type Authentication =
-  | { outcome: "ok"; identity: Identity; channelIds: string[] }
+  | {
+      outcome: "ok";
+      identity: Identity;
+      channelIds: string[];
+      /** Chapter 3.8. The environment's two socket allowances, read from
+       * Postgres by the api and carried on the same response — the gateway has
+       * no database client and R12 spent its whole argument on keeping it that
+       * way. */
+      limits: { connect: number; send: number };
+    }
   | { outcome: "refused" }
   | { outcome: "unavailable"; error: string };
 
@@ -51,6 +60,7 @@ export async function authenticate(
         token,
       },
       channelIds: session.channel_ids,
+      limits: session.limits,
     };
   } catch (error) {
     return { outcome: "unavailable", error: String(error) };

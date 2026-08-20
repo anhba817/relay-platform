@@ -25,11 +25,17 @@ export default tseslint.config(
     // `services/api/src/limits/**` is the Redis analogue of the repository
     // layer; the gateway holds its own client in `services/gateway/src/limits.ts`
     // and for fan-out in `fanout.ts`.
+    //
+    // `limits.itest.ts` is the one TEST allowed a raw client, and for a reason
+    // the rule cannot express: its whole subject is that the api and the gateway
+    // increment the SAME key, and the only way to check that is to read the key
+    // with neither of their code.
     files: ["**/*.ts"],
     ignores: [
       "services/api/src/db/**",
       "services/api/src/limits/**",
       "services/gateway/src/limits.ts",
+      "services/gateway/src/limits.itest.ts",
       "services/gateway/src/fanout.ts",
     ],
     rules: {
@@ -50,7 +56,7 @@ export default tseslint.config(
             {
               name: "ioredis",
               message:
-                "The counter store lives in services/api/src/limits only (constitution I, chapter 3.8). Its keys are per environment; an unrestricted client is a cross-tenant read.",
+                "The counter store lives in services/api/src/limits and services/gateway/src/limits.ts only (constitution I, chapter 3.8). Its keys are per environment; an unrestricted client is a cross-tenant read.",
             },
           ],
           patterns: [

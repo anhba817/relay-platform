@@ -137,6 +137,23 @@ export const internalSessionResponseSchema = z.strictObject({
   environment_id: z.string().min(1),
   user: z.string().min(1),
   channel_ids: z.array(z.string().min(1)),
+  /** Chapter 3.8. The two limits the gateway enforces, resolved from the
+   * environment's policy with nulls already turned into defaults.
+   *
+   * THEY RIDE THIS RESPONSE BECAUSE THE GATEWAY HAS NO DATABASE, and must not
+   * gain one — `registry.ts` states that as a design property: "no pg, no
+   * drizzle-orm, no repository import". The policy is three columns in Postgres
+   * and the api is the only service that reads Postgres, so the limits travel on
+   * the one call the gateway was already making at connect.
+   *
+   * The same move chapter 3.2 made on this call, whose comment records it: the
+   * api "answers with the identity AND the memberships … it just asks a better
+   * question than 'what may this user hear'". This asks it for one thing more
+   * (research R12). */
+  limits: z.strictObject({
+    connect: z.number().int().nonnegative(),
+    send: z.number().int().nonnegative(),
+  }),
 });
 
 /** The deliveries stream (chapter 3.5), and its subject grammar.

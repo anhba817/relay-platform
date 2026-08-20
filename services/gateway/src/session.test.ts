@@ -1,16 +1,18 @@
 import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { createLogger, type Logger } from "@relay/service-kit";
 import { serve } from "@relay/service-kit";
-import type { Frame } from "@relay/protocol";
+import { CLOSE_CODES, type Frame } from "@relay/protocol";
 
 import type { InternalSendResponse, Message } from "@relay/protocol";
 
 import type { ApiClient } from "./api-client.js";
 import type { Fanout } from "./fanout.js";
+import { decide, type GatewayLimits } from "./limits.js";
 import { attachSessions } from "./session.js";
 
 // The door, the frames, and the liveness clock — all provable without a
@@ -42,7 +44,16 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // fake except the ANSWER.
     session: async (token) =>
       token === VALID_TOKEN
-        ? { environment_id: "env-1", user: "tuan", channel_ids: [CHANNEL] }
+        ? {
+            environment_id: "env-1",
+            user: "tuan",
+            channel_ids: [CHANNEL],
+            // Chapter 3.8. The limits ride the session response because the
+            // gateway has no database to read them from — so the stub supplies
+            // them, exactly as the api would. Generous by default: every test
+            // above this line is about something else.
+            limits: { connect: 3_000, send: 600 },
+          }
         : null,
     backfill: async () => ({}),
     sendMessage: async () => committed(42),
@@ -125,11 +136,34 @@ function stubFanout(): Fanout & {
   };
 }
 
+/** A counter with no Redis in it (chapter 3.8). The arithmetic is unit-tested
+ * in `limits.test.ts`; what these tests need is control over the ANSWER, so a
+ * refusal is a line of code instead of three thousand sockets. */
+function stubLimits(
+  allowances: { connect?: number; send?: number } = {},
+): GatewayLimits & { spent: { connect: number; send: number } } {
+  const spent = { connect: 0, send: 0 };
+  return {
+    spent,
+    spend: async (_environmentId, operation, limit) => {
+      spent[operation] += 1;
+      // The stub honours whichever allowance the test set, falling back to the
+      // limit the session response carried — which is what makes T034a's
+      // distinction visible: an allowance the test names here is the store's
+      // view, `limit` is the socket's cached one.
+      const allowed = allowances[operation] ?? limit;
+      return decide(spent[operation], allowed, 0, 60_000);
+    },
+    close: async () => {},
+  };
+}
+
 async function boot(
   api: ApiClient = stubApi(),
   pingIntervalMs?: number,
   fanout?: Fanout,
   resumeDeadlineMs?: number,
+  limits?: GatewayLimits,
 ): Promise<Harness> {
   const server: Server = serve({
     service: "gateway",
@@ -143,6 +177,7 @@ async function boot(
     ...(fanout !== undefined && { fanout }),
     ...(pingIntervalMs !== undefined && { pingIntervalMs }),
     ...(resumeDeadlineMs !== undefined && { resumeDeadlineMs }),
+    ...(limits !== undefined && { limits }),
   });
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
@@ -674,5 +709,248 @@ describe("the socket (chapter 2.5)", () => {
     // resume work, and a channel the caller is not in is not a question.
     expect(seen).toEqual({ [CHANNEL]: 41 });
     socket.close();
+  });
+});
+
+// Chapter 3.8. The socket's two limits — one at the door, one on every frame —
+// and the two shapes a refusal takes, which are different because a handshake
+// has an HTTP response to write headers onto and a frame does not.
+describe("the socket's limits (chapter 3.8)", () => {
+  let harness: Harness | undefined;
+  afterEach(async () => {
+    await harness?.close();
+    harness = undefined;
+  });
+
+  /** The upgrade's HTTP answer, for the case where there is no WebSocket to
+   * ask. `ws` surfaces a non-101 as `unexpected-response`, which hands back the
+   * request and the raw `IncomingMessage` — status and headers included. */
+  function unexpectedResponse(
+    socket: WebSocket,
+  ): Promise<{ status: number; headers: Record<string, string | undefined> }> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no response")), 2000);
+      socket.on("unexpected-response", (_req, res) => {
+        clearTimeout(timer);
+        res.resume();
+        resolve({
+          status: res.statusCode ?? 0,
+          headers: res.headers as Record<string, string | undefined>,
+        });
+      });
+      socket.on("open", () => {
+        clearTimeout(timer);
+        reject(new Error("the handshake completed"));
+      });
+      socket.on("error", () => {});
+    });
+  }
+
+  it("refuses an over-limit handshake with an HTTP 429, before the handshake (FR-005)", async () => {
+    // An allowance of one, so the second connect is the refused one.
+    harness = await boot(
+      stubApi(),
+      undefined,
+      undefined,
+      undefined,
+      stubLimits({ connect: 1 }),
+    );
+    const first = new WebSocket(`${harness.url}?token=${await token()}`);
+    await nextFrame(first, "connection.ack");
+
+    const second = new WebSocket(`${harness.url}?token=${await token()}`);
+    const { status, headers } = await unexpectedResponse(second);
+    expect(status).toBe(429);
+    // The instruction, not just the refusal. This is the reason the limiter is
+    // a fixed window: `Retry-After` and `X-RateLimit-Reset` both name one
+    // moment, and a refilling bucket's honest answer would be a curve.
+    expect(Number(headers["retry-after"])).toBeGreaterThan(0);
+    expect(headers["x-ratelimit-limit"]).toBe("1");
+    expect(headers["x-ratelimit-remaining"]).toBe("0");
+    expect(headers["x-ratelimit-reset"]).toBeDefined();
+
+    first.close();
+  });
+
+  it("leaves already-open sockets alone when the door is shut (FR-005)", async () => {
+    // The refusal is about establishing connections, not about the ones that
+    // exist. A limiter that killed live sockets to enforce an establishment
+    // limit would be enforcing a concurrency limit, which is a different
+    // promise and one Relay has not made.
+    harness = await boot(
+      stubApi(),
+      undefined,
+      undefined,
+      undefined,
+      stubLimits({ connect: 1 }),
+    );
+    const open = new WebSocket(`${harness.url}?token=${await token()}`);
+    await nextFrame(open, "connection.ack");
+
+    const refused = new WebSocket(`${harness.url}?token=${await token()}`);
+    expect((await unexpectedResponse(refused)).status).toBe(429);
+
+    // Still there, and still working — a round trip rather than a readyState
+    // check, because "the socket object says OPEN" is not the same claim.
+    open.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: { channel: CHANNEL, text: "hello", idem_key: "k1" },
+      }),
+    );
+    expect(await nextFrame(open, "message.ack")).toMatchObject({
+      payload: { seq: 42 },
+    });
+    open.close();
+  });
+
+  it("answers an over-limit frame with rate_limited and KEEPS THE CONNECTION OPEN (FR-004)", async () => {
+    harness = await boot(
+      stubApi(),
+      undefined,
+      undefined,
+      undefined,
+      stubLimits({ send: 1 }),
+    );
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    await nextFrame(socket, "connection.ack");
+    const send = () =>
+      socket.send(
+        JSON.stringify({
+          type: "message.send",
+          payload: { channel: CHANNEL, text: "hello", idem_key: "k1" },
+        }),
+      );
+
+    send();
+    await nextFrame(socket, "message.ack");
+    send();
+    const error = await nextFrame(socket, "error");
+    // `rate_limited` was declared in chapter 1.3 and emitted by nothing until
+    // now. This is the first line of the codebase that sends it.
+    expect(error).toMatchObject({ payload: { code: "rate_limited" } });
+    // And every error frame carries an id now, which is the other contract
+    // chapter 1.3 wrote down and never wired.
+    expect((error as { payload: { request_id: string } }).payload.request_id)
+      .toBeTruthy();
+
+    // THE POINT: the socket is still up. Closing it would make the client
+    // reconnect, and a reconnect spends the ESTABLISHMENT allowance — a
+    // limiter that pushes the limited into a second limit.
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    socket.close();
+  });
+
+  it("enforces a CONFIGURED connect limit, not just the default (SC-011, FR-037)", async () => {
+    // The limit arrives on the authentication response, because the gateway has
+    // no database to read it from. A test that only exercised the default would
+    // pass with the plumbing missing entirely.
+    harness = await boot(
+      stubApi({
+        session: async () => ({
+          environment_id: "env-1",
+          user: "tuan",
+          channel_ids: [CHANNEL],
+          limits: { connect: 2, send: 600 },
+        }),
+      }),
+      undefined,
+      undefined,
+      undefined,
+      // No allowance override: the stub honours the limit the session response
+      // carried, so the number under test is the CONFIGURED one.
+      stubLimits(),
+    );
+    const first = new WebSocket(`${harness.url}?token=${await token()}`);
+    await nextFrame(first, "connection.ack");
+    const second = new WebSocket(`${harness.url}?token=${await token()}`);
+    await nextFrame(second, "connection.ack");
+
+    const third = new WebSocket(`${harness.url}?token=${await token()}`);
+    expect((await unexpectedResponse(third)).status).toBe(429);
+    first.close();
+    second.close();
+  });
+
+  it("does not apply a limit changed mid-connection until the client reconnects (research R12)", async () => {
+    // The consequence R12 accepted, asserted so it is a property rather than a
+    // surprise. The alternative is a Postgres read per frame, from a service
+    // that holds no database client, on the hot path of the thing the limit
+    // protects.
+    let configured = 600;
+    harness = await boot(
+      stubApi({
+        session: async () => ({
+          environment_id: "env-1",
+          user: "tuan",
+          channel_ids: [CHANNEL],
+          limits: { connect: 3_000, send: configured },
+        }),
+      }),
+      undefined,
+      undefined,
+      undefined,
+      stubLimits(),
+    );
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    await nextFrame(socket, "connection.ack");
+
+    // The policy changes to "refuse everything" while the socket is open.
+    configured = 0;
+
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: { channel: CHANNEL, text: "hello", idem_key: "k1" },
+      }),
+    );
+    // Still allowed: this connection is spending the allowance it was born
+    // with. A new one would not be.
+    expect(await nextFrame(socket, "message.ack")).toMatchObject({
+      payload: { seq: 42 },
+    });
+
+    const reconnected = new WebSocket(`${harness.url}?token=${await token()}`);
+    await nextFrame(reconnected, "connection.ack");
+    reconnected.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: { channel: CHANNEL, text: "hello", idem_key: "k1" },
+      }),
+    );
+    expect(await nextFrame(reconnected, "error")).toMatchObject({
+      payload: { code: "rate_limited" },
+    });
+
+    socket.close();
+    reconnected.close();
+  });
+
+  it("STILL emits close code 4008 from nowhere (quickstart V7)", async () => {
+    // 4008 reads "quota exhausted". There is no quota yet — that is chapter 3.9
+    // — and reaching for the code because it was already declared would collapse
+    // the distinction this chapter is built on: a rate limit is a smoothing
+    // instruction, a quota is a commercial one, and they do not deserve the same
+    // signal. So does 4009, "server shutdown (drain)", for the same kind of
+    // reason (FR-045).
+    //
+    // Grep rather than behaviour, because the claim is about absence: no input
+    // makes the gateway send it, and the only way to check "no input" is to read
+    // what the source can send.
+    const source = await Promise.all(
+      ["session.ts", "limits.ts", "resume.ts", "main.ts"].map((file) =>
+        readFile(new URL(file, import.meta.url), "utf8"),
+      ),
+    );
+    for (const text of source) {
+      expect(text).not.toMatch(/close\(\s*400[89]/);
+    }
+    // A grep that can only pass is not a check. The SAME pattern, aimed at the
+    // codes this file does emit, has to match — otherwise "nothing sends 4008"
+    // would also be true of a typo in the regex.
+    expect(source.join("")).toMatch(/close\(\s*400[12]/);
+    // And the vocabulary still declares them, so this is "unused", not "gone".
+    expect(CLOSE_CODES[4008]).toBeDefined();
+    expect(CLOSE_CODES[4009]).toBeDefined();
   });
 });

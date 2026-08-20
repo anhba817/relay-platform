@@ -53,7 +53,10 @@ export default defineConfig({
         // Constitution VI, first clause: 70% of business logic. Set to what the
         // constitution says, not to what the code achieves — a threshold tuned
         // down to pass measures nothing. Currently met with room to spare
-        // (86.55% statements, 78.07% branches at the time of writing).
+        // (89.50% statements, 82.73% branches after chapter 3.8, up from 86.55%
+        // and 78.07%). Ten new files, eight of them small and heavily branched,
+        // moved both figures up — which is not the usual direction for a chapter
+        // that adds code, and worth naming for that reason.
         lines: 70,
         functions: 70,
         statements: 70,
@@ -163,6 +166,76 @@ export default defineConfig({
         },
         "services/api/src/webhooks/analytics.ts": {
           branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // CHAPTER 3.8's limiter. Pinned at what the work achieves, which for the
+        // three pure files is everything — they hold no clock, no store and no
+        // framework, so a branch they miss is a case nobody thought of rather
+        // than a case nobody could reach.
+        //
+        // `bucket.ts`, `policy.ts` and `fallback.ts` are here at 100 on every
+        // metric. `fallback.ts` earns the strictest reading of constitution VI
+        // available: it is the mechanism the AUTH limiter degrades to, and R3's
+        // whole argument is that this one counter must not fail open. An
+        // unmeasured branch in it is a hole in the thing the chapter is about.
+        "services/api/src/limits/bucket.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/limits/policy.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/limits/fallback.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // The four that touch a store, a clock or Nest's request pipeline, pinned
+        // at measurement rather than at 100. Each shortfall is one branch that
+        // needs a real outage at a real instant to reach, and chasing it would
+        // mean mocking the thing under test.
+        //
+        // `store.ts` misses its `downUntil` reset; `auth-limiter.ts` misses the
+        // arm where the store answers AND the fallback has an entry;
+        // `client-address.ts` misses one shape of malformed body. The gateway's
+        // `limits.ts` misses the arm where a recovered store clears `downUntil`
+        // mid-window.
+        "services/api/src/limits/store.ts": {
+          branches: 91,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/limits/auth-limiter.ts": {
+          branches: 87,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/limits/client-address.ts": {
+          branches: 90,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/limits/rate-limit.middleware.ts": {
+          branches: 85,
+          functions: 100,
+          lines: 96,
+          statements: 97,
+        },
+        "services/gateway/src/limits.ts": {
+          branches: 90,
           functions: 100,
           lines: 100,
           statements: 100,

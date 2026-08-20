@@ -47,6 +47,16 @@ export interface Connection {
    * 42. Bounded instead by `MAX_RESUME_CHANNELS`, which already caps the cursors
    * these are scoped to. */
   marks: Record<string, number> | null;
+  /** Chapter 3.8. The environment's send allowance, as it stood when this socket
+   * connected — carried on the session response because the gateway has no
+   * database and must not gain one (research R12).
+   *
+   * FIXED FOR THE LIFE OF THE CONNECTION, and that is a stated property rather
+   * than an accident: a limit changed while a socket is open does not reach it
+   * until the client reconnects. The alternative is a Postgres read per frame, on
+   * the hot path of the thing the limit protects. Beside `marks` for the same
+   * reason — it describes one socket and dies with it. */
+  sendLimit: number;
 }
 
 export class Registry {
