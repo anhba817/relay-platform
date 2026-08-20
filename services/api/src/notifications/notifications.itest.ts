@@ -211,7 +211,8 @@ describe("the disablement notification, end to end", () => {
       logger: silent,
       batchSize: 10_000,
     });
-    await expect(broken.drainOnce()).rejects.toThrow();
+    // Zero delivered, and no throw: a send that fails is one row's problem.
+    expect(await broken.drainOnce()).toBe(0);
     await broken.stop();
     expect(await stillEmpty(address)).toHaveLength(0);
 
@@ -342,14 +343,14 @@ describe("the disablement notification, end to end", () => {
     expect(row).toBeDefined();
     expect(row!.delivered_at).toBeNull();
 
-    // The relay, pointed at nothing. It throws — and the row stays claimable.
+    // The relay, pointed at nothing. Nothing is delivered and nothing throws.
     const broken = createNotificationRelay({
       db,
       mailer: createMailer("smtp://127.0.0.1:1"),
       logger: silent,
       batchSize: 10_000,
     });
-    await expect(broken.drainOnce()).rejects.toThrow();
+    expect(await broken.drainOnce()).toBe(0);
     await broken.stop();
 
     // Everything else still works: a second endpoint disables normally while the
@@ -363,6 +364,28 @@ describe("the disablement notification, end to end", () => {
       )
     ).rows as { enabled: boolean }[];
     expect(rows[0]!.enabled).toBe(false);
+  });
+
+  it("does not let ONE undeliverable row block every row behind it", async () => {
+    // The failure per-row isolation exists to prevent, and it is permanent
+    // rather than transient: rows are claimed oldest-first, so a row that always
+    // throws is always claimed first. Abort the batch on it and nothing behind
+    // it is ever delivered — one address a mail server refuses, and the whole
+    // notification queue is dead.
+    //
+    // The bad address here is one Mailpit rejects at RCPT time. Its own
+    // behaviour, not a stub's: this is the shape of the thing in production.
+    const tag = randomUUID().slice(0, 8);
+    await seed(["not a valid address at all"]);
+    const good = `behind-${tag}@example.test`;
+    await seed([good]);
+    await disable();
+
+    const r = relay();
+    // The good one goes out. The bad one does not, and does not take it down.
+    expect(await r.drainOnce()).toBeGreaterThan(0);
+    await r.stop();
+    expect(await inbox(good)).toHaveLength(1);
   });
 
   it("drains chapter 3.6's backlog with NO SPECIAL HANDLING (FR-020)", async () => {

@@ -13,10 +13,7 @@ import {
   type SQL,
 } from "drizzle-orm";
 
-import {
-  DEFAULT_LIMITS,
-  type LimitedOperation,
-} from "../limits/policy";
+import { DEFAULT_LIMITS, type LimitedOperation } from "../limits/policy";
 import type { Db } from "./client";
 import {
   apiKeys,
@@ -393,16 +390,33 @@ export interface DisableNotificationRow {
  * has to say how many, and a test that forgets ends up asserting about somebody
  * else's fixture.
  *
- * SEND THEN MARK, and the mark in the `finally` — chapter 3.3's shape, for
- * chapter 3.3's reason: whatever went wrong with row N+1, rows 1..N really did go
- * out and must not be sent again. A crash between the send and the mark resends
- * one email, which is the accepted cost; marking first would lose it silently,
- * and a notification nobody received is the failure FR-WHK-07 exists to prevent.
+ * SEND THEN MARK: a crash between the two resends one email, which is the
+ * accepted cost, and marking first would lose it silently — a notification
+ * nobody received is the failure FR-WHK-07 exists to prevent.
+ *
+ * PER-ROW ISOLATION, and this is where it departs from `drainOutbox` one screen
+ * up. That one lets a failing publish abort the batch, on the reasoning that the
+ * broker is either up or down and a partial batch means down. An email is not
+ * like that: one address a server refuses is one address, and letting it abort
+ * the batch would make it abort EVERY batch — claimed first because it is
+ * oldest, throwing, rolling back, and no notification behind it ever going out.
+ * Head-of-line blocking, permanent, from one bad recipient.
+ *
+ * So a row that throws is reported through `onError` and simply not marked. It
+ * stays claimable and the rows behind it still go.
+ *
+ * A NOTE ON WHY THE ORDERING IS OBSERVABLE AT ALL. It was not, at first: with
+ * the mark in a `finally` and the throw escaping the transaction callback, the
+ * transaction rolled back and undid the mark, so marking BEFORE the send and
+ * marking after it produced identical behaviour. The chapter's own sabotage
+ * mutation could not fail (research R44). Catching per row is what makes the two
+ * different, because now nothing rolls back.
  */
 export async function drainDisableNotifications(
   db: Db,
   limit: number,
   deliver: (row: DisableNotificationRow) => Promise<void>,
+  onError: (row: DisableNotificationRow, error: unknown) => void = () => {},
 ): Promise<number> {
   return db.transaction(async (tx) => {
     const claimed = (await tx.execute(
@@ -431,33 +445,37 @@ export async function drainDisableNotifications(
     };
 
     const delivered: string[] = [];
-    try {
-      for (const raw of claimed.rows) {
-        // Timestamps back as `Date`, not as whatever the driver felt like. Raw
-        // SQL through `execute` skips drizzle's column mapping, and a timestamptz
-        // arrives as a string — which reaches the mailer as an object with no
-        // `getTime`, one call later and one file away. Coerced here, at the
-        // boundary that produced it, rather than defended against downstream.
-        const row: DisableNotificationRow = {
-          ...raw,
-          disabledAt: new Date(raw.disabledAt),
-          runStartedAt: new Date(raw.runStartedAt),
-        };
+    for (const raw of claimed.rows) {
+      // Timestamps back as `Date`, not as whatever the driver felt like. Raw
+      // SQL through `execute` skips drizzle's column mapping, and a timestamptz
+      // arrives as a string — which reaches the mailer as an object with no
+      // `getTime`, one call later and one file away. Coerced here, at the
+      // boundary that produced it, rather than defended against downstream.
+      const row: DisableNotificationRow = {
+        ...raw,
+        disabledAt: new Date(raw.disabledAt),
+        runStartedAt: new Date(raw.runStartedAt),
+      };
+      try {
         await deliver(row);
         delivered.push(row.id);
+      } catch (error) {
+        // Not marked. The row stays claimable and the next pass tries it again,
+        // which is the whole reason this is a table rather than a call.
+        onError(row, error);
       }
-    } finally {
-      if (delivered.length > 0) {
-        // The builder rather than raw SQL, unlike the outbox drain one screen
-        // up. That one interpolates `ARRAY[…]::bigint[]` through `sql.raw`
-        // because its ids are integers; these are uuids, and `sql` renders a JS
-        // array as a comma-separated parameter list — which Postgres reads as a
-        // row expression and rejects with "record type has too many columns".
-        await tx
-          .update(webhookDisableNotifications)
-          .set({ deliveredAt: new Date() })
-          .where(inArray(webhookDisableNotifications.id, delivered));
-      }
+    }
+
+    if (delivered.length > 0) {
+      // The builder rather than raw SQL, unlike the outbox drain one screen up.
+      // That one interpolates `ARRAY[…]::bigint[]` through `sql.raw` because its
+      // ids are integers; these are uuids, and `sql` renders a JS array as a
+      // comma-separated parameter list — which Postgres reads as a row
+      // expression and rejects with "record type has too many columns".
+      await tx
+        .update(webhookDisableNotifications)
+        .set({ deliveredAt: new Date() })
+        .where(inArray(webhookDisableNotifications.id, delivered));
     }
     return delivered.length;
   });
@@ -670,8 +688,9 @@ async function applyFailureRun(
   // the column, and for `timestamptz` that is a string here rather than a Date —
   // which drizzle then refuses to write back, with `value.toISOString is not a
   // function` from deep inside its timestamp mapper and no mention of this line.
-  const [clock] = (await tx.execute(sql`SELECT now() AS now`))
-    .rows as { now: string | Date }[];
+  const [clock] = (await tx.execute(sql`SELECT now() AS now`)).rows as {
+    now: string | Date;
+  }[];
   const now = new Date(clock!.now);
 
   const runStartedAt = endpoint.runStartedAt ?? now;
@@ -717,7 +736,10 @@ async function disableEndpoint(
     error: string | null;
   },
 ): Promise<{ disabled: boolean }> {
-  const windowMs = runWindowMs({ runStartedAt: input.runStartedAt, now: input.now });
+  const windowMs = runWindowMs({
+    runStartedAt: input.runStartedAt,
+    now: input.now,
+  });
   const reason = disableReason({
     runAttempts: input.runAttempts,
     windowMs,
@@ -917,7 +939,9 @@ export async function recordAttemptOutcome(
     // quietly retried for two hours would report a stale one, and a test event
     // that kept coming back would be indistinguishable from real traffic to the
     // customer trying to read their logs.
-    const next = delivery.synthetic ? null : nextAttemptAt(delivery.attempt + 1);
+    const next = delivery.synthetic
+      ? null
+      : nextAttemptAt(delivery.attempt + 1);
     if (next) {
       await tx
         .update(webhookDeliveries)

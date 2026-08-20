@@ -23,6 +23,12 @@ import { disableNotification, type Mailer } from "./mailer";
 // FR-WHK-07 exists because an endpoint went quiet and nobody was told — so a
 // crash between the send and the mark resends, and the chapter says so.
 //
+// It also makes a failing row a ROW's problem rather than the batch's. The event
+// relay lets one bad publish abort its batch, because a broker is up or down;
+// one address a mail server refuses is one address, and aborting on it would
+// abort every batch for ever — it is claimed first, being oldest. The repository
+// catches per row and this callback is where the failure surfaces.
+//
 // NOT ON THE REQUEST PATH, for chapter 3.3's reason. Disabling an endpoint
 // writes a row and returns; whether a mail server is reachable is this loop's
 // problem. An SMTP timeout inside the dispatcher's disablement check would make
@@ -113,7 +119,16 @@ export function createNotificationRelay({
   }
 
   async function drainOnce(): Promise<number> {
-    return drainDisableNotifications(db, batchSize, deliver);
+    return drainDisableNotifications(db, batchSize, deliver, (row, error) => {
+      // One row's failure, one line, and the batch keeps going. A mail server
+      // that is down produces one of these per claimed row and then a drain of
+      // zero, which the loop treats as idle — correct, because there is nothing
+      // this process can do but wait.
+      logger.log("error", "notifications.send_failed", {
+        notification_id: row.id,
+        error: String(error),
+      });
+    });
   }
 
   async function run(): Promise<void> {
