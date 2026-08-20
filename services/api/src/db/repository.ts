@@ -688,9 +688,8 @@ async function applyFailureRun(
   // the column, and for `timestamptz` that is a string here rather than a Date —
   // which drizzle then refuses to write back, with `value.toISOString is not a
   // function` from deep inside its timestamp mapper and no mention of this line.
-  const [clock] = (await tx.execute(sql`SELECT now() AS now`)).rows as {
-    now: string | Date;
-  }[];
+  const [clock] = (await tx.execute(sql`SELECT now() AS now`))
+    .rows as { now: string | Date }[];
   const now = new Date(clock!.now);
 
   const runStartedAt = endpoint.runStartedAt ?? now;
@@ -736,10 +735,7 @@ async function disableEndpoint(
     error: string | null;
   },
 ): Promise<{ disabled: boolean }> {
-  const windowMs = runWindowMs({
-    runStartedAt: input.runStartedAt,
-    now: input.now,
-  });
+  const windowMs = runWindowMs({ runStartedAt: input.runStartedAt, now: input.now });
   const reason = disableReason({
     runAttempts: input.runAttempts,
     windowMs,
@@ -939,9 +935,7 @@ export async function recordAttemptOutcome(
     // quietly retried for two hours would report a stale one, and a test event
     // that kept coming back would be indistinguishable from real traffic to the
     // customer trying to read their logs.
-    const next = delivery.synthetic
-      ? null
-      : nextAttemptAt(delivery.attempt + 1);
+    const next = delivery.synthetic ? null : nextAttemptAt(delivery.attempt + 1);
     if (next) {
       await tx
         .update(webhookDeliveries)
