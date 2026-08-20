@@ -7,6 +7,13 @@ import { defineConfig } from "vitest/config";
 // a .ts config would be loaded as CJS, which vitest refuses.)
 export default defineConfig({
   test: {
+    // Feature 030: the global-operation guard. `globalSetup` migrates and
+    // then installs the trigger once per lane; `setupFiles` sets the
+    // exemption for files on the harness's list and, where the lane carries
+    // bait, plants it per file.
+    globalSetup: ["../../packages/test-harness/src/global-setup.ts"],
+    setupFiles: ["../../packages/test-harness/src/setup.ts"],
+    env: { RELAY_HARNESS_BAIT: "on" },
     include: ["src/**/*.itest.ts"],
   },
 });
