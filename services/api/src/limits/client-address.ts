@@ -23,7 +23,7 @@ export const CLIENT_ADDRESS_FIELD = "client_address";
 
 export function clientAddress(
   req: RequestWithPrincipal & {
-    socket?: { remoteAddress?: string };
+    socket?: { remoteAddress?: string | undefined };
     body?: unknown;
   },
 ): string {

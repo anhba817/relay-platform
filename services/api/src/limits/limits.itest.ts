@@ -384,6 +384,34 @@ describe("the limiter", () => {
     }
   });
 
+  it("limits account creation per address, which has no tenant to key on", async () => {
+    // FR-041. Signup has no environment — that is the point of it — and no
+    // guard, so neither the per-environment limiter nor `CredentialGuard`'s
+    // refusal reaches it. An unlimited account-creation route in a platform that
+    // limits everything else is a gap a reader notices.
+    const previousPrefix = process.env["RELAY_AUTH_KEY_PREFIX"];
+    const previousThreshold = process.env["RELAY_AUTH_FAILURES_PER_MINUTE"];
+    process.env["RELAY_AUTH_KEY_PREFIX"] = `rlauth-signup-${Date.now()}`;
+    process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = "2";
+    try {
+      const start = () =>
+        fetch(`${url}/auth/github/start`, { redirect: "manual" });
+
+      // Two allowed, whatever they answer — an unconfigured provider is a 404 and
+      // that is not what is under test here.
+      expect((await start()).status).not.toBe(429);
+      expect((await start()).status).not.toBe(429);
+
+      expect((await start()).status).toBe(429);
+    } finally {
+      if (previousPrefix === undefined) delete process.env["RELAY_AUTH_KEY_PREFIX"];
+      else process.env["RELAY_AUTH_KEY_PREFIX"] = previousPrefix;
+      if (previousThreshold === undefined)
+        delete process.env["RELAY_AUTH_FAILURES_PER_MINUTE"];
+      else process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = previousThreshold;
+    }
+  });
+
   it("two environments carry DIFFERENT configured limits, each at its own number", async () => {
     // Independent counters are half of what the journey map asks for. The other
     // half is "separate keys and separate quotas": a developer raises her dev

@@ -103,6 +103,20 @@ describe("credentials", () => {
   };
 
   beforeAll(async () => {
+    // Chapter 3.8. This suite submits bad credentials ON PURPOSE — that is what
+    // it is for — and the failed-authentication limiter counts them all against
+    // one loopback address. The default is ten a minute.
+    //
+    // RAISING WORKS HOWEVER POLLUTED THE SHARED COUNT, which is why this is a
+    // threshold and not a private key: the integration lane runs files in
+    // parallel, every suite asserting a `401` lands in the same bucket, and a
+    // high ceiling never refuses. A suite needing a LOW threshold needs its own
+    // key instead — see `limits.itest.ts` (research R21).
+    //
+    // Explicit and visible, rather than the default being chosen to suit the
+    // tests. Chapter 3.6's `RELAY_DISABLE_SWEEP` states the rule: a flag whose
+    // default disabled a requirement would be a requirement nobody had built.
+    process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = "10000";
     db = createDb(createPool());
 
     env = await createEnvironment(db, { name: "credentials-itest" });

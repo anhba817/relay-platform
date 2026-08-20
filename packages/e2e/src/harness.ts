@@ -340,6 +340,13 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       // would be a second source of truth for a credential.
       "RELAY_WEBHOOK_SECRET_KEY",
       "RELAY_INTERNAL_CREDENTIAL",
+      // Chapter 3.8: the failed-authentication threshold and the counter's key
+      // prefix. Forwarded for the reason this list exists at all — turbo runs
+      // tasks in STRICT env mode, so an undeclared variable reaches a child as
+      // `undefined` and the `??` behind it silently wins. A suite that raised the
+      // threshold would raise it in the parent and not in the api the child runs.
+      "RELAY_AUTH_FAILURES_PER_MINUTE",
+      "RELAY_AUTH_KEY_PREFIX",
     ),
     // Chapter 3.3: the api children run WITHOUT the outbox relay. This journey
     // asserts message delivery, and a background loop draining the outbox while

@@ -8,9 +8,13 @@ import { environmentLimits } from "../db/repository";
 import type { RequestWithPrincipal } from "../auth/principal";
 import { LOGGER } from "../logger";
 import { remaining, resetAt, windowStart } from "./bucket";
+import { clientAddress } from "./client-address";
 import { COUNTER_STORE, LIMITS_DB } from "./limits.module";
-import { WINDOW_MS, type LimitedOperation } from "./policy";
-import { counterKey, type CounterStore } from "./store";
+import { authFailureThreshold, WINDOW_MS, type LimitedOperation } from "./policy";
+import { authKey, counterKey, type CounterStore } from "./store";
+
+/** Read once per call site so a test that freezes time sees one instant. */
+const now0 = (): number => Date.now();
 
 // The tenant limiter (chapter 3.8, FR-RTL-01…04).
 //
@@ -41,6 +45,11 @@ import { counterKey, type CounterStore } from "./store";
 
 const PUBLIC_PREFIX = "/v1/";
 const SEND_PATH = /^\/v1\/channels\/[^/]+\/messages\/?$/;
+/** Account creation (FR-041). Limited per SOURCE ADDRESS, because it has no
+ * tenant to key on — that is the point of it — and an unlimited
+ * account-creation route is not acceptable in a platform that limits everything
+ * else. It also has no guard, so T027a's refusal cannot reach it. */
+const SIGNUP_PATH = /^\/auth\/[^/]+\/(start|callback)\/?$/;
 
 interface Decision {
   operation: LimitedOperation;
@@ -85,6 +94,33 @@ export class RateLimitMiddleware implements NestMiddleware {
     const path = raw.split("?")[0] ?? "/";
     const operations = operationsFor(req.method ?? "GET", path);
     const principal = req.principal;
+
+    // Account creation first: no tenant, no guard, so it is neither counted like
+    // customer traffic nor refusable by `CredentialGuard`. Same counter family
+    // and same threshold as failed authentication (FR-041, research R17).
+    if (SIGNUP_PATH.test(path)) {
+      const address = clientAddress(req);
+      const count = await this.store.increment(
+        authKey(address, windowStart(now0(), WINDOW_MS)) + ":signup",
+        now0(),
+      );
+      if (count !== null && count > authFailureThreshold()) {
+        res.statusCode = 429;
+        res.setHeader("Retry-After", "60");
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify({
+            code: "rate_limited",
+            message: "too many sign-up attempts from this address; retry shortly",
+            docs_url: "https://relay.example/docs/errors/rate_limited",
+            request_id: String(res.getHeader("X-Request-Id") ?? ""),
+          }),
+        );
+        return;
+      }
+      next();
+      return;
+    }
 
     // An environment to key on, or nothing to do. A platform principal has none
     // by construction — the dispatcher's credential belongs to a deployment, not
