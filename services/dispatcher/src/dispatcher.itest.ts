@@ -264,6 +264,22 @@ describe("the dispatcher", () => {
         ensure: relay.ensureDeliveriesStream,
       }),
       logger: kit.createLogger("itest-relay"),
+      // A BATCH BIG ENOUGH TO REACH THIS TEST'S OWN DELIVERY. `drainOnce` is
+      // global: it takes the fifty oldest due deliveries in the platform,
+      // oldest first, and this suite's is the newest. Every earlier suite in the
+      // run leaves due deliveries behind, so once more than fifty of them
+      // accumulate the batch fills before reaching ours, the poll times out at
+      // eight seconds, and `expected 0 to be greater than 0` is what a reader
+      // sees.
+      //
+      // It only bites in the COVERAGE lane, where `fileParallelism: false` puts
+      // every suite in one process against one database. The failing run drains
+      // the backlog itself, so the next run passes — which is why it reads as a
+      // flake rather than as the threshold it is.
+      //
+      // Found at chapter 3.8's baseline. Chapter 3.7 fixed the same global drain
+      // in `deliveries.itest.ts` twice and never looked at this door.
+      batchSize: 10_000,
     });
     return r.drainOnce();
   };
