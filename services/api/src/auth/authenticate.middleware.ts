@@ -6,7 +6,14 @@ import {
   environmentSigningSecret,
 } from "../db/repository";
 import { looksLikeApiKey } from "./api-key";
-import { bearerCredential, type Principal, type RequestWithPrincipal } from "./principal";
+import { AuthLimiter } from "../limits/auth-limiter";
+import { clientAddress } from "../limits/client-address";
+import {
+  bearerCredential,
+  OVER_AUTH_THRESHOLD,
+  type Principal,
+  type RequestWithPrincipal,
+} from "./principal";
 import { environmentClaim, verifyUserToken } from "./user-token";
 
 export const AUTH_DB = "AUTH_DB";
@@ -106,17 +113,32 @@ export async function resolvePrincipal(
  */
 @Injectable()
 export class AuthenticateMiddleware implements NestMiddleware {
-  constructor(@Inject(AUTH_DB) private readonly db: Db) {}
+  constructor(
+    @Inject(AUTH_DB) private readonly db: Db,
+    private readonly authLimiter: AuthLimiter,
+  ) {}
 
   async use(
-    req: RequestWithPrincipal,
+    req: RequestWithPrincipal & { socket?: { remoteAddress?: string } },
     _res: unknown,
     next: () => void,
   ): Promise<void> {
     const credential = bearerCredential(req.headers);
     if (credential !== null) {
+      // Chapter 3.8 (FR-AUT-12). The failure is observable HERE — credential
+      // present, principal null — so this is where it is counted. It is not where
+      // it is refused: this middleware never throws, and `CredentialGuard` raises
+      // the 429 from the flag below (research R18).
+      const address = clientAddress(req);
+      if (await this.authLimiter.isOverThreshold(address)) {
+        req[OVER_AUTH_THRESHOLD] = true;
+      }
       const principal = await resolvePrincipal(this.db, credential);
-      if (principal !== null) req.principal = principal;
+      if (principal !== null) {
+        req.principal = principal;
+      } else {
+        await this.authLimiter.recordFailure(address);
+      }
     }
     next();
   }

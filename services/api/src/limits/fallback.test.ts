@@ -53,6 +53,26 @@ describe("the fallback counter", () => {
     expect(c.increment("b", 60_000)).toBe(1);
   });
 
+  it("peeks without counting, because a check must not be its own failure", () => {
+    // `isOverThreshold` runs on every request that presents a credential,
+    // including the valid ones. A check that also wrote would push an address
+    // over on its own questions.
+    const c = createFallbackCounter({ windowMs: MINUTE, maxKeys: 100 });
+    c.increment("1.2.3.4", 0);
+    c.increment("1.2.3.4", 0);
+
+    expect(c.peek("1.2.3.4", 0)).toBe(2);
+    expect(c.peek("1.2.3.4", 0)).toBe(2);
+    expect(c.peek("never-seen", 0)).toBe(0);
+  });
+
+  it("peeks zero once the window has turned over", () => {
+    const c = createFallbackCounter({ windowMs: MINUTE, maxKeys: 100 });
+    c.increment("1.2.3.4", 0);
+    expect(c.peek("1.2.3.4", 0)).toBe(1);
+    expect(c.peek("1.2.3.4", 60_000)).toBe(0);
+  });
+
   it("never grows past the cap, however many keys arrive", () => {
     // The memory bound is the point: an unbounded map keyed by source address is
     // a memory-exhaustion vector, so a fallback that closed a brute-force hole

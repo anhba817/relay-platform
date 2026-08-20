@@ -1,5 +1,6 @@
 import {
   ForbiddenException,
+  HttpException,
   Injectable,
   SetMetadata,
   UnauthorizedException,
@@ -10,6 +11,7 @@ import { Reflector } from "@nestjs/core";
 
 import {
   describePrincipalKind,
+  OVER_AUTH_THRESHOLD,
   type PrincipalKind,
   type RequestWithPrincipal,
 } from "./principal";
@@ -57,6 +59,30 @@ export class CredentialGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest<RequestWithPrincipal>();
     const principal = req.principal;
+
+    // Chapter 3.8 (FR-011, FR-040, research R18). The refusal for an
+    // over-threshold address is thrown HERE and not in the middleware that
+    // counted it, because `AuthenticateMiddleware` never throws by documented
+    // design — pre-credential routes reach their handlers by having no principal.
+    //
+    // Three things fall out of putting it here. The invariant survives verbatim.
+    // Both refusals come from one place, which is what FR-028 needs: a caller
+    // must not be able to tell a rate-limited refusal from a wrong-credential
+    // one, or the limiter becomes an oracle. And the guard already throws the
+    // object form that carries a `code`, which is what the envelope needs.
+    //
+    // BEFORE the principal check, so an address over its allowance is refused
+    // whether or not the credential it just presented would have worked.
+    if (req[OVER_AUTH_THRESHOLD] === true) {
+      throw new HttpException(
+        {
+          code: "rate_limited",
+          message:
+            "too many failed authentication attempts from this address; retry shortly",
+        },
+        429,
+      );
+    }
 
     if (!principal) {
       throw new UnauthorizedException(

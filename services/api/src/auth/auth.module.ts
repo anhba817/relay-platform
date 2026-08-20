@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
 
 import { createDb, createPool, type Db } from "../db/client";
+import { LimitsModule } from "../limits/limits.module";
+import { AuthLimiter } from "../limits/auth-limiter";
 import { AUTH_DB, AuthenticateMiddleware } from "./authenticate.middleware";
 import { CredentialGuard } from "./credential.guard";
 import { DevTokenController } from "./dev-token.controller";
@@ -15,12 +17,17 @@ import { DevTokenController } from "./dev-token.controller";
 // runs BEFORE any tenant scope exists, and borrowing the request-scoped
 // machinery 2.2 built would invert the order it needs.
 @Module({
+  // Chapter 3.8: the failed-authentication counter. Imported rather than built
+  // here, because the counter store is one client with one lifecycle and two
+  // consumers — this module and the tenant limiter's middleware.
+  imports: [LimitsModule],
   controllers: [DevTokenController],
   providers: [
     { provide: AUTH_DB, useFactory: (): Db => createDb(createPool()) },
+    AuthLimiter,
     AuthenticateMiddleware,
     CredentialGuard,
   ],
-  exports: [AUTH_DB, AuthenticateMiddleware, CredentialGuard],
+  exports: [AUTH_DB, AuthenticateMiddleware, CredentialGuard, AuthLimiter],
 })
 export class AuthModule {}

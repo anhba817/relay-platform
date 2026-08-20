@@ -1,6 +1,7 @@
 import { Inject, Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
 
 import { createDb, createPool, type Db } from "../db/client";
+import { apiLogger, LOGGER } from "../logger";
 import { createCounterStore, type CounterStore } from "./store";
 
 // The counter store's home (chapter 3.8).
@@ -34,8 +35,14 @@ export class CounterStoreLifecycle implements OnModuleDestroy {
   providers: [
     { provide: COUNTER_STORE, useFactory: (): CounterStore => createCounterStore() },
     { provide: LIMITS_DB, useFactory: (): Db => createDb(createPool()) },
+    // Exported so the auth limiter can be constructed inside `AuthModule`, which
+    // imports this one. `AppModule` provides the same token for everything else;
+    // the factory is shared so both are the same kind of logger, and the DI
+    // bargain ADR-15 buys — a test swaps the sink by overriding one provider —
+    // holds in both places.
+    { provide: LOGGER, useFactory: apiLogger },
     CounterStoreLifecycle,
   ],
-  exports: [COUNTER_STORE, LIMITS_DB],
+  exports: [COUNTER_STORE, LIMITS_DB, LOGGER],
 })
 export class LimitsModule {}

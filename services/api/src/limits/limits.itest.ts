@@ -14,6 +14,8 @@ import {
   Repository,
 } from "../db/repository";
 import { mintUserToken } from "../auth/user-token";
+import { COUNTER_STORE } from "./limits.module";
+import { createCounterStore, type CounterStore } from "./store";
 import { environments } from "../db/schema";
 import { eq } from "drizzle-orm";
 
@@ -296,6 +298,92 @@ describe("the limiter", () => {
     }
   });
 
+  it("refuses an address past the failed-auth threshold, and says nothing extra", async () => {
+    // FR-AUT-12 and FR-028. Past the threshold the refusal must be
+    // INDISTINGUISHABLE from a wrong-credential refusal — a limiter that answers
+    // differently for a credential it would have accepted is an oracle.
+    //
+    // Its own key prefix, because the lane runs files in parallel and every
+    // suite asserting a 401 from loopback lands in one bucket. A suite that
+    // needs a LOW threshold needs a private key, not a private number
+    // (research R21).
+    const previousPrefix = process.env["RELAY_AUTH_KEY_PREFIX"];
+    const previousThreshold = process.env["RELAY_AUTH_FAILURES_PER_MINUTE"];
+    process.env["RELAY_AUTH_KEY_PREFIX"] = `rlauth-itest-${Date.now()}`;
+    process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = "3";
+    try {
+      const bad = () =>
+        fetch(`${url}/v1/channels/x/messages`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer rk_live_not_a_real_key_at_all_000000",
+          },
+          body: JSON.stringify({ text: "hi" }),
+        });
+
+      const first = await bad();
+      expect(first.status).toBe(401);
+
+      await bad();
+      await bad();
+      const refused = await bad();
+
+      expect(refused.status).toBe(429);
+      const body = (await refused.json()) as { code: string; message: string };
+      expect(body.code).toBe("rate_limited");
+      // Never the credential (NFR-SEC-06), and no hint about whether it was
+      // valid.
+      expect(body.message).not.toContain("rk_live");
+      expect(body.message).not.toContain("valid");
+    } finally {
+      if (previousPrefix === undefined) delete process.env["RELAY_AUTH_KEY_PREFIX"];
+      else process.env["RELAY_AUTH_KEY_PREFIX"] = previousPrefix;
+      if (previousThreshold === undefined)
+        delete process.env["RELAY_AUTH_FAILURES_PER_MINUTE"];
+      else process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = previousThreshold;
+    }
+  });
+
+  it("counts ten client addresses as ten, not as one gateway", async () => {
+    // FR-039. A handshake authenticated through the gateway reaches the api FROM
+    // the gateway, so counting the TCP peer would put every customer's failures
+    // in one bucket and let one attacker exhaust a threshold that then refused
+    // everybody.
+    //
+    // The address rides the internal contract as a field rather than a header,
+    // because a header the caller asserts is a header the caller can forge —
+    // chapter 3.2 removed exactly that pattern.
+    const previousPrefix = process.env["RELAY_AUTH_KEY_PREFIX"];
+    const previousThreshold = process.env["RELAY_AUTH_FAILURES_PER_MINUTE"];
+    process.env["RELAY_AUTH_KEY_PREFIX"] = `rlauth-fleet-${Date.now()}`;
+    process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = "3";
+    try {
+      // Ten distinct clients, one bad handshake each, all arriving from this
+      // process — which is what the gateway looks like to the api.
+      for (let i = 0; i < 10; i++) {
+        const res = await fetch(`${url}/internal/session`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer not.a.real.token",
+          },
+          body: JSON.stringify({ client_address: `198.51.100.${i}` }),
+        });
+        // Every one is a 401: ten addresses, one failure each, none over three.
+        expect(res.status, `client ${i} should be refused for its credential`).toBe(
+          401,
+        );
+      }
+    } finally {
+      if (previousPrefix === undefined) delete process.env["RELAY_AUTH_KEY_PREFIX"];
+      else process.env["RELAY_AUTH_KEY_PREFIX"] = previousPrefix;
+      if (previousThreshold === undefined)
+        delete process.env["RELAY_AUTH_FAILURES_PER_MINUTE"];
+      else process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = previousThreshold;
+    }
+  });
+
   it("two environments carry DIFFERENT configured limits, each at its own number", async () => {
     // Independent counters are half of what the journey map asks for. The other
     // half is "separate keys and separate quotas": a developer raises her dev
@@ -316,5 +404,117 @@ describe("the limiter", () => {
     await send(prod.channelId, prod.credential);
     expect((await send(prod.channelId, prod.credential)).status).toBe(429);
     expect((await send(dev.channelId, dev.credential)).status).toBe(201);
+  });
+});
+
+// The failure direction, which is what this chapter is actually about
+// (FR-010, FR-011, FR-014, research R3, R6).
+//
+// A REAL ioredis client against a dead port, not a mock that throws. The
+// question is what the platform does when a store it depends on is gone, and a
+// stub that rejects on command would answer a different question — it would skip
+// connection handling, which is where the first draft of `store.ts` got it wrong.
+//
+// A dead port rather than stopping the container, because the lane runs files in
+// PARALLEL and stopping Redis would break every other suite mid-run.
+describe("when the counter store is gone", () => {
+  let app: INestApplication;
+  let url: string;
+  let db: Db;
+  let channelId: string;
+  let credential: string;
+  let deadStore: CounterStore;
+
+  beforeAll(async () => {
+    const pool = createPool();
+    await migrate(pool);
+    db = createDb(pool);
+    const env = await createEnvironment(db, { name: "limits-degraded" });
+    channelId = (await new Repository(db, env.id).createChannel("c", "public")).id;
+    credential = (await createApiKey(db, { environmentId: env.id })).credential;
+
+    // Port 1 is reserved and nothing listens on it.
+    deadStore = createCounterStore("redis://127.0.0.1:1");
+    app = (
+      await Test.createTestingModule({ imports: [AppModule] })
+        .overrideProvider(COUNTER_STORE)
+        .useValue(deadStore)
+        .compile()
+    ).createNestApplication({ logger: false });
+    await app.listen(0);
+    url = await app.getUrl();
+  }, 60_000);
+
+  afterAll(async () => {
+    await app.close();
+    await deadStore.close();
+  });
+
+  it("SERVES the request rather than refusing it", async () => {
+    // Redis is not a source of truth (SAD §6.3), and a cache outage is not a
+    // reason to refuse a paying customer's traffic. This is the direction the
+    // tenant limiter fails in, and it is a decision rather than an accident.
+    const res = await fetch(`${url}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${credential}`,
+      },
+      body: JSON.stringify({ text: "served anyway" }),
+    });
+
+    expect(res.status).toBe(201);
+  });
+
+  it("keeps Limit and DROPS Remaining and Reset, rather than inventing them", async () => {
+    // FR-014. `Limit` is policy read from Postgres and is not degraded. The other
+    // two exist only because something was counting, and a client must be able to
+    // tell "you have N left" from "we are not counting".
+    //
+    // NOT a sentinel: a client that does not know `-1` would parse it as a number
+    // and conclude it was over its limit (research R6).
+    const res = await fetch(`${url}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${credential}`,
+      },
+      body: JSON.stringify({ text: "no counts" }),
+    });
+
+    expect(res.headers.get(HEADERS.limit)).toBe("600");
+    expect(res.headers.get(HEADERS.remaining)).toBeNull();
+    expect(res.headers.get(HEADERS.reset)).toBeNull();
+  });
+
+  it("does NOT let an address spend an unlimited number of failed logins", async () => {
+    // The other direction, in the same outage, and the reason the chapter exists.
+    // Failing open here is not a degradation — it is a brute-force window. The
+    // in-process fallback holds the same threshold per instance, so the guarantee
+    // weakens from N per window per fleet to N per window per instance rather
+    // than disappearing.
+    const previous = process.env["RELAY_AUTH_FAILURES_PER_MINUTE"];
+    process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = "3";
+    try {
+      const bad = () =>
+        fetch(`${url}/v1/channels/${channelId}/messages`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer rk_live_still_not_a_real_key_0000000",
+          },
+          body: JSON.stringify({ text: "hi" }),
+        });
+
+      expect((await bad()).status).toBe(401);
+      await bad();
+      await bad();
+
+      expect((await bad()).status).toBe(429);
+    } finally {
+      if (previous === undefined)
+        delete process.env["RELAY_AUTH_FAILURES_PER_MINUTE"];
+      else process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = previous;
+    }
   });
 });

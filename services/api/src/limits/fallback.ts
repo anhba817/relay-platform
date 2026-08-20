@@ -39,6 +39,14 @@ export interface FallbackCounter {
    * `null` has learned nothing about that address and must not treat it as
    * "under the threshold". */
   increment(key: string, nowMs: number): number | null;
+  /** The current count for a key WITHOUT adding to it, or `null` when the key is
+   * not tracked and the map is full.
+   *
+   * `null` and `0` are different answers and the caller must tell them apart:
+   * zero means "tracked, nothing counted", null means "we have no idea". While
+   * degraded, refusing an address we cannot track is the safe direction, and the
+   * cap makes that a bounded population rather than everybody. */
+  peek(key: string, nowMs: number): number | null;
   /** Live keys. Exposed for the test that proves the bound holds. */
   size(): number;
 }
@@ -81,6 +89,15 @@ export function createFallbackCounter({
 
       entries.set(key, { count: 1, windowStart: start });
       return 1;
+    },
+
+    peek(key, nowMs) {
+      const start = Math.floor(nowMs / windowMs) * windowMs;
+      const existing = entries.get(key);
+      if (existing === undefined) {
+        return entries.size >= maxKeys ? null : 0;
+      }
+      return existing.windowStart === start ? existing.count : 0;
     },
 
     size() {

@@ -22,6 +22,23 @@ import {
 import { encryptSecret, mintSigningSecret } from "./secret";
 import { MAX_ATTEMPTS } from "./schedule";
 
+// Chapter 3.8 added `request_id` to every error body (constitution V's fourth
+// field, promised since 1.3). It is unique per request BY DESIGN, so two error
+// bodies can no longer be compared whole — and comparing them whole is how this
+// suite proves a foreign resource is indistinguishable from an absent one, which
+// is a tenant-isolation property (constitution I).
+//
+// The id is the one field that reveals nothing about the resource, so it is the
+// one field the comparison must drop. Everything discriminating still has to
+// match exactly.
+function withoutRequestId(body: unknown): unknown {
+  if (typeof body !== "object" || body === null) return body;
+  const rest: Record<string, unknown> = { ...(body as Record<string, unknown>) };
+  delete rest["request_id"];
+  return rest;
+}
+
+
 // The attempt record, against a real broker and a real api (chapter 3.6).
 //
 // Invariants 1, 2, 3 and 5 of contracts/attempts.md live here. Invariant 4 is the
@@ -388,7 +405,9 @@ describe("the attempt record", () => {
     const second = await report(body);
     // The dispatcher is told the same thing both times — that is what idempotent
     // means here — so the repeat is invisible to it.
-    expect(await first.json()).toEqual(await second.json());
+    expect(withoutRequestId(await first.json())).toEqual(
+      withoutRequestId(await second.json()),
+    );
 
     // Spend a real budget looking for a second event rather than checking once.
     const events = await collected(scoped.id, 2, 5_000);
