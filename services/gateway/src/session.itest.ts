@@ -117,7 +117,9 @@ async function startApi(): Promise<ApiUnderTest> {
     // Chapter 3.3: no outbox relay in this child. This suite is about the
     // socket's credentials; a background loop draining a table that chapter
     // 3.3's suite is asserting on turns two unrelated test files into a race.
-    env: { ...process.env, PORT: String(port), RELAY_OUTBOX_RELAY: "off" },
+    env: { ...process.env, PORT: String(port), RELAY_OUTBOX_RELAY: "off",
+      // Chapter 3.8: nor the notification relay, for the same reason.
+      RELAY_NOTIFICATION_RELAY: "off" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const url = `http://127.0.0.1:${port}`;

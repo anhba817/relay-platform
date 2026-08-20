@@ -1,6 +1,17 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, gt, isNull, lt, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
 import {
   DEFAULT_LIMITS,
@@ -339,6 +350,148 @@ export async function drainOutbox(
     }
     return published.length;
   });
+}
+
+// ---------------------------------------------------------------------------
+// The disablement notifications (chapter 3.8, FR-018 to FR-020). THE OUTBOX A
+// THIRD TIME — after chapter 3.3's events and chapter 3.5's deliveries — and
+// this one needed no migration at all: chapter 3.6 gave the table a
+// `delivered_at` column and left it null throughout, which is a claim predicate
+// already written down.
+//
+// The backlog 3.6 accumulated therefore drains on the first run with NO SPECIAL
+// HANDLING. By the predicate's own definition those rows are undelivered work,
+// and code that treated them as a migration would be code asserting they are
+// different when they are not (FR-020).
+//
+// Admin surface, like `drainOutbox`: one relay serves every environment, because
+// a notification is an obligation the platform owes rather than tenant traffic.
+// ---------------------------------------------------------------------------
+
+export interface DisableNotificationRow {
+  id: string;
+  organisationId: string;
+  /** What to call the environment in an email. `environments` has a `kind` —
+   * development, staging, production — and no name of its own, so on its own it
+   * is ambiguous for an organisation with four applications. The application's
+   * name and the kind together are the shortest thing a reader can act on. */
+  environmentName: string;
+  endpointUrl: string;
+  disabledAt: Date;
+  runStartedAt: Date;
+  runAttempts: number;
+  lastStatus: number | null;
+  lastError: string | null;
+}
+
+/** Claim up to `limit` undelivered notifications, hand each to `deliver`, and
+ * mark the ones that went out — all inside ONE transaction.
+ *
+ * AN EXPLICIT LIMIT, no default. Chapter 3.7's baseline found four suites broken
+ * by tests that asserted local facts about a global, oldest-first operation, and
+ * this is another global operation: a caller that wants only its own rows drained
+ * has to say how many, and a test that forgets ends up asserting about somebody
+ * else's fixture.
+ *
+ * SEND THEN MARK, and the mark in the `finally` — chapter 3.3's shape, for
+ * chapter 3.3's reason: whatever went wrong with row N+1, rows 1..N really did go
+ * out and must not be sent again. A crash between the send and the mark resends
+ * one email, which is the accepted cost; marking first would lose it silently,
+ * and a notification nobody received is the failure FR-WHK-07 exists to prevent.
+ */
+export async function drainDisableNotifications(
+  db: Db,
+  limit: number,
+  deliver: (row: DisableNotificationRow) => Promise<void>,
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    const claimed = (await tx.execute(
+      sql`SELECT n.id                AS "id",
+                 n.organisation_id   AS "organisationId",
+                 a.name || ' / ' || e.kind AS "environmentName",
+                 w.url               AS "endpointUrl",
+                 n.disabled_at       AS "disabledAt",
+                 n.run_started_at    AS "runStartedAt",
+                 n.run_attempts      AS "runAttempts",
+                 n.last_status       AS "lastStatus",
+                 n.last_error        AS "lastError"
+            FROM webhook_disable_notifications n
+            JOIN environments e ON e.id = n.environment_id
+            JOIN applications a ON a.id = e.application_id
+            JOIN webhook_endpoints w ON w.id = n.endpoint_id
+           WHERE n.delivered_at IS NULL
+           ORDER BY n.disabled_at, n.id
+           LIMIT ${limit}
+             FOR UPDATE OF n SKIP LOCKED`,
+    )) as unknown as {
+      rows: (Omit<DisableNotificationRow, "disabledAt" | "runStartedAt"> & {
+        disabledAt: string | Date;
+        runStartedAt: string | Date;
+      })[];
+    };
+
+    const delivered: string[] = [];
+    try {
+      for (const raw of claimed.rows) {
+        // Timestamps back as `Date`, not as whatever the driver felt like. Raw
+        // SQL through `execute` skips drizzle's column mapping, and a timestamptz
+        // arrives as a string — which reaches the mailer as an object with no
+        // `getTime`, one call later and one file away. Coerced here, at the
+        // boundary that produced it, rather than defended against downstream.
+        const row: DisableNotificationRow = {
+          ...raw,
+          disabledAt: new Date(raw.disabledAt),
+          runStartedAt: new Date(raw.runStartedAt),
+        };
+        await deliver(row);
+        delivered.push(row.id);
+      }
+    } finally {
+      if (delivered.length > 0) {
+        // The builder rather than raw SQL, unlike the outbox drain one screen
+        // up. That one interpolates `ARRAY[…]::bigint[]` through `sql.raw`
+        // because its ids are integers; these are uuids, and `sql` renders a JS
+        // array as a comma-separated parameter list — which Postgres reads as a
+        // row expression and rejects with "record type has too many columns".
+        await tx
+          .update(webhookDisableNotifications)
+          .set({ deliveredAt: new Date() })
+          .where(inArray(webhookDisableNotifications.id, delivered));
+      }
+    }
+    return delivered.length;
+  });
+}
+
+/** The addresses to notify for an organisation, at SEND TIME (FR-022).
+ *
+ * Resolved from the row's `organisation_id`, which chapter 3.6 denormalised onto
+ * the notification precisely so this lookup could not follow the endpoint's
+ * CURRENT owner. An application that moved between organisations after the
+ * disablement must not silently retarget an obligation already owed to somebody
+ * else — 3.6 wrote the reason down and this is the first code to depend on it.
+ *
+ * `humans.email` is nullable, so this can legitimately return nothing. That is a
+ * branch the caller has to handle, not a case that cannot arise.
+ *
+ * EVERY member, not only the owners. `memberships.role` is one of owner, admin
+ * or member, and picking a subset here would be this chapter inventing a
+ * notification-preferences model — which is product, and belongs to whichever
+ * chapter builds preferences. Everyone who can see the endpoint hears that it
+ * stopped. */
+export async function organisationRecipients(
+  db: Db,
+  organisationId: string,
+): Promise<string[]> {
+  const result = (await db.execute(
+    sql`SELECT DISTINCT h.email AS "email"
+          FROM memberships m
+          JOIN humans h ON h.id = m.human_id
+         WHERE m.organisation_id = ${organisationId}
+           AND h.email IS NOT NULL
+         ORDER BY h.email`,
+  )) as unknown as { rows: { email: string }[] };
+  return result.rows.map((row) => row.email);
 }
 
 /** How far behind the relay is. The single number worth alarming on later, and

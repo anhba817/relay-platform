@@ -32,6 +32,27 @@ describe("the compose declaration agrees with @relay/config", () => {
     expect(healthchecks.length).toBeGreaterThanOrEqual(INFRA_SERVICES.length);
   });
 
+  it("REGISTERS every compose service, which is the direction this file lacked", () => {
+    // The assertion above runs one way: every registered service must appear in
+    // compose. Nothing ran the other way, so a container added to compose and
+    // never registered here was invisible — `INFRA_SERVICES` would quietly stop
+    // naming the local infrastructure while every test still passed. Chapter
+    // 3.8 added a fifth container and the gap is how it nearly went unnoticed.
+    //
+    // The services behind `--profile services` are Relay's own and are not
+    // infrastructure, so they are excluded by name rather than by pattern: a
+    // list is auditable and a pattern would silently absorb the next container.
+    const ours = new Set(["api", "gateway", "dispatcher"]);
+    // Only the `services:` block. Volume names sit at the same indentation one
+    // block down, and a match that swept the whole file would report
+    // `postgres-data` as an unregistered service.
+    const services = compose.slice(0, compose.indexOf("\nvolumes:"));
+    const declared = [...services.matchAll(/^ {2}([a-z][a-z0-9-]*):$/gm)]
+      .map((match) => match[1] as string)
+      .filter((service) => !ours.has(service));
+    expect([...declared].sort()).toEqual([...INFRA_SERVICES].sort());
+  });
+
   it("persists exactly the durable stores — and never Redis", () => {
     for (const volume of DURABLE_VOLUMES) {
       expect(compose).toContain(`${volume}:`);

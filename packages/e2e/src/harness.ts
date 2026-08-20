@@ -347,6 +347,11 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       // threshold would raise it in the parent and not in the api the child runs.
       "RELAY_AUTH_FAILURES_PER_MINUTE",
       "RELAY_AUTH_KEY_PREFIX",
+      // Chapter 3.8's other half: where the notification relay posts its SMTP.
+      // The lane runs Mailpit on 11025 and the default is 1025, so an
+      // unforwarded variable is not a missing feature — it is a mailer talking
+      // confidently to a port nothing is listening on.
+      "RELAY_SMTP_URL",
     ),
     // Chapter 3.3: the api children run WITHOUT the outbox relay. This journey
     // asserts message delivery, and a background loop draining the outbox while
@@ -354,6 +359,10 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     // files, not a property of the system. The relay has its own suite, which
     // drives it explicitly.
     RELAY_OUTBOX_RELAY: "off",
+    // Chapter 3.8: and no notification relay either, for the same reason. This
+    // journey asserts message delivery; a loop marking rows delivered while
+    // 3.8's own suite asserts on that column is a race between test files.
+    RELAY_NOTIFICATION_RELAY: "off",
     // Chapter 3.4: no event consumer in these children either, for the reason
     // the line above exists — this journey asserts message delivery, and a
     // background consumer writing to a table 3.4's suite asserts on is a race

@@ -5,6 +5,7 @@ import { createLogger } from "@relay/service-kit";
 
 import { AppModule } from "./app.module";
 import { EventConsumerService } from "./consumer/consumer.module";
+import { NotificationRelayService } from "./notifications/notifications.module";
 import { OutboxRelayService } from "./outbox/outbox.module";
 import { DeliveryRelayService } from "./webhooks/webhooks.module";
 
@@ -20,6 +21,11 @@ async function bootstrap(): Promise<void> {
   // accumulating in Postgres instead of preventing the api from serving writes
   // (chapter 3.3, research R9).
   app.get(OutboxRelayService).start();
+  // Chapter 3.8: the disablement notifications chapter 3.6 wrote and nothing
+  // delivered. Its backlog drains on this first start as ordinary undelivered
+  // work — no migration and no special case, because `delivered_at IS NULL` was
+  // already true of every one of those rows.
+  app.get(NotificationRelayService).start();
   // And the second relay (chapter 3.5): the same loop over a different table,
   // publishing deliveries that have become due. Started here for 3.3's reason —
   // a retry schedule that only runs when someone remembers is not a schedule.

@@ -126,6 +126,8 @@ async function startApi(): Promise<ApiUnderTest> {
       ...process.env,
       PORT: String(port),
       RELAY_OUTBOX_RELAY: "off",
+      // Chapter 3.8: nor the notification relay, for the same reason.
+      RELAY_NOTIFICATION_RELAY: "off",
       RELAY_REDIS_URL: REDIS_URL,
     },
     stdio: ["ignore", "pipe", "pipe"],

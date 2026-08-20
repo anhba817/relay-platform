@@ -11,6 +11,7 @@ import { HealthController } from "./health.controller";
 import { InternalModule } from "./internal/internal.module";
 import { MessagesModule } from "./messages/messages.module";
 import { ConsumerModule } from "./consumer/consumer.module";
+import { NotificationsModule } from "./notifications/notifications.module";
 import { OutboxModule } from "./outbox/outbox.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 import { TenancyModule } from "./tenancy/tenancy.module";
@@ -31,6 +32,7 @@ import { RequestContextMiddleware } from "./request-context.middleware";
     InternalModule,
     TenancyModule,
     OutboxModule,
+    NotificationsModule,
     ConsumerModule,
     WebhooksModule,
     LimitsModule,

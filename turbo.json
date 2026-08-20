@@ -35,7 +35,10 @@
         "RELAY_WEBHOOK_SECRET_KEY",
         "RELAY_EVENT_CONSUMER",
         "RELAY_NATS_REPLICAS",
-        "RELAY_E2E_API_PORT"
+        "RELAY_E2E_API_PORT",
+        "RELAY_SMTP_URL",
+        "RELAY_MAILPIT_URL",
+        "RELAY_NOTIFICATION_RELAY"
       ]
     },
     "//#lint:root": {
