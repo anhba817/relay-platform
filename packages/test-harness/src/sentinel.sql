@@ -49,8 +49,20 @@ DECLARE
 BEGIN
   -- Refusal is the default: current_setting(..., true) returns NULL in a
   -- connection that never carried the option, and NULL is not 'on'.
+  --
+  -- WHICH ROW A BEFORE TRIGGER RETURNS DECIDES WHETHER THE WRITE HAPPENS, and
+  -- getting it wrong here is worse than the fault this file exists to catch. A
+  -- BEFORE UPDATE trigger returning OLD does not allow the update — it replaces
+  -- it with a write of the old values, silently. Measured: with `RETURN OLD` on
+  -- both paths, an exempt suite swept 17 sentinel endpoints, sweeps them again
+  -- on the next pass, and never runs out, because every disable was reverted by
+  -- the trigger that claimed to permit it. The exemption has to hand back NEW on
+  -- an UPDATE and OLD on a DELETE, which is the only row each has.
   IF current_setting('relay.allow_global', true) = 'on' THEN
-    RETURN OLD;
+    IF TG_OP = 'DELETE' THEN
+      RETURN OLD;
+    END IF;
+    RETURN NEW;
   END IF;
 
   SELECT owner INTO who FROM __sentinel_environments
