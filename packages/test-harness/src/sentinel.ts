@@ -262,13 +262,30 @@ export async function plant(
     [`${s.name}.bait`, BAIT_ROWS],
   );
 
-  // bait 4: undelivered disablement notifications.
+  // bait 4: disablement notifications, ALREADY DELIVERED — the same concession
+  // the deliveries made, for the same measured reason, and the third time the
+  // same law bit.
+  //
+  // `drainDisableNotifications` claims on `delivered_at IS NULL` and then does
+  // per-row work: look up the organisation's recipients, decide, mark. The
+  // sentinel's organisation has no addressable member, so each bait row takes the
+  // cheap branch — and cheap is about 1.4ms, which across seventeen files' worth
+  // of bait is a little under five seconds. `notifications.itest.ts` has a test
+  // with vitest's default five-second budget, and run 1 of the twenty-run battery
+  // timed it out (research R49).
+  //
+  // THE RULE THIS SETTLES, having now been measured three times: bait may be
+  // claimable only where draining it is DATABASE work. The endpoints (a sweep) and
+  // the outbox rows (a publish to whatever the test hands it) qualify and are left
+  // claimable — instances 1 and 7 were both caught by them. The deliveries and
+  // these notifications do I/O per row, so they stay in the table as rows a global
+  // count would see and out of every claim window.
   await q(
     `INSERT INTO webhook_disable_notifications
        (id, environment_id, organisation_id, endpoint_id, disabled_at,
-        run_started_at, run_attempts, last_status)
+        run_started_at, run_attempts, last_status, delivered_at)
      SELECT gen_random_uuid(), $1, $2, $3, now() - interval '3 hours',
-            now() - interval '4 hours', 25, 503
+            now() - interval '4 hours', 25, 503, now() - interval '2 hours'
        FROM generate_series(1, $4)`,
     [s.environmentId, s.organisationId, s.deliveryEndpointId, BAIT_ROWS],
   );

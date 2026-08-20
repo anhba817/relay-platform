@@ -144,7 +144,7 @@ describe("an exemption that names one table", () => {
 
   it("may write the table it names", async () => {
     const r = await narrow.query(
-      "update webhook_disable_notifications set delivered_at = now() where endpoint_id = $1",
+      "update webhook_disable_notifications set last_status = 500 where endpoint_id = $1",
       // The notifications hang off the DISABLED endpoint, which is what a
       // disablement notification is about — see `plant()`.
       [n.deliveryEndpointId],
