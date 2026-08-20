@@ -151,18 +151,41 @@ export async function plant(
     [s.environmentId, s.applicationId, `sentinel-not-a-secret-${s.environmentId}`],
   );
 
-  // bait 1: an endpoint the sweep would disable. `disabled_at` and
-  // `disabled_reason` must be null together, and `failure_run_started_at` and
-  // `failure_run_attempts` must be non-null together — both read off the live
-  // schema rather than guessed (webhook_endpoints_disabled_check,
-  // webhook_endpoints_failure_run_check).
+  // bait 1: BAIT_ROWS endpoints the sweep would disable, not one.
+  //
+  // MEASURED: with a single bait endpoint, instance 1 — `sweepDisabledEndpoints`
+  // at the product's own limit of 100 — reintroduced and run alone on a fresh
+  // database PASSED, 49 tests of 49. Of course it did: the fault is that older
+  // eligible endpoints fill the batch before the test's own is reached, and one
+  // older endpoint does not fill a batch of a hundred (research R42).
+  //
+  // So the endpoint bait is sized by the same rule as the other three: BAIT_ROWS,
+  // which is twice the largest batch any product reader takes. The first of them
+  // keeps `s.endpointId`, because the deliveries and the notifications hang off a
+  // known id and a refusal that names a stable row is easier to read than one
+  // that names a random one.
+  //
+  // `disabled_at` and `disabled_reason` must be null together, and
+  // `failure_run_started_at` and `failure_run_attempts` must be non-null together
+  // — both read off the live schema rather than guessed
+  // (webhook_endpoints_disabled_check, webhook_endpoints_failure_run_check).
   await q(
     `INSERT INTO webhook_endpoints
        (id, environment_id, url, event_types, secret_ciphertext, enabled,
         failure_run_started_at, failure_run_attempts, disabled_at, disabled_reason)
-     VALUES ($1, $2, $3, '["message.created"]'::jsonb, 'sentinel-not-a-ciphertext',
-             true, now() - interval '4 hours', 25, NULL, NULL)`,
-    [s.endpointId, s.environmentId, `https://sentinel.invalid/${s.owner}`],
+     SELECT CASE WHEN i = 1 THEN $1::uuid ELSE gen_random_uuid() END,
+            $2, $3 || '/' || i, '["message.created"]'::jsonb,
+            'sentinel-not-a-ciphertext', true,
+            -- Older than any endpoint a test mints, so they sort ahead of it in
+            -- the sweep's oldest-first window, which is the whole mechanism.
+            now() - interval '4 hours' - (i * interval '1 second'), 25, NULL, NULL
+       FROM generate_series(1, $4) AS g(i)`,
+    [
+      s.endpointId,
+      s.environmentId,
+      `https://sentinel.invalid/${s.owner}`,
+      BAIT_ROWS,
+    ],
   );
 
   // bait 2: due deliveries.
