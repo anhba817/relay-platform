@@ -162,12 +162,24 @@ export class RateLimitMiddleware implements NestMiddleware {
       });
     }
 
+    const refusal = decisions.find((d) => d.refused);
+
     // THE HEADERS DESCRIBE WHICHEVER HAS FEWER REMAINING, because that is the one
     // that will refuse first and the only value a client can schedule against. A
     // client with 400 request-slots and 12 send-slots needs to hear 12; reporting
     // 400 would be a header that lies by omission. A tie reports the first, which
     // is `rest` (research R11).
-    const nearest = decisions.reduce((a, b) => (b.remaining < a.remaining ? b : a));
+    //
+    // EXCEPT WHEN ONE OF THEM ACTUALLY REFUSED, and that exception was found by
+    // capturing the transcript rather than by a test. Both budgets can reach
+    // zero remaining in the same request while only one of them is over: with
+    // `rest` at 3 and `send` at 2, the third send leaves both at zero remaining
+    // and only `send` refused. "Fewest remaining" then picks `rest` on the tie,
+    // and the response says `X-RateLimit-Limit: 3` above a body reading "too many
+    // messages" — two numbers describing different budgets in one refusal
+    // (research R41). A refusal describes the budget that refused.
+    const nearest =
+      refusal ?? decisions.reduce((a, b) => (b.remaining < a.remaining ? b : a));
     const degraded = decisions.some((d) => !d.counted);
 
     res.setHeader("X-RateLimit-Limit", String(nearest.limit));
@@ -183,7 +195,6 @@ export class RateLimitMiddleware implements NestMiddleware {
       res.setHeader("X-RateLimit-Reset", String(nearest.resetSeconds));
     }
 
-    const refusal = decisions.find((d) => d.refused);
     if (refusal !== undefined) {
       const retryAfter = Math.max(1, refusal.resetSeconds - Math.floor(now / 1000));
       res.setHeader("Retry-After", String(retryAfter));

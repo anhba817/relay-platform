@@ -170,6 +170,31 @@ describe("the limiter", () => {
     expect(body.message).not.toContain(credential);
   });
 
+  it("describes the budget that REFUSED, not the one with fewest remaining", async () => {
+    // Both budgets can hit zero remaining in the same request while only one of
+    // them is over. Three sends against `rest: 3` and `send: 2` leave rest at
+    // 3/3 — spent but not over — and send at 3/2, which is. "Fewest remaining"
+    // ties at zero and picks rest, so the refusal used to answer
+    // `X-RateLimit-Limit: 3` above a body reading "too many messages".
+    //
+    // A client cannot act on that. It reads the header, sets its rate to 3 a
+    // minute, and is refused again at 2. Found by capturing the transcript for
+    // the chapter, not by a test — which is the argument for capturing them
+    // (research R41).
+    const { channelId, credential } = await seed("refusal-headers", {
+      rest: 3,
+      send: 2,
+    });
+    await send(channelId, credential, "one");
+    await send(channelId, credential, "two");
+    const refused = await send(channelId, credential, "three");
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get(HEADERS.limit)).toBe("2");
+    expect(((await refused.json()) as { message: string }).message).toMatch(
+      /too many messages/,
+    );
+  });
+
   it("never limits /healthz, whatever the environment has spent", async () => {
     // Docker polls it every five seconds and `up -d --wait` depends on the
     // answer. A limiter that can refuse a health check can stop a deployment.
