@@ -1,4 +1,4 @@
-// The files permitted to perform global operations (feature 030, FR-009, FR-015).
+// The files permitted to perform global operations (feature 030).
 //
 // A LIST OF PATHS, EACH WITH ITS REASON. Not a pattern: a pattern silently absorbs
 // the next file added, which is the failure mode this whole feature is about.

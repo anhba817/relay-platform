@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 // config overrides `fileParallelism` — so a shared sentinel would mean one file's
 // planting deleting rows another file is mid-test against. Per-file planting and a
 // shared sentinel are incompatible, and the plan had both until research R12
-// (FR-023).
+// (feature 030).
 //
 // The ids are derived from the file's path, so they are stable across runs and
 // unique across files, and a developer reading a failure can tell which file owns
@@ -22,7 +22,7 @@ import { createHash } from "node:crypto";
  * drag its whole dependency graph into a setup file. That trade is only acceptable
  * because `bait-size.test.ts` reads those three files and fails if any of them
  * rises past this bound: a literal that goes stale silently is the thing research
- * R7 warned about, and a literal guarded by a test is not silent (FR-002). */
+ * R7 warned about, and a literal guarded by a test is not silent (feature 030). */
 export const MAX_PRODUCT_BATCH = 100;
 export const BAIT_ROWS = MAX_PRODUCT_BATCH * 2;
 
@@ -90,13 +90,13 @@ export const SENTINEL = {
  * IDEMPOTENT BY DELETE-THEN-INSERT rather than `ON CONFLICT`, because three of the
  * four baits are consumable and a re-insert has to restore the *count* as well as
  * the rows. The environment id makes the delete exact, so the seeder cannot become
- * the accumulation it exists to simulate (FR-003).
+ * the accumulation it exists to simulate (feature 030).
  *
  * THE CLIENT IS THE CALLER'S PROBLEM, and that is the point. Deleting a sentinel
  * row is exactly what the trigger forbids, so planting needs the exemption — and a
  * connection carrying the exemption must never reach a test, or that test runs
  * unguarded. `setup.ts` opens a dedicated client, passes it here, and closes it
- * before the first test (FR-024, research R12).
+ * before the first test (research R12).
  *
  * The four kinds are chosen so that every global operation in the codebase touches
  * at least one:

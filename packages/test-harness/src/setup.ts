@@ -21,7 +21,7 @@ import { plant, sentinelFor } from "./sentinel.js";
 // An exemption written in `beforeAll` would arrive after their pool already exists.
 // None of the six exempt suites is written that way today, so nothing is currently
 // broken by it — which is the same kind of luck this whole feature exists to remove
-// (FR-026, research R14).
+// (research R14).
 //
 // Bait planting stays in `beforeAll`, because it is asynchronous database work.
 //
@@ -59,7 +59,7 @@ const EXEMPT = TABLES !== null;
  * carries it. A `SET` issued through `pool.query()` lands on whichever connection
  * the pool hands out — measured at two of five checkouts, `["on",null,null,"on",
  * null]` — which would make an exempt suite fail two times in five, in a way
- * indistinguishable from the flakiness this feature removes (FR-020, research R10).
+ * indistinguishable from the flakiness this feature removes (research R10).
  *
  * The connection string rather than the pool's config object, because that needs no
  * change to `createPool()`, a product function every service calls. */
@@ -82,7 +82,7 @@ if (TABLES !== null && TABLES.length > 0 && BASE_URL !== undefined) {
 /** Both relays catch and log their own errors, so a refusal raised inside one is a
  * log line and a green lane — the guard's sharpest limitation (research R13). Every
  * suite that spawns an api child sets these off today; that is a convention in four
- * files, and this makes it checked (FR-025). */
+ * files, and this makes it checked. */
 const RELAY_FLAGS = [
   "RELAY_OUTBOX_RELAY",
   "RELAY_DELIVERY_RELAY",
@@ -112,14 +112,14 @@ if (!EXEMPT) {
 beforeAll(async () => {
   // Bait goes only to the lanes where reader-shape faults live. Planting it in the
   // gateway and e2e lanes would change their workload for no return, which is the
-  // failure research R4 measured (FR-022). The config that wants it says so.
+  // failure research R4 measured. The config that wants it says so.
   if (process.env["RELAY_HARNESS_BAIT"] !== "on") return;
   if (BASE_URL === undefined) return;
 
   // A DEDICATED CLIENT THAT NEVER ENTERS THE SUITE'S POOL. Deleting a sentinel row
   // is exactly what the guard forbids, so planting needs the exemption — and a
   // connection carrying it that a test later reused would leave that test unguarded
-  // (FR-024, research R12).
+  // (research R12).
   // `all`: planting deletes across every guarded table, which is the one job that
   // genuinely needs a blanket.
   const seeder = new pg.Client({
