@@ -85,6 +85,16 @@ services:
     environment:
       DATABASE_URL: postgres://relay:relay@postgres:5432/relay
       RELAY_NATS_URL: nats://nats:4222
+      # Chapter 3.8. Container names, not localhost — the api's own default is
+      # `redis://localhost:6379`, which inside this container is not the Redis
+      # service. And the tenant limiter FAILS OPEN by design (FR-010), so a
+      # missing address would not crash anything: the composed stack would serve
+      # every request unlimited while reporting a limit. The constitution
+      # requires the full stack to start with one command, and this is what makes
+      # that true rather than merely quiet (research R24).
+      #
+      # RELAY_SMTP_URL joins in the transport phase, with the container it names.
+      RELAY_REDIS_URL: redis://redis:6379
       # Development values. Both are secrets in anything that is not a laptop,
       # and the api refuses to start in production without the first.
       RELAY_WEBHOOK_SECRET_KEY: ${RELAY_WEBHOOK_SECRET_KEY:-}
@@ -95,6 +105,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       nats: { condition: service_healthy }
+      redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4000/healthz"]
       interval: 5s
