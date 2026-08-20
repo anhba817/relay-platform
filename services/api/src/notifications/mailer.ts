@@ -1,6 +1,6 @@
 import { createTransport, type Transporter } from "nodemailer";
 
-// The disablement notification (chapter 3.8, FR-021, FR-WHK-07).
+// The disablement notification (chapter 3.8, FR-WHK-07, FR-WHK-07).
 //
 // TWO PIECES, SEPARATED ON PURPOSE. `disableNotification` turns facts into a
 // message and touches nothing — no SMTP, no clock, no database — so what the
@@ -8,7 +8,7 @@ import { createTransport, type Transporter } from "nodemailer";
 // a server, and it is thin enough that there is nothing in it to get wrong.
 //
 // THE SEAM IS THE SECURITY CONTROL. `DisableFacts` has no field for a secret, so
-// the mailer cannot leak one it was never given — FR-021 is enforced by the
+// the mailer cannot leak one it was never given — FR-WHK-07 is enforced by the
 // shape of the input rather than by a filter over the output, and a filter is
 // what you write when the shape already lost. The test scans the message anyway,
 // because "cannot happen" is a claim and a scan is evidence.

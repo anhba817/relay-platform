@@ -1,6 +1,6 @@
 import type { RequestWithPrincipal } from "../auth/principal";
 
-// Whose failure was that? (chapter 3.8, FR-039, research R14.)
+// Whose failure was that? (chapter 3.8, FR-AUT-12, research R14.)
 //
 // THE API SEES THE GATEWAY, not the client. A WebSocket handshake is
 // authenticated by the gateway forwarding the end user's token to

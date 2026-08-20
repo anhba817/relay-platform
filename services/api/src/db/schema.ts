@@ -133,7 +133,7 @@ export const environments = pgTable(
     // one in a field named for the other would collapse in the schema what the
     // prose spends a chapter drawing (research R31).
     quotaConfig: jsonb("quota_config").notNull().default({}),
-    // Chapter 3.8: per-environment rate limits (FR-RTL-04, FR-007).
+    // Chapter 3.8: per-environment rate limits (FR-RTL-04, FR-RTL-04).
     //
     // NULLABLE, AND NULL IS NOT ZERO. Null means "no override, use the
     // documented default", resolved at read time. Zero means "refuse

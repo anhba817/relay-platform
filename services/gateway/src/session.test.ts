@@ -746,7 +746,7 @@ describe("the socket's limits (chapter 3.8)", () => {
     });
   }
 
-  it("refuses an over-limit handshake with an HTTP 429, before the handshake (FR-005)", async () => {
+  it("refuses an over-limit handshake with an HTTP 429, before the handshake (FR-RTL-03)", async () => {
     // An allowance of one, so the second connect is the refused one.
     harness = await boot(
       stubApi(),
@@ -772,7 +772,7 @@ describe("the socket's limits (chapter 3.8)", () => {
     first.close();
   });
 
-  it("leaves already-open sockets alone when the door is shut (FR-005)", async () => {
+  it("leaves already-open sockets alone when the door is shut (FR-RTL-03)", async () => {
     // The refusal is about establishing connections, not about the ones that
     // exist. A limiter that killed live sockets to enforce an establishment
     // limit would be enforcing a concurrency limit, which is a different
@@ -804,7 +804,7 @@ describe("the socket's limits (chapter 3.8)", () => {
     open.close();
   });
 
-  it("answers an over-limit frame with rate_limited and KEEPS THE CONNECTION OPEN (FR-004)", async () => {
+  it("answers an over-limit frame with rate_limited and KEEPS THE CONNECTION OPEN", async () => {
     harness = await boot(
       stubApi(),
       undefined,
@@ -841,7 +841,7 @@ describe("the socket's limits (chapter 3.8)", () => {
     socket.close();
   });
 
-  it("enforces a CONFIGURED connect limit, not just the default (SC-011, FR-037)", async () => {
+  it("enforces a CONFIGURED connect limit, not just the default (ADR-05, FR-RTL-04)", async () => {
     // The limit arrives on the authentication response, because the gateway has
     // no database to read it from. A test that only exercised the default would
     // pass with the plumbing missing entirely.
@@ -932,7 +932,7 @@ describe("the socket's limits (chapter 3.8)", () => {
     // the distinction this chapter is built on: a rate limit is a smoothing
     // instruction, a quota is a commercial one, and they do not deserve the same
     // signal. So does 4009, "server shutdown (drain)", for the same kind of
-    // reason (FR-045).
+    // reason (NFR-REL-03).
     //
     // Grep rather than behaviour, because the claim is about absence: no input
     // makes the gateway send it, and the only way to check "no input" is to read

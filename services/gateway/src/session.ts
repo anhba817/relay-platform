@@ -55,7 +55,7 @@ function send(socket: WebSocket, frame: Frame): void {
  * refused needs to point at that refusal, not at the connection. So callers pass
  * the id of the frame they are answering, and `sendError` mints one only for a
  * frame nobody asked for. */
-/** The handshake refusal (chapter 3.8, FR-005). Written onto the raw upgrade
+/** The handshake refusal (chapter 3.8, FR-RTL-03). Written onto the raw upgrade
  * socket by hand, because there is no `res` here — `server.on("upgrade")` hands
  * over the socket and the unparsed head, and anything sent on it has to be a
  * complete HTTP response including the blank line before the body.
@@ -507,7 +507,7 @@ export function attachSessions({
 
     // Chapter 3.8. THE SEND LIMIT IS SPENT ON THE FRAME, not on the api call
     // it becomes — a socket send and a REST send count against one budget
-    // (FR-002), or a client could double its allowance by opening a socket.
+    // (FR-RTL-01), or a client could double its allowance by opening a socket.
     //
     // AND THE CONNECTION STAYS OPEN. Closing it would be the obvious move and
     // the wrong one: a closed socket makes the client reconnect, a reconnect

@@ -71,7 +71,7 @@ describe("decide", () => {
   });
 });
 
-describe("the gateway's dependencies (SC-011)", () => {
+describe("the gateway's dependencies (ADR-05)", () => {
   it("gains no database client, which is the property R12 exists to protect", async () => {
     // ADR-05: the gateway never touches Postgres. Chapter 3.8 needed the
     // environment's limits, which live in Postgres, and the tempting fix was a

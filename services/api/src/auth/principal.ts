@@ -67,7 +67,7 @@ export type PrincipalKind = Principal["kind"];
  *
  * THE MIDDLEWARE NEVER THROWS, by documented design — pre-credential routes
  * reach their handlers by having no principal — so the refusal has to be raised
- * somewhere that already refuses. The guard owns the 401 that FR-028 wants this
+ * somewhere that already refuses. The guard owns the 401 that EIR-API-04 wants this
  * indistinguishable from, and it already throws the object form that carries a
  * `code` (research R18). */
 export const OVER_AUTH_THRESHOLD = Symbol.for("relay:over-auth-threshold");

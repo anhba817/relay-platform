@@ -137,7 +137,7 @@ describe("the limiter", () => {
   });
 
   it("counts a REST send against BOTH budgets, and reports the nearer", async () => {
-    // FR-036. The send limit counts messages wherever they enter, so a REST send
+    // FR-RTL-01. The send limit counts messages wherever they enter, so a REST send
     // spends one of each. With `send` set lower than `rest`, the headers must
     // follow `send` — the one that will refuse first is the only value a client
     // can schedule against (research R11).
@@ -278,7 +278,7 @@ describe("the limiter", () => {
   });
 
   it("an override applies to ONE environment, not to every environment", async () => {
-    // FR-007's configurability, and the half SC-003 needed: the journey map asks
+    // FR-RTL-04's configurability, and the half constitution I needed: the journey map asks
     // for "separate keys and separate quotas", so Mai can hammer her dev
     // environment without moving production's ceiling. Independent counters
     // would pass a weaker version of this test.
@@ -324,7 +324,7 @@ describe("the limiter", () => {
   });
 
   it("refuses an address past the failed-auth threshold, and says nothing extra", async () => {
-    // FR-AUT-12 and FR-028. Past the threshold the refusal must be
+    // FR-AUT-12 and EIR-API-04. Past the threshold the refusal must be
     // INDISTINGUISHABLE from a wrong-credential refusal — a limiter that answers
     // differently for a credential it would have accepted is an oracle.
     //
@@ -371,7 +371,7 @@ describe("the limiter", () => {
   });
 
   it("counts ten client addresses as ten, not as one gateway", async () => {
-    // FR-039. A handshake authenticated through the gateway reaches the api FROM
+    // FR-AUT-12. A handshake authenticated through the gateway reaches the api FROM
     // the gateway, so counting the TCP peer would put every customer's failures
     // in one bucket and let one attacker exhaust a threshold that then refused
     // everybody.
@@ -410,7 +410,7 @@ describe("the limiter", () => {
   });
 
   it("limits account creation per address, which has no tenant to key on", async () => {
-    // FR-041. Signup has no environment — that is the point of it — and no
+    // FR-AUT-12. Signup has no environment — that is the point of it — and no
     // guard, so neither the per-environment limiter nor `CredentialGuard`'s
     // refusal reaches it. An unlimited account-creation route in a platform that
     // limits everything else is a gap a reader notices.
@@ -461,7 +461,7 @@ describe("the limiter", () => {
 });
 
 // The failure direction, which is what this chapter is actually about
-// (FR-010, FR-011, FR-014, research R3, R6).
+// (SAD §6.3, FR-AUT-12, FR-RTL-02, research R3, R6).
 //
 // A REAL ioredis client against a dead port, not a mock that throws. The
 // question is what the platform does when a store it depends on is gone, and a
@@ -520,7 +520,7 @@ describe("when the counter store is gone", () => {
   });
 
   it("keeps Limit and DROPS Remaining and Reset, rather than inventing them", async () => {
-    // FR-014. `Limit` is policy read from Postgres and is not degraded. The other
+    // FR-RTL-02. `Limit` is policy read from Postgres and is not degraded. The other
     // two exist only because something was counting, and a client must be able to
     // tell "you have N left" from "we are not counting".
     //

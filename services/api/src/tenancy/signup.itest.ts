@@ -49,7 +49,7 @@ describe("signup", () => {
   let provider: Awaited<ReturnType<typeof standInProvider>>;
 
   beforeAll(async () => {
-    // Chapter 3.8 limited account creation per source address (FR-041), and this
+    // Chapter 3.8 limited account creation per source address (FR-AUT-12), and this
     // suite drives the signup routes repeatedly from one loopback address — which
     // is what a suite about signup does.
     //

@@ -28,8 +28,8 @@ export interface CounterStore {
    *
    * NULL IS NOT ZERO AND NOT AN ERROR. It means "we are not counting", and each
    * caller decides what that is worth: the tenant limiter serves the request
-   * (FR-010, Redis is not a source of truth), and the auth limiter falls back to
-   * counting in memory rather than letting an attacker through (FR-011). Same
+   * (SAD §6.3, Redis is not a source of truth), and the auth limiter falls back to
+   * counting in memory rather than letting an attacker through (FR-AUT-12). Same
    * signal, opposite conclusions, which is the chapter's argument in one return
    * type. */
   increment(key: string, nowMs: number): Promise<number | null>;
@@ -43,7 +43,7 @@ export interface CounterStore {
 
 export const DEFAULT_REDIS_URL = "redis://localhost:6379";
 
-/** The key. `rl:` is the prefix SAD §6.3 specifies; the operation and the
+/** The key. `rl:` is the prefix the SAD's cache-keys table names; the operation and the
  * window's start are appended so one `INCR` reaches the right counter and the key
  * expires itself.
  *

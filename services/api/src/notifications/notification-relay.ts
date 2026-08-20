@@ -8,7 +8,7 @@ import {
 } from "../db/repository";
 import { disableNotification, type Mailer } from "./mailer";
 
-// The notification relay (chapter 3.8, FR-018 to FR-023).
+// The notification relay (chapter 3.8, FR-WHK-07 to FR-WHK-07).
 //
 // THE OUTBOX A THIRD TIME, and deliberately the same shape as chapter 3.3's:
 // claim undelivered rows oldest-first with `FOR UPDATE SKIP LOCKED`, do the
@@ -72,14 +72,14 @@ export function createNotificationRelay({
   async function deliver(row: DisableNotificationRow): Promise<void> {
     // Resolved from the ROW's organisation, not from the endpoint's current
     // owner. Chapter 3.6 denormalised that column so this lookup could not
-    // follow an application that moved after the disablement (FR-022).
+    // follow an application that moved after the disablement (FR-WHK-07).
     const recipients = await organisationRecipients(db, row.organisationId);
 
     if (recipients.length === 0) {
       // A REAL BRANCH, not a defensive `if`. `humans.email` is nullable — a
       // human who signed in through a provider that returned no address has
       // none — so an organisation whose every member is unaddressable is a
-      // state the schema permits and this code will meet (FR-023).
+      // state the schema permits and this code will meet (FR-WHK-07).
       //
       // The row is still marked delivered. There is no address to retry to, and
       // leaving it claimable would mean this relay reclaimed the same

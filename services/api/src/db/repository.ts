@@ -247,7 +247,7 @@ export async function environmentSigningSecret(
 }
 
 /** An environment's rate limits, with nulls resolved to the documented defaults
- * (chapter 3.8, FR-007, research R26).
+ * (chapter 3.8, FR-RTL-04, research R26).
  *
  * RESOLVED HERE RATHER THAN AT THE CALL SITE, because "null means use the
  * default" is a property of the column and a caller that had to remember it
@@ -350,7 +350,7 @@ export async function drainOutbox(
 }
 
 // ---------------------------------------------------------------------------
-// The disablement notifications (chapter 3.8, FR-018 to FR-020). THE OUTBOX A
+// The disablement notifications (chapter 3.8, FR-WHK-07 to FR-WHK-07). THE OUTBOX A
 // THIRD TIME — after chapter 3.3's events and chapter 3.5's deliveries — and
 // this one needed no migration at all: chapter 3.6 gave the table a
 // `delivered_at` column and left it null throughout, which is a claim predicate
@@ -359,7 +359,7 @@ export async function drainOutbox(
 // The backlog 3.6 accumulated therefore drains on the first run with NO SPECIAL
 // HANDLING. By the predicate's own definition those rows are undelivered work,
 // and code that treated them as a migration would be code asserting they are
-// different when they are not (FR-020).
+// different when they are not (FR-WHK-07).
 //
 // Admin surface, like `drainOutbox`: one relay serves every environment, because
 // a notification is an obligation the platform owes rather than tenant traffic.
@@ -481,7 +481,7 @@ export async function drainDisableNotifications(
   });
 }
 
-/** The addresses to notify for an organisation, at SEND TIME (FR-022).
+/** The addresses to notify for an organisation, at SEND TIME (FR-WHK-07).
  *
  * Resolved from the row's `organisation_id`, which chapter 3.6 denormalised onto
  * the notification precisely so this lookup could not follow the endpoint's

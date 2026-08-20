@@ -1,4 +1,4 @@
--- Chapter 3.8 — per-environment rate limit policy (FR-RTL-04, FR-007).
+-- Chapter 3.8 — per-environment rate limit policy (FR-RTL-04, FR-RTL-04).
 --
 -- NULLABLE, AND NULL IS NOT ZERO. A null column means "no override, use the
 -- documented default", resolved at read time. A zero means "refuse everything",

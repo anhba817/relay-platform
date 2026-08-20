@@ -13,10 +13,10 @@ import { createMailer } from "./mailer";
 import { createNotificationRelay } from "./notification-relay";
 
 // The transport chapter 3.6 deferred, against a real mail server (chapter 3.8,
-// FR-018 to FR-024).
+// FR-WHK-07 to FR-WHK-05).
 //
 // EVERY ASSERTION READS WHAT MAILPIT RECEIVED, never what the sender passed.
-// FR-021 is a claim about the contents of an email, and a stub records the same
+// FR-WHK-07 is a claim about the contents of an email, and a stub records the same
 // object the assertion would be reading — so a mailer that put a secret in a
 // header the stub does not model would pass. The only artefact that can settle
 // it is the message a server actually took delivery of.
@@ -183,7 +183,7 @@ describe("the disablement notification, end to end", () => {
     await r.stop();
   });
 
-  it("sends what the organisation needs, and Mailpit confirms the contents (FR-021)", async () => {
+  it("sends what the organisation needs, and Mailpit confirms the contents (FR-WHK-07)", async () => {
     const address = `owner-${randomUUID().slice(0, 8)}@example.test`;
     const { name } = await seed([address]);
     expect(await disable()).toBeGreaterThan(0);
@@ -213,7 +213,7 @@ describe("the disablement notification, end to end", () => {
     }
   });
 
-  it("sets delivered_at only AFTER the send returns (FR-018)", async () => {
+  it("sets delivered_at only AFTER the send returns (FR-WHK-07)", async () => {
     const address = `fail-${randomUUID().slice(0, 8)}@example.test`;
     const { endpointId } = await seed([address]);
     await disable();
@@ -243,7 +243,7 @@ describe("the disablement notification, end to end", () => {
     expect(await inbox(address)).toHaveLength(1);
   });
 
-  it("does not send a delivered row twice (FR-019)", async () => {
+  it("does not send a delivered row twice (FR-WHK-07)", async () => {
     const address = `once-${randomUUID().slice(0, 8)}@example.test`;
     await seed([address]);
     await disable();
@@ -290,7 +290,7 @@ describe("the disablement notification, end to end", () => {
     expect(await inbox(address, 2)).toHaveLength(2);
   });
 
-  it("handles an organisation nobody can be written to (FR-023)", async () => {
+  it("handles an organisation nobody can be written to (FR-WHK-07)", async () => {
     // `humans.email` is nullable, so this is a state the schema permits rather
     // than a defensive `if`. The row is marked delivered — there is no address
     // to retry to, and leaving it claimable would mean reclaiming the same
@@ -339,7 +339,7 @@ describe("the disablement notification, end to end", () => {
     }
   });
 
-  it("does not take anything else down with it when the mail server is gone (FR-024)", async () => {
+  it("does not take anything else down with it when the mail server is gone (FR-WHK-05)", async () => {
     // The blast radius, checked rather than asserted in prose. A mail server is
     // the least reliable dependency in this system and the least important, and
     // an outage in it must not reach a customer — not message delivery, not the
@@ -408,7 +408,7 @@ describe("the disablement notification, end to end", () => {
     expect(await inbox(good)).toHaveLength(1);
   });
 
-  it("drains chapter 3.6's backlog with NO SPECIAL HANDLING (FR-020)", async () => {
+  it("drains chapter 3.6's backlog with NO SPECIAL HANDLING (FR-WHK-07)", async () => {
     // Rows written before any transport existed are undelivered work by the
     // claim predicate's own definition. If they needed special handling the
     // shape would be wrong — so the test is that three rows written by three

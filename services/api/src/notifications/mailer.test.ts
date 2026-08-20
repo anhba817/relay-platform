@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { disableNotification, type DisableFacts } from "./mailer";
 
-// What the message SAYS, decided without a server (chapter 3.8, FR-021). The
+// What the message SAYS, decided without a server (chapter 3.8, FR-WHK-07). The
 // integration suite proves the same properties about what Mailpit received; this
 // one is where the wording is designed.
 
@@ -44,7 +44,7 @@ describe("the disablement notification", () => {
     expect(mail.text).toContain("ECONNREFUSED");
   });
 
-  it("CARRIES NO SECRET, NO KEY AND NO CREDENTIAL (FR-021)", () => {
+  it("CARRIES NO SECRET, NO KEY AND NO CREDENTIAL (FR-WHK-07)", () => {
     // The whole message, scanned as one string. This is the assertion the
     // chapter is about: an email is the least controlled artefact Relay
     // produces — it lands in an inbox, gets forwarded, sits in a mail archive

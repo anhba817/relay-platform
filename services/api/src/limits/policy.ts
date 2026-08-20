@@ -16,14 +16,14 @@
 // Each number below names what it rests on, including the one that rests on
 // nothing. That is the actual fix; the new value is a consequence of it.
 
-/** Per environment, per minute. Overridable per environment (FR-RTL-04, FR-007);
+/** Per environment, per minute. Overridable per environment (FR-RTL-04, FR-RTL-04);
  * these apply when a column is null, which means "no override" and never zero —
  * refuse-everything has to stay expressible. */
 export const DEFAULT_LIMITS = {
   /** NO ANCHOR, and recorded as such. No SRS requirement caps a tenant's request
    * rate; NFR-PRF-02's p95 under 150 ms is a latency target, not a throughput
    * bound. Matched to the send limit because a REST send consumes both budgets
-   * (FR-036), and two different ceilings on one operation would mean a client
+   * (FR-RTL-01), and two different ceilings on one operation would mean a client
    * hitting one while the other says it has room. */
   rest: 600,
 
@@ -61,7 +61,7 @@ export type LimitedOperation = keyof typeof DEFAULT_LIMITS;
  * THE COST IT CARRIES, which R4 did not name: shared egress. An office behind one
  * NAT is one source address, so ten failed logins a minute is a whole building's
  * budget — and the refusal is deliberately indistinguishable from a wrong
- * credential (FR-028), so they will experience it as a broken login. Kept anyway;
+ * credential (EIR-API-04), so they will experience it as a broken login. Kept anyway;
  * the alternative is a threshold high enough to be worthless against the attack
  * it exists for. */
 export const DEFAULT_AUTH_FAILURES_PER_MINUTE = 10;

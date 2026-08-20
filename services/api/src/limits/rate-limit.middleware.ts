@@ -34,7 +34,7 @@ const now0 = (): number => Date.now();
 // customer traffic. Only the dispatcher carries the platform credential. So the
 // route decides, not the caller:
 //
-//   /v1/…            counted. A message send decrements both budgets (FR-036).
+//   /v1/…            counted. A message send decrements both budgets (FR-RTL-01).
 //   /internal/…      not counted. The gateway already counted the handshake
 //                    against `connect` and the frame against `send`; counting
 //                    again here would charge the socket twice and make a
@@ -45,7 +45,7 @@ const now0 = (): number => Date.now();
 
 const PUBLIC_PREFIX = "/v1/";
 const SEND_PATH = /^\/v1\/channels\/[^/]+\/messages\/?$/;
-/** Account creation (FR-041). Limited per SOURCE ADDRESS, because it has no
+/** Account creation (FR-AUT-12). Limited per SOURCE ADDRESS, because it has no
  * tenant to key on — that is the point of it — and an unlimited
  * account-creation route is not acceptable in a platform that limits everything
  * else. It also has no guard, so T027a's refusal cannot reach it. */
@@ -97,7 +97,7 @@ export class RateLimitMiddleware implements NestMiddleware {
 
     // Account creation first: no tenant, no guard, so it is neither counted like
     // customer traffic nor refusable by `CredentialGuard`. Same counter family
-    // and same threshold as failed authentication (FR-041, research R17).
+    // and same threshold as failed authentication (FR-AUT-12, research R17).
     if (SIGNUP_PATH.test(path)) {
       const address = clientAddress(req);
       const count = await this.store.increment(
@@ -186,7 +186,7 @@ export class RateLimitMiddleware implements NestMiddleware {
     if (degraded) {
       // `Limit` only. It is policy read from Postgres and is not degraded; the
       // other two exist only because something was counting, and inventing them
-      // is the failure FR-014 forbids. NOT a sentinel — a client that does not
+      // is the failure FR-RTL-02 forbids. NOT a sentinel — a client that does not
       // know `-1` would parse it as a number and conclude it was over its limit
       // (research R6).
       this.degradation(environmentId, req);

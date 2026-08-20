@@ -78,7 +78,7 @@ services:
     # Chapter 3.8. An SMTP server that accepts everything and delivers nothing,
     # with an HTTP API for reading what it caught.
     #
-    # WHY A CONTAINER RATHER THAN A FAKE. FR-021 says an email must not contain a
+    # WHY A CONTAINER RATHER THAN A FAKE. FR-WHK-07 says an email must not contain a
     # signing secret, and the only artefact that can settle that is the message a
     # server RECEIVED — a stub records what the sender passed, which is the same
     # object the assertion would be reading, so a mailer that dropped the secret
@@ -114,7 +114,7 @@ services:
       RELAY_NATS_URL: nats://nats:4222
       # Chapter 3.8. Container names, not localhost — the api's own default is
       # `redis://localhost:6379`, which inside this container is not the Redis
-      # service. And the tenant limiter FAILS OPEN by design (FR-010), so a
+      # service. And the tenant limiter FAILS OPEN by design (SAD §6.3), so a
       # missing address would not crash anything: the composed stack would serve
       # every request unlimited while reporting a limit. The constitution
       # requires the full stack to start with one command, and this is what makes
