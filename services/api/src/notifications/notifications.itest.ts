@@ -138,6 +138,23 @@ describe("the disablement notification, end to end", () => {
    * anything fills it. */
   const disable = async () => sweepDisabledEndpoints(db);
 
+  /** Is THIS endpoint's notification still claimable?
+   *
+   * Asked of one row, never of the batch's return value. `drainDisableNotifications`
+   * is global and the integration lane runs files in parallel, so another suite's
+   * disablement can be claimed by this test's relay between two of its own lines —
+   * which is precisely the "local facts about a global operation" fault chapter
+   * 3.7's baseline found in four suites, and which this file walked into on its
+   * first full-lane run. */
+  const undelivered = async (endpointId: string): Promise<boolean> => {
+    const { rows } = await pool.query(
+      "SELECT delivered_at FROM webhook_disable_notifications " +
+        "WHERE endpoint_id = $1 ORDER BY disabled_at DESC LIMIT 1",
+      [endpointId],
+    );
+    return (rows as { delivered_at: Date | null }[])[0]?.delivered_at === null;
+  };
+
   const relay = () =>
     createNotificationRelay({
       db,
@@ -198,7 +215,7 @@ describe("the disablement notification, end to end", () => {
 
   it("sets delivered_at only AFTER the send returns (FR-018)", async () => {
     const address = `fail-${randomUUID().slice(0, 8)}@example.test`;
-    await seed([address]);
+    const { endpointId } = await seed([address]);
     await disable();
 
     // A mailer pointed at a port that answers nothing. The send throws, the
@@ -211,9 +228,12 @@ describe("the disablement notification, end to end", () => {
       logger: silent,
       batchSize: 10_000,
     });
-    // Zero delivered, and no throw: a send that fails is one row's problem.
-    expect(await broken.drainOnce()).toBe(0);
+    // No throw: a send that fails is one row's problem. And THIS row is still
+    // claimable — asked of the row rather than of the batch count, which counts
+    // whatever else the lane happened to leave claimable.
+    await broken.drainOnce();
     await broken.stop();
+    expect(await undelivered(endpointId)).toBe(true);
     expect(await stillEmpty(address)).toHaveLength(0);
 
     // And the same row goes out on the next pass, with a mailer that works.
@@ -234,7 +254,7 @@ describe("the disablement notification, end to end", () => {
     expect(await inbox(address)).toHaveLength(1);
 
     const second = relay();
-    expect(await second.drainOnce()).toBe(0);
+    await second.drainOnce();
     await second.stop();
     // Still one. `delivered_at IS NULL` is the whole of the deduplication, which
     // is why this needed no new column.
@@ -280,7 +300,7 @@ describe("the disablement notification, end to end", () => {
     const capturing = createLogger("notifications-itest", (line) => {
       lines.push(line);
     });
-    await seed([null, null]);
+    const { endpointId } = await seed([null, null]);
     await disable();
 
     const r = createNotificationRelay({
@@ -293,10 +313,9 @@ describe("the disablement notification, end to end", () => {
     await r.stop();
 
     expect(lines.join("\n")).toContain("notifications.unaddressable");
-    // Marked, so the next pass does not reclaim it.
-    const again = relay();
-    expect(await again.drainOnce()).toBe(0);
-    await again.stop();
+    // Marked, so the next pass does not reclaim it — asked of the row, because
+    // the batch count belongs to the whole lane.
+    expect(await undelivered(endpointId)).toBe(false);
   });
 
   it("sends to EVERY member with an address, one message each", async () => {
@@ -343,15 +362,16 @@ describe("the disablement notification, end to end", () => {
     expect(row).toBeDefined();
     expect(row!.delivered_at).toBeNull();
 
-    // The relay, pointed at nothing. Nothing is delivered and nothing throws.
+    // The relay, pointed at nothing. Nothing throws, and this row is untouched.
     const broken = createNotificationRelay({
       db,
       mailer: createMailer("smtp://127.0.0.1:1"),
       logger: silent,
       batchSize: 10_000,
     });
-    expect(await broken.drainOnce()).toBe(0);
+    await broken.drainOnce();
     await broken.stop();
+    expect(await undelivered(endpointId)).toBe(true);
 
     // Everything else still works: a second endpoint disables normally while the
     // mail server is down, because nothing on that path talks to it.

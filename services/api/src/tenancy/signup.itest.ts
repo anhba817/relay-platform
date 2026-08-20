@@ -58,6 +58,17 @@ describe("signup", () => {
     // failed-authentication threshold, and for the same reason: raising survives a
     // shared count, lowering does not (research R21).
     process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = "10000";
+    // AND ITS OWN BUCKET. Raising the threshold is private to this worker —
+    // vitest gives each file its own process — but the Redis key is not, so a
+    // suite that raises its ceiling and keeps the default prefix pushes a SHARED
+    // count up while being personally immune to it. T004a measured this file's
+    // contribution to the default bucket at 8 and signup's at 13, against a
+    // threshold of 10: nothing was refused, and only because the suites that
+    // spawn a child reach the api over `::ffff:127.0.0.1` while this one reaches
+    // it in-process over `::1`. Two address formats were the whole of the
+    // isolation. Now it is a prefix, which is a decision rather than an accident.
+    process.env["RELAY_AUTH_KEY_PREFIX"] =
+      `rlauth-signup-${Date.now()}`;
     db = createDb(createPool());
     provider = await standInProvider({
       id: 90210,
