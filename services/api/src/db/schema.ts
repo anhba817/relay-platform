@@ -123,8 +123,13 @@ export const environments = pgTable(
     // DECLARED IN 2.1 AND STILL EMPTY. Named in SRS §6.1's Environment entity
     // and SAD §338, read by nothing in seventeen chapters. Chapter 3.8
     // deliberately did NOT put rate-limit policy here: the column is named for
-    // quotas, quotas are chapter 3.9, and the distinction between a limit that
-    // may be lost and a quota that is money is the thing 3.8 is about. Putting
+    // quotas, quotas are a later chapter, and the distinction between a limit
+    // that may be lost and a quota that is money is the thing 3.8 is about.
+    // (Deliberately not a chapter NUMBER: 3.7 renumbered quotas once already,
+    // and a comment in a file fenced byte-exact into a published page goes stale
+    // silently. Chapter 3.7's rule — cite what a thing is, never where it will
+    // be. A grep for forward references is the gate, so this comment must not
+    // trip it either.) Putting
     // one in a field named for the other would collapse in the schema what the
     // prose spends a chapter drawing (research R31).
     quotaConfig: jsonb("quota_config").notNull().default({}),

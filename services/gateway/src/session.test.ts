@@ -927,8 +927,8 @@ describe("the socket's limits (chapter 3.8)", () => {
   });
 
   it("STILL emits close code 4008 from nowhere (quickstart V7)", async () => {
-    // 4008 reads "quota exhausted". There is no quota yet — that is chapter 3.9
-    // — and reaching for the code because it was already declared would collapse
+    // 4008 reads "quota exhausted". There is no quota yet — quotas are a later
+    // chapter — and reaching for the code because it was declared would collapse
     // the distinction this chapter is built on: a rate limit is a smoothing
     // instruction, a quota is a commercial one, and they do not deserve the same
     // signal. So does 4009, "server shutdown (drain)", for the same kind of
