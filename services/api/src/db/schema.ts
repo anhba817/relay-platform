@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -693,5 +694,120 @@ export const webhookDisableNotifications = pgTable(
     // endpoint per outage, so an index for any other access pattern would be
     // guessing at a query nobody has written.
     index("webhook_disable_notifications_environment_idx").on(t.environmentId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Chapter 3.10 — monthly usage quotas (FR-RTL-05 to FR-RTL-08).
+// ---------------------------------------------------------------------------
+//
+// The POLICY is not here, because it was already here. `environments.quotaConfig`
+// has been declared since chapter 2.1 and read by nothing for eighteen chapters;
+// 3.8 was offered it for rate-limit policy and refused it in prose, on the
+// grounds that the column is named for quotas and quotas are a later chapter.
+// This is that chapter. `quotas/config.ts` is the only thing that parses it.
+//
+// `date` IS THIS PROJECT'S FIRST, against 28 `timestamp` columns, and it is half
+// a primary key here and a third of one below. Drizzle's `date` in its default
+// mode reads and writes `YYYY-MM-DD` strings, which is what `quotas/period.ts`
+// produces — a `Date` on one side of that comparison and a string on the other is
+// a row that cannot be found rather than an error (research R7a).
+
+export const usagePeriods = pgTable(
+  "usage_periods",
+  {
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    period: date("period").notNull(),
+    // `{ mode: "number" }` like the two bigints this project already has
+    // (`channels.lastSequence`, `messages.sequence`). Drizzle requires a mode,
+    // and a cumulative count that overflowed would be a wrong bill rather than a
+    // wrapped counter.
+    messagesSent: bigint("messages_sent", { mode: "number" })
+      .notNull()
+      .default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.environmentId, t.period] }),
+    check(
+      "usage_periods_messages_sent_non_negative",
+      sql`${t.messagesSent} >= 0`,
+    ),
+  ],
+);
+
+// One row per user per period. A message count is `+1`; a distinct-user count is
+// not, because incrementing it needs to know whether this user already sent this
+// period — which is a read. The row IS the answer, written `ON CONFLICT DO
+// NOTHING`, and bounded by the tenant's users rather than by their traffic.
+export const usageActiveUsers = pgTable(
+  "usage_active_users",
+  {
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    period: date("period").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.environmentId, t.period, t.userId] })],
+);
+
+// THE OUTBOX, A FOURTH TIME — after 3.3's events, 3.5's deliveries and 3.9's
+// disablement emails. Four concrete tables that look alike is a pattern; one
+// abstract table serving four purposes is a framework.
+//
+// `webhookDisableNotifications` cannot be reused: its `endpointId` is NOT NULL
+// and a quota crossing has no endpoint.
+export const quotaNotifications = pgTable(
+  "quota_notifications",
+  {
+    id: uuid("id").primaryKey(),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    period: date("period").notNull(),
+    dimension: text("dimension").notNull(),
+    threshold: integer("threshold").notNull(),
+    // What the figures were WHEN IT HAPPENED. The cap can change between the
+    // crossing and the delivery, and an email saying "80% of 10,000" should mean
+    // the 10,000 that was true at the time.
+    quota: bigint("quota", { mode: "number" }).notNull(),
+    usageAtCrossing: bigint("usage_at_crossing", { mode: "number" }).notNull(),
+    crossedAt: timestamp("crossed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    lastError: text("last_error"),
+  },
+  (t) => [
+    check(
+      "quota_notifications_dimension_check",
+      sql`${t.dimension} IN ('messages', 'active_users')`,
+    ),
+    check(
+      "quota_notifications_threshold_check",
+      sql`${t.threshold} IN (50, 80, 100)`,
+    ),
+    // THIS CONSTRAINT IS FR-015. At most one email per threshold per quota per
+    // period, enforced by the schema rather than promised by the code that writes
+    // it, so a concurrent double-crossing resolves to one row and not two emails.
+    unique("quota_notifications_once_per_threshold").on(
+      t.environmentId,
+      t.period,
+      t.dimension,
+      t.threshold,
+    ),
   ],
 );
