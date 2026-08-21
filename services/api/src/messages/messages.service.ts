@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -10,6 +12,7 @@ import {
   type MessageRow,
   type MessageWithSender,
 } from "../db/repository";
+import { QuotaExceededError } from "../quotas/quota.error";
 import { decodeCursor, encodeCursor } from "./cursor";
 import type { HistoryQuery, SendMessageBody } from "./messages.schema";
 
@@ -55,6 +58,38 @@ export class MessagesService {
         // answer differ from the missing-id answer, and "different" is
         // itself a disclosure (FR-TEN-05).
         throw new NotFoundException("channel not found");
+      }
+      if (error instanceof QuotaExceededError) {
+        // ONE THROW, AND IT IS THE ONLY ONE (chapter 3.10, FR-008).
+        //
+        // Both send routes reach this method — `internal.controller.ts` calls
+        // `messages.send`, the public controller calls it too — so there is one
+        // place to refuse from. An earlier draft of the plan costed "two
+        // controller mappings"; this service has no per-controller mappings to
+        // add one to, and adding two would be the drift EIR-API-04 and
+        // `ProtocolErrorFilter` exist to prevent (research R3).
+        //
+        // `402`, NOT `429`. Chapter 3.8 owns `429`, and a client that sleeps for
+        // `Retry-After` and retries is behaving correctly for a rate limit and
+        // wrongly for a quota — which will still be exhausted in an hour and in
+        // three weeks. There is a time at which sends resume and it is in the
+        // message, not in a header a client will act on.
+        //
+        // THE CODE IS NAMED HERE, and it has to be. `ProtocolErrorFilter` infers
+        // a code from the status for 400, 401, 403 and 404, and everything else
+        // becomes `internal_error` — so an unnamed `402` would emit a body
+        // calling itself an internal error while carrying a `402`. That is the
+        // lie chapter 2.2 fixed for 400 and chapter 3.2 for 403, and 3.2's
+        // mechanism — a thrower naming its own code — is what this uses. The
+        // filter builds the four-field envelope and derives `docs_url` from the
+        // code.
+        throw new HttpException(
+          {
+            code: "quota_exceeded",
+            message: error.publicMessage(),
+          },
+          HttpStatus.PAYMENT_REQUIRED,
+        );
       }
       throw error;
     }

@@ -289,6 +289,13 @@ export interface System {
     tuan: Client;
   }>;
   seedForeignTenant: () => Promise<{ channel: string; text: string }>;
+  /** Set an environment's quota policy (chapter 3.10).
+   *
+   * Here rather than in the test, because `packages/e2e` may not import `pg` —
+   * the driver restriction chapter 2.5 added, and this package is not on its
+   * ignores list. The harness already holds the api's own database handle, so
+   * the one place that may write is the one place that does. */
+  setQuota: (environmentId: string, config: unknown) => Promise<void>;
   client: (name: string, environmentId: string) => Promise<Client>;
   stop: () => Promise<void>;
 }
@@ -486,6 +493,14 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       await repo.sendMessage(channel.id, { text, userId: user.id });
       say(`seeded a foreign tenant (${other}) with one message`);
       return { channel: channel.id, text };
+    },
+    async setQuota(environmentId, config) {
+      await (
+        db as { execute: (q: string) => Promise<unknown> }
+      ).execute(
+        `UPDATE environments SET quota_config = '${JSON.stringify(config)}'::jsonb
+          WHERE id = '${environmentId}'`,
+      );
     },
     async client(name, environmentId) {
       return new Client(name, await token(environmentId, name), say);

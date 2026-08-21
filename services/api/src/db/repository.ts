@@ -37,6 +37,7 @@ import {
 } from "./schema";
 import { messageCreatedEvent } from "../outbox/event";
 import { capsFor } from "../quotas/config";
+import { QuotaExceededError } from "../quotas/quota.error";
 import { periodOf } from "../quotas/period";
 import { nextAttemptAt } from "../webhooks/schedule";
 import {
@@ -2296,6 +2297,14 @@ export class Repository {
     },
   ): Promise<MessageRow> {
     return this.db.transaction(async (tx) => {
+      // ONE PERIOD FOR THE WHOLE TRANSACTION, taken before anything is checked.
+      // The cap check and the increment must agree about which month this is; a
+      // send that checked August and incremented September would be refused
+      // against one number and counted against another. The app clock rather
+      // than the database's, because both statements need the same value and
+      // only one of them can be `now()`.
+      const period = periodOf(new Date());
+
       const [channel] = await tx
         .select({ id: channels.id, lastSequence: channels.lastSequence })
         .from(channels)
@@ -2307,6 +2316,26 @@ export class Repository {
         )
         .for("update");
       if (!channel) throw new ChannelNotFoundError(channelId);
+
+      // THE CAP, CHECKED BEFORE THE MESSAGE IS WRITTEN (chapter 3.10, FR-007).
+      //
+      // Here rather than in middleware, because chapter 3.8's limiter never sees
+      // `/internal/messages` — `operationsFor` returns [] for anything outside
+      // `/v1` — and that is the route a WebSocket send arrives on. Both doors
+      // reach this method, and it already owns the write transaction, so the
+      // check and the increment commit together (research R3).
+      //
+      // `FOR UPDATE` on the usage row BOUNDS THE OVERSHOOT TO ONE MESSAGE: two
+      // concurrent sends serialise here, so the second reads the first's
+      // increment rather than the same number. Without it the overshoot is
+      // bounded by concurrency instead. What it costs is that sends to one
+      // environment serialise on one row — measured in T033 rather than assumed
+      // acceptable (research R8).
+      //
+      // A first send of the month locks nothing, because there is no row yet.
+      // That is correct: usage is zero, and only a cap of zero refuses it.
+      await this.assertWithinQuota(tx, period, userId);
+
       const seq = channel.lastSequence + 1;
       const id = randomUUID();
 
@@ -2405,7 +2434,6 @@ export class Repository {
       // On the INSERTED branch only, like the event. A recognised idempotent
       // retry wrote no message and must consume no quota either, or a client
       // retrying on a flaky link is billed twice for one message.
-      const period = periodOf(new Date(createdAt));
       await tx
         .insert(usagePeriods)
         .values({ environmentId: this.environmentId, period, messagesSent: 1 })
@@ -2437,6 +2465,87 @@ export class Repository {
         created_at: createdAt,
       };
     });
+  }
+
+  /** Refuse the send if a hard cap is already met (chapter 3.10, FR-007).
+   *
+   * Reads the caps and the usage in the transaction that is about to write, with
+   * the usage row taken `FOR UPDATE`. Both dimensions, because FR-005 configures
+   * a cap for each.
+   *
+   * THE ACTIVE-USER CHECK ONLY BITES ON A NEW SENDER. A tenant at its user cap is
+   * not cut off from the users it already has — the cap is on how many distinct
+   * people may send in a month, not on how much they may say. So a sender already
+   * counted this period passes, and only the one who would be the next new face
+   * is refused. Getting this backwards would suspend a whole tenant the moment
+   * their last allowed user sent their second message. */
+  private async assertWithinQuota(
+    tx: Db,
+    period: string,
+    userId: string | undefined,
+  ): Promise<void> {
+    const [env] = await tx
+      .select({ quotaConfig: environments.quotaConfig })
+      .from(environments)
+      .where(eq(environments.id, this.environmentId));
+
+    const messages_ = capsFor(env?.quotaConfig, "messages").caps;
+    const users_ = capsFor(env?.quotaConfig, "active_users").caps;
+    if (messages_.hard === null && users_.hard === null) return;
+
+    const [usage] = await tx
+      .select({ messagesSent: usagePeriods.messagesSent })
+      .from(usagePeriods)
+      .where(
+        and(
+          eq(usagePeriods.environmentId, this.environmentId),
+          eq(usagePeriods.period, period),
+        ),
+      )
+      .for("update");
+    const sent = usage?.messagesSent ?? 0;
+
+    if (messages_.hard !== null && sent >= messages_.hard) {
+      throw new QuotaExceededError({
+        dimension: "messages",
+        usage: sent,
+        quota: messages_.hard,
+        period,
+      });
+    }
+
+    if (users_.hard === null || userId === undefined) return;
+
+    const [already] = await tx
+      .select({ userId: usageActiveUsers.userId })
+      .from(usageActiveUsers)
+      .where(
+        and(
+          eq(usageActiveUsers.environmentId, this.environmentId),
+          eq(usageActiveUsers.period, period),
+          eq(usageActiveUsers.userId, userId),
+        ),
+      );
+    if (already) return;
+
+    const [count] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(usageActiveUsers)
+      .where(
+        and(
+          eq(usageActiveUsers.environmentId, this.environmentId),
+          eq(usageActiveUsers.period, period),
+        ),
+      );
+    const active = count?.n ?? 0;
+    if (active >= users_.hard) {
+      throw new QuotaExceededError({
+        dimension: "active_users",
+        usage: active,
+        quota: users_.hard,
+        period,
+      });
+    }
   }
 
   /** Fetch a message by its idempotency key within a channel — the
