@@ -12,6 +12,7 @@ import { InternalModule } from "./internal/internal.module";
 import { MessagesModule } from "./messages/messages.module";
 import { ConsumerModule } from "./consumer/consumer.module";
 import { NotificationsModule } from "./notifications/notifications.module";
+import { QuotasModule } from "./quotas/quotas.module";
 import { OutboxModule } from "./outbox/outbox.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 import { TenancyModule } from "./tenancy/tenancy.module";
@@ -33,6 +34,7 @@ import { RequestContextMiddleware } from "./request-context.middleware";
     TenancyModule,
     OutboxModule,
     NotificationsModule,
+    QuotasModule,
     ConsumerModule,
     WebhooksModule,
     LimitsModule,

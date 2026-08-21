@@ -9,6 +9,9 @@ import { createDb, createPool, type Db } from "../db/client";
 import { migrate } from "../db/migrate";
 import { createEnvironment, Repository, usageFor } from "../db/repository";
 import { environments } from "../db/schema";
+import { createLogger } from "@relay/service-kit";
+import { createMailer } from "../notifications/mailer";
+import { createQuotaRelay } from "./quota-relay";
 import { QuotaExceededError } from "./quota.error";
 import { periodOf } from "./period";
 
@@ -349,4 +352,221 @@ describe("running out", () => {
     )) as unknown as { rows: { n: number }[] };
     expect(rows[0]!.n).toBe(1);
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Chapter 3.10, User Story 3 — nobody is surprised.
+// ---------------------------------------------------------------------------
+//
+// Read out of Mailpit rather than asserted on a send call, which is the shape
+// chapter 3.9 established: only a received message can prove an email carries no
+// secret, and only a received message proves it was sent at all.
+//
+// Mailpit is ONE SHARED INBOX for the whole lane, so every assertion filters by a
+// per-test recipient address rather than reading "the latest message" — the
+// mistake that makes a suite pass alone and fail beside another.
+
+const mailpit = process.env["RELAY_MAILPIT_URL"] ?? "http://localhost:8025";
+
+interface Received {
+  ID: string;
+  Subject: string;
+}
+
+async function inbox(address: string, expected = 1, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const res = await fetch(
+      `${mailpit}/api/v1/search?query=${encodeURIComponent(`to:${address}`)}`,
+    );
+    const body = (await res.json()) as { messages: Received[] };
+    if (body.messages.length >= expected || Date.now() > deadline) {
+      return body.messages;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+async function bodyOf(id: string): Promise<string> {
+  const res = await fetch(`${mailpit}/api/v1/message/${id}`);
+  const b = (await res.json()) as { Text: string; Subject: string };
+  return `${b.Subject}\n${b.Text}`;
+}
+
+describe("nobody is surprised", () => {
+  let pool: ReturnType<typeof createPool>;
+  let db: Db;
+
+  beforeAll(async () => {
+    pool = createPool();
+    await migrate(pool);
+    db = createDb(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  /** An organisation with one addressable admin, and an environment under it. */
+  const seed = async (addresses: (string | null)[]) => {
+    const orgId = randomUUID();
+    const appId = randomUUID();
+    const envId = randomUUID();
+    await db.execute(
+      `INSERT INTO organisations (id,name) VALUES ('${orgId}','quota-org')`,
+    );
+    for (const address of addresses) {
+      const humanId = randomUUID();
+      await db.execute(
+        `INSERT INTO humans (id,provider,provider_account_id,email)
+         VALUES ('${humanId}','github','${humanId}',${address ? `'${address}'` : "NULL"})`,
+      );
+      await db.execute(
+        `INSERT INTO memberships (organisation_id,human_id,role)
+         VALUES ('${orgId}','${humanId}','owner')`,
+      );
+    }
+    await db.execute(
+      `INSERT INTO applications (id,organisation_id,name)
+       VALUES ('${appId}','${orgId}','Fleet Ops')`,
+    );
+    await db.execute(
+      `INSERT INTO environments (id,application_id,kind,signing_secret)
+       VALUES ('${envId}','${appId}','production','x')`,
+    );
+    const repo = new Repository(db, envId);
+    const channel = await repo.createChannel(`c-${randomUUID().slice(0, 8)}`, "public");
+    const userId = (await repo.createUser(`u-${randomUUID().slice(0, 8)}`)).id;
+    return { environmentId: envId, repo, channelId: channel.id, userId };
+  };
+
+  const relay = () =>
+    createQuotaRelay({
+      db,
+      mailer: createMailer(),
+      logger: createLogger("quotas-itest"),
+      batchSize: 10_000,
+    });
+
+  const setCaps = async (environmentId: string, config: unknown) =>
+    db
+      .update(environments)
+      .set({ quotaConfig: config as Record<string, unknown> })
+      .where(eq(environments.id, environmentId));
+
+  /** The percentages Mailpit holds for one address, ascending as NUMBERS.
+   * Sorting the subjects as strings puts "100%" before "50%", which is the kind
+   * of assertion that passes for the wrong reason and fails for a worse one. */
+  const thresholdsIn = (got: Received[]): number[] =>
+    got
+      .map((m) => Number(/(\d+)%/.exec(m.Subject)?.[1] ?? 0))
+      .sort((a, b) => a - b);
+
+  it("sends exactly three emails per quota per period, and Mailpit has them", async () => {
+    const address = `q-${randomUUID().slice(0, 8)}@example.test`;
+    const { environmentId, repo, channelId, userId } = await seed([address]);
+    await setCaps(environmentId, { messages: { hard: 4 } });
+
+    // 1 of 4 = 25%, 2 = 50%, 3 = 75%, 4 = 100%. THREE crossings, not two: the
+    // fourth message clears 80% and 100% in one step, because 80% of 4 is 3.2
+    // and nothing lands on it. Written as two first, and the lane said three.
+    for (const t of ["a", "b", "c", "d"]) {
+      await repo.sendMessage(channelId, { text: t, userId });
+    }
+    expect(await relay().drainOnce()).toBeGreaterThan(0);
+
+    expect(thresholdsIn(await inbox(address, 3))).toEqual([50, 80, 100]);
+  }, 60_000);
+
+  it("notifies every threshold a single send jumps over", async () => {
+    // FR-016. One message can take a tenant from comfortable to suspended, and
+    // all three emails are owed. 40% to 100% in one step.
+    const address = `jump-${randomUUID().slice(0, 8)}@example.test`;
+    const { environmentId, repo, channelId, userId } = await seed([address]);
+    await setCaps(environmentId, { messages: { hard: 5 } });
+    // 20, 40, 60, 80, 100 — the third message crosses 50, the fourth crosses 80,
+    // the fifth crosses 100.
+    for (const t of ["a", "b", "c", "d", "e"]) {
+      await repo.sendMessage(channelId, { text: t, userId });
+    }
+    await relay().drainOnce();
+
+    expect(thresholdsIn(await inbox(address, 3))).toEqual([50, 80, 100]);
+  }, 60_000);
+
+  it("sends no further email when a threshold is re-crossed", async () => {
+    // FR-015, and the constraint is what enforces it, not this code path.
+    const address = `once-${randomUUID().slice(0, 8)}@example.test`;
+    const { environmentId, repo, channelId, userId } = await seed([address]);
+    await setCaps(environmentId, { messages: { hard: 2 } });
+    await repo.sendMessage(channelId, { text: "a", userId });
+    await relay().drainOnce();
+    const first = await inbox(address, 1);
+    expect(first).toHaveLength(1);
+
+    // Raise the cap so the same percentage is crossed again on the way up.
+    await setCaps(environmentId, { messages: { hard: 4 } });
+    await repo.sendMessage(channelId, { text: "b", userId });
+    await relay().drainOnce();
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(await inbox(address, 99, 0)).toHaveLength(1);
+  }, 60_000);
+
+  it("records the crossing and enforces the cap for an organisation nobody can email", async () => {
+    // FR-018. `humans.email` is nullable, so this is a state the schema permits
+    // rather than a defensive `if`. The obligation is discharged as far as it
+    // can be and the failure is logged rather than swallowed.
+    const { environmentId, repo, channelId, userId } = await seed([null, null]);
+    await setCaps(environmentId, { messages: { hard: 1 } });
+    await repo.sendMessage(channelId, { text: "a", userId });
+
+    expect(await relay().drainOnce()).toBeGreaterThan(0);
+    await expect(
+      repo.sendMessage(channelId, { text: "b", userId }),
+    ).rejects.toThrow(QuotaExceededError);
+  }, 60_000);
+
+  it("carries no secret, key, credential or message text", async () => {
+    const address = `leak-${randomUUID().slice(0, 8)}@example.test`;
+    const { environmentId, repo, channelId, userId } = await seed([address]);
+    await setCaps(environmentId, { messages: { hard: 1 } });
+    await repo.sendMessage(channelId, { text: "B2, north ramp", userId });
+    await relay().drainOnce();
+
+    const [mail] = await inbox(address, 1);
+    const text = await bodyOf(mail!.ID);
+    for (const forbidden of ["B2, north ramp", "signing_secret", "rk_", environmentId]) {
+      expect(text).not.toContain(forbidden);
+    }
+  }, 60_000);
+
+  it("cannot fail a send when the mail server is gone", async () => {
+    // FR-019. Writing a row is not sending one, and this is the requirement that
+    // says so out loud. Chapter 3.9 met the same hazard from the other side,
+    // where a drain's failure became a lane's failure.
+    const address = `down-${randomUUID().slice(0, 8)}@example.test`;
+    const { environmentId, repo, channelId, userId } = await seed([address]);
+    await setCaps(environmentId, { messages: { hard: 1 } });
+
+    // The send crosses 100% and must succeed regardless of any mail server.
+    await expect(
+      repo.sendMessage(channelId, { text: "a", userId }),
+    ).resolves.toBeDefined();
+
+    const down = createQuotaRelay({
+      db,
+      mailer: createMailer("smtp://127.0.0.1:1"),
+      logger: createLogger("quotas-down"),
+      batchSize: 10_000,
+    });
+    expect(await down.drainOnce()).toBe(0);
+
+    // Still claimable: the row kept its null `delivered_at` and recorded why.
+    const { rows } = (await db.execute(
+      `SELECT delivered_at IS NULL AS claimable, last_error IS NOT NULL AS explained
+         FROM quota_notifications WHERE environment_id = '${environmentId}'`,
+    )) as unknown as { rows: { claimable: boolean; explained: boolean }[] };
+    expect(rows[0]).toEqual({ claimable: true, explained: true });
+  }, 60_000);
 });

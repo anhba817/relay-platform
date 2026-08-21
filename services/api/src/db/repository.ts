@@ -27,6 +27,7 @@ import {
   messages,
   organisations,
   outbox,
+  quotaNotifications,
   usageActiveUsers,
   usagePeriods,
   users,
@@ -36,8 +37,9 @@ import {
   webhookEndpoints,
 } from "./schema";
 import { messageCreatedEvent } from "../outbox/event";
-import { capsFor } from "../quotas/config";
-import { QuotaExceededError } from "../quotas/quota.error";
+import { capsFor, type Caps } from "../quotas/config";
+import { thresholdsCrossed } from "../quotas/policy";
+import { QuotaExceededError, type Dimension } from "../quotas/quota.error";
 import { periodOf } from "../quotas/period";
 import { nextAttemptAt } from "../webhooks/schedule";
 import {
@@ -341,6 +343,80 @@ export async function usageFor(
     messageQuota: capsFor(row?.quotaConfig, "messages").caps.hard,
     activeUserQuota: capsFor(row?.quotaConfig, "active_users").caps.hard,
   };
+}
+
+/** One quota crossing waiting to be emailed. */
+export interface QuotaNotificationRow {
+  id: string;
+  organisationId: string;
+  environmentName: string;
+  period: string;
+  dimension: string;
+  threshold: number;
+  quota: number;
+  usageAtCrossing: number;
+  /** Whether a hard cap is in force for this dimension right now — which decides
+   * whether the email says sends have stopped or that nothing has changed. Read
+   * at delivery rather than stored, because it is a statement about the present
+   * and the operator may have raised the cap since. */
+  hardCapInForce: boolean;
+}
+
+/** The outbox drain, a FOURTH time (chapter 3.10) — after 3.3's events, 3.5's
+ * deliveries and 3.9's disablement emails. Same claim predicate, same
+ * per-row error handling, same required batch size.
+ *
+ * PER-ROW `try`/`catch` WITH A REQUIRED `onError`, and the default that used to
+ * sit on 3.9's version is not repeated here: it discarded a row's failure with no
+ * log line, and feature 030's R48 removed it after finding it as this file's last
+ * uncovered function. One bad recipient must not abort the batch and must not
+ * vanish either. */
+export async function drainQuotaNotifications(
+  db: Db,
+  limit: number,
+  deliver: (row: QuotaNotificationRow) => Promise<void>,
+  onError: (row: QuotaNotificationRow, error: unknown) => void,
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    const claimed = (await tx.execute(
+      sql`SELECT q.id                AS "id",
+                 q.organisation_id   AS "organisationId",
+                 a.name || ' / ' || e.kind AS "environmentName",
+                 to_char(q.period, 'YYYY-MM-DD') AS "period",
+                 q.dimension         AS "dimension",
+                 q.threshold         AS "threshold",
+                 q.quota             AS "quota",
+                 q.usage_at_crossing AS "usageAtCrossing",
+                 (e.quota_config #>> ('{' || q.dimension || ',hard}')::text[])
+                   IS NOT NULL       AS "hardCapInForce"
+            FROM quota_notifications q
+            JOIN environments e ON e.id = q.environment_id
+            JOIN applications a ON a.id = e.application_id
+           WHERE q.delivered_at IS NULL
+           ORDER BY q.crossed_at
+           LIMIT ${limit}
+             FOR UPDATE OF q SKIP LOCKED`,
+    )) as unknown as { rows: QuotaNotificationRow[] };
+
+    let delivered = 0;
+    for (const row of claimed.rows) {
+      try {
+        await deliver(row);
+        await tx.execute(
+          sql`UPDATE quota_notifications SET delivered_at = now(), last_error = NULL
+               WHERE id = ${row.id}::uuid`,
+        );
+        delivered += 1;
+      } catch (error) {
+        onError(row, error);
+        await tx.execute(
+          sql`UPDATE quota_notifications SET last_error = ${String(error)}
+               WHERE id = ${row.id}::uuid`,
+        );
+      }
+    }
+    return delivered;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2334,7 +2410,7 @@ export class Repository {
       //
       // A first send of the month locks nothing, because there is no row yet.
       // That is correct: usage is zero, and only a cap of zero refuses it.
-      await this.assertWithinQuota(tx, period, userId);
+      const quota = await this.assertWithinQuota(tx, period, userId);
 
       const seq = channel.lastSequence + 1;
       const id = randomUUID();
@@ -2457,6 +2533,45 @@ export class Repository {
           .onConflictDoNothing();
       }
 
+      // What this send crossed, if anything. Almost always nothing, which is why
+      // the caps are read first and the whole block skipped when none is set.
+      if (quota) {
+        const organisationId = await this.organisationOf(tx);
+        if (organisationId) {
+          const sentAfter = quota.sent + 1;
+          await this.recordCrossings(
+            tx,
+            period,
+            "messages",
+            quota.sent,
+            sentAfter,
+            quota.caps.messages,
+            organisationId,
+          );
+          if (userId !== undefined) {
+            const [n] = await tx
+              .select({ n: sql<number>`count(*)::int` })
+              .from(usageActiveUsers)
+              .where(
+                and(
+                  eq(usageActiveUsers.environmentId, this.environmentId),
+                  eq(usageActiveUsers.period, period),
+                ),
+              );
+            const users = n?.n ?? 0;
+            await this.recordCrossings(
+              tx,
+              period,
+              "active_users",
+              users - 1,
+              users,
+              quota.caps.active_users,
+              organisationId,
+            );
+          }
+        }
+      }
+
       return {
         id,
         channel_id: channel.id,
@@ -2483,7 +2598,10 @@ export class Repository {
     tx: Db,
     period: string,
     userId: string | undefined,
-  ): Promise<void> {
+  ): Promise<{
+    caps: { messages: Caps; active_users: Caps };
+    sent: number;
+  } | null> {
     const [env] = await tx
       .select({ quotaConfig: environments.quotaConfig })
       .from(environments)
@@ -2491,7 +2609,17 @@ export class Repository {
 
     const messages_ = capsFor(env?.quotaConfig, "messages").caps;
     const users_ = capsFor(env?.quotaConfig, "active_users").caps;
-    if (messages_.hard === null && users_.hard === null) return;
+    // Nothing configured at all — no cap and no threshold — and the whole block
+    // is skipped. The unconfigured tenant is the common case and pays one
+    // indexed read for it.
+    if (
+      messages_.hard === null &&
+      messages_.soft === null &&
+      users_.hard === null &&
+      users_.soft === null
+    ) {
+      return null;
+    }
 
     const [usage] = await tx
       .select({ messagesSent: usagePeriods.messagesSent })
@@ -2506,6 +2634,26 @@ export class Repository {
     const sent = usage?.messagesSent ?? 0;
 
     if (messages_.hard !== null && sent >= messages_.hard) {
+      // THE CROSSING IS WRITTEN BEFORE THE REFUSAL IS RAISED (FR-013a).
+      //
+      // Usually the send that reached the cap already recorded 100%. Two cases
+      // where it did not: a cap lowered below current usage, which no send
+      // crossed, and a soft threshold configured at the same value as the hard
+      // cap. The email has to survive the send that did not, so the row goes in
+      // first and the throw comes after. `ON CONFLICT DO NOTHING` makes the
+      // usual case free.
+      const organisationId = await this.organisationOf(tx);
+      if (organisationId) {
+        await this.recordCrossings(
+          tx,
+          period,
+          "messages",
+          sent - 1,
+          sent,
+          messages_,
+          organisationId,
+        );
+      }
       throw new QuotaExceededError({
         dimension: "messages",
         usage: sent,
@@ -2514,7 +2662,9 @@ export class Repository {
       });
     }
 
-    if (users_.hard === null || userId === undefined) return;
+    if (users_.hard === null || userId === undefined) {
+      return { caps: { messages: messages_, active_users: users_ }, sent };
+    }
 
     const [already] = await tx
       .select({ userId: usageActiveUsers.userId })
@@ -2526,7 +2676,9 @@ export class Repository {
           eq(usageActiveUsers.userId, userId),
         ),
       );
-    if (already) return;
+    if (already) {
+      return { caps: { messages: messages_, active_users: users_ }, sent };
+    }
 
     const [count] = await tx
       .select({ n: sql<number>`count(*)::int` })
@@ -2546,6 +2698,64 @@ export class Repository {
         period,
       });
     }
+    return { caps: { messages: messages_, active_users: users_ }, sent };
+  }
+
+  /** Write a row for each threshold a usage increase crossed (chapter 3.10,
+   * FR-014, FR-016).
+   *
+   * IN THE SAME TRANSACTION AS THE THING THAT CAUSED IT. The crossing and the
+   * message commit together or neither does, which is the same argument the
+   * event above them makes and the reason there is no periodic sweep in this
+   * chapter at all: usage only ever rises because of a send, and the send knows
+   * the value before and after, so it knows what it crossed (research R5).
+   *
+   * THE PERCENTAGE IS OF `hard ?? soft`. A soft threshold with no hard cap is
+   * still a figure an operator asked to be warned about, and 100% of it is worth
+   * an email even though nothing will be refused.
+   *
+   * `ON CONFLICT DO NOTHING` against `quota_notifications_once_per_threshold` is
+   * what makes it at-most-once (FR-015) — the schema, not this code. A concurrent
+   * double-crossing resolves to one row rather than two emails. */
+  private async recordCrossings(
+    tx: Db,
+    period: string,
+    dimension: Dimension,
+    before: number,
+    after: number,
+    caps: { hard: number | null; soft: number | null },
+    organisationId: string,
+  ): Promise<void> {
+    const reference = caps.hard ?? caps.soft;
+    if (reference === null) return;
+    const crossed = thresholdsCrossed(before, after, reference);
+    if (crossed.length === 0) return;
+
+    await tx
+      .insert(quotaNotifications)
+      .values(
+        crossed.map((threshold) => ({
+          id: randomUUID(),
+          environmentId: this.environmentId,
+          organisationId,
+          period,
+          dimension,
+          threshold,
+          quota: reference,
+          usageAtCrossing: after,
+        })),
+      )
+      .onConflictDoNothing();
+  }
+
+  /** The organisation an environment belongs to — who gets told. */
+  private async organisationOf(tx: Db): Promise<string | null> {
+    const [row] = await tx
+      .select({ organisationId: applications.organisationId })
+      .from(environments)
+      .innerJoin(applications, eq(applications.id, environments.applicationId))
+      .where(eq(environments.id, this.environmentId));
+    return row?.organisationId ?? null;
   }
 
   /** Fetch a message by its idempotency key within a channel — the

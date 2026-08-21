@@ -6,6 +6,7 @@ import { createLogger } from "@relay/service-kit";
 import { AppModule } from "./app.module";
 import { EventConsumerService } from "./consumer/consumer.module";
 import { NotificationRelayService } from "./notifications/notifications.module";
+import { QuotaRelayService } from "./quotas/quotas.module";
 import { OutboxRelayService } from "./outbox/outbox.module";
 import { DeliveryRelayService } from "./webhooks/webhooks.module";
 
@@ -26,6 +27,7 @@ async function bootstrap(): Promise<void> {
   // work — no migration and no special case, because `delivered_at IS NULL` was
   // already true of every one of those rows.
   app.get(NotificationRelayService).start();
+  app.get(QuotaRelayService).start();
   // And the second relay (chapter 3.5): the same loop over a different table,
   // publishing deliveries that have become due. Started here for 3.3's reason —
   // a retry schedule that only runs when someone remembers is not a schedule.
