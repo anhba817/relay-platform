@@ -661,17 +661,38 @@ describe("the material for one attempt", () => {
   });
 
   it("counts what is pending and stops counting it once it is delivered", async () => {
-    const { deliveryId } = await seedDelivery();
+    const { deliveryId, envId } = await seedDelivery();
 
-    // GLOBAL, and asserted as a delta for that reason — this is the number an
-    // operator watches, so it counts every tenant's backlog, and another suite
-    // seeding rows beside this one must not be able to break it.
-    const before = await pendingDeliveryDepth(db);
-    expect(before).toBeGreaterThan(0);
+    // THE DELTA USED TO BE ASSERTED ON THE GLOBAL COUNT, and the comment above it
+    // said a delta was safe because "another suite seeding rows beside this one
+    // must not be able to break it". It is not, and one did:
+    //
+    //   AssertionError: expected 22741 to be 22742
+    //
+    // A delta is two reads with a gap. Another suite delivering one of its own
+    // rows in that gap moves the second read by one more, and the assertion is a
+    // local fact about a global operation with an extra step — the twelfth
+    // occurrence of the fault this lane has been recording since chapter 3.3, and
+    // the third whose defence was a comment explaining why it was fine.
+    //
+    // The global function still has a caller, because it is the number an operator
+    // watches and it needs one. What it is asked is the part that cannot race:
+    // there is a backlog.
+    expect(await pendingDeliveryDepth(db)).toBeGreaterThan(0);
 
+    // The delta is asserted where it can be attributed — this environment, whose
+    // rows nobody else writes.
+    const pendingHere = async (): Promise<number> => {
+      const { rows } = (await db.execute(
+        `SELECT count(*)::int AS n FROM webhook_deliveries
+          WHERE environment_id = '${envId}' AND state = 'pending'`,
+      )) as unknown as { rows: { n: number }[] };
+      return rows[0]!.n;
+    };
+
+    expect(await pendingHere()).toBe(1);
     await recordAttemptOutcome(db, { deliveryId, attempt: 1, status: 200 });
-
-    expect(await pendingDeliveryDepth(db)).toBe(before - 1);
+    expect(await pendingHere()).toBe(0);
   });
 });
 
