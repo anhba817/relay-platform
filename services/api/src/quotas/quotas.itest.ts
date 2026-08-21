@@ -570,3 +570,78 @@ describe("nobody is surprised", () => {
     expect(rows[0]).toEqual({ claimable: true, explained: true });
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// The relay's own loop.
+// ---------------------------------------------------------------------------
+//
+// `start`, `stop` and the `run` loop are the part of every relay in this
+// codebase that no test enters — chapter 3.3's, 3.5's and 3.9's all report the
+// same hole, and `notification-relay.ts` sits at 58.06% statements because of
+// it. Every suite drives `drainOnce()` directly, which is the right way to
+// assert on rows and the wrong way to find out whether the loop that calls it in
+// production actually runs.
+//
+// This costs four lines and closes it for the fourth relay.
+describe("the relay's loop", () => {
+  let pool: ReturnType<typeof createPool>;
+  let db: Db;
+
+  beforeAll(async () => {
+    pool = createPool();
+    await migrate(pool);
+    db = createDb(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("drains what it finds when started, and stops when told", async () => {
+    const address = `loop-${randomUUID().slice(0, 8)}@example.test`;
+    const orgId = randomUUID();
+    const appId = randomUUID();
+    const envId = randomUUID();
+    const humanId = randomUUID();
+    await db.execute(
+      `INSERT INTO organisations (id,name) VALUES ('${orgId}','loop-org')`,
+    );
+    await db.execute(
+      `INSERT INTO humans (id,provider,provider_account_id,email)
+       VALUES ('${humanId}','github','${humanId}','${address}')`,
+    );
+    await db.execute(
+      `INSERT INTO memberships (organisation_id,human_id,role)
+       VALUES ('${orgId}','${humanId}','owner')`,
+    );
+    await db.execute(
+      `INSERT INTO applications (id,organisation_id,name)
+       VALUES ('${appId}','${orgId}','Loop Co')`,
+    );
+    await db.execute(
+      `INSERT INTO environments (id,application_id,kind,signing_secret)
+       VALUES ('${envId}','${appId}','production','x')`,
+    );
+    await db.execute(
+      `INSERT INTO quota_notifications
+         (id,environment_id,organisation_id,period,dimension,threshold,quota,usage_at_crossing)
+       VALUES ('${randomUUID()}','${envId}','${orgId}','${PERIOD}','messages',50,100,50)`,
+    );
+
+    const r = createQuotaRelay({
+      db,
+      mailer: createMailer(),
+      logger: createLogger("quotas-loop"),
+      batchSize: 10_000,
+      intervalMs: 50,
+    });
+    r.start();
+    // Idempotent: a second start must not run a second loop.
+    r.start();
+    try {
+      expect(await inbox(address, 1)).toHaveLength(1);
+    } finally {
+      await r.stop();
+    }
+  }, 60_000);
+});
