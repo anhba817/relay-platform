@@ -3,6 +3,7 @@ import { relative } from "node:path";
 import pg from "pg";
 import { beforeAll, expect } from "vitest";
 
+import { databaseUrl } from "./db-url.js";
 import { EXEMPT_FILES, exemptTables } from "./exempt.js";
 import { plant, sentinelFor } from "./sentinel.js";
 
@@ -70,8 +71,13 @@ function withExemption(url: string, tables: readonly string[] | "all"): string {
   return u.toString();
 }
 
-const BASE_URL = process.env["DATABASE_URL"];
-if (TABLES !== null && TABLES.length > 0 && BASE_URL !== undefined) {
+// `databaseUrl()`, not `process.env.DATABASE_URL`: every package in this workspace
+// falls back to the compose stack's address when the variable is unset, and a
+// harness that did not would be the one task in the repository requiring it
+// (research R50). Writing the variable back means the suite's own `createPool()`
+// reads the exemption too, which is the whole mechanism.
+const BASE_URL = databaseUrl();
+if (TABLES !== null && TABLES.length > 0) {
   process.env["DATABASE_URL"] = withExemption(BASE_URL, TABLES);
 }
 
@@ -114,7 +120,6 @@ beforeAll(async () => {
   // gateway and e2e lanes would change their workload for no return, which is the
   // failure research R4 measured. The config that wants it says so.
   if (process.env["RELAY_HARNESS_BAIT"] !== "on") return;
-  if (BASE_URL === undefined) return;
 
   // A DEDICATED CLIENT THAT NEVER ENTERS THE SUITE'S POOL. Deleting a sentinel row
   // is exactly what the guard forbids, so planting needs the exemption — and a

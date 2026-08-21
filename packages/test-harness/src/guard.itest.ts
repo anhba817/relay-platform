@@ -1,6 +1,7 @@
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { databaseUrl } from "./db-url.js";
 import { plant, sentinelFor } from "./sentinel.js";
 
 // The guard's own tests. It is infrastructure every other lane now depends on, and
@@ -15,8 +16,7 @@ import { plant, sentinelFor } from "./sentinel.js";
 // "logs nothing when there is nothing to disable" failed with a number instead of
 // a reason. No amount of guard-refuses-correctly testing would have found it.
 
-const URL_ = process.env["DATABASE_URL"];
-if (URL_ === undefined) throw new Error("DATABASE_URL is required");
+const URL_ = databaseUrl();
 
 function exempt(url: string, tables = "all"): string {
   const u = new URL(url);
