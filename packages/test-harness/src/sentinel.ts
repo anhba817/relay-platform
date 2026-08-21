@@ -26,6 +26,24 @@ import { createHash } from "node:crypto";
 export const MAX_PRODUCT_BATCH = 100;
 export const BAIT_ROWS = MAX_PRODUCT_BATCH * 2;
 
+/** The owner of the SHARED sweep bait — the one sentinel that holds `BAIT_ROWS`
+ * endpoints with an open failure run.
+ *
+ * SWEEP BAIT IS A GLOBAL PROPERTY; THE TRIGGER'S ATTRIBUTION IS A PER-FILE ONE,
+ * and the first version conflated them. To defeat `sweepDisabledEndpoints`'s batch
+ * you need more than `MAX_PRODUCT_BATCH` eligible endpoints *in the database* —
+ * it does not matter who planted them. To have a refusal name the file that
+ * planted the row you need one guarded row per file. Planting 200 per file
+ * satisfied both and cost nineteen times what the first needs.
+ *
+ * The bill arrived somewhere else, which is why it took a battery to find:
+ * `deliveries.itest.ts` sweeps globally, every disabled endpoint WRITES a
+ * disablement notification, and 3,799 of those are what
+ * `notifications.itest.ts`'s first global drain then has to work through. It
+ * timed out at 5,000ms on run 4 of twenty, having passed runs 1 to 3 (research
+ * R51). */
+export const READER_BAIT_OWNER = "__shared__/sweep-bait";
+
 /** The product files whose batch defaults this bound has to dominate. Read by
  * `bait-size.test.ts`; listed here so the two cannot drift apart. */
 export const BATCH_SOURCES = [
@@ -157,18 +175,12 @@ export async function plant(
     [s.environmentId, s.applicationId, `sentinel-not-a-secret-${s.environmentId}`],
   );
 
-  // bait 1: BAIT_ROWS endpoints the sweep would disable, not one.
+  // bait 1: ONE endpoint with an open failure run past the cutoff.
   //
-  // MEASURED: with a single bait endpoint, instance 1 — `sweepDisabledEndpoints`
-  // at the product's own limit of 100 — reintroduced and run alone on a fresh
-  // database PASSED, 49 tests of 49. Of course it did: the fault is that older
-  // eligible endpoints fill the batch before the test's own is reached, and one
-  // older endpoint does not fill a batch of a hundred (research R42).
-  //
-  // So the endpoint bait is sized by the same rule as the other three: BAIT_ROWS,
-  // which is twice the largest batch any product reader takes. The first of them
-  // keeps `s.endpointId`, so a refusal names a stable row rather than a random
-  // one.
+  // One, because this one is the TRIGGER'S target — the row a refusal names, which
+  // is why it has to belong to this file and no other. The sweep-defeating pile of
+  // them lives in the shared sentinel `plantReaderBait()` maintains; see
+  // READER_BAIT_OWNER for why those are two jobs and not one.
   //
   // `disabled_at` and `disabled_reason` must be null together, and
   // `failure_run_started_at` and `failure_run_attempts` must be non-null together
@@ -178,19 +190,9 @@ export async function plant(
     `INSERT INTO webhook_endpoints
        (id, environment_id, url, event_types, secret_ciphertext, enabled,
         failure_run_started_at, failure_run_attempts, disabled_at, disabled_reason)
-     SELECT CASE WHEN i = 1 THEN $1::uuid ELSE gen_random_uuid() END,
-            $2, $3 || '/' || i, '["message.created"]'::jsonb,
-            'sentinel-not-a-ciphertext', true,
-            -- Older than any endpoint a test mints, so they sort ahead of it in
-            -- the sweep's oldest-first window, which is the whole mechanism.
-            now() - interval '4 hours' - (i * interval '1 second'), 25, NULL, NULL
-       FROM generate_series(1, $4) AS g(i)`,
-    [
-      s.endpointId,
-      s.environmentId,
-      `https://sentinel.invalid/${s.owner}`,
-      BAIT_ROWS,
-    ],
+     VALUES ($1, $2, $3, '["message.created"]'::jsonb, 'sentinel-not-a-ciphertext',
+             true, now() - interval '4 hours', 25, NULL, NULL)`,
+    [s.endpointId, s.environmentId, `https://sentinel.invalid/${s.owner}`],
   );
 
   // bait 2: due deliveries — on a DISABLED endpoint, which is the difference
@@ -288,5 +290,87 @@ export async function plant(
             now() - interval '4 hours', 25, 503, now() - interval '2 hours'
        FROM generate_series(1, $4)`,
     [s.environmentId, s.organisationId, s.deliveryEndpointId, BAIT_ROWS],
+  );
+}
+
+/** Maintain the shared sweep bait: `BAIT_ROWS` endpoints with an open failure run
+ * past the cutoff, owned by one sentinel rather than by every file.
+ *
+ * IDEMPOTENT BY UPDATE, NOT BY DELETE-AND-REINSERT, and that is the point. A
+ * global sweep disables these — that is what they are for — so every file's
+ * `beforeAll` has to put them back. Re-creating them would mean deleting 200 rows
+ * another file may be mid-sweep against (research R12); re-enabling them is one
+ * statement that cannot remove a row from under anybody.
+ *
+ * It also clears the disablement notifications the last sweep wrote, which is the
+ * whole reason this function exists: those rows are the shared growing resource
+ * the harness was accidentally manufacturing.
+ */
+export async function plantReaderBait(client: {
+  query(sql: string, values?: unknown[]): Promise<unknown>;
+}): Promise<void> {
+  const q = (sql: string, values?: unknown[]) => client.query(sql, values);
+  const s = sentinelFor(READER_BAIT_OWNER);
+
+  await q(
+    `INSERT INTO __sentinel_environments (environment_id, owner) VALUES ($1, $2)
+     ON CONFLICT (environment_id) DO UPDATE SET owner = EXCLUDED.owner`,
+    [s.environmentId, s.owner],
+  );
+  await q(
+    `INSERT INTO organisations (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+    [s.organisationId, s.name],
+  );
+  await q(
+    `INSERT INTO humans (id, provider, provider_account_id, email)
+     VALUES ($1, 'github', $2, NULL) ON CONFLICT (id) DO NOTHING`,
+    [s.humanId, s.name],
+  );
+  await q(
+    `INSERT INTO memberships (organisation_id, human_id, role)
+     VALUES ($1, $2, 'owner') ON CONFLICT DO NOTHING`,
+    [s.organisationId, s.humanId],
+  );
+  await q(
+    `INSERT INTO applications (id, organisation_id, name)
+     VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
+    [s.applicationId, s.organisationId, s.name],
+  );
+  await q(
+    `INSERT INTO environments (id, application_id, kind, signing_secret)
+     VALUES ($1, $2, 'development', $3) ON CONFLICT (id) DO NOTHING`,
+    [s.environmentId, s.applicationId, `sentinel-not-a-secret-${s.environmentId}`],
+  );
+
+  // The sweep's leavings, before the endpoints go back. Deleting them first means
+  // a concurrent drain never sees a row whose endpoint is about to be enabled.
+  await q(`DELETE FROM webhook_disable_notifications WHERE environment_id = $1`, [
+    s.environmentId,
+  ]);
+
+  // Create any that are missing, then re-enable every one of them. `ON CONFLICT
+  // DO NOTHING` plus a following UPDATE rather than an upsert with EXCLUDED,
+  // because the interesting column set differs between the two cases.
+  await q(
+    `INSERT INTO webhook_endpoints
+       (id, environment_id, url, event_types, secret_ciphertext, enabled,
+        failure_run_started_at, failure_run_attempts, disabled_at, disabled_reason)
+     SELECT md5($1 || i)::uuid, $2, $3 || '/' || i,
+            '["message.created"]'::jsonb, 'sentinel-not-a-ciphertext', true,
+            -- Older than any endpoint a test mints, so they sort ahead of it in
+            -- the sweep's oldest-first window, which is the whole mechanism.
+            now() - interval '4 hours' - (i * interval '1 second'), 25, NULL, NULL
+       FROM generate_series(1, $4) AS g(i)
+     ON CONFLICT (id) DO NOTHING`,
+    [s.environmentId, s.environmentId, `https://sentinel.invalid/${s.owner}`, BAIT_ROWS],
+  );
+  await q(
+    `UPDATE webhook_endpoints
+        SET enabled = true, disabled_at = NULL, disabled_reason = NULL,
+            failure_run_started_at = now() - interval '4 hours',
+            failure_run_attempts = 25
+      WHERE environment_id = $1
+        AND (enabled = false OR failure_run_started_at IS NULL)`,
+    [s.environmentId],
   );
 }

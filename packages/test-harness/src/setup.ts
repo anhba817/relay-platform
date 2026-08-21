@@ -5,7 +5,7 @@ import { beforeAll, expect } from "vitest";
 
 import { databaseUrl } from "./db-url.js";
 import { EXEMPT_FILES, exemptTables } from "./exempt.js";
-import { plant, sentinelFor } from "./sentinel.js";
+import { plant, plantReaderBait, sentinelFor } from "./sentinel.js";
 
 // Runs once per test file, before the test file is imported (feature 030).
 //
@@ -133,6 +133,10 @@ beforeAll(async () => {
   await seeder.connect();
   try {
     await plant(seeder, sentinelFor(FILE));
+    // The shared sweep bait, re-enabled rather than re-created — see
+    // READER_BAIT_OWNER. Every file does this, because every file may be the one
+    // running alone against a database a previous sweep emptied.
+    await plantReaderBait(seeder);
   } finally {
     await seeder.end();
   }
