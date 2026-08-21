@@ -121,8 +121,8 @@ CREATE TABLE usage_periods (
 --
 -- Bounded by the tenant's distinct users per month rather than by their traffic,
 -- which is what makes it affordable and the reason it is a table and not a
--- counter. HyperLogLog in Redis is the textbook answer and is refused by FR-002:
--- a flush would erase the month.
+-- counter. HyperLogLog in Redis is the textbook answer and is refused by the rule
+-- above: a flush would erase the month.
 --
 -- A SEND WITH NO `user_id` WRITES NO ROW. A key-authenticated REST send is
 -- unattributed by design since chapter 3.3, and an unattributed send counts
@@ -149,7 +149,7 @@ CREATE TABLE usage_active_users (
 -- `webhook_disable_notifications` CANNOT BE REUSED — its `endpoint_id` is NOT
 -- NULL and a quota crossing has no endpoint.
 --
--- THE UNIQUE CONSTRAINT IS FR-015. "At most one email per threshold per quota per
+-- THE UNIQUE CONSTRAINT IS FR-RTL-07. "At most one email per threshold per quota per
 -- period" is enforced by the schema rather than promised by the code that writes
 -- it, so a concurrent double-crossing resolves to one row instead of two emails.
 --

@@ -38,7 +38,7 @@ describe("the thresholds an increase crosses", () => {
   });
 
   it("treats reaching the threshold exactly as crossing it", () => {
-    // "at 50%" in FR-014, not "past 50%".
+    // "at 50%" in FR-RTL-07, not "past 50%".
     expect(thresholdsCrossed(49, 50, 100)).toEqual([50]);
     expect(thresholdsCrossed(99, 100, 100)).toEqual([100]);
   });
@@ -50,7 +50,7 @@ describe("the thresholds an increase crosses", () => {
 
   it("crosses everything at once when the quota is zero", () => {
     // A cap of zero is 100% at usage zero and must stay expressible — an
-    // environment can be switched off deliberately (FR-006). Dividing by it is
+    // environment can be switched off deliberately (FR-RTL-06). Dividing by it is
     // the obvious way to get this wrong.
     expect(thresholdsCrossed(0, 1, 0)).toEqual([50, 80, 100]);
   });

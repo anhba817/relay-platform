@@ -60,7 +60,7 @@ export class MessagesService {
         throw new NotFoundException("channel not found");
       }
       if (error instanceof QuotaExceededError) {
-        // ONE THROW, AND IT IS THE ONLY ONE (chapter 3.10, FR-008).
+        // ONE THROW, AND IT IS THE ONLY ONE (chapter 3.10, FR-RTL-08).
         //
         // Both send routes reach this method — `internal.controller.ts` calls
         // `messages.send`, the public controller calls it too — so there is one

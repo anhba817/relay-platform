@@ -32,7 +32,7 @@ describe("reading a dimension's caps out of quota_config", () => {
 
   it("keeps ZERO distinct from absent", () => {
     // Zero means refuse everything and must stay expressible — an environment can
-    // be switched off deliberately (FR-006). This is the distinction chapter 3.8
+    // be switched off deliberately (FR-RTL-06). This is the distinction chapter 3.8
     // needed nullable columns for, and it survives the move to jsonb.
     expect(capsFor({ messages: { hard: 0 } }, "messages").caps.hard).toBe(0);
     expect(capsFor({ messages: {} }, "messages").caps.hard).toBeNull();

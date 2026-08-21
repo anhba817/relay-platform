@@ -37,7 +37,7 @@ function resumesOn(period: string): string {
 }
 
 /** What an organisation's admins are told when usage crosses a threshold
- * (chapter 3.10, FR-014).
+ * (chapter 3.10, FR-RTL-07).
  *
  * NO SECRET, NO KEY, NO MESSAGE TEXT. Chapter 3.9 established that this is
  * verified by reading what the mail server received rather than by asserting on

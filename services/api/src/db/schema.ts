@@ -800,7 +800,7 @@ export const quotaNotifications = pgTable(
       "quota_notifications_threshold_check",
       sql`${t.threshold} IN (50, 80, 100)`,
     ),
-    // THIS CONSTRAINT IS FR-015. At most one email per threshold per quota per
+    // THIS CONSTRAINT IS FR-RTL-07. At most one email per threshold per quota per
     // period, enforced by the schema rather than promised by the code that writes
     // it, so a concurrent double-crossing resolves to one row and not two emails.
     unique("quota_notifications_once_per_threshold").on(
