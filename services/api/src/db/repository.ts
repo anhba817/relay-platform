@@ -2401,15 +2401,27 @@ export class Repository {
       // reach this method, and it already owns the write transaction, so the
       // check and the increment commit together (research R3).
       //
-      // `FOR UPDATE` on the usage row BOUNDS THE OVERSHOOT TO ONE MESSAGE: two
-      // concurrent sends serialise here, so the second reads the first's
-      // increment rather than the same number. Without it the overshoot is
-      // bounded by concurrency instead. What it costs is that sends to one
-      // environment serialise on one row — measured in T033 rather than assumed
-      // acceptable (research R8).
+      // A PLAIN READ, AND THE OVERSHOOT IS STATED RATHER THAN DEFENDED AGAINST.
       //
-      // A first send of the month locks nothing, because there is no row yet.
-      // That is correct: usage is zero, and only a cap of zero refuses it.
+      // The first version took `FOR UPDATE` on the usage row, which bounds the
+      // overshoot to exactly one message. Two things retired it.
+      //
+      // The caps and the usage are now ONE joined read, and Postgres will not
+      // lock that:
+      //
+      //   ERROR:  FOR UPDATE cannot be applied to the nullable side of an outer join
+      //
+      // And the specification never asked for the lock. Its edge case reads: "the
+      // overshoot is bounded by concurrency, not unbounded, and this is stated
+      // rather than defended against." A few dozen sends in flight against a
+      // monthly cap of thousands is a bound worth naming rather than engineering
+      // around.
+      //
+      // WHAT THE QUOTA PATH COSTS, measured with the phases instrumented and the
+      // config toggled on one environment: 0.56ms per send at 32-way concurrency.
+      // The joined read is about 1.2ms of that and US1 needs it whether or not a
+      // cap exists. An earlier uncontrolled benchmark reported 273% and sent three
+      // separate hypotheses chasing what turned out to be warm-up (T033).
       const quota = await this.assertWithinQuota(tx, period, userId);
 
       const seq = channel.lastSequence + 1;
@@ -2535,39 +2547,64 @@ export class Repository {
 
       // What this send crossed, if anything. Almost always nothing, which is why
       // the caps are read first and the whole block skipped when none is set.
+      // WORK OUT WHETHER ANYTHING WAS CROSSED BEFORE ASKING THE DATABASE ANYTHING.
+      //
+      // `thresholdsCrossed` is pure arithmetic on two numbers the transaction
+      // already holds, and it answers "nothing" for almost every send. The first
+      // version looked up the organisation and counted the period's users FIRST
+      // and consulted the arithmetic afterwards, which put two extra queries on
+      // every send by an environment that merely HAS a quota — measured at 341%
+      // over the unconfigured path and mistaken, at first, for the cost of a lock
+      // (T033).
       if (quota) {
-        const organisationId = await this.organisationOf(tx);
-        if (organisationId) {
-          const sentAfter = quota.sent + 1;
-          await this.recordCrossings(
-            tx,
-            period,
-            "messages",
-            quota.sent,
-            sentAfter,
-            quota.caps.messages,
-            organisationId,
-          );
-          if (userId !== undefined) {
-            const [n] = await tx
-              .select({ n: sql<number>`count(*)::int` })
-              .from(usageActiveUsers)
-              .where(
-                and(
-                  eq(usageActiveUsers.environmentId, this.environmentId),
-                  eq(usageActiveUsers.period, period),
-                ),
+        const messageRef =
+          quota.caps.messages.hard ?? quota.caps.messages.soft;
+        const crossedMessages = thresholdsCrossed(
+          quota.sent,
+          quota.sent + 1,
+          messageRef,
+        );
+        // The user count is only worth asking for when a user cap exists AND this
+        // send could have added someone.
+        const userRef =
+          quota.caps.active_users.hard ?? quota.caps.active_users.soft;
+        const mayHaveAddedUser = userId !== undefined && userRef !== null;
+
+        if (crossedMessages.length > 0 || mayHaveAddedUser) {
+          const organisationId = await this.organisationOf(tx);
+          if (organisationId) {
+            if (crossedMessages.length > 0) {
+              await this.recordCrossings(
+                tx,
+                period,
+                "messages",
+                quota.sent,
+                quota.sent + 1,
+                quota.caps.messages,
+                organisationId,
               );
-            const users = n?.n ?? 0;
-            await this.recordCrossings(
-              tx,
-              period,
-              "active_users",
-              users - 1,
-              users,
-              quota.caps.active_users,
-              organisationId,
-            );
+            }
+            if (mayHaveAddedUser) {
+              const [n] = await tx
+                .select({ n: sql<number>`count(*)::int` })
+                .from(usageActiveUsers)
+                .where(
+                  and(
+                    eq(usageActiveUsers.environmentId, this.environmentId),
+                    eq(usageActiveUsers.period, period),
+                  ),
+                );
+              const users = n?.n ?? 0;
+              await this.recordCrossings(
+                tx,
+                period,
+                "active_users",
+                users - 1,
+                users,
+                quota.caps.active_users,
+                organisationId,
+              );
+            }
           }
         }
       }
@@ -2602,9 +2639,25 @@ export class Repository {
     caps: { messages: Caps; active_users: Caps };
     sent: number;
   } | null> {
+    // ONE QUERY, NOT TWO. The caps live on `environments` and the usage on
+    // `usage_periods`, and reading them separately costs two round-trips inside
+    // the write transaction — which holds a pooled connection for the duration.
+    // Above the pool size that queues, and T033 measured the two-query version at
+    // 7.95ms per send against 1.45ms unconfigured at 32-way concurrency. Joined,
+    // it is one round-trip on two primary keys.
     const [env] = await tx
-      .select({ quotaConfig: environments.quotaConfig })
+      .select({
+        quotaConfig: environments.quotaConfig,
+        messagesSent: usagePeriods.messagesSent,
+      })
       .from(environments)
+      .leftJoin(
+        usagePeriods,
+        and(
+          eq(usagePeriods.environmentId, environments.id),
+          eq(usagePeriods.period, period),
+        ),
+      )
       .where(eq(environments.id, this.environmentId));
 
     const messages_ = capsFor(env?.quotaConfig, "messages").caps;
@@ -2621,17 +2674,7 @@ export class Repository {
       return null;
     }
 
-    const [usage] = await tx
-      .select({ messagesSent: usagePeriods.messagesSent })
-      .from(usagePeriods)
-      .where(
-        and(
-          eq(usagePeriods.environmentId, this.environmentId),
-          eq(usagePeriods.period, period),
-        ),
-      )
-      .for("update");
-    const sent = usage?.messagesSent ?? 0;
+    const sent = env?.messagesSent ?? 0;
 
     if (messages_.hard !== null && sent >= messages_.hard) {
       // THE CROSSING IS WRITTEN BEFORE THE REFUSAL IS RAISED (FR-013a).
