@@ -188,6 +188,22 @@ describe("the disablement notification, end to end", () => {
     return (rows as { delivered_at: Date | null }[])[0]?.delivered_at === null;
   };
 
+  // THIRTY SECONDS ON EVERY TEST IN THIS FILE, and it is the budget its siblings
+  // have always declared rather than a concession.
+  //
+  // Each of these drives a GLOBAL relay drain and then waits on a real SMTP
+  // round-trip to Mailpit. Every other suite in this lane doing comparable work
+  // says so: `deliveries.itest.ts` uses 60, 120 and 180 seconds,
+  // `test-event.itest.ts` 60 and 90, `attempts.itest.ts` and `outbox.itest.ts` 30
+  // and 60. This file declared 60 seconds for its `beforeAll` and nothing for its
+  // tests, so all nine ran on vitest's 5,000ms default — the only drain-driving
+  // suite in the lane that did.
+  //
+  // Measured: these tests take 0.5 to 2.2 seconds each with the lane running
+  // seventeen files in parallel, and occasionally excursion past five. Two
+  // different ones crossed on two different runs of the twenty-run battery, at
+  // runs 4 and 9 (research R52). A budget two-and-a-half times the observed cost
+  // is not a margin.
   const relay = () =>
     createNotificationRelay({
       db,
@@ -244,7 +260,7 @@ describe("the disablement notification, end to end", () => {
     ]) {
       expect(whole).not.toMatch(pattern);
     }
-  });
+  }, 30_000);
 
   it("sets delivered_at only AFTER the send returns (FR-WHK-07)", async () => {
     const address = `fail-${randomUUID().slice(0, 8)}@example.test`;
@@ -274,7 +290,7 @@ describe("the disablement notification, end to end", () => {
     expect(await working.drainOnce()).toBeGreaterThan(0);
     await working.stop();
     expect(await inbox(address)).toHaveLength(1);
-  });
+  }, 30_000);
 
   it("does not send a delivered row twice (FR-WHK-07)", async () => {
     const address = `once-${randomUUID().slice(0, 8)}@example.test`;
@@ -293,7 +309,7 @@ describe("the disablement notification, end to end", () => {
     // is why this needed no new column.
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     expect(await inbox(address, 1, 0)).toHaveLength(1);
-  });
+  }, 30_000);
 
   it("sends twice for an endpoint disabled, re-enabled and disabled again", async () => {
     // Two outages are two things to be told about. Nothing collapses them, and
@@ -321,7 +337,7 @@ describe("the disablement notification, end to end", () => {
     await second.stop();
 
     expect(await inbox(address, 2)).toHaveLength(2);
-  });
+  }, 30_000);
 
   it("handles an organisation nobody can be written to (FR-WHK-07)", async () => {
     // `humans.email` is nullable, so this is a state the schema permits rather
@@ -349,7 +365,7 @@ describe("the disablement notification, end to end", () => {
     // Marked, so the next pass does not reclaim it — asked of the row, because
     // the batch count belongs to the whole lane.
     expect(await undelivered(endpointId)).toBe(false);
-  });
+  }, 30_000);
 
   it("sends to EVERY member with an address, one message each", async () => {
     // One message per recipient, not one message with several addresses on it: a
@@ -370,7 +386,7 @@ describe("the disablement notification, end to end", () => {
       expect(messages).toHaveLength(1);
       expect(messages[0]!.To.map((t) => t.Address)).toEqual([address]);
     }
-  });
+  }, 30_000);
 
   it("does not take anything else down with it when the mail server is gone (FR-WHK-05)", async () => {
     // The blast radius, checked rather than asserted in prose. A mail server is
@@ -419,7 +435,7 @@ describe("the disablement notification, end to end", () => {
       )
     ).rows as { enabled: boolean }[];
     expect(rows[0]!.enabled).toBe(false);
-  });
+  }, 30_000);
 
   it("does not let ONE undeliverable row block every row behind it", async () => {
     // The failure per-row isolation exists to prevent, and it is permanent
@@ -442,7 +458,7 @@ describe("the disablement notification, end to end", () => {
     expect(await r.drainOnce()).toBeGreaterThan(0);
     await r.stop();
     expect(await inbox(good)).toHaveLength(1);
-  });
+  }, 30_000);
 
   it("drains chapter 3.6's backlog with NO SPECIAL HANDLING (FR-WHK-07)", async () => {
     // Rows written before any transport existed are undelivered work by the
@@ -463,5 +479,5 @@ describe("the disablement notification, end to end", () => {
     for (const address of addresses) {
       expect(await inbox(address)).toHaveLength(1);
     }
-  });
+  }, 30_000);
 });
