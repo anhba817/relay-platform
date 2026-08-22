@@ -12,7 +12,11 @@ import {
   Repository,
   usageFor,
 } from "../db/repository";
+import { createLogger } from "@relay/service-kit";
+
+import { createMailer } from "../notifications/mailer";
 import { periodOf } from "./period";
+import { createQuotaRelay } from "./quota-relay";
 import { QuotaExceededError } from "./quota.error";
 
 // Connection-minutes, credited (chapter 3.11, US1 and US2).
@@ -457,5 +461,202 @@ describe("the cap brakes the thing it meters (US3, api side)", () => {
     // And the history still reads.
     const history = await repo.listMessages(channel.id, { limit: 10 });
     expect(history.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// --- the third dimension's emails (US4) ------------------------------------
+//
+// MAILPIT IS ONE SHARED INBOX for the whole lane, so every assertion below
+// filters by a per-test recipient. Chapter 3.10's suite established that shape
+// and then undercut it one line later with
+// `expect(await relay().drainOnce()).toBeGreaterThan(0)` — true whether it
+// drained this test's row or a neighbour's. `drainOnce` claims undelivered rows
+// across EVERY environment, and neither guard watches it: the lint rule does not
+// name the function (chapter 3.11 added it) and could not see the call anyway,
+// because it goes through `createQuotaRelay`.
+//
+// So the assertions here are about rows this test wrote, by address, and never
+// about a count the drain returned (research R22, FR-032).
+
+const mailpit = process.env["RELAY_MAILPIT_URL"] ?? "http://localhost:8025";
+
+interface Received {
+  ID: string;
+  Subject: string;
+}
+
+async function inbox(address: string, expected = 1, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const res = await fetch(
+      `${mailpit}/api/v1/search?query=${encodeURIComponent(`to:${address}`)}`,
+    );
+    const body = (await res.json()) as { messages: Received[] };
+    if (body.messages.length >= expected || Date.now() > deadline) {
+      return body.messages;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+describe("nobody is surprised by a third dimension (US4)", () => {
+  /** An organisation with one addressable admin, and an environment under it. */
+  const seed = async (address: string) => {
+    const orgId = randomUUID();
+    const appId = randomUUID();
+    const envId = randomUUID();
+    const humanId = randomUUID();
+    await db.execute(
+      `INSERT INTO organisations (id,name) VALUES ('${orgId}','conn-org')`,
+    );
+    await db.execute(
+      `INSERT INTO humans (id,provider,provider_account_id,email)
+       VALUES ('${humanId}','github','${humanId}','${address}')`,
+    );
+    await db.execute(
+      `INSERT INTO memberships (organisation_id,human_id,role)
+       VALUES ('${orgId}','${humanId}','owner')`,
+    );
+    await db.execute(
+      `INSERT INTO applications (id,organisation_id,name)
+       VALUES ('${appId}','${orgId}','Fleet Ops')`,
+    );
+    await db.execute(
+      `INSERT INTO environments (id,application_id,kind,signing_secret)
+       VALUES ('${envId}','${appId}','production','x')`,
+    );
+    return envId;
+  };
+
+  const drain = () =>
+    createQuotaRelay({
+      db,
+      mailer: createMailer(),
+      logger: createLogger("connections-itest"),
+      batchSize: 10_000,
+    }).drainOnce();
+
+  const setCap = (environmentId: string, config: unknown) =>
+    pool.query("UPDATE environments SET quota_config = $1 WHERE id = $2", [
+      JSON.stringify(config),
+      environmentId,
+    ]);
+
+  /** The percentages Mailpit holds for one address, ascending as NUMBERS.
+   * Sorting subjects as strings puts "100%" before "50%" — chapter 3.10 got
+   * that wrong once and left the warning. */
+  const thresholdsIn = (got: Received[]): number[] =>
+    got
+      .map((m) => Number(/(\d+)%/.exec(m.Subject)?.[1] ?? 0))
+      .sort((a, b) => a - b);
+
+  it("sends exactly three emails for connection-minutes (SC-009)", async () => {
+    const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
+    const env = await seed(address);
+    await setCap(env, { connection_minutes: { hard: 10 } });
+
+    // 0 → 5 (50%), 5 → 8 (80%), 8 → 10 (100%). One connection, three reports.
+    const connection = randomUUID();
+    for (const total of [5, 8, 10]) {
+      await report(env, [[connection, AUGUST, total]]);
+    }
+    await drain();
+
+    const got = await inbox(address, 3);
+    expect(thresholdsIn(got)).toEqual([50, 80, 100]);
+    // Scoped to THIS address. The count the drain returned is not asserted on,
+    // because it counts every environment's rows.
+    expect(got).toHaveLength(3);
+  });
+
+  it("notifies both thresholds a single report crossed (FR-023)", async () => {
+    // A cap of 4 and four minutes in one step crosses 50%, 80% AND 100% —
+    // 80% of 4 is 3.2, which chapter 3.10 got wrong twice before writing it down.
+    const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
+    const env = await seed(address);
+    await setCap(env, { connection_minutes: { hard: 4 } });
+
+    await report(env, [[randomUUID(), AUGUST, 4]]);
+    await drain();
+
+    expect(thresholdsIn(await inbox(address, 3))).toEqual([50, 80, 100]);
+  });
+
+  it("sends nothing further when a threshold is re-crossed", async () => {
+    const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
+    const env = await seed(address);
+    await setCap(env, { connection_minutes: { hard: 10 } });
+
+    const connection = randomUUID();
+    await report(env, [[connection, AUGUST, 5]]);
+    await drain();
+    expect(await inbox(address, 1)).toHaveLength(1);
+
+    // More minutes, same threshold band. The UNIQUE constraint is what makes
+    // this at-most-once, not the code that writes the row.
+    await report(env, [[connection, AUGUST, 6]]);
+    await report(env, [[connection, AUGUST, 7]]);
+    await drain();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await inbox(address, 2, 1_000)).toHaveLength(1);
+  });
+
+  it("becomes notifiable again when the period rolls over (FR-022)", async () => {
+    const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
+    const env = await seed(address);
+    await setCap(env, { connection_minutes: { hard: 10 } });
+
+    await report(env, [[randomUUID(), AUGUST, 10]]);
+    await drain();
+    const august = await inbox(address, 3);
+    expect(august).toHaveLength(3);
+
+    // Same cap, next month, same thresholds — the key is
+    // (environment, period, dimension, threshold).
+    await report(env, [[randomUUID(), SEPTEMBER, 10]]);
+    await drain();
+    expect(await inbox(address, 6)).toHaveLength(6);
+  });
+
+  it("a soft threshold with no hard cap emails and refuses nothing (SC-020)", async () => {
+    const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
+    const env = await seed(address);
+    await setCap(env, { connection_minutes: { soft: 10 } });
+
+    await report(env, [[randomUUID(), AUGUST, 10]]);
+    await drain();
+
+    const got = await inbox(address, 3);
+    expect(thresholdsIn(got)).toEqual([50, 80, 100]);
+
+    // And the connect still works, which is the half the email has to be honest
+    // about: at 100% of a SOFT threshold nothing has been refused.
+    await expect(
+      assertConnectionsWithinQuota(db, env, AUGUST),
+    ).resolves.toBeTruthy();
+
+    const body = await fetch(`${mailpit}/api/v1/message/${got[2]!.ID}`).then(
+      (r) => r.json() as Promise<{ Text: string }>,
+    );
+    expect(body.Text).toContain("Nothing has been refused");
+    expect(body.Text).not.toContain("4008");
+  });
+
+  it("names connection-minutes and what actually stops (FR-022)", async () => {
+    const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
+    const env = await seed(address);
+    await setCap(env, { connection_minutes: { hard: 2 } });
+
+    await report(env, [[randomUUID(), AUGUST, 2]]);
+    await drain();
+
+    const got = await inbox(address, 3);
+    const hundred = got.find((m) => m.Subject.includes("100%"))!;
+    const body = await fetch(`${mailpit}/api/v1/message/${hundred.ID}`).then(
+      (r) => r.json() as Promise<{ Text: string; Subject: string }>,
+    );
+    expect(body.Subject).toContain("connection-minutes");
+    expect(body.Text).toContain("New connections are now being refused");
+    expect(body.Text).toContain("Connections already open stay open");
   });
 });

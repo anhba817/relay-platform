@@ -132,6 +132,19 @@ export default tseslint.config(
                 "drainOutbox",
                 "drainDueDeliveries",
                 "drainDisableNotifications",
+                // Chapter 3.11 added this one, and chapter 3.10 should have.
+                // `drainQuotaNotifications` claims undelivered rows across every
+                // environment, exactly as its three siblings above do, and 3.10
+                // listed it in neither this rule nor `exempt.ts` — whose comment
+                // says the two MUST AGREE.
+                //
+                // SAY WHAT THIS DOES NOT BUY. It protects a future DIRECT
+                // importer. It does not protect the suites that already drive the
+                // drain, because they reach it through `createQuotaRelay`, and
+                // the note above is explicit that an indirect call is what this
+                // rule cannot see. Scoping those assertions to rows the test
+                // created is the half that works.
+                "drainQuotaNotifications",
                 "sweepDisabledEndpoints",
                 "outboxDepth",
                 "pendingDeliveryDepth",

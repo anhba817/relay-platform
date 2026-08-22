@@ -16,6 +16,26 @@ export interface CrossingFacts {
 const NOUN: Record<string, string> = {
   messages: "messages",
   active_users: "active users",
+  // Chapter 3.11. Hyphenated, as the customer-facing name — the column is
+  // `connection_minutes` and nobody reads a bill in snake case.
+  connection_minutes: "connection-minutes",
+};
+
+/** What stops when THIS dimension's hard cap is reached, in the words a reader
+ * needs (chapter 3.11).
+ *
+ * "Sends are now being refused" is right for two dimensions and wrong for the
+ * third: a connection-minutes cap refuses CONNECTS, and everything the tenant
+ * already has keeps working. An email that names the wrong operation sends
+ * somebody looking for a fault in the half that is fine. */
+const DEFAULT_STOPPAGE = "Sends are now being refused with `quota_exceeded`.";
+
+const STOPPAGE: Record<string, string> = {
+  messages: DEFAULT_STOPPAGE,
+  active_users: DEFAULT_STOPPAGE,
+  connection_minutes:
+    "New connections are now being refused with `quota_exceeded` and close code 4008. " +
+    "Connections already open stay open, and sends and history reads over REST are unaffected.",
 };
 
 /** The month, as a month. `2026-08-01` is a row key, not something to show a
@@ -57,7 +77,7 @@ export function quotaThreshold(facts: CrossingFacts): Mail {
     facts.threshold < 100
       ? "Nothing has been refused. This is a warning so the month does not end in a surprise."
       : facts.hardCapInForce
-        ? `Sends are now being refused with \`quota_exceeded\`. They resume in ${resumesOn(facts.period)}, or as soon as the quota is raised.`
+        ? `${STOPPAGE[facts.dimension] ?? DEFAULT_STOPPAGE} They resume in ${resumesOn(facts.period)}, or as soon as the quota is raised.`
         : "Nothing has been refused: this environment has no hard cap, only the threshold you asked to be told about.";
 
   const text = [

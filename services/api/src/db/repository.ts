@@ -286,6 +286,76 @@ export async function environmentLimits(
   };
 }
 
+/** Write a row for each threshold a usage increase crossed (chapter 3.10,
+ * FR-RTL-07), and the organisation to tell about it.
+ *
+ * STANDALONE SINCE CHAPTER 3.11, and the reason is the same one `usageFor` and
+ * `creditConnectionMinutes` give: `Repository` closes over an `environmentId` by
+ * construction, and the caller that now needs this is the usage report route,
+ * which holds a PLATFORM principal and therefore no environment at all. The
+ * private methods on `Repository` stay as one-line delegations, so chapter 3.10's
+ * two call sites inside `sendMessage` read exactly as they did.
+ *
+ * Copying the crossing logic into the platform path instead would have made a
+ * fifth place that has to agree about thresholds. Moving it costs about forty
+ * lines and changes no behaviour, which T056a verified against the full lane
+ * before anything was written on top of it.
+ *
+ * IN THE SAME TRANSACTION AS THE THING THAT CAUSED IT. The crossing and the
+ * credit commit together or neither does — which is also why there is no periodic
+ * sweep in either chapter: usage only ever rises because of an event, and the
+ * event knows the value before and after, so it knows what it crossed.
+ *
+ * THE PERCENTAGE IS OF `hard ?? soft`. A soft threshold with no hard cap is still
+ * a figure an operator asked to be warned about.
+ *
+ * `ON CONFLICT DO NOTHING` against `quota_notifications_once_per_threshold` is
+ * what makes it at-most-once — the schema, not this code. */
+export async function recordCrossings(
+  tx: Db,
+  environmentId: string,
+  period: string,
+  dimension: Dimension,
+  before: number,
+  after: number,
+  caps: { hard: number | null; soft: number | null },
+  organisationId: string,
+): Promise<void> {
+  const reference = caps.hard ?? caps.soft;
+  if (reference === null) return;
+  const crossed = thresholdsCrossed(before, after, reference);
+  if (crossed.length === 0) return;
+
+  await tx
+    .insert(quotaNotifications)
+    .values(
+      crossed.map((threshold) => ({
+        id: randomUUID(),
+        environmentId,
+        organisationId,
+        period,
+        dimension,
+        threshold,
+        quota: reference,
+        usageAtCrossing: after,
+      })),
+    )
+    .onConflictDoNothing();
+}
+
+/** The organisation an environment belongs to — who gets told. */
+export async function organisationOf(
+  tx: Db,
+  environmentId: string,
+): Promise<string | null> {
+  const [row] = await tx
+    .select({ organisationId: applications.organisationId })
+    .from(environments)
+    .innerJoin(applications, eq(applications.id, environments.applicationId))
+    .where(eq(environments.id, environmentId));
+  return row?.organisationId ?? null;
+}
+
 /** May this environment open another connection? (chapter 3.11, FR-015.)
  *
  * ENFORCED AT THE DOOR, because that is the operation this dimension meters.
@@ -389,6 +459,12 @@ export async function creditConnectionMinutes(
 ): Promise<number> {
   return db.transaction(async (tx) => {
     let credited = 0;
+    /** Per `environment|period`, the roll-up before this batch touched it and
+     * after. Collected during the credit and used for the crossings below. */
+    const moved = new Map<
+      string,
+      { environmentId: string; period: string; before: number; after: number }
+    >();
     for (const entry of entries) {
       const [existing] = await tx
         .select({
@@ -432,7 +508,7 @@ export async function creditConnectionMinutes(
       if (delta === 0) continue;
       credited += delta;
 
-      await tx
+      const [rolled] = await tx
         .insert(usagePeriods)
         .values({
           environmentId: entry.environmentId,
@@ -444,7 +520,53 @@ export async function creditConnectionMinutes(
           set: {
             connectionMinutes: sql`${usagePeriods.connectionMinutes} + ${delta}`,
           },
-        });
+        })
+        .returning({ after: usagePeriods.connectionMinutes });
+
+      // The figure before and after, per environment per period. `RETURNING`
+      // gives the after; the before is it minus what this entry just added,
+      // which is exact because the row is being written inside this transaction.
+      const key = `${entry.environmentId}|${entry.period}`;
+      const after = rolled?.after ?? delta;
+      const seen = moved.get(key);
+      moved.set(key, {
+        environmentId: entry.environmentId,
+        period: entry.period,
+        before: seen?.before ?? after - delta,
+        after,
+      });
+    }
+
+    // THE CROSSINGS, IN THE SAME TRANSACTION AS THE CREDIT (chapter 3.11,
+    // FR-022/FR-023). The report knows the figure before and after, so it knows
+    // which thresholds it crossed — which is why this chapter has no periodic
+    // sweep either, for the second chapter running (research R5).
+    //
+    // AFTER the credit loop rather than inside it, because a batch can carry
+    // several entries for one environment and period — a socket that spanned a
+    // month boundary, or a hundred sockets on one instance — and crossing 80%
+    // once is one email however many entries pushed it there.
+    for (const group of moved.values()) {
+      const [env] = await tx
+        .select({ quotaConfig: environments.quotaConfig })
+        .from(environments)
+        .where(eq(environments.id, group.environmentId));
+      const caps = capsFor(env?.quotaConfig, "connection_minutes").caps;
+      if (caps.hard === null && caps.soft === null) continue;
+
+      const organisationId = await organisationOf(tx, group.environmentId);
+      if (organisationId === null) continue;
+
+      await recordCrossings(
+        tx,
+        group.environmentId,
+        group.period,
+        "connection_minutes",
+        group.before,
+        group.after,
+        caps,
+        organisationId,
+      );
     }
     return credited;
   });
@@ -2948,36 +3070,21 @@ export class Repository {
     caps: { hard: number | null; soft: number | null },
     organisationId: string,
   ): Promise<void> {
-    const reference = caps.hard ?? caps.soft;
-    if (reference === null) return;
-    const crossed = thresholdsCrossed(before, after, reference);
-    if (crossed.length === 0) return;
-
-    await tx
-      .insert(quotaNotifications)
-      .values(
-        crossed.map((threshold) => ({
-          id: randomUUID(),
-          environmentId: this.environmentId,
-          organisationId,
-          period,
-          dimension,
-          threshold,
-          quota: reference,
-          usageAtCrossing: after,
-        })),
-      )
-      .onConflictDoNothing();
+    return recordCrossings(
+      tx,
+      this.environmentId,
+      period,
+      dimension,
+      before,
+      after,
+      caps,
+      organisationId,
+    );
   }
 
   /** The organisation an environment belongs to — who gets told. */
   private async organisationOf(tx: Db): Promise<string | null> {
-    const [row] = await tx
-      .select({ organisationId: applications.organisationId })
-      .from(environments)
-      .innerJoin(applications, eq(applications.id, environments.applicationId))
-      .where(eq(environments.id, this.environmentId));
-    return row?.organisationId ?? null;
+    return organisationOf(tx, this.environmentId);
   }
 
   /** Fetch a message by its idempotency key within a channel — the
