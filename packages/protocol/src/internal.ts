@@ -328,7 +328,7 @@ export type InternalDeliveryOutcomeResponse = z.infer<
   typeof internalDeliveryOutcomeResponseSchema
 >;
 
-/** The usage report (chapter 3.11, FR-005).
+/** The usage report (chapter 3.11, FR-RTL-05).
  *
  * THE ONE CALL THE GATEWAY MAKES FOR ITSELF. Its other three —
  * `/internal/session`, `/internal/backfill`, `/internal/messages` — forward the
@@ -346,7 +346,7 @@ export type InternalDeliveryOutcomeResponse = z.infer<
  *
  * ONE ENTRY PER CONNECTION PER PERIOD. A socket open across midnight on the
  * first of the month owes minutes to two periods and sends two entries, because
- * each period is credited independently (FR-009). */
+ * each period is credited independently (FR-RTL-05). */
 export const internalUsageReportEntrySchema = z.strictObject({
   connection_id: z.string().uuid(),
   environment_id: z.string().uuid(),

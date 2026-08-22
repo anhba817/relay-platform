@@ -53,7 +53,7 @@ export function minuteOf(at: Date): string {
 /** The period a minute bucket belongs to — `minuteOf`'s output back to
  * `periodOf`'s. The gateway reports buckets and the api credits periods, and a
  * connection open across midnight on the first owes minutes to two of them
- * (FR-009). Parsing here rather than at each call site keeps one definition of
+ * (FR-RTL-05). Parsing here rather than at each call site keeps one definition of
  * how a bucket string decomposes. */
 export function periodOfMinute(minute: string): string {
   return `${minute.slice(0, 7)}-01`;

@@ -16,12 +16,7 @@ import { AUTH_DB } from "../auth/authenticate.middleware";
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import type { RequestWithPrincipal } from "../auth/principal";
 import type { Db } from "../db/client";
-import {
-  assertConnectionsWithinQuota,
-  environmentLimits,
-  Repository,
-} from "../db/repository";
-import { DEFAULT_LIMITS } from "../limits/policy";
+import { connectPolicy, Repository } from "../db/repository";
 import { periodOf } from "../quotas/period";
 import { QuotaExceededError } from "../quotas/quota.error";
 
@@ -73,16 +68,21 @@ export class SessionController {
     // defaults by the time they leave the repository, so the gateway never has to
     // know that "no override" is a state.
     // Chapter 3.11. THE CAP IS ENFORCED AT THE DOOR, because a connection is the
-    // operation that consumes connection-minutes. A second call on the same
-    // request rather than a heavier `environmentLimits` — chapter 3.10's second
-    // analysis pass refused that extension precisely because this path calls it.
+    // operation that consumes connection-minutes.
+    //
+    // ONE READ FOR BOTH, and the plan said two. Research R7 chose a second call
+    // rather than a heavier `environmentLimits`, because chapter 3.10's H2 had
+    // refused to put a usage join in that function — and H2 is still right, since
+    // its other caller is the rate-limit middleware on every `/v1` request. But
+    // two calls cost what a join would have: measured, connect latency at 32-way
+    // went 15.0ms to 17.6ms, and folding them back recovered 0.8ms.
     //
     // THE CODE IS NAMED BY THE THROWER. `ProtocolErrorFilter` is `@Catch()`-all
-    // and infers a code for four statuses; 402 is not one of them, so an
-    // unnamed refusal would reach the gateway as `internal_error` — chapter
-    // 3.10's H3, which cost that chapter a whole analysis pass to find.
+    // and infers a code for four statuses; 402 is not one of them, so an unnamed
+    // refusal would reach the gateway as `internal_error` — chapter 3.10's H3.
+    let policy;
     try {
-      await assertConnectionsWithinQuota(
+      policy = await connectPolicy(
         this.db,
         principal.environmentId,
         periodOf(new Date()),
@@ -97,14 +97,13 @@ export class SessionController {
       throw error;
     }
 
-    const limits = await environmentLimits(this.db, principal.environmentId);
     return {
       environment_id: principal.environmentId,
       user: principal.userExternalId,
       channel_ids: user ? await this.repo.channelsForUser(user.id) : [],
       limits: {
-        connect: limits?.connect ?? DEFAULT_LIMITS.connect,
-        send: limits?.send ?? DEFAULT_LIMITS.send,
+        connect: policy.limits.connect,
+        send: policy.limits.send,
       },
     };
   }

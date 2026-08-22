@@ -79,7 +79,7 @@ export interface ApiClient {
    *
    * `null` when no credential is configured — the gateway serves sockets without
    * metering rather than refusing to start, because metering may not be a
-   * startup dependency (FR-012). */
+   * startup dependency (constitution III). */
   reportUsage(
     body: InternalUsageReportRequest,
   ): Promise<InternalUsageReportResponse | null>;

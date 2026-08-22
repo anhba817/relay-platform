@@ -61,7 +61,7 @@ function floorToMinute(at: Date): number {
  * `docs/04-srs.md` about per-second precision.
  *
  * SPLIT BY PERIOD, because a socket open across midnight on the first owes
- * minutes to two months and each is credited independently (FR-009). The api is
+ * minutes to two months and each is credited independently (FR-RTL-05). The api is
  * never asked to do this arithmetic on the gateway's behalf: the wire carries one
  * entry per period, already decided.
  *
@@ -112,7 +112,7 @@ export interface Meter {
    * carries the same total plus whatever accrued. */
   retained(): number;
   /** How many entries were discarded at the cap. Counted rather than silent
-   * (FR-029). */
+   * (FR-RTL-05). */
   dropped(): number;
   stop(): void;
 }
@@ -205,7 +205,7 @@ export function createMeter({
       }
     } catch (error) {
       // A failed report closes nothing, refuses nothing, and fails nothing
-      // (FR-012). Open connections need no action — their next report carries
+      // (constitution III). Open connections need no action — their next report carries
       // the same total plus whatever accrued — and the closed ones stay.
       logger.log("error", "meter.report_failed", {
         connections: connections.length,

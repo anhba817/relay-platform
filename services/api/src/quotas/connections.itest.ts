@@ -45,7 +45,7 @@ afterAll(async () => {
 
 /** A fresh environment per test. Every assertion below is scoped to one, which
  * is how a suite sharing a database with every other suite says something true
- * about itself (FR-032). */
+ * about itself (constitution VI). */
 async function environment(): Promise<string> {
   const env = await createEnvironment(db, { name: `conn-${randomUUID()}` });
   return env.id;
@@ -98,7 +98,7 @@ describe("a duration becomes a number (US1)", () => {
     expect(await minutesOf(env)).toBe(7);
   });
 
-  it("counts a socket that lived and died between two reports (SC-021)", async () => {
+  it("counts a socket that lived and died between two reports", async () => {
     // The registry has already forgotten this connection by the time anything
     // could ask about it; the close handler hands its total over instead. One
     // report, one minute, and the socket was never open at a tick.
@@ -130,7 +130,7 @@ describe("a duration becomes a number (US1)", () => {
   });
 });
 
-describe("the month boundary (SC-011)", () => {
+describe("the month boundary", () => {
   it("puts a connection's minutes in the periods they happened in", async () => {
     // One socket, two entries — the gateway split it, because it is the side
     // that knows what time it was.
@@ -247,7 +247,7 @@ describe("the report is unreliable, and the number is not (US2)", () => {
   });
 });
 
-describe("the accounting state is bounded by connections, not minutes (SC-017)", () => {
+describe("the accounting state is bounded by connections, not minutes", () => {
   it("stores the same number of rows for one minute and for sixty", async () => {
     // The naive dedup key is `(connection, minute)`, which is 43.2 million rows
     // a month at a thousand concurrent sockets. This is the assertion that the
@@ -281,7 +281,7 @@ describe("the accounting state is bounded by connections, not minutes (SC-017)",
   });
 });
 
-describe("the figure survives a flush of the counter store (SC-016, FR-026)", () => {
+describe("the figure survives a flush of the counter store (FR-RTL-05)", () => {
   it("reads the same number before and after Redis is emptied", async () => {
     // The property that separates a quota from chapter 3.8's limiter. Connection
     // minutes never touch Redis at all, and this test is what stops that
@@ -338,7 +338,7 @@ describe("the cap brakes the thing it meters (US3, api side)", () => {
     expect(caps.hard).toBe(5);
   });
 
-  it("refuses EVERY connect at a cap of zero (FR-014)", async () => {
+  it("refuses EVERY connect at a cap of zero (FR-RTL-06)", async () => {
     // Zero is not absent. An operator who wrote it meant it.
     const env = await environment();
     await setCap(env, { connection_minutes: { hard: 0 } });
@@ -356,7 +356,7 @@ describe("the cap brakes the thing it meters (US3, api side)", () => {
     expect(await minutesOf(env)).toBe(9);
   });
 
-  it("names the dimension, the figures and the date it resumes (FR-016)", async () => {
+  it("names the dimension, the figures and the date it resumes (FR-RTL-08)", async () => {
     const env = await environment();
     await setCap(env, { connection_minutes: { hard: 3 } });
     await report(env, [[randomUUID(), AUGUST, 3]]);
@@ -375,7 +375,7 @@ describe("the cap brakes the thing it meters (US3, api side)", () => {
     expect(message).not.toContain("sends resume");
   });
 
-  it("restores connecting when the cap is raised, with no restart (SC-008)", async () => {
+  it("restores connecting when the cap is raised, with no restart", async () => {
     const env = await environment();
     await setCap(env, { connection_minutes: { hard: 2 } });
     await report(env, [[randomUUID(), AUGUST, 2]]);
@@ -389,7 +389,7 @@ describe("the cap brakes the thing it meters (US3, api side)", () => {
     ).resolves.toBeTruthy();
   });
 
-  it("restores connecting when the period rolls over (FR-020)", async () => {
+  it("restores connecting when the period rolls over (FR-RTL-06)", async () => {
     const env = await environment();
     await setCap(env, { connection_minutes: { hard: 2 } });
     await report(env, [[randomUUID(), AUGUST, 2]]);
@@ -403,7 +403,7 @@ describe("the cap brakes the thing it meters (US3, api side)", () => {
     ).resolves.toBeTruthy();
   });
 
-  it("keeps accruing past the cap, which is the overshoot (FR-017, FR-019)", async () => {
+  it("keeps accruing past the cap, which is the overshoot (FR-RTL-08, FR-RTL-08)", async () => {
     // Sockets already open stay open and keep being metered, so the figure
     // passes the cap and the bound is how long they live — which nothing in the
     // platform limits. Recorded as behaviour rather than left as a claim.
@@ -426,7 +426,7 @@ describe("the cap brakes the thing it meters (US3, api side)", () => {
     ).resolves.toBeTruthy();
   });
 
-  it("a REST send and a history read both succeed while capped (SC-007)", async () => {
+  it("a REST send and a history read both succeed while capped", async () => {
     // FR-RTL-08's promise, and the reason the connection-minutes cap refuses
     // CONNECTS rather than sends: everything a tenant already has keeps working.
     // No socket is involved in either of these, which is why they live in the
@@ -476,7 +476,7 @@ describe("the cap brakes the thing it meters (US3, api side)", () => {
 // because it goes through `createQuotaRelay`.
 //
 // So the assertions here are about rows this test wrote, by address, and never
-// about a count the drain returned (research R22, FR-032).
+// about a count the drain returned (research R22, constitution VI).
 
 const mailpit = process.env["RELAY_MAILPIT_URL"] ?? "http://localhost:8025";
 
@@ -550,7 +550,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
       .map((m) => Number(/(\d+)%/.exec(m.Subject)?.[1] ?? 0))
       .sort((a, b) => a - b);
 
-  it("sends exactly three emails for connection-minutes (SC-009)", async () => {
+  it("sends exactly three emails for connection-minutes", async () => {
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
     const env = await seed(address);
     await setCap(env, { connection_minutes: { hard: 10 } });
@@ -569,7 +569,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
     expect(got).toHaveLength(3);
   });
 
-  it("notifies both thresholds a single report crossed (FR-023)", async () => {
+  it("notifies both thresholds a single report crossed (FR-RTL-07)", async () => {
     // A cap of 4 and four minutes in one step crosses 50%, 80% AND 100% —
     // 80% of 4 is 3.2, which chapter 3.10 got wrong twice before writing it down.
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
@@ -601,7 +601,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
     expect(await inbox(address, 2, 1_000)).toHaveLength(1);
   });
 
-  it("becomes notifiable again when the period rolls over (FR-022)", async () => {
+  it("becomes notifiable again when the period rolls over (FR-RTL-07)", async () => {
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
     const env = await seed(address);
     await setCap(env, { connection_minutes: { hard: 10 } });
@@ -618,7 +618,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
     expect(await inbox(address, 6)).toHaveLength(6);
   });
 
-  it("a soft threshold with no hard cap emails and refuses nothing (SC-020)", async () => {
+  it("a soft threshold with no hard cap emails and refuses nothing", async () => {
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
     const env = await seed(address);
     await setCap(env, { connection_minutes: { soft: 10 } });
@@ -642,7 +642,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
     expect(body.Text).not.toContain("4008");
   });
 
-  it("names connection-minutes and what actually stops (FR-022)", async () => {
+  it("names connection-minutes and what actually stops (FR-RTL-07)", async () => {
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
     const env = await seed(address);
     await setCap(env, { connection_minutes: { hard: 2 } });

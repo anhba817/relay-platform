@@ -47,7 +47,7 @@ export function createServer(logger?: Logger) {
   //
   // ABSENT BY DEFAULT AND NOT A STARTUP DEPENDENCY. A gateway with no credential
   // serves sockets and meters nothing, and says so once here rather than on
-  // every tick — metering may not be able to refuse a connection (FR-012), and
+  // every tick — metering may not be able to refuse a connection (constitution III), and
   // the loudest version of that rule is that it cannot refuse a boot either.
   const serviceCredential = process.env.RELAY_INTERNAL_CREDENTIAL_GATEWAY;
   if (serviceCredential === undefined) {
@@ -97,7 +97,7 @@ if (import.meta.main) {
     logger.log("info", "listening", { port });
   });
 
-  // A GRACEFUL SHUTDOWN, WHICH THIS SERVICE DID NOT HAVE (research R11, FR-031).
+  // A GRACEFUL SHUTDOWN, WHICH THIS SERVICE DID NOT HAVE (research R11, FR-RTL-05).
   //
   // `serve()` returns a bare `node:http` Server, and nothing here ever called
   // `server.close()` — so the `server.on("close")` handler above, which four

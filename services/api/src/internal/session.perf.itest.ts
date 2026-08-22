@@ -16,7 +16,7 @@ import {
 } from "../db/repository";
 import { mintUserToken } from "../auth/user-token";
 
-// What the cap costs at the door (chapter 3.11, SC-012, FR-025).
+// What the cap costs at the door (chapter 3.11, , NFR-PERF-01).
 //
 // COMMITTED RATHER THAN AD-HOC, because chapter 3.10's T033 measured with a
 // script that lived nowhere, reported regressions of 273% to 411%, and sent two
@@ -76,7 +76,7 @@ describe("the connect path, with a cap to check", () => {
       headers: { authorization: `Bearer ${token}` },
     });
 
-  it("reads the cap with index lookups, not a scan (SC-012)", async () => {
+  it("reads the cap with index lookups, not a scan", async () => {
     await pool.query("UPDATE environments SET quota_config = $1 WHERE id = $2", [
       JSON.stringify({ connection_minutes: { hard: 100_000 } }),
       environmentId,

@@ -111,7 +111,7 @@ describe("POST /internal/usage/connections", () => {
   const minutes = async (environment = environmentId) =>
     (await usageFor(db, environment, AUGUST)).connectionMinutes;
 
-  describe("who may write a bill (FR-011, SC-010)", () => {
+  describe("who may write a bill (NFR-SEC-06)", () => {
     it("accepts the platform credential and says what it credited", async () => {
       const res = await post(oneReport(6), PLATFORM);
       expect(res.status).toBe(200);
@@ -195,7 +195,7 @@ describe("POST /internal/usage/connections", () => {
     });
   });
 
-  describe("the schema is the door (FR-011)", () => {
+  describe("the schema is the door (NFR-SEC-06)", () => {
     it("refuses a period that is not the first of a month", async () => {
       const res = await post(
         { connections: [{ connection_id: randomUUID(), environment_id: environmentId, period: "2026-08-14", minutes: 1 }] },
@@ -226,7 +226,7 @@ describe("POST /internal/usage/connections", () => {
     });
   });
 
-  describe("the api's half of the refusal (US3, FR-016)", () => {
+  describe("the api's half of the refusal (US3, FR-RTL-08)", () => {
     const setCap = (config: unknown) =>
       db
         ? fetch(`${url}/healthz`).then(async () => {

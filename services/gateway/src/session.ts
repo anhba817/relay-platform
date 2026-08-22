@@ -674,7 +674,7 @@ export function attachSessions({
   return {
     registry,
     meter,
-    // ASYNC, because of what it now has to wait for (research R11, FR-031). A
+    // ASYNC, because of what it now has to wait for (research R11, FR-RTL-05). A
     // final report on the way out takes the graceful case's loss to zero and
     // leaves R10's one-interval bound for the case that cannot be helped. A
     // flush that is not awaited is the same non-guarantee one line further down:

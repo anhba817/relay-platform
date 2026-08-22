@@ -345,7 +345,7 @@ describe("the cap at the door (chapter 3.11, US3)", () => {
     api?.stop();
   });
 
-  it("closes 4008 with an error frame naming the resume date (SC-022)", async () => {
+  it("closes 4008 with an error frame naming the resume date", async () => {
     // THE CLIENT'S HALF. The api answers 402; what reaches the browser is the
     // socket's own vocabulary — a code the protocol has declared since chapter
     // 1.3 and nothing has ever sent.
@@ -377,13 +377,13 @@ describe("the cap at the door (chapter 3.11, US3)", () => {
     expect(code).toBe(4008);
   });
 
-  it("opens normally the moment the cap is raised (SC-008)", async () => {
+  it("opens normally the moment the cap is raised", async () => {
     await setCap({ connection_minutes: { hard: 100_000 } });
     const socket = connect(await mintToken());
     expect(await firstFrame(socket, "connection.ack")).toBeTruthy();
   });
 
-  it("leaves a socket opened before the breach open and receiving (SC-006)", async () => {
+  it("leaves a socket opened before the breach open and receiving", async () => {
     // FR-RTL-08's promise, and the reason the overshoot exists at all.
     await setCap({ connection_minutes: { hard: 100_000 } });
     const early = connect(await mintToken());

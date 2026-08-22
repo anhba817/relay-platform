@@ -356,34 +356,42 @@ export async function organisationOf(
   return row?.organisationId ?? null;
 }
 
-/** May this environment open another connection? (chapter 3.11, FR-015.)
+/** Everything the connect path needs, in ONE round trip (chapter 3.11,
+ * FR-RTL-05, FR-RTL-06).
  *
- * ENFORCED AT THE DOOR, because that is the operation this dimension meters.
- * The messages cap refuses sends; the connection-minutes cap refuses connects. A
- * cap that only refused sends would leave an idle listener burning the metered
- * resource with nothing to stop it, which is a cap that does not bound the thing
- * it counts.
+ * ENFORCED AT THE DOOR, because that is the operation this dimension meters. The
+ * messages cap refuses sends; the connection-minutes cap refuses connects. A cap
+ * that only refused sends would leave an idle listener burning the metered
+ * resource with nothing to stop it.
  *
- * ONE JOINED READ, and `environmentLimits` is deliberately NOT extended to carry
- * it. Chapter 3.10's second analysis pass refused exactly that extension because
- * `session.controller.ts` calls it and every WebSocket connect would then pay for
- * a usage join — the finding was right, and the answer is a second call on the
- * same request rather than a heavier version of the first.
+ * ONE QUERY, AND THE PLAN SAID TWO. Research R7 chose "a second call on the same
+ * request rather than a heavier version of the first", because chapter 3.10's H2
+ * had refused to put a usage join inside `environmentLimits`. H2 is still right
+ * and `environmentLimits` is untouched — its OTHER caller is
+ * `rate-limit.middleware.ts`, which runs on every `/v1` request and must not pay
+ * for a join it never reads.
  *
- * THE UNCONFIGURED TENANT PAYS ONE INDEXED READ AND LEAVES. Measured before this
- * chapter changed anything: the connect path costs 6.807 ms at one-way
- * concurrency, of which 0.053 ms is database — three index scans. The room is
- * there; T065 checks that this read stays in it.
+ * But two calls cost what a join would have, at concurrency, and it was measured:
+ * connect latency at 32-way went from 15.0ms to 17.6ms across four runs clustered
+ * inside 0.7ms, and folding them back recovered 0.8ms of it. The mechanism is the
+ * one chapter 3.10's T033 already recorded — an extra round trip holds a pooled
+ * connection for the duration, and above the pool size that queues.
  *
- * RETURNS the usage and caps when it does NOT refuse, because the caller that
- * needs the refusal also needs the figures for the crossing rows above it. */
-export async function assertConnectionsWithinQuota(
+ * THE UNCONFIGURED TENANT still pays one indexed read and leaves. */
+export async function connectPolicy(
   db: Db,
   environmentId: string,
   period: string,
-): Promise<{ used: number; caps: Caps }> {
+): Promise<{
+  limits: Record<LimitedOperation, number>;
+  used: number;
+  caps: Caps;
+}> {
   const [row] = await db
     .select({
+      rest: environments.restLimitPerMinute,
+      send: environments.sendLimitPerMinute,
+      connect: environments.connectLimitPerMinute,
       quotaConfig: environments.quotaConfig,
       connectionMinutes: usagePeriods.connectionMinutes,
     })
@@ -397,23 +405,36 @@ export async function assertConnectionsWithinQuota(
     )
     .where(eq(environments.id, environmentId));
 
+  const limits = {
+    rest: row?.rest ?? DEFAULT_LIMITS.rest,
+    send: row?.send ?? DEFAULT_LIMITS.send,
+    connect: row?.connect ?? DEFAULT_LIMITS.connect,
+  };
   const caps = capsFor(row?.quotaConfig, "connection_minutes").caps;
   const used = row?.connectionMinutes ?? 0;
 
-  // Nothing configured at all — no cap and no threshold — and the whole block is
-  // skipped. The unconfigured tenant is the common case and this is what it pays.
-  if (caps.hard === null) return { used, caps };
-  if (used < caps.hard) return { used, caps };
-
-  throw new QuotaExceededError({
-    dimension: "connection_minutes",
-    usage: used,
-    quota: caps.hard,
-    period,
-  });
+  if (caps.hard !== null && used >= caps.hard) {
+    throw new QuotaExceededError({
+      dimension: "connection_minutes",
+      usage: used,
+      quota: caps.hard,
+      period,
+    });
+  }
+  return { limits, used, caps };
 }
 
-/** Credit a batch of usage reports (chapter 3.11, FR-005/FR-006/FR-009).
+/** The same verdict without the limits, for callers that need only the answer. */
+export async function assertConnectionsWithinQuota(
+  db: Db,
+  environmentId: string,
+  period: string,
+): Promise<{ used: number; caps: Caps }> {
+  const { used, caps } = await connectPolicy(db, environmentId, period);
+  return { used, caps };
+}
+
+/** Credit a batch of usage reports (chapter 3.11, FR-RTL-05/FR-RTL-05/FR-RTL-05).
  *
  * A STANDALONE FUNCTION, NOT A `Repository` METHOD, and the reason is the same
  * one `usageFor` below gives: the caller is the platform, not a tenant.
@@ -538,7 +559,7 @@ export async function creditConnectionMinutes(
     }
 
     // THE CROSSINGS, IN THE SAME TRANSACTION AS THE CREDIT (chapter 3.11,
-    // FR-022/FR-023). The report knows the figure before and after, so it knows
+    // FR-RTL-07/FR-RTL-07). The report knows the figure before and after, so it knows
     // which thresholds it crossed — which is why this chapter has no periodic
     // sweep either, for the second chapter running (research R5).
     //

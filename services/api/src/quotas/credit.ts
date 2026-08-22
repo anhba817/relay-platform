@@ -1,4 +1,4 @@
-/** What a usage report is worth, in one function (chapter 3.11, FR-006/FR-007).
+/** What a usage report is worth, in one function (chapter 3.11, FR-RTL-05/FR-RTL-05).
  *
  * A report says what a connection has consumed IN TOTAL in a period, not what it
  * consumed since the last report. Everything the protocol gets from that
