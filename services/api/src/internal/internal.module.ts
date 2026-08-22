@@ -14,6 +14,7 @@ import { BackfillController } from "./backfill.controller";
 import { InternalController } from "./internal.controller";
 import { DispatchController } from "./dispatch.controller";
 import { SessionController } from "./session.controller";
+import { UsageController } from "./usage.controller";
 
 // The internal routes reuse MessagesModule's providers wholesale — the
 // request-scoped Repository, the guard, the service. One write path, two
@@ -33,6 +34,11 @@ import { SessionController } from "./session.controller";
     BackfillController,
     SessionController,
     DispatchController,
+    // Chapter 3.11. Registered HERE and not in `app.module.ts`, which carries
+    // only `HealthController` and already imports this module — a controller
+    // nobody registers is a route that does not exist, and chapter 3.10's third
+    // analysis pass found exactly that.
+    UsageController,
   ],
   providers: [
     {

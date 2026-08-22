@@ -66,7 +66,11 @@ export function createServer(logger?: Logger) {
     limits,
   });
   server.on("close", () => {
-    sessions.close();
+    // `sessions.close()` became async in chapter 3.11 — it flushes a final usage
+    // report. Voided HERE and awaited in the signal handler below, because
+    // `server.on("close")` has nowhere to await and the process is not leaving
+    // on this path anyway.
+    void sessions.close();
     void fanout.close();
     void limits.close();
   });

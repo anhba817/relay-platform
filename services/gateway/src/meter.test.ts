@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { bucketsFor, minuteOf, periodOf } from "./meter.js";
+import {
+  bucketsFor,
+  createMeter,
+  MAX_RETAINED_CLOSED,
+  minuteOf,
+  periodOf,
+} from "./meter.js";
 
 const at = (iso: string) => new Date(iso);
 const total = (b: Record<string, number>) =>
@@ -122,5 +128,200 @@ describe("the two calendars agree (drift test, R18)", () => {
       expect(periodOf(at(iso))).toBe(period);
       expect(minuteOf(at(iso))).toBe(minute);
     }
+  });
+});
+
+describe("createMeter — what it holds, and what it does not", () => {
+  const CONNECTION = {
+    id: "0f9c8b7a-6d5e-4c3b-8a19-8f7e6d5c4b3a",
+    environmentId: "8b21c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    openedAt: at("2026-08-22T10:00:00Z"),
+  };
+
+  const silent = { log: () => undefined };
+
+  function harness(
+    reportUsage: (body: unknown) => Promise<unknown>,
+    connections: unknown[] = [],
+  ) {
+    const sent: unknown[] = [];
+    const meter = createMeter({
+      api: {
+        reportUsage: async (body: unknown) => {
+          sent.push(body);
+          return (await reportUsage(body)) as never;
+        },
+      } as never,
+      registry: { all: () => connections } as never,
+      logger: silent as never,
+      intervalMs: 1_000_000, // the tests drive `reportOnce` themselves
+    });
+    return { meter, sent };
+  }
+
+  it("holds NOTHING for a connection that is still open", async () => {
+    // R3's claim, and the reason there is no outbox here: an open connection's
+    // next report carries the same total plus whatever accrued, so a failed
+    // report needs no memory at all.
+    const { meter } = harness(async () => {
+      throw new Error("api down");
+    }, [CONNECTION]);
+
+    await meter.reportOnce(at("2026-08-22T10:05:00Z"));
+    expect(meter.retained()).toBe(0);
+    meter.stop();
+  });
+
+  it("holds a CLOSED connection until a report is accepted", async () => {
+    // And this is where R3 stops applying: a closed connection has no next
+    // report to repair a lost one.
+    let up = false;
+    const { meter, sent } = harness(async () => {
+      if (!up) throw new Error("api down");
+      return { credited: 6 };
+    });
+
+    meter.closed(CONNECTION as never, at("2026-08-22T10:05:00Z"));
+    expect(meter.retained()).toBe(1);
+
+    await meter.reportOnce(at("2026-08-22T10:05:00Z"));
+    expect(meter.retained()).toBe(1); // still owed
+
+    up = true;
+    await meter.reportOnce(at("2026-08-22T10:06:00Z"));
+    expect(meter.retained()).toBe(0);
+    expect(sent).toHaveLength(2);
+    meter.stop();
+  });
+
+  it("reports a closed connection's minutes, not zero", async () => {
+    const { meter, sent } = harness(async () => ({ credited: 6 }));
+    meter.closed(CONNECTION as never, at("2026-08-22T10:05:00Z"));
+    await meter.reportOnce(at("2026-08-22T10:05:00Z"));
+
+    const body = sent[0] as { connections: Array<{ minutes: number }> };
+    expect(body.connections[0]!.minutes).toBe(6); // 10:00 through 10:05
+    meter.stop();
+  });
+
+  it("keeps both halves of a connection that spanned a month boundary", async () => {
+    const { meter } = harness(async () => {
+      throw new Error("api down");
+    });
+    meter.closed(
+      { ...CONNECTION, openedAt: at("2026-08-31T23:58:00Z") } as never,
+      at("2026-09-01T00:01:00Z"),
+    );
+    // Two periods, two retained entries, neither overwriting the other.
+    expect(meter.retained()).toBe(2);
+    meter.stop();
+  });
+
+  it("counts a discard at the cap rather than dropping it silently", async () => {
+    const { meter } = harness(async () => {
+      throw new Error("api down");
+    });
+    for (let i = 0; i < MAX_RETAINED_CLOSED + 5; i++) {
+      meter.closed(
+        {
+          ...CONNECTION,
+          id: `0f9c8b7a-6d5e-4c3b-8a19-${String(i).padStart(12, "0")}`,
+        } as never,
+        at("2026-08-22T10:01:00Z"),
+      );
+    }
+    expect(meter.retained()).toBe(MAX_RETAINED_CLOSED);
+    expect(meter.dropped()).toBe(5);
+    meter.stop();
+  });
+
+  it("sends nothing when there is nothing owed", async () => {
+    const { meter, sent } = harness(async () => ({ credited: 0 }));
+    await meter.reportOnce(at("2026-08-22T10:00:00Z"));
+    expect(sent).toHaveLength(0);
+    meter.stop();
+  });
+
+  it("drops what it holds when there is no credential to report with", async () => {
+    // Null is "not configured", not "accepted". Holding these would grow without
+    // bound in a gateway that will never meter.
+    const { meter } = harness(async () => null);
+    meter.closed(CONNECTION as never, at("2026-08-22T10:05:00Z"));
+    await meter.reportOnce(at("2026-08-22T10:05:00Z"));
+    expect(meter.retained()).toBe(0);
+    meter.stop();
+  });
+});
+
+// SC-018 / FR-004. The chapter 2.1 lint ban, asserted rather than assumed.
+//
+// This chapter is the hardest case that ban has faced: the gateway is the only
+// process that can see a connection, and the shortest path from here to a
+// recorded minute is a `pg` import. It is not taken, and the reason it is not
+// taken has to outlive the paragraph that says so — `registry.ts` states the
+// property in prose and eslint enforces it, and this makes it something a test
+// run reports on.
+//
+// GREP RATHER THAN BEHAVIOUR, because the claim is about ABSENCE: no input makes
+// this service open a connection to Postgres, and the only way to check "no
+// input" is to read what the source can do. Chapter 3.8's 4008 test is the
+// precedent, including its self-check.
+describe("the gateway still owns no database (SC-018, ADR-05)", () => {
+  it("imports no database client anywhere in its source", async () => {
+    const { readFile, readdir } = await import("node:fs/promises");
+    const here = new URL(".", import.meta.url);
+    const files = (await readdir(here)).filter(
+      (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".itest.ts"),
+    );
+    expect(files.length).toBeGreaterThan(5);
+
+    const banned = /^\s*import\s[^;]*\sfrom\s+["'](pg|drizzle-orm|drizzle-orm\/.*)["']/m;
+    for (const file of files) {
+      const source = await readFile(new URL(file, here), "utf8");
+      expect(source, `${file} imports a database client`).not.toMatch(banned);
+    }
+
+    // A grep that can only pass is not a check.
+    expect('import pg from "pg";').toMatch(banned);
+    expect('import { eq } from "drizzle-orm";').toMatch(banned);
+  });
+});
+
+describe("the timer, and the clock it defaults to", () => {
+  it("reports on its own interval without being asked", async () => {
+    // Line-for-line the smallest test in this file and the only one that proves
+    // the meter is a background thing at all. Everything above drives
+    // `reportOnce` directly, which is right for arithmetic and would leave the
+    // one line that makes it periodic unexercised.
+    const sent: unknown[] = [];
+    const meter = createMeter({
+      api: {
+        reportUsage: async (body: unknown) => {
+          sent.push(body);
+          return { credited: 1 };
+        },
+      } as never,
+      registry: {
+        all: () => [
+          {
+            id: "0f9c8b7a-6d5e-4c3b-8a19-8f7e6d5c4b3a",
+            environmentId: "8b21c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            openedAt: new Date(Date.now() - 120_000),
+          },
+        ],
+      } as never,
+      logger: { log: () => undefined } as never,
+      intervalMs: 5,
+      // `now` deliberately omitted: this is also the test that the default
+      // clock — the one production uses — is wired to the timer.
+    });
+
+    await new Promise((r) => setTimeout(r, 40));
+    meter.stop();
+    expect(sent.length).toBeGreaterThan(0);
+
+    const after = sent.length;
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sent.length).toBe(after); // stop() means stop
   });
 });

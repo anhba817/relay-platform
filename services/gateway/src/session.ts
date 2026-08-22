@@ -15,6 +15,7 @@ import { ApiError, type ApiClient } from "./api-client.js";
 import { authenticate, type Identity } from "./auth.js";
 import type { Fanout } from "./fanout.js";
 import type { Decision, GatewayLimits } from "./limits.js";
+import { createMeter, METER_INTERVAL_MS, type Meter } from "./meter.js";
 import { Registry, type Connection } from "./registry.js";
 import {
   MAX_BUFFERED_FRAMES,
@@ -128,6 +129,12 @@ export interface SessionServerOptions {
    * uncounted one. `main.ts` always supplies it, so the optionality is a test
    * affordance rather than a deployment mode. */
   limits?: GatewayLimits;
+  /** Chapter 3.11. Optional for the reason `limits` and `fanout` are: 2.5's
+   * tests and a single-process dev run have no api credential, and a socket
+   * server that refused to start without one would be a worse default than an
+   * unmetered one. `main.ts` always supplies the interval; the meter itself is
+   * built here so its timer has the same owner as the heartbeat's. */
+  meterIntervalMs?: number;
 }
 
 export function attachSessions({
@@ -138,8 +145,20 @@ export function attachSessions({
   pingIntervalMs = PING_INTERVAL_MS,
   resumeDeadlineMs = SUBSCRIBE_DEADLINE_MS,
   limits,
-}: SessionServerOptions): { registry: Registry; close: () => void } {
+  meterIntervalMs = METER_INTERVAL_MS,
+}: SessionServerOptions): {
+  registry: Registry;
+  meter: Meter;
+  close: () => Promise<void>;
+} {
   const registry = new Registry();
+  // Chapter 3.11. A second timer beside the heartbeat, not a second job for it.
+  const meter: Meter = createMeter({
+    api,
+    registry,
+    logger,
+    intervalMs: meterIntervalMs,
+  });
 
   /** A frame arriving from the fabric — born on this instance or another,
    * indistinguishable by design — becomes message.created for every local
@@ -279,6 +298,12 @@ export function attachSessions({
       // succeeds, and leaves it null when it degrades.
       marks: null,
       sendLimit,
+      // Chapter 3.11. Stamped BEFORE the resume and before the ack, because the
+      // socket is already open and already costing a minute — a connection that
+      // started being metered only once it was fully established would give a
+      // reconnect storm a free window on every attempt.
+      openedAt: new Date(),
+      environmentId: identity.environmentId,
     };
 
     registry.add(connection);
@@ -307,6 +332,16 @@ export function attachSessions({
     });
     socket.on("message", (raw) => void handle(connection, raw.toString()));
     socket.on("close", (code) => {
+      // Chapter 3.11, and the ORDER MATTERS. The meter is told first, because
+      // the line below removes this connection from the registry the meter walks
+      // — and a socket that opened and closed between two reports would
+      // otherwise be counted zero. That is not a rounding error: it is the one
+      // thing the wall-clock-minute unit was chosen to charge (research R19).
+      //
+      // Handing over totals rather than reporting them. This handler is already
+      // documented as the last place that should throw, and a mass disconnect
+      // would turn one event into a burst of HTTP requests.
+      meter?.closed(connection, new Date());
       registry.remove(connection.id);
       // Releasing a subscription can fail — a broker that went away, or a
       // fabric already closed while sockets were still draining — and a
@@ -617,8 +652,16 @@ export function attachSessions({
 
   return {
     registry,
-    close: () => {
+    meter,
+    // ASYNC, because of what it now has to wait for (research R11, FR-031). A
+    // final report on the way out takes the graceful case's loss to zero and
+    // leaves R10's one-interval bound for the case that cannot be helped. A
+    // flush that is not awaited is the same non-guarantee one line further down:
+    // the process leaves before the request does.
+    close: async () => {
       clearInterval(heartbeat);
+      meter.stop();
+      await meter.reportOnce(new Date());
       wss.close();
     },
   };

@@ -57,6 +57,19 @@ export interface Connection {
    * the hot path of the thing the limit protects. Beside `marks` for the same
    * reason — it describes one socket and dies with it. */
   sendLimit: number;
+  /** Chapter 3.11. When this socket opened, and which environment owes for it.
+   *
+   * The meter needs both and the registry is where they belong, beside `marks`
+   * and `sendLimit` and for the same reason: this describes one socket and dies
+   * with it. Nothing here survives the instance, and nothing needs to — a
+   * connection lives on exactly one gateway and its id is minted here.
+   *
+   * `openedAt` RATHER THAN A RUNNING TOTAL. The unit is a wall-clock minute
+   * bucket, so what a connection owes is a function of when it opened and what
+   * time it is now; keeping a counter instead would need a tick to increment it
+   * and would drift the moment one was missed. */
+  openedAt: Date;
+  environmentId: string;
 }
 
 export class Registry {

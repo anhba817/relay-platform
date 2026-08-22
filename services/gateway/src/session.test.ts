@@ -188,7 +188,7 @@ async function boot(
   return {
     url: `ws://127.0.0.1:${port}/v1/ws`,
     close: async () => {
-      sessions.close();
+      await sessions.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };

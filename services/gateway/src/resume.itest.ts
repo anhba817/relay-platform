@@ -78,7 +78,7 @@ async function boot(api: Omit<ApiClient, "reportUsage">): Promise<Harness> {
   return {
     url: `ws://127.0.0.1:${port}/v1/ws`,
     close: async () => {
-      sessions.close();
+      await sessions.close();
       await fanout.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },

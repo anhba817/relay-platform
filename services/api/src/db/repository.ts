@@ -29,6 +29,7 @@ import {
   outbox,
   quotaNotifications,
   usageActiveUsers,
+  usageConnections,
   usagePeriods,
   users,
   webhookDeadLetters,
@@ -39,6 +40,7 @@ import {
 import { messageCreatedEvent } from "../outbox/event";
 import { capsFor, type Caps } from "../quotas/config";
 import { thresholdsCrossed } from "../quotas/policy";
+import { creditFor, highWaterMark } from "../quotas/credit";
 import { QuotaExceededError, type Dimension } from "../quotas/quota.error";
 import { periodOf } from "../quotas/period";
 import { nextAttemptAt } from "../webhooks/schedule";
@@ -284,6 +286,113 @@ export async function environmentLimits(
   };
 }
 
+/** Credit a batch of usage reports (chapter 3.11, FR-005/FR-006/FR-009).
+ *
+ * A STANDALONE FUNCTION, NOT A `Repository` METHOD, and the reason is the same
+ * one `usageFor` below gives: the caller is the platform, not a tenant.
+ * `Repository` closes over an `environmentId` by construction — that is
+ * constitution I expressed as a type — and a platform principal deliberately
+ * carries none. `expandEventToDeliveries` and `recordAttemptOutcome` set this
+ * precedent for the dispatcher's routes; this is the gateway's.
+ *
+ * WHAT MAKES A REPLAY FREE. A report says what a connection has consumed IN
+ * TOTAL, so the credit is `max(0, reported - credited)` and the stored figure is
+ * `max(reported, credited)`. Both live in `quotas/credit.ts`, pure and tested
+ * without a database, because those two lines are the whole protocol.
+ *
+ * THE LOCK CHAPTER 3.10 WANTED AND COULD NOT HAVE. Crediting is read-then-write,
+ * so it takes `SELECT … FOR UPDATE` on the accounting row. 3.10 needed the same
+ * lock on the usage row and hit `FOR UPDATE cannot be applied to the nullable
+ * side of an outer join`, because its caps and usage had become one joined read.
+ * Here the lock is a single table by primary key and Postgres allows it — the
+ * same instinct, in the one place it is permitted.
+ *
+ * A CONNECTION MAY NOT CHANGE ENVIRONMENT. The row's `environment_id` is written
+ * by the first report and never updated; a later report naming a different one
+ * throws rather than reconciling. A connection moving tenants is either a bug or
+ * an attempt, and constitution I makes that a correctness question. */
+export class ConnectionEnvironmentConflictError extends Error {
+  readonly connectionId: string;
+
+  constructor(connectionId: string) {
+    super(`connection ${connectionId} was first reported for another environment`);
+    this.name = "ConnectionEnvironmentConflictError";
+    this.connectionId = connectionId;
+  }
+}
+
+export async function creditConnectionMinutes(
+  db: Db,
+  entries: ReadonlyArray<{
+    connectionId: string;
+    environmentId: string;
+    period: string;
+    minutes: number;
+  }>,
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    let credited = 0;
+    for (const entry of entries) {
+      const [existing] = await tx
+        .select({
+          minutes: usageConnections.minutes,
+          environmentId: usageConnections.environmentId,
+        })
+        .from(usageConnections)
+        .where(
+          and(
+            eq(usageConnections.connectionId, entry.connectionId),
+            eq(usageConnections.period, entry.period),
+          ),
+        )
+        .for("update");
+
+      if (existing && existing.environmentId !== entry.environmentId) {
+        throw new ConnectionEnvironmentConflictError(entry.connectionId);
+      }
+
+      // A report naming a connection nothing has seen is accepted as that
+      // connection's FIRST. The api is never told when a connection opens — the
+      // first it hears of any of them is a report — so "unknown" and "first" are
+      // the same state and there is nothing to tell them apart with (R20).
+      const already = existing?.minutes ?? 0;
+      const delta = creditFor(entry.minutes, already);
+      const stored = highWaterMark(entry.minutes, already);
+
+      await tx
+        .insert(usageConnections)
+        .values({
+          connectionId: entry.connectionId,
+          period: entry.period,
+          environmentId: entry.environmentId,
+          minutes: stored,
+        })
+        .onConflictDoUpdate({
+          target: [usageConnections.connectionId, usageConnections.period],
+          set: { minutes: stored, lastSeenAt: new Date() },
+        });
+
+      if (delta === 0) continue;
+      credited += delta;
+
+      await tx
+        .insert(usagePeriods)
+        .values({
+          environmentId: entry.environmentId,
+          period: entry.period,
+          connectionMinutes: delta,
+        })
+        .onConflictDoUpdate({
+          target: [usagePeriods.environmentId, usagePeriods.period],
+          set: {
+            connectionMinutes: sql`${usagePeriods.connectionMinutes} + ${delta}`,
+          },
+        });
+    }
+    return credited;
+  });
+}
+
 /** What an environment has consumed in a period, and what it is allowed
  * (chapter 3.10, FR-RTL-05).
  *
@@ -308,12 +417,19 @@ export async function usageFor(
   period: string;
   messagesSent: number;
   activeUsers: number;
+  connectionMinutes: number;
   messageQuota: number | null;
   activeUserQuota: number | null;
+  connectionMinuteQuota: number | null;
 }> {
   const [row] = await db
     .select({
       messagesSent: usagePeriods.messagesSent,
+      // Chapter 3.11's figure, read from the ROLL-UP and never summed over
+      // `usage_connections` — that sum is proportional to the tenant's
+      // connections for the month, which is chapter 3.10's R1 argument in a new
+      // costume.
+      connectionMinutes: usagePeriods.connectionMinutes,
       quotaConfig: environments.quotaConfig,
     })
     .from(environments)
@@ -340,8 +456,11 @@ export async function usageFor(
     period,
     messagesSent: row?.messagesSent ?? 0,
     activeUsers: users?.n ?? 0,
+    connectionMinutes: row?.connectionMinutes ?? 0,
     messageQuota: capsFor(row?.quotaConfig, "messages").caps.hard,
     activeUserQuota: capsFor(row?.quotaConfig, "active_users").caps.hard,
+    connectionMinuteQuota: capsFor(row?.quotaConfig, "connection_minutes").caps
+      .hard,
   };
 }
 

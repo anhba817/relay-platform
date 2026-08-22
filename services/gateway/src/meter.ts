@@ -1,3 +1,9 @@
+import type { InternalUsageReportEntry } from "@relay/protocol";
+import type { Logger } from "@relay/service-kit";
+
+import type { ApiClient } from "./api-client.js";
+import type { Connection, Registry } from "./registry.js";
+
 // Connection-minutes, from the service that cannot write them (chapter 3.11).
 //
 // The api can count messages and distinct users because both are already rows.
@@ -72,4 +78,152 @@ export function bucketsFor(openedAt: Date, at: Date): Record<string, number> {
     totals[period] = (totals[period] ?? 0) + 1;
   }
   return totals;
+}
+
+// --- the timer half -------------------------------------------------------
+
+/** 60 seconds, to match the unit. A SECOND TIMER RATHER THAN THE HEARTBEAT'S:
+ * `PING_INTERVAL_MS` is 30s because EIR-WS-04 wants a dead socket noticed
+ * promptly, and billing cadence and liveness cadence are different requirements.
+ * One number answering to both means the next change to either argues with the
+ * other (research R10). */
+export const METER_INTERVAL_MS = 60_000;
+
+/** How many closed connections to hold before dropping the oldest.
+ *
+ * Bounded by closes since the last ACCEPTED report, not by time. At the default
+ * interval a gateway would have to close four thousand sockets inside one minute
+ * with the api unreachable to reach this, which is a mass disconnect during an
+ * outage — and dropping the oldest under-counts, which is the same direction as
+ * every other loss in this design and the opposite of billing for a socket
+ * nobody holds. */
+export const MAX_RETAINED_CLOSED = 4_000;
+
+export interface Meter {
+  /** A socket closed. Its final totals are handed over here, because the
+   * registry has already forgotten it by the time anything else could ask
+   * (research R19). */
+  closed(connection: Connection, at: Date): void;
+  /** Send one report for everything currently owed. Exposed for the timer, for
+   * the shutdown flush, and for tests that drive their own clock. */
+  reportOnce(at: Date): Promise<void>;
+  /** How many closed connections are waiting for an accepted report. Zero for
+   * open ones, always — they need no retention, because their next report
+   * carries the same total plus whatever accrued. */
+  retained(): number;
+  /** How many entries were discarded at the cap. Counted rather than silent
+   * (FR-029). */
+  dropped(): number;
+  stop(): void;
+}
+
+export interface MeterOptions {
+  api: ApiClient;
+  registry: Registry;
+  logger: Logger;
+  intervalMs?: number;
+  now?: () => Date;
+}
+
+/** The meter (chapter 3.11).
+ *
+ * WHAT IT SENDS IS A TOTAL, NOT AN INCREMENT, and everything else here follows
+ * from that. A lost report is repaired by the next one; a repeated one credits
+ * nothing; a report that cannot be delivered is DROPPED rather than queued. The
+ * gateway holds no outbox — which is the right amount of durable state for a
+ * service designed to hold none (research R3).
+ *
+ * WITH ONE EXCEPTION, AND IT IS THE HONEST HALF OF THAT CLAIM. A connection that
+ * has CLOSED has no next report to repair a lost one, so its final total is
+ * retained until a report carrying it is accepted. R3's reasoning holds for open
+ * connections and stops exactly here. */
+export function createMeter({
+  api,
+  registry,
+  logger,
+  intervalMs = METER_INTERVAL_MS,
+  now = () => new Date(),
+}: MeterOptions): Meter {
+  /** Keyed by `connection_id|period`, so a socket that spanned a month boundary
+   * retains both of its entries and neither overwrites the other. */
+  const closedEntries = new Map<string, InternalUsageReportEntry>();
+  let discarded = 0;
+
+  function entriesFor(
+    connection: Connection,
+    at: Date,
+  ): InternalUsageReportEntry[] {
+    return Object.entries(bucketsFor(connection.openedAt, at)).map(
+      ([period, minutes]) => ({
+        connection_id: connection.id,
+        environment_id: connection.environmentId,
+        period,
+        minutes,
+      }),
+    );
+  }
+
+  function closed(connection: Connection, at: Date): void {
+    for (const entry of entriesFor(connection, at)) {
+      if (
+        closedEntries.size >= MAX_RETAINED_CLOSED &&
+        !closedEntries.has(`${entry.connection_id}|${entry.period}`)
+      ) {
+        // Oldest first — a Map iterates in insertion order, and the oldest
+        // entry is the one whose minutes are least likely to still matter.
+        const oldest = closedEntries.keys().next().value;
+        if (oldest !== undefined) closedEntries.delete(oldest);
+        discarded += 1;
+        logger.log("error", "meter.retention_overflow", {
+          discarded,
+          retained: closedEntries.size,
+        });
+      }
+      closedEntries.set(`${entry.connection_id}|${entry.period}`, entry);
+    }
+  }
+
+  async function reportOnce(at: Date): Promise<void> {
+    const open = registry.all().flatMap((c) => entriesFor(c, at));
+    const closedNow = [...closedEntries.values()];
+    const connections = [...closedNow, ...open];
+    if (connections.length === 0) return;
+
+    try {
+      const answer = await api.reportUsage({ connections });
+      // Null means no credential is configured, which is not an acceptance —
+      // holding the closed entries would grow without bound in a gateway that
+      // will never meter, so they go.
+      if (answer === null) {
+        closedEntries.clear();
+        return;
+      }
+      // ACCEPTED. Only now do the closed ones go: their minutes are recorded and
+      // nothing will carry them again.
+      for (const entry of closedNow) {
+        closedEntries.delete(`${entry.connection_id}|${entry.period}`);
+      }
+    } catch (error) {
+      // A failed report closes nothing, refuses nothing, and fails nothing
+      // (FR-012). Open connections need no action — their next report carries
+      // the same total plus whatever accrued — and the closed ones stay.
+      logger.log("error", "meter.report_failed", {
+        connections: connections.length,
+        retained: closedEntries.size,
+        error: String(error),
+      });
+    }
+  }
+
+  const timer = setInterval(() => {
+    void reportOnce(now());
+  }, intervalMs);
+
+  return {
+    closed,
+    reportOnce,
+    retained: () => closedEntries.size,
+    dropped: () => discarded,
+    stop: () => clearInterval(timer),
+  };
 }
