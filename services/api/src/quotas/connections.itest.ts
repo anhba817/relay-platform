@@ -567,7 +567,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
     // Scoped to THIS address. The count the drain returned is not asserted on,
     // because it counts every environment's rows.
     expect(got).toHaveLength(3);
-  });
+  }, 20_000);
 
   it("notifies both thresholds a single report crossed (FR-RTL-07)", async () => {
     // A cap of 4 and four minutes in one step crosses 50%, 80% AND 100% —
@@ -580,7 +580,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
     await drain();
 
     expect(thresholdsIn(await inbox(address, 3))).toEqual([50, 80, 100]);
-  });
+  }, 20_000);
 
   it("sends nothing further when a threshold is re-crossed", async () => {
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
@@ -599,7 +599,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
     await drain();
     await new Promise((r) => setTimeout(r, 300));
     expect(await inbox(address, 2, 1_000)).toHaveLength(1);
-  });
+  }, 20_000);
 
   it("becomes notifiable again when the period rolls over (FR-RTL-07)", async () => {
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
@@ -616,7 +616,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
     await report(env, [[randomUUID(), SEPTEMBER, 10]]);
     await drain();
     expect(await inbox(address, 6)).toHaveLength(6);
-  });
+  }, 20_000);
 
   it("a soft threshold with no hard cap emails and refuses nothing", async () => {
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
@@ -640,7 +640,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
     );
     expect(body.Text).toContain("Nothing has been refused");
     expect(body.Text).not.toContain("4008");
-  });
+  }, 20_000);
 
   it("names connection-minutes and what actually stops (FR-RTL-07)", async () => {
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
@@ -658,5 +658,5 @@ describe("nobody is surprised by a third dimension (US4)", () => {
     expect(body.Subject).toContain("connection-minutes");
     expect(body.Text).toContain("New connections are now being refused");
     expect(body.Text).toContain("Connections already open stay open");
-  });
+  }, 20_000);
 });

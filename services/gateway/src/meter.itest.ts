@@ -92,6 +92,25 @@ describe("a signal, and what it does to a bill", () => {
       env: {
         ...process.env,
         PORT: String(apiPort),
+        // ITS OWN FAILED-AUTHENTICATION KEYSPACE, and the twenty-run battery is
+        // what found this. Chapter 3.8's auth limiter counts failures per SOURCE
+        // ADDRESS in Redis, which the whole lane shares, and the allowance is ten
+        // a minute. The last test in this file runs a gateway whose report
+        // credential the api does not know — deliberately — and at a 300ms
+        // interval that is roughly twenty failed authentications a minute from
+        // 127.0.0.1.
+        //
+        // The address then goes over threshold and `CredentialGuard` starts
+        // answering 429 to EVERYBODY, including chapter 3.2's expired-token test
+        // three suites away, which expects 401 and reports
+        // `expected 'internal_error' to be 'unauthorized'`. That is this project's
+        // recurring fault wearing a new hat: a test asserting a local fact while
+        // a neighbour spends a global budget.
+        //
+        // `RELAY_AUTH_KEY_PREFIX` already exists for exactly this and is already
+        // in turbo's env list. One prefix per api child, and the budget is this
+        // file's own.
+        RELAY_AUTH_KEY_PREFIX: `rlauth-meter-${randomUUID().slice(0, 8)}`,
         RELAY_OUTBOX_RELAY: "off",
         RELAY_NOTIFICATION_RELAY: "off",
         RELAY_DELIVERY_RELAY: "off",

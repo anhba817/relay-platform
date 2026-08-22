@@ -86,10 +86,28 @@ async function waitForHealth(url: string): Promise<void> {
   }
 }
 
-/** Chapter 3.11 made this take a port. Two describes in this file each need an
- * api of their own, and the fixed 4123 below meant the second one silently
- * failed to bind and every test after it died on `fetch failed`. */
-async function startApi(port = Number(process.env.RELAY_SESSION_ITEST_API_PORT ?? 4123)): Promise<ApiUnderTest> {
+/** A FRESH PORT PER CALL, and chapter 3.11 had to learn why twice.
+ *
+ * This used to bind a fixed 4123. Two things go wrong with a fixed port and both
+ * of them look like a broken feature rather than a broken fixture:
+ *
+ *   - `limits.itest.ts` binds 4124 and vitest runs these files in PARALLEL, so a
+ *     second describe here that picked 4124 raced it;
+ *   - and back to back, the previous run's child can still hold the port. The
+ *     new child exits on EADDRINUSE, `waitForHealth` gets a 200 from the OLD
+ *     api — a different environment, a different signing secret — and every
+ *     token this run minted is refused by an api that has never heard of it.
+ *
+ * The symptoms are `fetch failed`, `expected 1011 to be 4001`, and
+ * `expected 'internal_error' to be 'unauthorized'`: three different assertions,
+ * one fixture. `meter.itest.ts` already picks a random high port for exactly
+ * this, and this now does the same. */
+async function startApi(
+  port = Number(
+    process.env.RELAY_SESSION_ITEST_API_PORT ??
+      4400 + Math.floor(Math.random() * 200),
+  ),
+): Promise<ApiUnderTest> {
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error(
@@ -121,7 +139,19 @@ async function startApi(port = Number(process.env.RELAY_SESSION_ITEST_API_PORT ?
     // 3.3's suite is asserting on turns two unrelated test files into a race.
     env: { ...process.env, PORT: String(port), RELAY_OUTBOX_RELAY: "off",
       // Chapter 3.8: nor the notification relay, for the same reason.
-      RELAY_NOTIFICATION_RELAY: "off" },
+      RELAY_NOTIFICATION_RELAY: "off",
+      // Chapter 3.11: its own failed-authentication keyspace. Chapter 3.8's auth
+      // limiter counts failures per SOURCE ADDRESS in Redis, every suite in this
+      // lane is 127.0.0.1, and vitest runs the files in parallel — so ten
+      // failures a minute across ALL of them turns a neighbour's expected 401
+      // into a 429.
+      //
+      // NOT what broke this file — that was the fixed port above — and this was
+      // the first theory, held long enough to be written down before the evidence
+      // arrived. Kept because the coupling is real and the isolation costs one
+      // line, but it fixed nothing here and the comment says so rather than
+      // taking the credit.
+      RELAY_AUTH_KEY_PREFIX: `rlauth-session-${randomUUID().slice(0, 8)}` },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const url = `http://127.0.0.1:${port}`;
@@ -181,7 +211,9 @@ describe("the socket's credentials (chapter 3.2)", () => {
   };
 
   beforeAll(async () => {
-    api = await startApi(4124);
+    // No port argument: `startApi` picks its own, for the reasons written above
+    // it. This describe is where the fixed-port fault was found.
+    api = await startApi();
     server = serve({ service: "gateway", health: () => ({}), logger: silent });
     attachSessions({ server, api: createApiClient(api.url), logger: silent });
     await new Promise<void>((resolve) => server.listen(0, resolve));
