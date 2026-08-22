@@ -260,6 +260,27 @@ export function attachSessions({
           });
           return;
         }
+        if (result.outcome === "over_quota") {
+          // Chapter 3.11, and this is the 4001 path's SHAPE for the 4001 path's
+          // REASON. The handshake completes so that a close code has a socket to
+          // arrive on — EIR-WS-05 asks that of a bad token and EIR-WS-06 asks the
+          // same of quota exhaustion, and `CLOSE_CODES[4008]` has read "quota
+          // exhausted" since chapter 1.3 with nothing emitting it.
+          //
+          // AN ERROR FRAME FIRST, because a close reason is a short string and
+          // what a client needs is the date it resumes. The frame carries the
+          // api's own message, four fields, exactly as a refusal over HTTP would.
+          //
+          // NOT `refuseUpgrade`. That writes chapter 3.8's raw 429 and its whole
+          // justification was `Retry-After` — a header a close frame has nowhere
+          // to put. A quota refusal declines that header on purpose, so the
+          // argument for the HTTP shape evaporates with it, and the shape that is
+          // left reaches a browser where a failed upgrade's body does not.
+          sendError(ws, "quota_exceeded", result.message);
+          ws.close(4008, CLOSE_CODES[4008]);
+          logger.log("info", "connection.rejected", { reason: "quota_exceeded" });
+          return;
+        }
         void open(
           ws,
           result.identity,

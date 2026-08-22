@@ -286,6 +286,63 @@ export async function environmentLimits(
   };
 }
 
+/** May this environment open another connection? (chapter 3.11, FR-015.)
+ *
+ * ENFORCED AT THE DOOR, because that is the operation this dimension meters.
+ * The messages cap refuses sends; the connection-minutes cap refuses connects. A
+ * cap that only refused sends would leave an idle listener burning the metered
+ * resource with nothing to stop it, which is a cap that does not bound the thing
+ * it counts.
+ *
+ * ONE JOINED READ, and `environmentLimits` is deliberately NOT extended to carry
+ * it. Chapter 3.10's second analysis pass refused exactly that extension because
+ * `session.controller.ts` calls it and every WebSocket connect would then pay for
+ * a usage join — the finding was right, and the answer is a second call on the
+ * same request rather than a heavier version of the first.
+ *
+ * THE UNCONFIGURED TENANT PAYS ONE INDEXED READ AND LEAVES. Measured before this
+ * chapter changed anything: the connect path costs 6.807 ms at one-way
+ * concurrency, of which 0.053 ms is database — three index scans. The room is
+ * there; T065 checks that this read stays in it.
+ *
+ * RETURNS the usage and caps when it does NOT refuse, because the caller that
+ * needs the refusal also needs the figures for the crossing rows above it. */
+export async function assertConnectionsWithinQuota(
+  db: Db,
+  environmentId: string,
+  period: string,
+): Promise<{ used: number; caps: Caps }> {
+  const [row] = await db
+    .select({
+      quotaConfig: environments.quotaConfig,
+      connectionMinutes: usagePeriods.connectionMinutes,
+    })
+    .from(environments)
+    .leftJoin(
+      usagePeriods,
+      and(
+        eq(usagePeriods.environmentId, environments.id),
+        eq(usagePeriods.period, period),
+      ),
+    )
+    .where(eq(environments.id, environmentId));
+
+  const caps = capsFor(row?.quotaConfig, "connection_minutes").caps;
+  const used = row?.connectionMinutes ?? 0;
+
+  // Nothing configured at all — no cap and no threshold — and the whole block is
+  // skipped. The unconfigured tenant is the common case and this is what it pays.
+  if (caps.hard === null) return { used, caps };
+  if (used < caps.hard) return { used, caps };
+
+  throw new QuotaExceededError({
+    dimension: "connection_minutes",
+    usage: used,
+    quota: caps.hard,
+    period,
+  });
+}
+
 /** Credit a batch of usage reports (chapter 3.11, FR-005/FR-006/FR-009).
  *
  * A STANDALONE FUNCTION, NOT A `Repository` METHOD, and the reason is the same

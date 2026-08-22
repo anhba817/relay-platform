@@ -225,4 +225,64 @@ describe("POST /internal/usage/connections", () => {
       expect((await res.json()).code).toBe("internal_error");
     });
   });
+
+  describe("the api's half of the refusal (US3, FR-016)", () => {
+    const setCap = (config: unknown) =>
+      db
+        ? fetch(`${url}/healthz`).then(async () => {
+            const { createPool } = await import("../db/client.js");
+            const p = createPool();
+            await p.query(
+              "UPDATE environments SET quota_config = $1 WHERE id = $2",
+              [JSON.stringify(config), environmentId],
+            );
+            await p.end();
+          })
+        : Promise.resolve();
+
+    const session = (credential: string) =>
+      fetch(`${url}/internal/session`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${credential}` },
+      });
+
+    it("answers 402 with a named code when the cap is spent", async () => {
+      await setCap({ connection_minutes: { hard: 1 } });
+      await post(oneReport(50), PLATFORM);
+
+      const res = await session(userToken);
+      expect(res.status).toBe(402);
+
+      const body = (await res.json()) as Record<string, string>;
+      // NAMED BY THE THROWER. `ProtocolErrorFilter` infers a code for four
+      // statuses and 402 is not one of them, so an unnamed refusal would arrive
+      // as `internal_error` — chapter 3.10's H3.
+      expect(body.code).toBe("quota_exceeded");
+      expect(body.message).toContain("connection-minute");
+      expect(body.message).toContain("connections resume on");
+      // Four fields, as every refusal on this contract has since chapter 3.8.
+      expect(body.docs_url).toBeTruthy();
+      expect(body.request_id).toBeTruthy();
+    });
+
+    it("carries NO Retry-After, which is the whole difference from a rate limit", async () => {
+      await setCap({ connection_minutes: { hard: 1 } });
+      const res = await session(userToken);
+      expect(res.status).toBe(402);
+      // A client that sleeps for a header and retries is right for a rate limit
+      // and wrong for a quota, which will still be exhausted in an hour.
+      expect(res.headers.get("retry-after")).toBeNull();
+    });
+
+    it("answers 200 again the moment the cap is raised", async () => {
+      await setCap({ connection_minutes: { hard: 100_000 } });
+      const res = await session(userToken);
+      expect(res.status).toBe(200);
+    });
+
+    it("answers 200 with no cap configured", async () => {
+      await setCap({});
+      expect((await session(userToken)).status).toBe(200);
+    });
+  });
 });

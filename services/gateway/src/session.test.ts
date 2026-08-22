@@ -930,30 +930,44 @@ describe("the socket's limits (chapter 3.8)", () => {
     reconnected.close();
   });
 
-  it("STILL emits close code 4008 from nowhere (quickstart V7)", async () => {
-    // 4008 reads "quota exhausted". There is no quota yet — quotas are a later
-    // chapter — and reaching for the code because it was declared would collapse
-    // the distinction this chapter is built on: a rate limit is a smoothing
-    // instruction, a quota is a commercial one, and they do not deserve the same
-    // signal. So does 4009, "server shutdown (drain)", for the same kind of
-    // reason (NFR-REL-03).
+  it("emits 4008 for a quota, and 4009 from nowhere (chapter 3.11)", async () => {
+    // CHAPTER 3.8 WROTE THIS TEST INVERTED, and said why:
     //
-    // Grep rather than behaviour, because the claim is about absence: no input
-    // makes the gateway send it, and the only way to check "no input" is to read
-    // what the source can send.
+    //   4008 reads "quota exhausted". There is no quota yet — quotas are a
+    //   later chapter — and reaching for the code because it was declared would
+    //   collapse the distinction this chapter is built on: a rate limit is a
+    //   smoothing instruction, a quota is a commercial one, and they do not
+    //   deserve the same signal.
+    //
+    // This is the later chapter. The distinction it was protecting survives and
+    // is now visible on the wire rather than asserted in a comment: a rate limit
+    // refuses the handshake with a raw 429 and a `Retry-After`, and a quota
+    // COMPLETES the handshake, sends an error frame carrying the resume date, and
+    // closes 4008. Two refusals at one door, and a client can tell them apart.
+    //
+    // 4009 IS STILL EMITTED BY NOTHING. Chapter 3.11 gave the gateway its first
+    // shutdown path, so "server shutdown (drain)" is closer than it has ever
+    // been — and draining is a feature with its own semantics rather than a code
+    // to reach for because a handler arrived.
+    //
+    // Grep rather than behaviour, because half the claim is about ABSENCE: no
+    // input makes this service send 4009, and the only way to check "no input"
+    // is to read what the source can send.
     const source = await Promise.all(
-      ["session.ts", "limits.ts", "resume.ts", "main.ts"].map((file) =>
+      ["session.ts", "limits.ts", "resume.ts", "main.ts", "meter.ts"].map((file) =>
         readFile(new URL(file, import.meta.url), "utf8"),
       ),
     );
+    const joined = source.join("");
+
+    expect(joined).toMatch(/close\(\s*4008/);
     for (const text of source) {
-      expect(text).not.toMatch(/close\(\s*400[89]/);
+      expect(text).not.toMatch(/close\(\s*4009/);
     }
-    // A grep that can only pass is not a check. The SAME pattern, aimed at the
-    // codes this file does emit, has to match — otherwise "nothing sends 4008"
-    // would also be true of a typo in the regex.
-    expect(source.join("")).toMatch(/close\(\s*400[12]/);
-    // And the vocabulary still declares them, so this is "unused", not "gone".
+    // A grep that can only pass is not a check — the same pattern, aimed at a
+    // code this file does emit, has to match.
+    expect(joined).toMatch(/close\(\s*400[12]/);
+    // And the vocabulary still declares both, so 4009 is "unused", not "gone".
     expect(CLOSE_CODES[4008]).toBeDefined();
     expect(CLOSE_CODES[4009]).toBeDefined();
   });

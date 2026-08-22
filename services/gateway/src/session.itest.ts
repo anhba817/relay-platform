@@ -86,7 +86,10 @@ async function waitForHealth(url: string): Promise<void> {
   }
 }
 
-async function startApi(): Promise<ApiUnderTest> {
+/** Chapter 3.11 made this take a port. Two describes in this file each need an
+ * api of their own, and the fixed 4123 below meant the second one silently
+ * failed to bind and every test after it died on `fetch failed`. */
+async function startApi(port = Number(process.env.RELAY_SESSION_ITEST_API_PORT ?? 4123)): Promise<ApiUnderTest> {
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error(
@@ -112,7 +115,6 @@ async function startApi(): Promise<ApiUnderTest> {
     environmentId: environment.id,
   });
 
-  const port = Number(process.env.RELAY_SESSION_ITEST_API_PORT ?? 4123);
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     // Chapter 3.3: no outbox relay in this child. This suite is about the
     // socket's credentials; a background loop draining a table that chapter
@@ -179,7 +181,7 @@ describe("the socket's credentials (chapter 3.2)", () => {
   };
 
   beforeAll(async () => {
-    api = await startApi();
+    api = await startApi(4124);
     server = serve({ service: "gateway", health: () => ({}), logger: silent });
     attachSessions({ server, api: createApiClient(api.url), logger: silent });
     await new Promise<void>((resolve) => server.listen(0, resolve));
@@ -282,5 +284,116 @@ describe("the socket's credentials (chapter 3.2)", () => {
   afterAll(async () => {
     api?.stop();
     server?.close();
+  });
+});
+
+describe("the cap at the door (chapter 3.11, US3)", () => {
+  let api: ApiUnderTest;
+  let server: Server;
+  let url: string;
+  const sockets: WebSocket[] = [];
+  let stopSessions: () => Promise<void>;
+
+  const mintToken = async (user = "tuan") => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+
+  const connect = (token: string) => {
+    const socket = new WebSocket(`${url}/v1/ws?token=${token}`);
+    sockets.push(socket);
+    return socket;
+  };
+
+  const setCap = async (config: unknown) => {
+    const client = require_(
+      join(REPO, "services", "api", "dist", "db", "client.js"),
+    ) as { createPool: () => { query: (q: string, v: unknown[]) => Promise<unknown>; end: () => Promise<void> } };
+    const pool = client.createPool();
+    await pool.query(
+      "UPDATE environments SET quota_config = $1 WHERE id = $2",
+      [JSON.stringify(config), api.environmentId],
+    );
+    await pool.end();
+  };
+
+  beforeAll(async () => {
+    api = await startApi();
+    server = serve({ service: "gateway", health: () => ({}), logger: silent });
+    const sessions = attachSessions({
+      server,
+      api: createApiClient(api.url),
+      logger: silent,
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    stopSessions = sessions.close;
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const socket of sockets) socket.close();
+    await stopSessions?.();
+    server?.close();
+    api?.stop();
+  });
+
+  it("closes 4008 with an error frame naming the resume date (SC-022)", async () => {
+    // THE CLIENT'S HALF. The api answers 402; what reaches the browser is the
+    // socket's own vocabulary — a code the protocol has declared since chapter
+    // 1.3 and nothing has ever sent.
+    await setCap({ connection_minutes: { hard: 0 } });
+    const socket = connect(await mintToken());
+
+    const frame = (await firstFrame(socket, "error")) as {
+      payload: { code: string; message: string; docs_url: string; request_id: string };
+    };
+    expect(frame.payload.code).toBe("quota_exceeded");
+    expect(frame.payload.message).toContain("connection-minute");
+    expect(frame.payload.message).toContain("connections resume on");
+    // Four fields, like every other error this contract carries.
+    expect(frame.payload.docs_url).toBeTruthy();
+    expect(frame.payload.request_id).toBeTruthy();
+
+    expect(await closeCode(socket)).toBe(4008);
+  });
+
+  it("is NOT 4001, and not 1011 either", async () => {
+    // Before this chapter a 402 fell through to `parse`, threw, and closed 1011
+    // — "we are broken, retry". Mapping it to `refused` instead would close 4001
+    // — "your credential is bad" — which a client acts on by re-authenticating
+    // for ever. The token here is perfectly good.
+    await setCap({ connection_minutes: { hard: 0 } });
+    const code = await closeCode(connect(await mintToken()));
+    expect(code).not.toBe(4001);
+    expect(code).not.toBe(1011);
+    expect(code).toBe(4008);
+  });
+
+  it("opens normally the moment the cap is raised (SC-008)", async () => {
+    await setCap({ connection_minutes: { hard: 100_000 } });
+    const socket = connect(await mintToken());
+    expect(await firstFrame(socket, "connection.ack")).toBeTruthy();
+  });
+
+  it("leaves a socket opened before the breach open and receiving (SC-006)", async () => {
+    // FR-RTL-08's promise, and the reason the overshoot exists at all.
+    await setCap({ connection_minutes: { hard: 100_000 } });
+    const early = connect(await mintToken());
+    expect(await firstFrame(early, "connection.ack")).toBeTruthy();
+
+    await setCap({ connection_minutes: { hard: 0 } });
+    const refused = connect(await mintToken());
+    expect(await closeCode(refused)).toBe(4008);
+
+    // The early socket is untouched by its neighbour's refusal.
+    expect(early.readyState).toBe(WebSocket.OPEN);
   });
 });

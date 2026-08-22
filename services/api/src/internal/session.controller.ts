@@ -1,6 +1,8 @@
 import {
   Controller,
   HttpCode,
+  HttpException,
+  HttpStatus,
   Inject,
   Post,
   Req,
@@ -14,8 +16,14 @@ import { AUTH_DB } from "../auth/authenticate.middleware";
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import type { RequestWithPrincipal } from "../auth/principal";
 import type { Db } from "../db/client";
-import { environmentLimits, Repository } from "../db/repository";
+import {
+  assertConnectionsWithinQuota,
+  environmentLimits,
+  Repository,
+} from "../db/repository";
 import { DEFAULT_LIMITS } from "../limits/policy";
+import { periodOf } from "../quotas/period";
+import { QuotaExceededError } from "../quotas/quota.error";
 
 // `POST /internal/session` (chapter 3.2) — the route that replaced
 // `GET /internal/memberships`.
@@ -64,6 +72,31 @@ export class SessionController {
     // database and must not gain one (research R12). Null columns are already
     // defaults by the time they leave the repository, so the gateway never has to
     // know that "no override" is a state.
+    // Chapter 3.11. THE CAP IS ENFORCED AT THE DOOR, because a connection is the
+    // operation that consumes connection-minutes. A second call on the same
+    // request rather than a heavier `environmentLimits` — chapter 3.10's second
+    // analysis pass refused that extension precisely because this path calls it.
+    //
+    // THE CODE IS NAMED BY THE THROWER. `ProtocolErrorFilter` is `@Catch()`-all
+    // and infers a code for four statuses; 402 is not one of them, so an
+    // unnamed refusal would reach the gateway as `internal_error` — chapter
+    // 3.10's H3, which cost that chapter a whole analysis pass to find.
+    try {
+      await assertConnectionsWithinQuota(
+        this.db,
+        principal.environmentId,
+        periodOf(new Date()),
+      );
+    } catch (error) {
+      if (error instanceof QuotaExceededError) {
+        throw new HttpException(
+          { code: "quota_exceeded", message: error.publicMessage() },
+          HttpStatus.PAYMENT_REQUIRED,
+        );
+      }
+      throw error;
+    }
+
     const limits = await environmentLimits(this.db, principal.environmentId);
     return {
       environment_id: principal.environmentId,

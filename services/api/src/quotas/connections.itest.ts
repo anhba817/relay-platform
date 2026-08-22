@@ -1,15 +1,19 @@
 import { randomUUID } from "node:crypto";
 
+import Redis from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createDb, createPool, type Db } from "../db/client";
 import {
+  assertConnectionsWithinQuota,
   ConnectionEnvironmentConflictError,
   createEnvironment,
   creditConnectionMinutes,
+  Repository,
   usageFor,
 } from "../db/repository";
 import { periodOf } from "./period";
+import { QuotaExceededError } from "./quota.error";
 
 // Connection-minutes, credited (chapter 3.11, US1 and US2).
 //
@@ -282,8 +286,9 @@ describe("the figure survives a flush of the counter store (SC-016, FR-026)", ()
     await report(env, [[randomUUID(), AUGUST, 23]]);
     const before = await minutesOf(env);
 
-    const { default: Redis } = await import("ioredis");
-    const redis = new Redis(process.env.RELAY_REDIS_URL ?? "redis://localhost:6379");
+    const redis = new Redis(
+      process.env.RELAY_REDIS_URL ?? "redis://localhost:6379",
+    );
     await redis.flushall();
     await redis.quit();
 
@@ -299,5 +304,158 @@ describe("periodOf is the one definition of which month", () => {
     expect(period).toBe(AUGUST);
     await report(env, [[randomUUID(), period, 2]]);
     expect(await minutesOf(env, period)).toBe(2);
+  });
+});
+
+describe("the cap brakes the thing it meters (US3, api side)", () => {
+  const setCap = (environmentId: string, config: unknown) =>
+    pool.query("UPDATE environments SET quota_config = $1 WHERE id = $2", [
+      JSON.stringify(config),
+      environmentId,
+    ]);
+
+  it("refuses when usage is AT the cap, not past it", async () => {
+    const env = await environment();
+    await setCap(env, { connection_minutes: { hard: 5 } });
+    await report(env, [[randomUUID(), AUGUST, 5]]);
+
+    await expect(
+      assertConnectionsWithinQuota(db, env, AUGUST),
+    ).rejects.toBeInstanceOf(QuotaExceededError);
+  });
+
+  it("allows the connect one minute below the cap", async () => {
+    const env = await environment();
+    await setCap(env, { connection_minutes: { hard: 5 } });
+    await report(env, [[randomUUID(), AUGUST, 4]]);
+
+    const { used, caps } = await assertConnectionsWithinQuota(db, env, AUGUST);
+    expect(used).toBe(4);
+    expect(caps.hard).toBe(5);
+  });
+
+  it("refuses EVERY connect at a cap of zero (FR-014)", async () => {
+    // Zero is not absent. An operator who wrote it meant it.
+    const env = await environment();
+    await setCap(env, { connection_minutes: { hard: 0 } });
+    await expect(
+      assertConnectionsWithinQuota(db, env, AUGUST),
+    ).rejects.toBeInstanceOf(QuotaExceededError);
+  });
+
+  it("allows every connect with no cap configured, and still records", async () => {
+    const env = await environment();
+    const { caps } = await assertConnectionsWithinQuota(db, env, AUGUST);
+    expect(caps.hard).toBeNull();
+
+    await report(env, [[randomUUID(), AUGUST, 9]]);
+    expect(await minutesOf(env)).toBe(9);
+  });
+
+  it("names the dimension, the figures and the date it resumes (FR-016)", async () => {
+    const env = await environment();
+    await setCap(env, { connection_minutes: { hard: 3 } });
+    await report(env, [[randomUUID(), AUGUST, 3]]);
+
+    let message = "";
+    try {
+      await assertConnectionsWithinQuota(db, env, AUGUST);
+    } catch (error) {
+      message = (error as QuotaExceededError).publicMessage();
+    }
+    expect(message).toContain("connection-minute");
+    expect(message).toContain("3 of 3");
+    expect(message).toContain("2026-08-01");
+    // CONNECTIONS resume, not sends — sends were never refused.
+    expect(message).toContain("connections resume on 2026-09-01");
+    expect(message).not.toContain("sends resume");
+  });
+
+  it("restores connecting when the cap is raised, with no restart (SC-008)", async () => {
+    const env = await environment();
+    await setCap(env, { connection_minutes: { hard: 2 } });
+    await report(env, [[randomUUID(), AUGUST, 2]]);
+    await expect(
+      assertConnectionsWithinQuota(db, env, AUGUST),
+    ).rejects.toBeInstanceOf(QuotaExceededError);
+
+    await setCap(env, { connection_minutes: { hard: 100 } });
+    await expect(
+      assertConnectionsWithinQuota(db, env, AUGUST),
+    ).resolves.toBeTruthy();
+  });
+
+  it("restores connecting when the period rolls over (FR-020)", async () => {
+    const env = await environment();
+    await setCap(env, { connection_minutes: { hard: 2 } });
+    await report(env, [[randomUUID(), AUGUST, 2]]);
+
+    await expect(
+      assertConnectionsWithinQuota(db, env, AUGUST),
+    ).rejects.toBeInstanceOf(QuotaExceededError);
+    // Same cap, next month, no intervention.
+    await expect(
+      assertConnectionsWithinQuota(db, env, SEPTEMBER),
+    ).resolves.toBeTruthy();
+  });
+
+  it("keeps accruing past the cap, which is the overshoot (FR-017, FR-019)", async () => {
+    // Sockets already open stay open and keep being metered, so the figure
+    // passes the cap and the bound is how long they live — which nothing in the
+    // platform limits. Recorded as behaviour rather than left as a claim.
+    const env = await environment();
+    await setCap(env, { connection_minutes: { hard: 5 } });
+    const connection = randomUUID();
+    await report(env, [[connection, AUGUST, 5]]);
+    await report(env, [[connection, AUGUST, 12]]);
+
+    expect(await minutesOf(env)).toBe(12);
+    expect(await minutesOf(env)).toBeGreaterThan(5);
+  });
+
+  it("does not let one dimension's cap refuse another's operation", async () => {
+    // A messages cap says nothing about connecting.
+    const env = await environment();
+    await setCap(env, { messages: { hard: 0 } });
+    await expect(
+      assertConnectionsWithinQuota(db, env, AUGUST),
+    ).resolves.toBeTruthy();
+  });
+
+  it("a REST send and a history read both succeed while capped (SC-007)", async () => {
+    // FR-RTL-08's promise, and the reason the connection-minutes cap refuses
+    // CONNECTS rather than sends: everything a tenant already has keeps working.
+    // No socket is involved in either of these, which is why they live in the
+    // api's lane rather than the gateway's.
+    const env = await environment();
+    const repo = new Repository(db, env);
+    const user = await repo.createUser("tuan", "Tuan");
+    const channel = await repo.createChannel("fleet", "public");
+    await repo.addMember(channel.id, user.id);
+    await repo.sendMessage(channel.id, {
+      userId: user.id,
+      text: "before the cap",
+      idempotencyKey: randomUUID(),
+    });
+
+    await pool.query("UPDATE environments SET quota_config = $1 WHERE id = $2", [
+      JSON.stringify({ connection_minutes: { hard: 0 } }),
+      env,
+    ]);
+    await expect(
+      assertConnectionsWithinQuota(db, env, AUGUST),
+    ).rejects.toBeInstanceOf(QuotaExceededError);
+
+    // The send still lands.
+    const sent = await repo.sendMessage(channel.id, {
+      userId: user.id,
+      text: "after the cap",
+      idempotencyKey: randomUUID(),
+    });
+    expect(sent).toBeTruthy();
+
+    // And the history still reads.
+    const history = await repo.listMessages(channel.id, { limit: 10 });
+    expect(history.length).toBeGreaterThanOrEqual(2);
   });
 });

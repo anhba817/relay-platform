@@ -28,6 +28,17 @@ export const ERROR_CODES = {
   // is invalid" is how a live secret reaches a support ticket (NFR-SEC-06).
   wrong_credential_type:
     "the credential class presented cannot use this route; the message names presented and expected",
+  // Chapter 3.11. The socket's half of a quota refusal: an error frame carrying
+  // the dimension, the figures and the resume date, sent immediately before
+  // close code 4008.
+  //
+  // REGISTERED HERE RATHER THAN WRITTEN INLINE. The frame schema types `code` as
+  // `z.string().min(1)`, so nothing forces this — but the registry is the
+  // documented vocabulary and `codes.test.ts` enforces its uniqueness, which is
+  // why chapter 3.2 put `wrong_credential_type` in it instead of inventing it at
+  // the call site.
+  quota_exceeded:
+    "a monthly quota is exhausted; the message names the dimension, the figures and the date it resumes",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
