@@ -64,23 +64,66 @@ export function createServer(logger?: Logger) {
     logger: log,
     fanout,
     limits,
+    // Overridable so `meter.itest.ts` can drive a spawned gateway without
+    // waiting a real minute per assertion. The two tests there are the ones an
+    // in-process gateway cannot run — a signal has to arrive at a process — and
+    // sixty seconds each would put them past the suite's timeout.
+    //
+    // Spread rather than assigned `undefined`: `exactOptionalPropertyTypes` is
+    // on, and "absent" and "present but undefined" are different things to it.
+    ...(process.env.RELAY_METER_INTERVAL_MS
+      ? { meterIntervalMs: Number(process.env.RELAY_METER_INTERVAL_MS) }
+      : {}),
   });
+  // `server.on("close")` has nowhere to await, so the teardown that MUST be
+  // waited for is handed back instead. The listener stays for the paths that
+  // close the server without leaving the process — tests, mostly — and the
+  // signal handler below awaits the same work before exiting.
   server.on("close", () => {
-    // `sessions.close()` became async in chapter 3.11 — it flushes a final usage
-    // report. Voided HERE and awaited in the signal handler below, because
-    // `server.on("close")` has nowhere to await and the process is not leaving
-    // on this path anyway.
-    void sessions.close();
-    void fanout.close();
-    void limits.close();
+    void shutdown();
   });
-  return server;
+  async function shutdown(): Promise<void> {
+    await sessions.close();
+    await fanout.close();
+    await limits.close();
+  }
+  return Object.assign(server, { shutdown });
 }
 
 if (import.meta.main) {
   const port = Number(process.env.PORT ?? 4001);
   const logger = createLogger("gateway");
-  createServer(logger).listen(port, () => {
+  const server = createServer(logger).listen(port, () => {
     logger.log("info", "listening", { port });
   });
+
+  // A GRACEFUL SHUTDOWN, WHICH THIS SERVICE DID NOT HAVE (research R11, FR-031).
+  //
+  // `serve()` returns a bare `node:http` Server, and nothing here ever called
+  // `server.close()` — so the `server.on("close")` handler above, which four
+  // documents said flushed a final usage report, ran on no path at all. On
+  // `docker stop` the process took SIGTERM, Node's default disposition exited,
+  // and the handler was never reached. Every document agreed with every other
+  // document and none of them was the thing that had to be true.
+  //
+  // AWAITED, not fired. A flush that is not waited for is the same non-guarantee
+  // one line further down: the process leaves before the request does. This is
+  // the difference between losing a minute per crash and losing a minute per
+  // deploy times every open socket, and a deploy is the frequent one.
+  //
+  // The shape is the dispatcher's, at `services/dispatcher/src/main.ts:313`.
+  //
+  // 4009 IS NOT EMITTED HERE. `CLOSE_CODES[4009]` reads "server shutdown
+  // (drain)" and this is the first shutdown path the gateway has ever had, so
+  // the code is sitting right there — but draining is telling clients to
+  // reconnect elsewhere, which is a feature with its own semantics. Reaching for
+  // it because a handler happened to arrive is the "declared, so use it" that
+  // chapter 3.8 refused by name.
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      logger.log("info", "shutdown.signal", { signal });
+      server.close();
+      void server.shutdown().then(() => process.exit(0));
+    });
+  }
 }
