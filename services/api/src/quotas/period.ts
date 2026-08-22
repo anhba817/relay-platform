@@ -23,3 +23,38 @@ export function periodOf(at: Date): string {
   const month = String(at.getUTCMonth() + 1).padStart(2, "0");
   return `${year}-${month}-01`;
 }
+
+/** The minute an instant belongs to: `YYYY-MM-DDTHH:MM`, in UTC.
+ *
+ * THE UNIT OF THIS CHAPTER, and it is a wall-clock bucket rather than a
+ * duration. A connection open for any part of a minute has occupied that
+ * minute; five seconds costs one, and 00:00:59 to 00:01:01 costs two. That
+ * charges reconnect churn, which summing seconds does not, and it makes the
+ * identity of a minute the natural key for deduplicating a repeated report
+ * (research R2).
+ *
+ * TAKES AN INSTANT, LIKE `periodOf` ABOVE, and for a sharper reason. Every
+ * acceptance scenario this chapter has is stated in calendar minutes — three
+ * boundaries, a socket that lives inside one interval, ten intervals after a
+ * kill. A function that called `now()` would make each of them a real wait, and
+ * the suite would take longer than the twenty-run battery.
+ *
+ * A STRING, not a number, so a bucket prints legibly in a failure message and
+ * sorts lexically in the same order it sorts chronologically. */
+export function minuteOf(at: Date): string {
+  const y = at.getUTCFullYear();
+  const mo = String(at.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(at.getUTCDate()).padStart(2, "0");
+  const h = String(at.getUTCHours()).padStart(2, "0");
+  const mi = String(at.getUTCMinutes()).padStart(2, "0");
+  return `${y}-${mo}-${d}T${h}:${mi}`;
+}
+
+/** The period a minute bucket belongs to — `minuteOf`'s output back to
+ * `periodOf`'s. The gateway reports buckets and the api credits periods, and a
+ * connection open across midnight on the first owes minutes to two of them
+ * (FR-009). Parsing here rather than at each call site keeps one definition of
+ * how a bucket string decomposes. */
+export function periodOfMinute(minute: string): string {
+  return `${minute.slice(0, 7)}-01`;
+}

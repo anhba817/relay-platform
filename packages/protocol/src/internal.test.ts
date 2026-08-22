@@ -4,6 +4,9 @@ import {
   ALL_ANALYTICS_SUBJECT,
   ALL_EVENTS_SUBJECT,
   analyticsSubjectFor,
+  internalUsageReportEntrySchema,
+  internalUsageReportRequestSchema,
+  internalUsageReportResponseSchema,
   subjectFor,
   webhookAttemptSubject,
 } from "./internal.js";
@@ -110,5 +113,74 @@ describe("analyticsSubjectFor builds `analytics.{domain}.{action}.{env}`", () =>
   it("throws on a missing domain or action rather than producing `analytics..`", () => {
     expect(() => analyticsSubjectFor("", "attempt", ENV)).toThrow(/domain is required/);
     expect(() => analyticsSubjectFor("webhook", "", ENV)).toThrow(/action is required/);
+  });
+});
+
+describe("the usage report (chapter 3.11)", () => {
+  const entry = (over: Record<string, unknown> = {}) => ({
+    connection_id: "0f9c8b7a-6d5e-4c3b-8a19-8f7e6d5c4b3a",
+    environment_id: "8b21c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    period: "2026-08-01",
+    minutes: 17,
+    ...over,
+  });
+
+  it("accepts one connection's total for one period", () => {
+    const r = internalUsageReportRequestSchema.safeParse({
+      connections: [entry()],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts two entries for one connection across a month boundary", () => {
+    // The socket that was open at midnight on the first owes minutes to two
+    // periods, and each is credited independently.
+    const r = internalUsageReportRequestSchema.safeParse({
+      connections: [entry({ minutes: 17 }), entry({ period: "2026-09-01", minutes: 3 })],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("refuses a period that is not the first of a month", () => {
+    // A report naming the 14th would credit a period nothing reads.
+    for (const period of ["2026-08-14", "2026-08", "2026-08-01T00:00:00Z"]) {
+      expect(internalUsageReportEntrySchema.safeParse(entry({ period })).success)
+        .toBe(false);
+    }
+  });
+
+  it("refuses a negative or fractional total", () => {
+    expect(internalUsageReportEntrySchema.safeParse(entry({ minutes: -1 })).success)
+      .toBe(false);
+    expect(internalUsageReportEntrySchema.safeParse(entry({ minutes: 1.5 })).success)
+      .toBe(false);
+  });
+
+  it("accepts zero, which is what a connection reports in its first minute", () => {
+    expect(internalUsageReportEntrySchema.safeParse(entry({ minutes: 0 })).success)
+      .toBe(true);
+  });
+
+  it("refuses an unknown field, like every other schema on this contract", () => {
+    expect(
+      internalUsageReportEntrySchema.safeParse(entry({ seconds: 60 })).success,
+    ).toBe(false);
+  });
+
+  it("refuses an empty batch", () => {
+    // A report with nothing in it is a bug in the caller, not a no-op worth
+    // spending a transaction on.
+    expect(
+      internalUsageReportRequestSchema.safeParse({ connections: [] }).success,
+    ).toBe(false);
+  });
+
+  it("answers with the delta actually applied, and nothing else", () => {
+    expect(internalUsageReportResponseSchema.safeParse({ credited: 0 }).success)
+      .toBe(true);
+    expect(
+      internalUsageReportResponseSchema.safeParse({ credited: 4, refused: 0 })
+        .success,
+    ).toBe(false);
   });
 });

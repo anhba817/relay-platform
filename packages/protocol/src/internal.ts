@@ -328,6 +328,51 @@ export type InternalDeliveryOutcomeResponse = z.infer<
   typeof internalDeliveryOutcomeResponseSchema
 >;
 
+/** The usage report (chapter 3.11, FR-005).
+ *
+ * THE ONE CALL THE GATEWAY MAKES FOR ITSELF. Its other three —
+ * `/internal/session`, `/internal/backfill`, `/internal/messages` — forward the
+ * END USER's token, because each is a user's action taken through the socket.
+ * A usage report is nobody's action: it is the gateway's claim about many
+ * connections, across many environments, about time that has already passed. So
+ * it presents a platform credential and names its environments in the body, the
+ * way the dispatcher's routes do.
+ *
+ * `minutes` IS A TOTAL, NOT AN INCREMENT, and that single decision is why the
+ * gateway needs no retry buffer. A lost report is repaired by the next one,
+ * because the next one carries the same total plus whatever accrued since. A
+ * report delivered twice credits `max(0, reported - credited) = 0`. Reports that
+ * cannot be delivered are dropped rather than queued (research R3).
+ *
+ * ONE ENTRY PER CONNECTION PER PERIOD. A socket open across midnight on the
+ * first of the month owes minutes to two periods and sends two entries, because
+ * each period is credited independently (FR-009). */
+export const internalUsageReportEntrySchema = z.strictObject({
+  connection_id: z.string().uuid(),
+  environment_id: z.string().uuid(),
+  /** The first of a calendar month, UTC — `usage_periods`' key, not a date the
+   * caller picked. Refined rather than merely typed, because a report that
+   * named the 14th would create a period nothing reads. */
+  period: z
+    .string()
+    .regex(/^\d{4}-\d{2}-01$/, "period must be the first of a month"),
+  minutes: z.number().int().nonnegative(),
+});
+
+export const internalUsageReportRequestSchema = z.strictObject({
+  connections: z.array(internalUsageReportEntrySchema).min(1).max(5000),
+});
+
+/** `credited` is the sum of the deltas actually applied, so a replay answers
+ * `{"credited": 0}` and a caller can see its retry changed nothing.
+ *
+ * One field, because there is nothing else the caller can act on. An earlier
+ * draft of the contract carried a `refused` count beside it, which described
+ * nothing: the only refusal in this design rejects the whole request. */
+export const internalUsageReportResponseSchema = z.strictObject({
+  credited: z.number().int().nonnegative(),
+});
+
 export type InternalSendRequest = z.infer<typeof internalSendRequestSchema>;
 export type InternalSessionResponse = z.infer<
   typeof internalSessionResponseSchema
@@ -341,4 +386,13 @@ export type InternalBackfillRequest = z.infer<
 >;
 export type InternalBackfillResponse = z.infer<
   typeof internalBackfillResponseSchema
+>;
+export type InternalUsageReportEntry = z.infer<
+  typeof internalUsageReportEntrySchema
+>;
+export type InternalUsageReportRequest = z.infer<
+  typeof internalUsageReportRequestSchema
+>;
+export type InternalUsageReportResponse = z.infer<
+  typeof internalUsageReportResponseSchema
 >;

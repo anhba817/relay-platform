@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { periodOf } from "./period";
+import { minuteOf, periodOf, periodOfMinute } from "./period";
 
 // The month a usage row belongs to, and the one definition of it.
 //
@@ -48,5 +48,82 @@ describe("the period an instant belongs to", () => {
 
   it("handles a leap February", () => {
     expect(periodOf(new Date("2028-02-29T18:00:00.000Z"))).toBe("2028-02-01");
+  });
+});
+
+describe("minuteOf (chapter 3.11)", () => {
+  it("floors to the minute, so a second is not a bucket", () => {
+    expect(minuteOf(new Date("2026-08-22T14:37:00.000Z"))).toBe("2026-08-22T14:37");
+    expect(minuteOf(new Date("2026-08-22T14:37:59.999Z"))).toBe("2026-08-22T14:37");
+  });
+
+  it("crosses at the minute boundary, which is what makes a 2s socket cost two", () => {
+    // The chapter's own example. Open at 00:00:59, closed at 00:01:01: two
+    // seconds of wall clock, two buckets, two connection-minutes.
+    expect(minuteOf(new Date("2026-01-01T00:00:59Z"))).toBe("2026-01-01T00:00");
+    expect(minuteOf(new Date("2026-01-01T00:01:01Z"))).toBe("2026-01-01T00:01");
+  });
+
+  it("is UTC, not local — the same argument periodOf makes", () => {
+    // 23:30 UTC on the 31st is the next day in Asia/Ho_Chi_Minh. A bucket that
+    // followed the server's zone would land a tenant's minutes in a period
+    // nobody reads, which is the failure periodOf's comment describes.
+    expect(minuteOf(new Date("2026-08-31T23:30:00Z"))).toBe("2026-08-31T23:30");
+  });
+
+  it("sorts lexically in the order it sorts chronologically", () => {
+    const shuffled = [
+      "2026-08-22T09:05", "2026-08-09T22:05", "2026-08-22T09:00",
+    ].sort();
+    expect(shuffled).toEqual([
+      "2026-08-09T22:05", "2026-08-22T09:00", "2026-08-22T09:05",
+    ]);
+  });
+});
+
+describe("periodOfMinute agrees with periodOf (chapter 3.11)", () => {
+  it("maps a bucket to the period its instant belongs to", () => {
+    for (const iso of [
+      "2026-01-01T00:00:00Z", "2026-08-22T14:37:12Z",
+      "2026-12-31T23:59:59Z", "2024-02-29T12:00:00Z",
+    ]) {
+      const at = new Date(iso);
+      expect(periodOfMinute(minuteOf(at))).toBe(periodOf(at));
+    }
+  });
+
+  it("puts the two sides of a month boundary in different periods", () => {
+    const before = new Date("2026-08-31T23:59:30Z");
+    const after = new Date("2026-09-01T00:00:30Z");
+    expect(periodOfMinute(minuteOf(before))).toBe("2026-08-01");
+    expect(periodOfMinute(minuteOf(after))).toBe("2026-09-01");
+  });
+});
+
+// The drift test R18 requires, api side. Its twin is in
+// `services/gateway/src/meter.test.ts` and both hold the SAME instants and the
+// SAME written-out expectations. The gateway keeps its own copy of this calendar
+// because it cannot import across a service boundary; a period that disagreed
+// between the two would put a tenant's minutes in a month nobody reads.
+describe("the two calendars agree (drift test, R18)", () => {
+  it("floors every instant to the same period and the same minute", () => {
+    const expected: Array<[string, string, string]> = [
+      ["2026-01-01T00:00:00Z", "2026-01-01", "2026-01-01T00:00"],
+      ["2026-01-01T00:00:59Z", "2026-01-01", "2026-01-01T00:00"],
+      ["2026-01-31T23:59:59Z", "2026-01-01", "2026-01-31T23:59"],
+      ["2026-02-01T00:00:00Z", "2026-02-01", "2026-02-01T00:00"],
+      ["2024-02-29T12:00:00Z", "2024-02-01", "2024-02-29T12:00"],
+      ["2026-06-15T13:47:22Z", "2026-06-01", "2026-06-15T13:47"],
+      ["2026-08-31T23:59:30Z", "2026-08-01", "2026-08-31T23:59"],
+      ["2026-09-01T00:00:30Z", "2026-09-01", "2026-09-01T00:00"],
+      ["2026-12-31T23:59:59Z", "2026-12-01", "2026-12-31T23:59"],
+      ["2027-01-01T00:00:00Z", "2027-01-01", "2027-01-01T00:00"],
+      ["2026-03-01T00:00:00Z", "2026-03-01", "2026-03-01T00:00"],
+      ["2026-10-05T09:00:00Z", "2026-10-01", "2026-10-05T09:00"],
+    ];
+    for (const [iso, period, minute] of expected) {
+      expect(periodOf(new Date(iso))).toBe(period);
+      expect(minuteOf(new Date(iso))).toBe(minute);
+    }
   });
 });

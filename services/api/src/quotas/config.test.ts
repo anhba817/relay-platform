@@ -47,15 +47,63 @@ describe("reading a dimension's caps out of quota_config", () => {
   });
 
   it("rejects a dimension nobody implemented rather than ignoring it", () => {
-    // `connection_minutes` is chapter 3.11. Until then a config naming it is a
-    // cap the operator believes in and the system does not apply, which is worse
-    // than a refusal to parse.
-    expect(capsFor({ connection_minutes: { hard: 10 } }, "messages").error)
+    // A config naming a dimension the system does not apply is a cap the
+    // operator believes in and nothing enforces, which is worse than a refusal
+    // to parse.
+    //
+    // THIS TEST NAMED `connection_minutes` UNTIL CHAPTER 3.11, with the comment
+    // "until then". This is then — the dimension is implemented and the same
+    // assertion would now be asserting the opposite of the truth. It moves to
+    // `media_bytes`, which FR-MED-12 folds into quota enforcement in Part 4 and
+    // which nothing applies today. The tripwire survives; only the dimension
+    // standing on it changes.
+    expect(capsFor({ media_bytes: { hard: 10 } }, "messages").error)
       .not.toBeNull();
   });
 
   it("survives null and undefined", () => {
     expect(capsFor(null, "messages").caps).toEqual(NO_CAPS);
     expect(capsFor(undefined, "messages").caps).toEqual(NO_CAPS);
+  });
+});
+
+describe("the third dimension, and the two gates it has to pass (3.11)", () => {
+  it("reads a connection_minutes cap", () => {
+    const { caps, error } = capsFor(
+      { connection_minutes: { hard: 50_000, soft: 40_000 } },
+      "connection_minutes",
+    );
+    expect(error).toBeNull();
+    expect(caps).toEqual({ hard: 50_000, soft: 40_000 });
+  });
+
+  it("still refuses a dimension nobody implemented", () => {
+    // `.strict()` is the property being preserved here, not the key being added.
+    const { caps, error } = capsFor({ media_bytes: { hard: 1 } }, "messages");
+    expect(error).not.toBeNull();
+    expect(caps).toEqual({ hard: null, soft: null });
+  });
+
+  it("FAILS CLOSED on a config the CHECK would accept and the parser will not", () => {
+    // The migration's regex admits any run of digits, so a cap far past
+    // `Number.MAX_SAFE_INTEGER` reaches this parser as a non-integer float. A
+    // quota that cannot be read must refuse NOTHING rather than everything —
+    // suspending a tenant over an operator's typo turns a mistake into an outage.
+    const { caps, error } = capsFor(
+      { connection_minutes: { hard: 1.5 } },
+      "connection_minutes",
+    );
+    expect(error).not.toBeNull();
+    expect(caps).toEqual({ hard: null, soft: null });
+  });
+
+  it("keeps absent, null and zero distinct for the new dimension", () => {
+    expect(capsFor({}, "connection_minutes").caps).toEqual({ hard: null, soft: null });
+    expect(
+      capsFor({ connection_minutes: { hard: null } }, "connection_minutes").caps.hard,
+    ).toBeNull();
+    expect(
+      capsFor({ connection_minutes: { hard: 0 } }, "connection_minutes").caps.hard,
+    ).toBe(0);
   });
 });

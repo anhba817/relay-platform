@@ -3,6 +3,30 @@ import type { QuotaConfig } from "./config";
 /** The dimensions a quota is measured in. `connection_minutes` is chapter 3.11. */
 export type Dimension = keyof QuotaConfig;
 
+/** What each dimension is called to a customer, and what stops when it runs out.
+ *
+ * TABLES RATHER THAN A TERNARY, because chapter 3.11 is where the ternary broke.
+ * The old code read `dimension === "messages" ? "message" : "active user"`, and
+ * `Dimension` is `keyof QuotaConfig` — so adding `connection_minutes` to the
+ * config schema widened this type on its own and a connection-minutes breach
+ * would have rendered "monthly ACTIVE USER quota exhausted". The compiler catches
+ * nothing; a `Record<Dimension, string>` makes a missing dimension a build error.
+ *
+ * And what resumes is not always sending. A connection-minutes cap refuses
+ * connects, so telling a developer at 3am that "sends resume on the first" names
+ * the wrong operation. */
+const NOUN: Record<Dimension, string> = {
+  messages: "message",
+  active_users: "active user",
+  connection_minutes: "connection-minute",
+};
+
+const RESUMES: Record<Dimension, string> = {
+  messages: "sends",
+  active_users: "sends",
+  connection_minutes: "connections",
+};
+
 /** Raised by the repository when a send would exceed a hard cap.
  *
  * NOT AN HTTP CONCERN. The repository layer does not know what status a caller
@@ -32,7 +56,8 @@ export class QuotaExceededError extends Error {
     this.period = args.period;
   }
 
-  /** The date sends resume: midnight UTC on the first of the next month.
+  /** The date the refused operation resumes: midnight UTC on the first of the
+   * next month.
    *
    * In the message rather than in a `Retry-After` header, and that is the whole
    * argument for `402` over `429`. A client that sleeps for the header's value
@@ -50,9 +75,9 @@ export class QuotaExceededError extends Error {
    * changes (contracts/quota.md §1). */
   publicMessage(): string {
     return (
-      `monthly ${this.dimension === "messages" ? "message" : "active user"} ` +
-      `quota exhausted: ${this.usage} of ${this.quota} for ${this.period}; ` +
-      `sends resume on ${this.resumesOn()}`
+      `monthly ${NOUN[this.dimension]} quota exhausted: ` +
+      `${this.usage} of ${this.quota} for ${this.period}; ` +
+      `${RESUMES[this.dimension]} resume on ${this.resumesOn()}`
     );
   }
 }

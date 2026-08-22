@@ -727,6 +727,12 @@ export const usagePeriods = pgTable(
     messagesSent: bigint("messages_sent", { mode: "number" })
       .notNull()
       .default(0),
+    // Chapter 3.11's third figure, same type for the same reason. Ten thousand
+    // sockets held continuously accrue 5.26 billion connection-minutes a year
+    // and `integer` stops at 2,147,483,647 — about five months in.
+    connectionMinutes: bigint("connection_minutes", { mode: "number" })
+      .notNull()
+      .default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -737,6 +743,49 @@ export const usagePeriods = pgTable(
       "usage_periods_messages_sent_non_negative",
       sql`${t.messagesSent} >= 0`,
     ),
+    check(
+      "usage_periods_connection_minutes_non_negative",
+      sql`${t.connectionMinutes} >= 0`,
+    ),
+  ],
+);
+
+// One row per connection per period, and the whole of chapter 3.11's
+// idempotency (research R4).
+//
+// A report says what a connection has consumed IN TOTAL, not since last time.
+// The api credits `max(0, reported - credited)` and stores the new total, so a
+// replayed report credits nothing and a lost one is repaired by the next. That
+// is what lets the gateway keep no outbox at all.
+//
+// NOT ONE ROW PER MINUTE, which is the obvious dedup key and 43.2 million rows a
+// month at a thousand concurrent sockets. Bounded by connections instead — the
+// same trade `usageActiveUsers` above makes for users against traffic.
+//
+// `period` is in the key because a connection open across a month boundary owes
+// minutes to two periods; `connectionId` alone would already be unique.
+export const usageConnections = pgTable(
+  "usage_connections",
+  {
+    connectionId: uuid("connection_id").notNull(),
+    period: date("period").notNull(),
+    // Written by the first report and never updated. A later report naming a
+    // different environment for this connection is refused, not reconciled: a
+    // connection does not move between tenants (constitution I).
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    minutes: bigint("minutes", { mode: "number" }).notNull().default(0),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.connectionId, t.period] }),
+    check("usage_connections_minutes_non_negative", sql`${t.minutes} >= 0`),
   ],
 );
 

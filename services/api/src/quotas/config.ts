@@ -30,11 +30,16 @@ export const quotaConfigSchema = z
   .object({
     messages: capsSchema.optional(),
     active_users: capsSchema.optional(),
+    // Chapter 3.11. This is the key the comment below predicted, and adding it
+    // costs what the comment said plus three clauses in the migration's CHECK
+    // rather than one line — 0010 counts the difference.
+    connection_minutes: capsSchema.optional(),
   })
   // `.strict()` so a dimension nobody implemented is a parse failure rather than
-  // a silently ignored cap. Chapter 3.11 adds connection-minutes by adding a key
-  // here and a line to the migration's CHECK — the cost the jsonb shape trades
-  // for not needing a table migration.
+  // a silently ignored cap — which is also why a new key has to land HERE and in
+  // the migration together: the constraint would accept a `connection_minutes`
+  // config that this parser rejected, and `capsFor` fails closed, so the cap
+  // would silently become no cap.
   .strict();
 
 export type QuotaConfig = z.infer<typeof quotaConfigSchema>;
