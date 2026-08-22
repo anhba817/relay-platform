@@ -165,7 +165,22 @@ describe("credentials", () => {
       environmentId: env.id,
       name: "once",
     });
-    const secret = minted.credential.split("_").at(-1)!;
+    // THE SECRET IS EVERYTHING AFTER THE PUBLIC ID, and it is not
+    // `split("_").at(-1)`. `api-key.ts` says why three lines from its own regex:
+    // "the public id is hex when the secret is base64url … base64url's alphabet
+    // INCLUDES the separator". So the secret contains underscores, and taking the
+    // last segment yields whatever happens to follow the final one — occasionally
+    // a single character, which the row below then contains by chance:
+    //
+    //     AssertionError: expected '[{"public_id":"9e5240d…' not to contain 'A'
+    //
+    // Latent since chapter 3.1 and found by chapter 3.11's twenty-run battery on
+    // the gate run after it. Parsed with the same shape the production code
+    // parses (`CREDENTIAL` in `api-key.ts`) rather than a guess about delimiters.
+    const secret = /^rk_(?:dev|live)_[0-9a-f]{32}_(.+)$/.exec(
+      minted.credential,
+    )![1]!;
+    expect(secret.length).toBeGreaterThan(20);
 
     // Nothing in the row it left behind contains what was returned. Read with
     // a plain string rather than drizzle's `sql` helper: the query engine lives
