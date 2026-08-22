@@ -29,29 +29,65 @@ export const AUTH_DB = "AUTH_DB";
  * key; the signature decides whether to believe the claim. Getting that order
  * backwards is how a token from environment A gets accepted for environment B.
  */
-/** The internal platform credential (chapter 3.5). Configuration, never a
- * database row and never tenant data — it authenticates a SERVICE, and services
- * are deployed, not provisioned.
+/** The internal platform credentials (chapter 3.5, extended by 3.11).
+ * Configuration, never a database row and never tenant data — they authenticate
+ * a SERVICE, and services are deployed, not provisioned.
  *
  * Absent by default, which is the safe direction: with nothing configured, no
  * request can ever present a platform principal, and the internal routes that
- * require one simply refuse everybody. */
+ * require one simply refuse everybody. Each service is absent independently.
+ *
+ * ONE SECRET PER SERVICE, AND CHAPTER 3.11 IS WHY. Until this chapter there was
+ * one caller and this function ended `service: "dispatcher"`, hardcoded — which
+ * was accurate exactly as long as the dispatcher was alone. The gateway now
+ * reports connection-minutes, and `PlatformPrincipal.service` is documented as
+ * "which internal service presented it, for logs": with one shared secret, the
+ * one field in the principal that says who is asking becomes the one field that
+ * cannot be trusted.
+ *
+ * The second property is worth more than the log line. The gateway terminates
+ * connections from the public internet and the dispatcher does not, so a shared
+ * secret lets the more exposed service set the blast radius for both.
+ *
+ * THE ALTERNATIVE, REFUSED: keep one secret and have the caller name itself in a
+ * header, trusted only for logging. Chapter 3.2 spent itself removing exactly
+ * that — the gateway used to send an environment header and a user header it had
+ * invented — and "it is only for logs" is the sentence under which an asserted
+ * header survives a review. */
 export const PLATFORM_CREDENTIAL_ENV = "RELAY_INTERNAL_CREDENTIAL";
+export const GATEWAY_CREDENTIAL_ENV = "RELAY_INTERNAL_CREDENTIAL_GATEWAY";
 const PLATFORM_PREFIX = "rk_svc_";
 
-function resolvePlatformCredential(credential: string): Principal | null {
-  const configured = process.env[PLATFORM_CREDENTIAL_ENV];
-  if (!configured || configured.length < 32) return null;
-  // Constant-time-ish: compare lengths first, then every byte. A platform
-  // credential is a shared secret, and an early-exit compare on a shared secret
-  // is the one place a timing signal is worth the two lines to remove.
-  if (credential.length !== configured.length) return null;
+/** Which variable belongs to which service. The dispatcher's keeps its original
+ * name: renaming it would be a deployment change this chapter has not earned. */
+const PLATFORM_SERVICES: ReadonlyArray<readonly [string, string]> = [
+  [PLATFORM_CREDENTIAL_ENV, "dispatcher"],
+  [GATEWAY_CREDENTIAL_ENV, "gateway"],
+];
+
+/** Constant-time-ish: compare lengths first, then every byte. A platform
+ * credential is a shared secret, and an early-exit compare on a shared secret is
+ * the one place a timing signal is worth the two lines to remove. */
+function secretMatches(presented: string, configured: string): boolean {
+  if (presented.length !== configured.length) return false;
   let mismatch = 0;
-  for (let i = 0; i < credential.length; i++) {
-    mismatch |= credential.charCodeAt(i) ^ configured.charCodeAt(i);
+  for (let i = 0; i < presented.length; i++) {
+    mismatch |= presented.charCodeAt(i) ^ configured.charCodeAt(i);
   }
-  if (mismatch !== 0) return null;
-  return { kind: "platform", service: "dispatcher" };
+  return mismatch === 0;
+}
+
+function resolvePlatformCredential(credential: string): Principal | null {
+  // READ AT CALL TIME, NOT AT MODULE LOAD. `credentials.itest.ts` SETS these
+  // variables during the test and says so in a comment; hoisting the read into a
+  // module-level constant would break that quietly, and the suite would go green
+  // against a credential nobody configured.
+  for (const [variable, service] of PLATFORM_SERVICES) {
+    const configured = process.env[variable];
+    if (!configured || configured.length < 32) continue;
+    if (secretMatches(credential, configured)) return { kind: "platform", service };
+  }
+  return null;
 }
 
 export async function resolvePrincipal(

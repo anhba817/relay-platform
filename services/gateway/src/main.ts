@@ -39,9 +39,28 @@ export function createServer(logger?: Logger) {
   // created here rather than inside `attachSessions` so the tests that call
   // that function directly stay Redis-free, and so its close has an owner.
   const limits = createGatewayLimits();
+  // Chapter 3.11. THE FIRST SECRET THIS SERVICE HAS EVER HELD, and it is not a
+  // signing secret: chapter 3.2's claim that "the gateway holds no signing
+  // secret" is untouched, because this one verifies nothing and signs nothing.
+  // It only says which service is talking, on the one call that is the
+  // gateway's own rather than a user's.
+  //
+  // ABSENT BY DEFAULT AND NOT A STARTUP DEPENDENCY. A gateway with no credential
+  // serves sockets and meters nothing, and says so once here rather than on
+  // every tick — metering may not be able to refuse a connection (FR-012), and
+  // the loudest version of that rule is that it cannot refuse a boot either.
+  const serviceCredential = process.env.RELAY_INTERNAL_CREDENTIAL_GATEWAY;
+  if (serviceCredential === undefined) {
+    log.log("info", "metering.disabled", {
+      reason: "RELAY_INTERNAL_CREDENTIAL_GATEWAY is not set",
+    });
+  }
   const sessions = attachSessions({
     server,
-    api: createApiClient(process.env.RELAY_API_URL ?? DEFAULT_API_URL),
+    api: createApiClient(
+      process.env.RELAY_API_URL ?? DEFAULT_API_URL,
+      serviceCredential,
+    ),
     logger: log,
     fanout,
     limits,

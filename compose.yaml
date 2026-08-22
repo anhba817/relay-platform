@@ -126,6 +126,8 @@ services:
       # and the api refuses to start in production without the first.
       RELAY_WEBHOOK_SECRET_KEY: ${RELAY_WEBHOOK_SECRET_KEY:-}
       RELAY_INTERNAL_CREDENTIAL: ${RELAY_INTERNAL_CREDENTIAL:-rk_svc_local_development_credential_0000}
+      # The api verifies both service credentials, so it holds both.
+      RELAY_INTERNAL_CREDENTIAL_GATEWAY: ${RELAY_INTERNAL_CREDENTIAL_GATEWAY:-rk_svc_local_development_gateway_00000}
       PORT: "4000"
     ports:
       - "${RELAY_API_PORT:-4000}:4000"
@@ -149,6 +151,12 @@ services:
       RELAY_API_URL: http://api:4000
       RELAY_REDIS_URL: redis://redis:6379
       PORT: "4001"
+      # Chapter 3.11: the gateway's first credential of its own. Every other
+      # call it makes forwards the END USER's token; a usage report is nobody's
+      # user action, so it speaks for itself. Its own variable rather than the
+      # dispatcher's, because `PlatformPrincipal.service` has to stay true and
+      # because this service faces the public internet and that one does not.
+      RELAY_INTERNAL_CREDENTIAL_GATEWAY: ${RELAY_INTERNAL_CREDENTIAL_GATEWAY:-rk_svc_local_development_gateway_00000}
     ports:
       - "${RELAY_GATEWAY_PORT:-4001}:4001"
     depends_on:

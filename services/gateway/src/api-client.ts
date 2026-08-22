@@ -2,11 +2,14 @@ import {
   internalBackfillResponseSchema,
   internalSendResponseSchema,
   internalSessionResponseSchema,
+  internalUsageReportResponseSchema,
   type InternalBackfillRequest,
   type InternalBackfillResponse,
   type InternalSendRequest,
   type InternalSendResponse,
   type InternalSessionResponse,
+  type InternalUsageReportRequest,
+  type InternalUsageReportResponse,
 } from "@relay/protocol";
 
 // The gateway's only road to state (chapter 2.5, ADR-05): internal HTTP to
@@ -64,9 +67,29 @@ export interface ApiClient {
     identity: Identity,
     body: InternalSendRequest,
   ): Promise<InternalSendResponse>;
+  /** Chapter 3.11: the one call the gateway makes FOR ITSELF.
+   *
+   * Every other method on this interface takes an `Identity` and forwards the
+   * token inside it. This one takes none, and the absence is the design: a usage
+   * report is not a user's action, it is this process's claim about many
+   * connections across many environments. It presents the platform credential
+   * from `RELAY_INTERNAL_CREDENTIAL_GATEWAY` instead.
+   *
+   * `null` when no credential is configured — the gateway serves sockets without
+   * metering rather than refusing to start, because metering may not be a
+   * startup dependency (FR-012). */
+  reportUsage(
+    body: InternalUsageReportRequest,
+  ): Promise<InternalUsageReportResponse | null>;
 }
 
-export function createApiClient(baseUrl: string): ApiClient {
+export function createApiClient(
+  baseUrl: string,
+  /** Chapter 3.11. Absent by default and absent in every test that does not
+   * meter, which is the same safe direction the api's side takes: with nothing
+   * configured, no report is ever sent and no route is ever reached. */
+  serviceCredential?: string,
+): ApiClient {
   // Chapter 3.2 retired two headers here. The gateway used to send
   // an environment header and a user header — values it INVENTED from a token
   // it verified with a shared development secret. It now forwards the token
@@ -113,6 +136,26 @@ export function createApiClient(baseUrl: string): ApiClient {
       });
       const body = await parse(res, internalBackfillResponseSchema, "backfill");
       return body.channels;
+    },
+    async reportUsage(body) {
+      // No credential, no report. Not an error and not a throw: a gateway with
+      // no metering configured is a gateway that serves sockets, and the caller
+      // logs the absence once at boot rather than on every tick.
+      if (serviceCredential === undefined) return null;
+      const res = await fetch(`${baseUrl}/internal/usage/connections`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          // The gateway's OWN credential. Not `headers(identity)` — there is no
+          // identity here, and reaching for one would mean picking a user to
+          // speak for, which is exactly the assertion chapter 3.2 removed.
+          authorization: `Bearer ${serviceCredential}`,
+        },
+        body: JSON.stringify(
+          body satisfies InternalUsageReportRequest,
+        ),
+      });
+      return parse(res, internalUsageReportResponseSchema, "usage report");
     },
     async sendMessage(identity, body) {
       const res = await fetch(`${baseUrl}/internal/messages`, {
