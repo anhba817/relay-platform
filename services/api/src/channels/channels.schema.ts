@@ -31,7 +31,7 @@ export const createChannelBodySchema = z.strictObject({
   // An endpoint accepting `private` would sell a guarantee the platform does not
   // keep, and it would do it in the chapter whose exit criterion is that an
   // outsider can integrate on the documentation alone. The enum is `public`
-  // today; FR-CHN-03's private half goes to chapter 3.13 with FR-CHN-05, where
+  // today; FR-CHN-03's private half goes to chapter 3.15 with FR-CHN-05, where
   // the read paths are made to honour it.
   type: z.enum(["public"]),
   name: z.string().min(1).max(255).optional(),

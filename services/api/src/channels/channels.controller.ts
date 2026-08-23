@@ -11,7 +11,7 @@ import type { AddMembersBody, CreateChannelBody } from "./channels.schema";
 // `@Accepts("application")` and not both classes: creating a channel and deciding
 // who is in it are server-side acts. An end-user token is minted for one person
 // (FR-AUT-10), and a person adding themselves to a channel is a product decision
-// this chapter is not making — chapter 3.13 owns the user-facing surface.
+// this chapter is not making — chapter 3.15 owns the user-facing surface.
 /** The one thing this controller needs from the response object.
  *
  * Declared rather than imported, which is chapter 3.4's decision in

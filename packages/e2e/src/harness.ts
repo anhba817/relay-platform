@@ -77,7 +77,7 @@ const forwarded = (...names: string[]): Record<string, string> =>
  * rewrite four journeys in a chapter about isolation. `services/gateway/src/
  * public-surface.itest.ts` makes the same claim where the coverage run does look,
  * and `packages/outsider` makes the stronger one in a package that cannot import
- * this file at all. The migration is chapter 3.13's, with the rest of FR-CHN. */
+ * this file at all. The migration is chapter 3.15's, with the rest of FR-CHN. */
 interface Seeder {
   createEnvironment: (
     db: unknown,
