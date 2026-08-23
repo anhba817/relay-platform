@@ -189,6 +189,89 @@ export default tseslint.config(
     },
   },
   {
+    // THE SEAL ON `packages/outsider` (chapter 3.12, FR-030, FR-034, R12).
+    //
+    // That package holds one suite that behaves like a customer, and the claim it
+    // makes — an integration built from published documentation alone — is worth
+    // nothing if the suite can read the platform's source. So the claim is made
+    // mechanical, in three levels, and this block is levels 2 and 3.
+    //
+    // LEVEL 1 IS NOT A RULE AT ALL. `packages/outsider/package.json` declares no
+    // `@relay/*` dependency, and pnpm's isolated `node_modules` means there is no
+    // `@relay` directory at the workspace root — so
+    // `import { ERROR_CODES } from "@relay/protocol"` fails to RESOLVE. Nothing
+    // lints it; the module is not there.
+    //
+    // LEVEL 2 is the import rule below: a specifier that climbs out of the package
+    // by a relative or absolute path is refused. That closes the obvious way round
+    // level 1, which is to spell the same import as `../protocol/src/codes.js`.
+    //
+    // LEVEL 3 is the syntax rule, and an import rule cannot reach it.
+    // `packages/e2e/src/harness.ts:31` builds `join(HERE, "..", "..", "..")` and
+    // spawns the api's build output from it — a STRING, not an import specifier, so
+    // `no-restricted-imports` never sees it. The file cited as proof the hole
+    // exists is also proof the import rule does not close it. So `".."` as a
+    // literal is banned here, and so is `createRequire`, which is the other way to
+    // turn a computed path into a module.
+    //
+    // WHAT NONE OF THE THREE CLOSES, and three rules must not be left to imply a
+    // fourth: reading the repository's source with human eyes. Whoever writes that
+    // suite can open `codes.ts` in an editor, and no configuration can stop them.
+    // The seals make workspace code unIMPORTABLE; not reading it is a discipline,
+    // and the chapter says so in those words rather than presenting three rules as
+    // if they were four (FR-034).
+    files: ["packages/outsider/**/*.ts", "packages/outsider/**/*.mts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@relay/*"],
+              message:
+                "packages/outsider integrates from published documentation alone. It may not import workspace code — see the three levels in eslint.config.mjs.",
+            },
+            {
+              // NOT `/*` as a third entry here: minimatch matched `vitest/config`
+              // with it, and a rule that refuses the test runner is a rule
+              // somebody turns off. Absolute paths are covered by the syntax
+              // selector below, which matches on the specifier itself.
+              group: ["../*", "../../*"],
+              message:
+                "packages/outsider may not reach outside itself. A relative path out of the package is the same import by another spelling.",
+            },
+          ],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "Literal[value='..']",
+          message:
+            "packages/outsider may not build a path out of the package. `join(HERE, \"..\", …)` is how packages/e2e reaches the api's build output, and an import rule cannot see it.",
+        },
+        {
+          selector: "CallExpression[callee.name='createRequire']",
+          message:
+            "createRequire turns a computed path into a module, which is the escape the import rule cannot see.",
+        },
+        {
+          selector: "ImportDeclaration[source.value='node:module']",
+          message:
+            "node:module is only useful here for createRequire, which is banned above.",
+        },
+        {
+          // An absolute path is the third spelling of the same import. Matched on
+          // the specifier rather than by glob, because the glob for it also
+          // matched `vitest/config`.
+          selector: "ImportDeclaration[source.value=/^\\//]",
+          message:
+            "packages/outsider may not import by absolute path. See the three levels in eslint.config.mjs.",
+        },
+      ],
+    },
+  },
+  {
     // THE GLOBAL ADMIN FUNCTIONS, RESTRICTED IN INTEGRATION TESTS (feature 030).
     //
     // Six recorded instances of one fault: a test asserts a local fact about a
