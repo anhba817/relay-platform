@@ -131,3 +131,54 @@ export function shapeCounts(): Record<Shape, number> {
   for (const c of CLASSIFICATIONS) counts[c.shape]++;
   return counts;
 }
+
+/** One routable endpoint, as the running application reports it. */
+export interface DerivedTarget {
+  method: string;
+  path: string;
+}
+
+/** The shape of the express router this reaches into. Declared rather than
+ * imported: express 5 ships no types, and adding `@types/express` for one
+ * property read would move the api's dependency list for a test's benefit. */
+interface RouterLike {
+  stack?: Array<{ route?: { path?: string; methods?: Record<string, boolean> }; name?: string }>;
+}
+interface AdapterInstance {
+  router?: RouterLike;
+  _router?: RouterLike;
+}
+
+/** Where the router lives, and the fact that this is not public API.
+ *
+ * Express 5 exposes `router`; express 4 called it `_router`. Both are read, and
+ * which one answered is returned so a test can assert the derivation found
+ * something rather than silently finding nothing — the failure mode that would
+ * make this whole suite pass while attacking zero routes (research R2). */
+export function deriveTargets(instance: unknown): {
+  targets: DerivedTarget[];
+  middlewareLayers: number;
+  property: "router" | "_router" | "none";
+} {
+  const adapter = instance as AdapterInstance;
+  const router = adapter.router ?? adapter._router;
+  const property = adapter.router ? "router" : adapter._router ? "_router" : "none";
+  const targets: DerivedTarget[] = [];
+  let middlewareLayers = 0;
+  for (const layer of router?.stack ?? []) {
+    if (!layer.route) {
+      middlewareLayers++;
+      continue;
+    }
+    const path = layer.route.path ?? "";
+    for (const [verb, on] of Object.entries(layer.route.methods ?? {})) {
+      if (on) targets.push({ method: verb.toUpperCase(), path });
+    }
+  }
+  return { targets, middlewareLayers, property };
+}
+
+/** A route that has existed since chapter 2.2 and will exist for as long as this
+ * product does. If the derivation cannot find THIS, it has not found the mounted
+ * router, whatever else it returned. */
+export const CANARY_TARGET = "POST /v1/channels/:channelId/messages";
