@@ -63,7 +63,12 @@ export default defineConfig({
     hookTimeout: 60_000,
     coverage: {
       provider: "v8",
-      reporter: ["text", "json-summary"],
+      // `json` joins the other two for chapter 3.12's FR-040, which asks for every
+      // uncovered branch to be NAMED and not merely counted. `json-summary` carries
+      // totals and percentages; the per-branch locations are only in `coverage-final.json`.
+      // Found by trying to list the 25 uncovered arms in `repository.ts` and getting a
+      // file that does not contain them. `coverage/` is gitignored, so this commits nothing.
+      reporter: ["text", "json-summary", "json"],
       include: ["packages/*/src/**/*.ts", "services/*/src/**/*.ts"],
       exclude: [
         "**/*.test.ts",
