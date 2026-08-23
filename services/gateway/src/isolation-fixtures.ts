@@ -55,6 +55,11 @@ export interface SocketTenant {
   /** Put a message in this tenant's channel, so a foreign subscriber has something
    * it must not receive. */
   say: (text: string) => Promise<{ id: string; seq: number }>;
+  /** This tenant's own channel history, read with its own credential through the
+   * public route. A write attack has to be checked against the victim's state and
+   * not against the attacker's refusal: a refusal that changed a row is still a
+   * breach, and only the victim's side of the wire can tell. */
+  history: () => Promise<string>;
 }
 
 export interface SocketTenants {
@@ -99,6 +104,13 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
       token,
       say: (text: string) =>
         repo.sendMessage(channel.id, { text, userId: user.id, userExternalId }),
+      history: async () => {
+        const res = await fetch(`${apiUrl}/v1/channels/${channel.id}/messages?limit=100`, {
+          headers: { authorization: `Bearer ${key.credential}` },
+        });
+        if (!res.ok) throw new Error(`history for ${label}: ${res.status}`);
+        return res.text();
+      },
     };
   };
 
