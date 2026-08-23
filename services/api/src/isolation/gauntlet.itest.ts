@@ -1,5 +1,6 @@
 import "reflect-metadata";
 
+import { eq } from "drizzle-orm";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import { AppModule } from "../app.module";
 import { createDb, createPool } from "../db/client";
 import { mintUserToken } from "../auth/user-token";
 import { environmentSigningSecret } from "../db/repository";
+import { webhookDeliveries } from "../db/schema";
 import { credentialAttack, listAttack, readAttack, writeAttack } from "./attack";
 import { nowhereId, seedTwoTenants, type TwoTenants } from "./fixtures";
 
@@ -248,24 +250,45 @@ describe("the isolation gauntlet", () => {
     });
 
     it("POST /internal/messages", async () => {
-      const res = await fetch(`${url}/internal/messages`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${attackerToken}`, "content-type": "application/json" },
-        body: JSON.stringify({ channel_id: tenants.victim.channelId, text: "not mine" }),
-      });
-      expect(res.status).toBeGreaterThanOrEqual(400);
-      const after = await tenants.victim.repo.listMessages(tenants.victim.channelId, { limit: 50 });
-      expect(JSON.stringify(after)).not.toContain("not mine");
+      // The pair, not just a 4xx. "Refused" and "refused for the same reason a
+      // channel that does not exist is refused" are different claims, and only
+      // the second one is isolation: an answer that says "not yours" where the
+      // absent id says "no such channel" has disclosed that the channel exists.
+      const verdict = await writeAttack(
+        url,
+        attackerToken,
+        {
+          method: "POST",
+          path: "/internal/messages",
+          body: { channel_id: tenants.victim.channelId, text: "not mine" },
+        },
+        {
+          method: "POST",
+          path: "/internal/messages",
+          body: { channel_id: nowhereId(), text: "not mine" },
+        },
+        () => tenants.victim.repo.listMessages(tenants.victim.channelId, { limit: 50 }),
+      );
+      expect(verdict.differences).toEqual([]);
+      expect(verdict.stateChanged).toBe(false);
+      expect(JSON.stringify(verdict.after)).not.toContain("not mine");
     });
 
     it("POST /internal/backfill", async () => {
-      const res = await fetch(`${url}/internal/backfill`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${attackerToken}`, "content-type": "application/json" },
-        body: JSON.stringify({ cursor: { [tenants.victim.channelId]: 1 }, limit: 10 }),
-      });
-      const body = await res.text();
-      expect(body).not.toContain(tenants.victim.messageId);
+      const verdict = await writeAttack(
+        url,
+        attackerToken,
+        {
+          method: "POST",
+          path: "/internal/backfill",
+          body: { cursor: { [tenants.victim.channelId]: 1 }, limit: 10 },
+        },
+        { method: "POST", path: "/internal/backfill", body: { cursor: { [nowhereId()]: 1 }, limit: 10 } },
+        () => tenants.victim.repo.listMessages(tenants.victim.channelId, { limit: 50 }),
+      );
+      expect(verdict.differences).toEqual([]);
+      expect(verdict.stateChanged).toBe(false);
+      expect(JSON.stringify(verdict.foreign.body)).not.toContain(tenants.victim.messageId);
     });
 
     it("POST /internal/session", async () => {
@@ -279,6 +302,82 @@ describe("the isolation gauntlet", () => {
       // not one of them, and `channelsForUser` is scoped by the token's own
       // environment — this is the assertion that the scoping is real.
       expect(body).not.toContain(tenants.victim.channelId);
+    });
+  });
+  // ── T031: the five platform routes, and what isolation means for them ──────
+  //
+  // T031b, the comment the plan asked for: a platform credential is not
+  // tenant-scoped and is not meant to be. The dispatcher serves every tenant, so
+  // its credential reaches every tenant's deliveries. FR-044 narrowed WHICH
+  // ROUTES each service may call and changed nothing about that reach.
+  //
+  // So the attack shape differs here, and the difference is worth stating
+  // exactly. Only TWO of the five platform routes name an environment alongside
+  // an identifier — `dispatch/expand` (`environment_id` beside `event_id`) and
+  // `usage/connections` (an environment per connection). Those two can be told
+  // to act on environment A while carrying something from B, and both are
+  // attacked: expand below, connections by `usage.itest.ts`'s
+  // `connection_environment_conflict` assertion (T032).
+  //
+  // The other three — `material`, `outcome`, `replay` — take one opaque
+  // identifier and DERIVE the environment from the row they find. There is no
+  // cross-environment request to make, because the caller never says which
+  // environment it means. That is not a hole this suite declines to test; it is
+  // the absence of the parameter that would make the attack expressible. What
+  // guards them is FR-044 and nothing else — which is why `material`, the one
+  // response in the platform that returns a decrypted customer secret, is the
+  // route to watch first if a platform credential ever leaks.
+  describe("the platform routes (T031, T031b)", () => {
+    const dispatcher = process.env["RELAY_INTERNAL_CREDENTIAL"] ?? "";
+
+    async function victimDeliveries(): Promise<number> {
+      const rows = await db
+        .select({ id: webhookDeliveries.id })
+        .from(webhookDeliveries)
+        .where(eq(webhookDeliveries.endpointId, tenants.victim.endpointId));
+      return rows.length;
+    }
+
+    it("expand reaches only the endpoints of the environment it names", async () => {
+      const before = await victimDeliveries();
+      const res = await fetch(`${url}/internal/dispatch/expand`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${dispatcher}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          event_id: crypto.randomUUID(),
+          environment_id: tenants.attacker.environmentId,
+          type: "message.created",
+          payload: { text: "expand names one environment" },
+        }),
+      });
+      expect(res.status).toBe(200);
+      // The attacker's own endpoint subscribes to this type, so the call did
+      // something — without this the assertion below passes on a no-op.
+      expect((await res.json()).created).toBeGreaterThan(0);
+      expect(await victimDeliveries()).toBe(before);
+    });
+
+    it("expand naming an environment that exists nowhere creates nothing", async () => {
+      const before = await victimDeliveries();
+      const res = await fetch(`${url}/internal/dispatch/expand`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${dispatcher}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          event_id: crypto.randomUUID(),
+          environment_id: nowhereId(),
+          type: "message.created",
+          payload: { text: "no such environment" },
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).created).toBe(0);
+      expect(await victimDeliveries()).toBe(before);
     });
   });
 });
