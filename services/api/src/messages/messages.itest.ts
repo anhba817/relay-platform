@@ -7,22 +7,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../app.module";
 import { createDb, createPool } from "../db/client";
 import { createApiKey, createEnvironment, Repository } from "../db/repository";
-
-// Chapter 3.8 added `request_id` to every error body (constitution V's fourth
-// field, promised since 1.3). It is unique per request BY DESIGN, so two error
-// bodies can no longer be compared whole — and comparing them whole is how this
-// suite proves a foreign resource is indistinguishable from an absent one, which
-// is a tenant-isolation property (constitution I).
-//
-// The id is the one field that reveals nothing about the resource, so it is the
-// one field the comparison must drop. Everything discriminating still has to
-// match exactly.
-function withoutRequestId(body: unknown): unknown {
-  if (typeof body !== "object" || body === null) return body;
-  const rest: Record<string, unknown> = { ...(body as Record<string, unknown>) };
-  delete rest["request_id"];
-  return rest;
-}
+// The comparison this suite invented, now shared. Chapter 3.12 moved it into
+// `isolation/compare.ts` so 24 routes could use the same oracle; it is imported
+// back rather than duplicated, which is the fault that chapter is about.
+import { withoutRequestId } from "../isolation/compare";
 
 
 // The endpoint path (chapter 2.2): guard → pipe → service → repository →
