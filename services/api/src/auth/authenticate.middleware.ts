@@ -60,10 +60,21 @@ const PLATFORM_PREFIX = "rk_svc_";
 
 /** Which variable belongs to which service. The dispatcher's keeps its original
  * name: renaming it would be a deployment change this chapter has not earned. */
-const PLATFORM_SERVICES: ReadonlyArray<readonly [string, string]> = [
+const PLATFORM_SERVICES = [
   [PLATFORM_CREDENTIAL_ENV, "dispatcher"],
   [GATEWAY_CREDENTIAL_ENV, "gateway"],
-];
+] as const satisfies ReadonlyArray<readonly [string, string]>;
+
+/** The internal services that exist, DERIVED FROM THE LIST ABOVE rather than
+ * retyped beside it (chapter 3.12, FR-044).
+ *
+ * `as const` is doing the work: without it `(typeof PLATFORM_SERVICES)[number][1]`
+ * widens to `string` and a route could declare a service nobody deploys. With it,
+ * adding a third internal service widens this union on its own and every route
+ * that must now decide about it stops compiling — which is chapter 3.11's lesson
+ * from `Dimension`, where adding a config key widened a type and the two-way
+ * ternary underneath it was the thing the compiler could not see. */
+export type PlatformService = (typeof PLATFORM_SERVICES)[number][1];
 
 /** Constant-time-ish: compare lengths first, then every byte. A platform
  * credential is a shared secret, and an early-exit compare on a shared secret is

@@ -48,7 +48,10 @@ import type { Publisher } from "../outbox/publisher";
 // ignoring a tenant scope is the shape a cross-tenant hole takes.
 @Controller("internal/dispatch")
 @UseGuards(CredentialGuard)
-@Accepts("platform")
+// FR-044 (chapter 3.12): the CLASS was never enough. Two platform credentials
+// exist, `service` said which one answered, and nothing checked it — so the more
+// exposed service set the blast radius for both. Here: delivery is the dispatcher's; the gateway has no business replaying a dead letter.
+@Accepts({ platform: ["dispatcher"] })
 export class DispatchController {
   constructor(
     @Inject("DB") private readonly db: Db,

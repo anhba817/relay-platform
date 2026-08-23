@@ -95,8 +95,9 @@ describe("the gauntlet's target list derives from the running application", () =
     const counts = shapeCounts();
     const attacked = counts.read + counts.list + counts.write + counts.credential;
     const exempt = counts.exempt;
-    // eslint-disable-next-line no-console -- SC-001 asks for this number to be
-    // reported, and a number nobody can see is a number nobody checks.
+    // SC-001 asks for this number to be reported, and a number nobody can see is a
+    // number nobody checks. Visible under `--reporter=verbose`; the assertion below
+    // is what gates the build either way.
     console.log(
       `gauntlet targets: ${derived.length} derived, ${attacked} attacked, ${exempt} exempt ` +
         `(read ${counts.read}, list ${counts.list}, write ${counts.write}, credential ${counts.credential})`,

@@ -39,7 +39,20 @@ import { mintUserToken } from "../auth/user-token";
 // silence about an isolation property is what constitution I calls a
 // configuration mistake.
 
+// THE GATEWAY'S CREDENTIAL, and chapter 3.12 is why the variable changed.
+//
+// This suite set `RELAY_INTERNAL_CREDENTIAL` — the DISPATCHER's variable — and
+// presented it to `POST /internal/usage/connections`, which is the gateway's route
+// and nothing else's. It passed, because until FR-044 a route could say which class
+// of credential may call it and not which service, so both platform credentials
+// were interchangeable everywhere. The suite verifying the gateway's metering route
+// had never used the gateway's credential, and nine of its tests turned 403 the
+// moment the route declared its service.
+//
+// That is the hole FR-044 closes, demonstrated by this file rather than argued for.
 const PLATFORM = "rk_svc_usage_itest_0123456789abcdef012345";
+/** The dispatcher's, kept so the refusal can be tested in both directions (T030e). */
+const DISPATCHER_CREDENTIAL = "rk_svc_usage_itest_dispatcher_0123456789";
 const AUGUST = "2026-08-01";
 
 describe("POST /internal/usage/connections", () => {
@@ -55,7 +68,8 @@ describe("POST /internal/usage/connections", () => {
     // SET, not read — `credentials.itest.ts` explains why at length: CI never
     // set it, and the assertion standing between a platform credential and a
     // public route silently did nothing on every build.
-    process.env["RELAY_INTERNAL_CREDENTIAL"] = PLATFORM;
+    process.env["RELAY_INTERNAL_CREDENTIAL_GATEWAY"] = PLATFORM;
+    process.env["RELAY_INTERNAL_CREDENTIAL"] = DISPATCHER_CREDENTIAL;
 
     db = createDb(createPool());
     const env = await createEnvironment(db, { name: `usage-itest-${randomUUID()}` });
@@ -146,6 +160,76 @@ describe("POST /internal/usage/connections", () => {
       const body = await (await post(oneReport(1), apiKey)).text();
       expect(body).not.toContain(apiKey);
       expect(body).not.toContain(PLATFORM);
+    });
+  });
+
+  // ── FR-044: a platform credential is authorized by SERVICE, not just by class ──
+  //
+  // Until this chapter `Accepts` took kinds, both platform credentials resolved to
+  // one class, and every `@Accepts("platform")` route accepted either. So the
+  // gateway's credential reached `POST /internal/dispatch/replay`, whose handler
+  // takes a dead-letter id and NO environment — it acts on any tenant's dead
+  // letter, which is correct for the dispatcher and is reach the gateway should
+  // never have had. Chapter 3.11 argued for two secrets on exactly this ground
+  // ("the gateway terminates connections from the public internet and the
+  // dispatcher does not") and stopped one step short: two secrets stopped them
+  // sharing a secret, and they still shared a surface.
+  //
+  // BOTH DIRECTIONS, ROUTE BY ROUTE. A rule tested one way is a rule that works
+  // one way.
+  describe("a platform credential is refused on another service's route (FR-044)", () => {
+    const DISPATCH_ROUTES = [
+      "/internal/dispatch/expand",
+      "/internal/dispatch/material",
+      "/internal/dispatch/outcome",
+      "/internal/dispatch/replay",
+    ] as const;
+
+    it.each(DISPATCH_ROUTES)(
+      "refuses the gateway's credential on %s",
+      async (route) => {
+        const res = await fetch(`${url}${route}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${PLATFORM}`,
+          },
+          body: JSON.stringify({}),
+        });
+        expect(res.status).toBe(403);
+        const body = (await res.json()) as { code: string; message: string };
+        expect(body.code).toBe("wrong_credential_service");
+        // T030c2: the message names the service and the permitted set, and never
+        // the credential. A service name is a deployment label; a credential is a
+        // secret (NFR-SEC-06).
+        expect(body.message).toContain('"gateway"');
+        expect(body.message).toContain("dispatcher");
+        expect(body.message).not.toContain(PLATFORM);
+      },
+    );
+
+    it("refuses the dispatcher's credential on the gateway's metering route", async () => {
+      const res = await fetch(`${url}/internal/usage/connections`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${DISPATCHER_CREDENTIAL}`,
+        },
+        body: JSON.stringify(oneReport(1)),
+      });
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { code: string; message: string };
+      expect(body.code).toBe("wrong_credential_service");
+      expect(body.message).toContain('"dispatcher"');
+      expect(body.message).toContain("gateway");
+      expect(body.message).not.toContain(DISPATCHER_CREDENTIAL);
+    });
+
+    it("still accepts the gateway's credential on the gateway's own route", async () => {
+      // The other half of a refusal test: a rule that refuses everything passes
+      // the same assertions as a rule that refuses the right thing.
+      const res = await post(oneReport(2), PLATFORM);
+      expect(res.status).toBe(200);
     });
   });
 
