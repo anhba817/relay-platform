@@ -101,7 +101,7 @@ const SPINE: ReadonlyArray<readonly [string, string]> = [
 /** The spine, for anyone who needs to state it rather than derive it. */
 export const SPINE_TABLES: readonly string[] = SPINE.map(([t]) => t);
 
-interface CatalogueRow extends Record<string, unknown> {
+export interface CatalogueRow extends Record<string, unknown> {
   table_name: string;
   has_environment_id: boolean;
   fk_targets: string[] | null;
@@ -148,20 +148,29 @@ export async function classifyTables(db: Db): Promise<TableClassification[]> {
     `)
   ).rows;
 
-  const spine = new Map(SPINE);
+  return rows.map(classifyRow);
+}
 
-  return rows.map((row) => {
-    const via = row.fk_targets ?? [];
-    // ORDER MATTERS, and only in one place: a spine table with no environment_id
-    // and no foreign key would classify the same either way, but checking
-    // `direct` first means a future spine table that gains the column reports as
-    // `direct` and the list entry becomes visibly wrong rather than silently
-    // ignored.
-    if (row.has_environment_id) return { table: row.table_name, path: "direct" as const, via };
-    if (via.length > 0) return { table: row.table_name, path: "hop" as const, via };
-    const reason = spine.get(row.table_name);
-    if (reason !== undefined)
-      return { table: row.table_name, path: "spine" as const, via, reason };
-    return { table: row.table_name, path: null, via };
-  });
+/** THE CLASSIFICATION, SEPARATED FROM THE QUERY, and separated for a reason the
+ * coverage run made plain: the interesting arm is the one that returns `null`, and
+ * it cannot execute against a real database that has no unclassified table — which
+ * is exactly the state the check exists to keep. So the branch that fires only when
+ * somebody adds a table was the one branch nothing measured.
+ *
+ * Pure, so `catalogue.test.ts` drives all four arms with rows it makes up. Same
+ * argument as `webhooks/disable.ts` and `webhooks/analytics.ts`, which are pure and
+ * pinned at 100 for it: a file with nothing to mock has no reason to be partially
+ * tested. */
+export function classifyRow(row: CatalogueRow): TableClassification {
+  const via = row.fk_targets ?? [];
+  // ORDER MATTERS, and only in one place: a spine table with no environment_id
+  // and no foreign key would classify the same either way, but checking
+  // `direct` first means a future spine table that gains the column reports as
+  // `direct` and the list entry becomes visibly wrong rather than silently
+  // ignored.
+  if (row.has_environment_id) return { table: row.table_name, path: "direct", via };
+  if (via.length > 0) return { table: row.table_name, path: "hop", via };
+  const reason = new Map(SPINE).get(row.table_name);
+  if (reason !== undefined) return { table: row.table_name, path: "spine", via, reason };
+  return { table: row.table_name, path: null, via };
 }

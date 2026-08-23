@@ -129,6 +129,28 @@ export default defineConfig({
         // tested none of them" in the only language it has. The tests were written;
         // it now reads 97.29 / 90.56 / 100 / 99.14. These numbers are that
         // measurement, not a target negotiated down to meet it.
+        // CHAPTER 3.12 DID NOT RAISE THIS, and the number says why. The chapter
+        // added six operations to this file — idempotent creation for channels and
+        // users, a three-outcome `addMember`, two scoped counts — and branches
+        // measured 90.43% mid-phase, DOWN from T007's 90.60% while still above the
+        // pinned 90. Three new uncovered arms, all of them the same kind:
+        //
+        //   - `addMember`'s `(inserted.rowCount ?? 0)` — REMOVED rather than named.
+        //     `rowCount` is typed `number | null` and is never null for an INSERT,
+        //     so the `??` was an arm nothing could take, bought for nothing in the
+        //     one file constitution VI asks 100% of. `RETURNING` and `.rows.length`
+        //     replaced it.
+        //   - `createChannel`'s and `createUser`'s "could not be created or read"
+        //     throws. Both are the loser of an `ON CONFLICT` race finding no row,
+        //     which means the winner's row was deleted between two statements in
+        //     the same call. Nothing in the api deletes from either table, so
+        //     reaching these means constructing a state the layer exists to make
+        //     unconstructable — the same class T007's list already named for lines
+        //     151 and 3139.
+        //
+        // It now reads 90.71%, above where the chapter found it and below 91, so
+        // the pin stays at 90 rather than moving to a number the next chapter
+        // would have to earn back.
         "services/api/src/db/repository.ts": {
           branches: 90,
           functions: 100,
@@ -194,6 +216,77 @@ export default defineConfig({
         // (FR-004, SC-006), and its `catch` is what stops an analytics outage
         // becoming a delivery outage (contract invariant 4). Both are branches, and
         // an unmeasured branch here fails silently in the direction nobody checks.
+        // ── CHAPTER 3.12'S NEW FILES, PINNED DELIBERATELY ──────────────────
+        //
+        // T079 asked for an explicit decision either way, and the answer is: pin
+        // the ones that decide something, at what they measure. All of these sit
+        // inside the coverage `include` glob, so an unpinned file here is bounded
+        // by nothing but the aggregate 70 — chapter 3.11's T033c made the same
+        // call for the same reason, and its comment is the one to read: an
+        // unpinned file is a figure that can slide.
+        //
+        // `catalogue.ts` matters most of the four. It lands in
+        // `services/api/src/db/`, the one directory that already carries a
+        // per-file ratchet and the directory constitution VI's 100%-branch clause
+        // is about. It reaches 100 on every metric — but only after the
+        // classification was separated from the query, because the arm that
+        // returns `null` cannot execute against a database that has no
+        // unclassified table, which is the state the check exists to keep. The
+        // separation is the finding; the number is what it bought.
+        "services/api/src/db/catalogue.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // The gauntlet's own instruments. Test infrastructure that the include
+        // glob cannot tell from product code — and rather than adding an exclude
+        // entry to hide them, they are pinned, because Phase 7's whole argument
+        // applies one layer down: an instrument that has never produced output has
+        // never had its output checked. Both reached 100 only after the arms a
+        // PASSING suite cannot reach were driven with fakes: the router shapes the
+        // live adapter does not have, and the difference strings a healthy
+        // platform never produces.
+        "services/api/src/isolation/targets.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/isolation/compare.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // `attack.ts` is NOT at 100, and the remaining arms are named rather than
+        // chased. `send`'s empty-body arm and `credentialAttack`'s mint-failure arm
+        // both need an HTTP fake to reach, and faking the transport in a file whose
+        // subject is real HTTP would test the fake. `rowsOf` was extracted and
+        // closed because it holds a real decision — zero rows from an unrecognised
+        // shape reads exactly like zero rows from a correctly-scoped list, and only
+        // one of those is a pass.
+        "services/api/src/isolation/attack.ts": {
+          branches: 83,
+          functions: 100,
+          lines: 100,
+          statements: 96,
+        },
+
+        // The channel surface's decisions: the scoped read that comes FIRST so a
+        // foreign channel and an absent one answer alike, and the ceiling counted
+        // from storage before any user is created. The one uncovered branch is the
+        // `not_found` outcome after a successful scoped read — the channel deleted
+        // between two statements of one call — which nothing in the api can do.
+        "services/api/src/channels/channels.service.ts": {
+          branches: 75,
+          functions: 100,
+          lines: 94,
+          statements: 94,
+        },
+
         "services/api/src/webhooks/disable.ts": {
           branches: 100,
           functions: 100,

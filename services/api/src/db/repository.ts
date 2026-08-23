@@ -2712,9 +2712,15 @@ export class Repository {
           SELECT c.id, u.id FROM channels c, users u
           WHERE c.id = ${channelId} AND c.environment_id = ${this.environmentId}
             AND u.id = ${userId} AND u.environment_id = ${this.environmentId}
-          ON CONFLICT (channel_id, user_id) DO NOTHING`,
+          ON CONFLICT (channel_id, user_id) DO NOTHING
+          RETURNING channel_id`,
     );
-    if ((inserted.rowCount ?? 0) > 0) return "added";
+    // `RETURNING` and `.rows.length`, not `rowCount ?? 0`. `rowCount` is typed
+    // `number | null` by the driver and is never null for an INSERT, so the `??`
+    // was a branch nothing could take — one uncovered arm in the file
+    // constitution VI asks for 100% of, bought for nothing. A row that came back
+    // is a row that was inserted.
+    if (inserted.rows.length > 0) return "added";
 
     const existing = await this.db
       .select({ userId: members.userId })

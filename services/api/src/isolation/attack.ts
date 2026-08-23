@@ -54,7 +54,12 @@ async function send(baseUrl: string, credential: string, req: AttackRequest): Pr
   return { status: res.status, body };
 }
 
-function comparePair(foreign: Answer, absent: Answer): string[] {
+/** Exported for `attack.test.ts`. The arm that reports a DIFFERENCE never
+ * executes in a healthy lane — every attack in the gauntlet compares equal — so
+ * the one branch that matters here is the one a passing suite cannot reach. It is
+ * driven with made-up answers instead (chapter 3.12's Phase 7 argument, one layer
+ * down: an instrument that has never fired is untested). */
+export function comparePair(foreign: Answer, absent: Answer): string[] {
   const differences: string[] = [];
   if (foreign.status !== absent.status) {
     differences.push(`status ${foreign.status} (foreign) vs ${absent.status} (absent)`);
@@ -94,6 +99,22 @@ export interface ListVerdict {
   body: unknown;
 }
 
+/** THE ROWS IN A LIST RESPONSE, whatever shape it came in.
+ *
+ * Three shapes because the platform has two and a future route may have neither:
+ * `GET /v1/webhooks` answers a bare array, a paginated route answers
+ * `{ data: [...] }`, and anything else has no rows to count. Exported and pure
+ * because only ONE of those arms can execute against the routes that exist today,
+ * and a count of zero from an unrecognised shape reads exactly like a count of
+ * zero from a correctly-scoped list — which is the one answer this suite must
+ * never confuse with success. */
+export function rowsOf(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
+  const data = (body as { data?: unknown } | null)?.data;
+  if (Array.isArray(data)) return data;
+  return [];
+}
+
 export async function listAttack(
   baseUrl: string,
   credential: string,
@@ -101,11 +122,7 @@ export async function listAttack(
   foreignIds: readonly string[],
 ): Promise<ListVerdict> {
   const answer = await send(baseUrl, credential, req);
-  const rows = Array.isArray(answer.body)
-    ? answer.body
-    : Array.isArray((answer.body as { data?: unknown[] } | null)?.data)
-      ? ((answer.body as { data: unknown[] }).data)
-      : [];
+  const rows = rowsOf(answer.body);
   const serialised = JSON.stringify(answer.body ?? "");
   return {
     status: answer.status,
