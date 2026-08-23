@@ -4,7 +4,6 @@ import { createDb, createPool } from "../db/client";
 import { classifyTables, SPINE_TABLES, type TableClassification } from "../db/catalogue";
 
 import type { Db } from "../db/client";
-import type pg from "pg";
 
 // THE STRUCTURAL HALF (FR-012, SC-007, constitution I).
 //
@@ -21,7 +20,10 @@ import type pg from "pg";
 // makes the second claim, endpoint by endpoint. Neither implies the other.
 
 describe("every table has a path to one tenant", () => {
-  let pool: pg.Pool;
+  // `ReturnType` rather than `import type pg from "pg"`: the driver's own types
+  // are behind the same ban as the driver (FR-043), and a type-only import is
+  // still an import to `no-restricted-imports`.
+  let pool: ReturnType<typeof createPool>;
   let db: Db;
   let tables: TableClassification[];
 

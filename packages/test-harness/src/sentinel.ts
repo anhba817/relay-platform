@@ -66,6 +66,11 @@ export interface Sentinel {
    * considers ENABLED endpoints, and the dispatcher only does real work for one.
    * See `plant()` for the measurement that forced the split. */
   deliveryEndpointId: string;
+  /** Chapter 3.12's usage-table bait. One row each, and the ids are derived like
+   * every other so a refusal names the file that planted them. */
+  usageUserId: string;
+  usageConnectionId: string;
+  usageNotificationId: string;
   /** `__sentinel__:<owner>`, on every row, so a failure says whose it is. */
   name: string;
 }
@@ -92,6 +97,9 @@ export function sentinelFor(owner: string): Sentinel {
     environmentId: id("environment"),
     endpointId: id("endpoint"),
     deliveryEndpointId: id("delivery-endpoint"),
+    usageUserId: id("usage-user"),
+    usageConnectionId: id("usage-connection"),
+    usageNotificationId: id("usage-notification"),
     name: `__sentinel__:${owner}`,
   };
 }
@@ -290,6 +298,55 @@ export async function plant(
             now() - interval '4 hours', 25, 503, now() - interval '2 hours'
        FROM generate_series(1, $4)`,
     [s.environmentId, s.organisationId, s.deliveryEndpointId, BAIT_ROWS],
+  );
+
+  // bait 5: the four usage tables, ONE ROW EACH (chapter 3.12, FR-036).
+  //
+  // Chapter 3.12 added these four to the trigger array, and being in the array is
+  // not the same as being watched: with no sentinel row in a table, the trigger
+  // is a `WHEN` clause that never matches. One row per table is what makes the
+  // guard real for them.
+  //
+  // ONE, not `BAIT_ROWS`, and the difference matters in both directions. The
+  // TRIGGER fires on the first sentinel row a statement touches, so one is
+  // enough for it. `BAIT_ROWS` exists for the READER mechanism — defeating an
+  // unbounded batch so a caller reaches bait before its own rows — and only
+  // `quota_notifications` has a global drain at all. Planting 200 of each here
+  // would buy nothing and pay R51's bill again: the last time bait was sized by
+  // symmetry rather than by measurement, `notifications.itest.ts` timed out on
+  // run 4 of twenty.
+  //
+  // ALREADY DELIVERED, for `quota_notifications`, by the rule the disablement
+  // notifications settled above: bait may be claimable only where draining it is
+  // database work. `drainQuotaNotifications` does I/O per row.
+  await q(
+    `INSERT INTO usage_periods (environment_id, period, messages_sent)
+     VALUES ($1, DATE '2020-01-01', 0) ON CONFLICT DO NOTHING`,
+    [s.environmentId],
+  );
+  await q(
+    `INSERT INTO users (id, environment_id, external_id)
+     VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
+    [s.usageUserId, s.environmentId, `${s.name}:usage`],
+  );
+  await q(
+    `INSERT INTO usage_active_users (environment_id, period, user_id)
+     VALUES ($1, DATE '2020-01-01', $2) ON CONFLICT DO NOTHING`,
+    [s.environmentId, s.usageUserId],
+  );
+  await q(
+    `INSERT INTO usage_connections (connection_id, period, environment_id, minutes)
+     VALUES ($1, DATE '2020-01-01', $2, 0) ON CONFLICT DO NOTHING`,
+    [s.usageConnectionId, s.environmentId],
+  );
+  await q(
+    `INSERT INTO quota_notifications
+       (id, environment_id, organisation_id, period, dimension, threshold, quota,
+        usage_at_crossing, delivered_at)
+     VALUES ($1, $2, $3, DATE '2020-01-01', 'messages', 80, 1000, 800,
+             now() - interval '2 hours')
+     ON CONFLICT (id) DO NOTHING`,
+    [s.usageNotificationId, s.environmentId, s.organisationId],
   );
 }
 

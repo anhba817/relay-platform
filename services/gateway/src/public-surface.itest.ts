@@ -57,13 +57,13 @@ async function waitForHealth(url: string): Promise<void> {
   }
 }
 
-/** 4800-5000: `session.itest.ts` holds 4400-4600, `isolation.itest.ts` 4600-4800
- * and `limits.itest.ts` 4124. A random high port per run, for the reason
- * `session.itest.ts` records — a previous run's child still holding a fixed port
- * answers the health check from a DIFFERENT environment, and every token this run
- * minted is then refused by an api that has never heard of it. */
+/** 5200-5400 — see the port map at the top of `limits.itest.ts`. A random high
+ * port per run, for the reason `session.itest.ts` records: a previous run's child
+ * still holding a fixed port answers the health check from a DIFFERENT
+ * environment, and every token this run minted is then refused by an api that has
+ * never heard of it. */
 async function startApi(): Promise<{ url: string; credential: string; stop: () => void }> {
-  const port = 4800 + Math.floor(Math.random() * 200);
+  const port = 5200 + Math.floor(Math.random() * 200);
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error("the api is not built — run `pnpm build` before this lane");

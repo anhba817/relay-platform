@@ -1,6 +1,5 @@
 import "reflect-metadata";
 
-import { eq } from "drizzle-orm";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -9,7 +8,6 @@ import { AppModule } from "../app.module";
 import { createDb, createPool } from "../db/client";
 import { mintUserToken } from "../auth/user-token";
 import { environmentSigningSecret } from "../db/repository";
-import { webhookDeliveries } from "../db/schema";
 import { credentialAttack, listAttack, readAttack, writeAttack } from "./attack";
 import { nowhereId, seedTwoTenants, type TwoTenants } from "./fixtures";
 
@@ -395,13 +393,10 @@ describe("the isolation gauntlet", () => {
   describe("the platform routes (T031, T031b)", () => {
     const dispatcher = process.env["RELAY_INTERNAL_CREDENTIAL"] ?? "";
 
-    async function victimDeliveries(): Promise<number> {
-      const rows = await db
-        .select({ id: webhookDeliveries.id })
-        .from(webhookDeliveries)
-        .where(eq(webhookDeliveries.endpointId, tenants.victim.endpointId));
-      return rows.length;
-    }
+    // Through the victim's OWN repository, which is both scoped and the only
+    // place the query engine is allowed to live (FR-043).
+    const victimDeliveries = () =>
+      tenants.victim.repo.countDeliveriesForEndpoint(tenants.victim.endpointId);
 
     it("expand reaches only the endpoints of the environment it names", async () => {
       const before = await victimDeliveries();

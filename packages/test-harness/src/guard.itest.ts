@@ -160,3 +160,96 @@ describe("an exemption that names one table", () => {
     ).rejects.toThrow(/global-operation guard.*public\.webhook_endpoints/s);
   });
 });
+
+// ── THE FOUR USAGE TABLES (chapter 3.12, FR-038, SC-017) ─────────────────────
+//
+// Chapters 3.10 and 3.11 added `usage_periods`, `usage_active_users`,
+// `quota_notifications` and `usage_connections`, and neither added them to
+// `sentinel.sql`'s trigger array. A cross-environment UPDATE or DELETE on any of
+// them passed for two chapters.
+//
+// BEING IN THE ARRAY IS NOT EVIDENCE OF BEING WATCHED, which is why this block
+// drives all four rather than asserting the array's length. Chapter 3.10's SC-008
+// passed by not being watched; a test that reads the source it is meant to check
+// is the same mistake one layer up.
+//
+// The rows come from `plant()`'s bait 5 rather than from this file, and the first
+// draft got that wrong in a way worth recording. It seeded its own
+// `quota_notifications` row with `delivered_at` NULL — a CLAIMABLE row — and
+// `createQuotaRelay` claims undelivered notifications across every environment.
+// Thirteen tests failed in `quotas.itest.ts` and `connections.itest.ts`, two files
+// that have nothing to do with this one, with a guard refusal naming a uuid this
+// file had hardcoded. That is the fourth time the same law has been measured:
+// **bait may be claimable only where draining it is database work.** `plant()`
+// plants these already delivered for exactly that reason, and using its rows
+// instead of inventing new ones is also how a refusal keeps naming its owner.
+describe("the four usage tables chapters 3.10 and 3.11 left unguarded", () => {
+  const u = sentinelFor("packages/test-harness/src/guard.itest.ts#usage");
+
+  beforeAll(async () => {
+    await plant(permitted, u);
+  }, 60_000);
+
+  const cases: [string, string, unknown[]][] = [
+    [
+      "usage_periods",
+      "update usage_periods set messages_sent = 1 where environment_id = $1",
+      [u.environmentId],
+    ],
+    [
+      "usage_active_users",
+      "delete from usage_active_users where environment_id = $1",
+      [u.environmentId],
+    ],
+    [
+      "quota_notifications",
+      "update quota_notifications set last_error = 'probe' where environment_id = $1",
+      [u.environmentId],
+    ],
+    [
+      "usage_connections",
+      "delete from usage_connections where environment_id = $1",
+      [u.environmentId],
+    ],
+  ];
+
+  for (const [table, statement, params] of cases) {
+    it(`refuses a cross-environment write to ${table}, naming the table`, async () => {
+      await expect(guarded.query(statement, params as never[])).rejects.toThrow(
+        new RegExp(`global-operation guard.*public\\.${table}`, "s"),
+      );
+    });
+  }
+
+  // The key expression, tested for what it prints and not only for firing. Three
+  // of these four have composite primary keys and no `id` column, so `OLD.id` —
+  // what the message interpolated until this chapter — raises `record "old" has
+  // no field "id"` at execution time. A guard that fails on the writes it permits
+  // is worse than one that watches nothing, because it fails in the tests that
+  // were right.
+  it("prints the row when there is no id column, and the id when there is", async () => {
+    await expect(
+      guarded.query("delete from usage_periods where environment_id = $1", [u.environmentId]),
+    ).rejects.toThrow(new RegExp(`\\(id \\{.*${u.environmentId}.*\\}\\)`, "s"));
+
+    await expect(
+      guarded.query("delete from quota_notifications where id = $1", [u.usageNotificationId]),
+    ).rejects.toThrow(new RegExp(`\\(id ${u.usageNotificationId}\\)`));
+  });
+
+  // And the permitted connection still WRITES, which is the failure mode this
+  // whole file exists for: a BEFORE trigger returning OLD claims to permit and
+  // silently discards. Four tables added means four new chances at it.
+  it("lets a named exemption through, and the write lands", async () => {
+    const r = await permitted.query(
+      "update usage_periods set messages_sent = 99 where environment_id = $1",
+      [u.environmentId],
+    );
+    expect(r.rowCount).toBeGreaterThan(0);
+    const back = await permitted.query(
+      "select messages_sent from usage_periods where environment_id = $1",
+      [u.environmentId],
+    );
+    expect(Number(back.rows[0].messages_sent)).toBe(99);
+  });
+});

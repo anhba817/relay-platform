@@ -83,9 +83,26 @@ BEGIN
   -- row id, and the diagnosis. NO SUGGESTED FIX: the right scoped alternative
   -- depends on what the test meant, and a guess printed as advice is worse than
   -- silence. That guidance belongs in the lint rule, which knows the call site.
+  --
+  -- `OLD.id` UNTIL CHAPTER 3.12, and that is why extending the array below was
+  -- not a one-line change. Three of the four usage tables have composite primary
+  -- keys and no `id` column at all — `usage_periods` is
+  -- `(environment_id, period)`, `usage_active_users` adds `user_id`,
+  -- `usage_connections` is `(connection_id, period)` — and `OLD.id` on a record
+  -- without that field raises `record "old" has no field "id"` AT EXECUTION TIME.
+  -- A guard that fails on the writes it permits is worse than one that watches
+  -- nothing, because it fails in the tests that were right.
+  --
+  -- The fallback PRINTS THE WHOLE ROW, and that is a deliberate bound rather than
+  -- a convenience. These four carry counters, period dates and identifiers: no
+  -- message text, no display names, no credentials. The same fallback on
+  -- `messages` would put a customer's message body in a test log, which is an
+  -- NFR-SEC-06 violation — so if this ever guards a table holding content, the
+  -- expression has to name that table's key instead of dumping it.
   RAISE EXCEPTION
     'global-operation guard: this statement modified sentinel row %.% (id %), which belongs to no test%',
-    TG_TABLE_SCHEMA, TG_TABLE_NAME, OLD.id,
+    TG_TABLE_SCHEMA, TG_TABLE_NAME,
+    coalesce(to_jsonb(OLD) ->> 'id', to_jsonb(OLD)::text),
     COALESCE(' — the bait planted by ' || who, '');
 END $$;
 
@@ -93,6 +110,12 @@ END $$;
 -- rows. Not `outbox`: it has no environment_id because it is platform
 -- bookkeeping, so its bait is protected by the reader mechanism only. A stated
 -- gap rather than an oversight (data-model.md).
+--
+-- NINE, NOT FIVE, AS OF CHAPTER 3.12 (FR-036). The four usage tables were added
+-- by chapters 3.10 and 3.11 and neither added them here, so a cross-environment
+-- UPDATE or DELETE on any of them passed for two chapters. Confirmed against a
+-- running database rather than read off this file: `pg_trigger` held five
+-- `__sentinel_guard_*` rows and none of them was a usage table.
 DO $$
 DECLARE
   t text;
@@ -102,7 +125,14 @@ BEGIN
     'webhook_deliveries',
     'webhook_disable_notifications',
     'channels',
-    'users'
+    'users',
+    -- Chapters 3.10 and 3.11's tables. Every one carries `environment_id`, which
+    -- is the only thing the WHEN clause below needs; what they do NOT all carry
+    -- is `id`, which is what the message expression above had to change for.
+    'usage_periods',
+    'usage_active_users',
+    'quota_notifications',
+    'usage_connections'
   ] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS __sentinel_guard_%1$s ON %1$I', t);
     EXECUTE format(

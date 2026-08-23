@@ -54,7 +54,10 @@ async function waitForHealth(url: string): Promise<void> {
  * DIFFERENT environment — every token this run minted then gets refused by a
  * service that has never heard of it. Three unrelated-looking assertions, one
  * fixture. Its range is 4400-4600 and `limits.itest.ts` holds 4124, so this
- * takes 4600-4800.
+ * takes 4900-5100 — see the port map at the top of `limits.itest.ts`. The first
+ * draft took 4600-4800, which OVERLAPPED `meter.itest.ts`'s two ranges (4610-4670
+ * and 4710-4770); T077's audit is what found that, and a range chosen by looking
+ * at one neighbour instead of at all of them is how it happened.
  *
  * `+ children` rather than a second random draw: this file starts TWO api
  * children, and two draws from one range can collide with each other — a 1-in-200
@@ -62,7 +65,7 @@ async function waitForHealth(url: string): Promise<void> {
  * is the exact trap the fixed port was. */
 let children = 0;
 async function startApi(): Promise<{ url: string; stop: () => void }> {
-  const port = 4600 + ((Math.floor(Math.random() * 100) * 2 + children++) % 200);
+  const port = 4900 + ((Math.floor(Math.random() * 100) * 2 + children++) % 200);
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error(

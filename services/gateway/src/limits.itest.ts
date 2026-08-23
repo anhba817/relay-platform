@@ -12,6 +12,17 @@ import { Redis } from "ioredis";
 import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+// THE LANE'S PORT MAP, and it is a map because two files drawing from one range
+// is the same fault as two files sharing a fixed port (chapter 3.12, T077):
+//
+//   4100-4300  gateway/limits.itest.ts          api
+//   4310-4370  dispatcher/dispatcher.itest.ts   api
+//   4400-4600  gateway/session.itest.ts         api
+//   4610-4670  gateway/meter.itest.ts           gateway
+//   4710-4770  gateway/meter.itest.ts           api
+//   4900-5100  gateway/isolation.itest.ts       api (TWO children, see below)
+//   5200-5400  gateway/public-surface.itest.ts  api
+
 import { createApiClient } from "./api-client.js";
 import { createGatewayLimits, type GatewayLimits } from "./limits.js";
 import { attachSessions } from "./session.js";
@@ -120,7 +131,21 @@ async function startApi(): Promise<ApiUnderTest> {
   await repo.addMember(channel.id, user.id);
   const key = await seeder.createApiKey(db, { environmentId: environment.id });
 
-  const port = Number(process.env.RELAY_LIMITS_ITEST_API_PORT ?? 4124);
+  // A RANDOM HIGH PORT, and this file is the last one in the lane to get one
+  // (chapter 3.12, FR-041). It bound a fixed 4124, which is the fault
+  // `session.itest.ts` documents at length and had to learn twice: a previous
+  // run's child can still hold the port, the new child exits on EADDRINUSE, the
+  // health check gets a 200 from the OLD api — a different environment and a
+  // different signing secret — and every token this run minted is refused by a
+  // service that has never heard of it. Three unrelated-looking assertions, one
+  // fixture, and green until the day it is not.
+  //
+  // 4100-4300 here. The whole map is at the top of this file, because a range
+  // that only says what it avoids goes stale the next time a file is added.
+  const port = Number(
+    process.env.RELAY_LIMITS_ITEST_API_PORT ??
+      4100 + Math.floor(Math.random() * 200),
+  );
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     env: {
       ...process.env,

@@ -26,8 +26,14 @@
 export const EXEMPT_FILES: ReadonlyArray<{
   path: string;
   /** The guarded tables this file may write across environments. Everything else
-   * is still refused, in this file as in any other. Guarded tables are the five in
-   * `sentinel.sql`; `outbox` is not among them and needs no entry. */
+   * is still refused, in this file as in any other.
+   *
+   * NINE GUARDED TABLES AS OF CHAPTER 3.12, not five: `sentinel.sql` gained
+   * `usage_periods`, `usage_active_users`, `quota_notifications` and
+   * `usage_connections`, which chapters 3.10 and 3.11 added to the schema and to
+   * neither of these two lists. `outbox` is still not among them — it carries no
+   * `environment_id`, so the trigger's `WHEN` clause has nothing to test — and
+   * needs no entry. */
   tables: readonly string[];
   because: string;
 }> = [

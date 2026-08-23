@@ -364,7 +364,17 @@ describe("the dispatcher", () => {
     second = customerEndpoint();
     secondUrl = await second.listen();
 
-    apiPort = Number(process.env["RELAY_DISPATCHER_ITEST_API_PORT"] ?? 4131);
+    // A RANDOM HIGH PORT (chapter 3.12, T077). This bound a fixed 4131, which is
+    // the second instance of the fault CLAUDE.md names only for
+    // `limits.itest.ts` — the audit is what found it. The integration lane runs
+    // one package at a time, so nothing races this file WITHIN a run; what does
+    // bite is a back-to-back run whose previous child still holds the port, and
+    // then the health check answers from an api serving a different environment.
+    // See the port map at the top of `services/gateway/src/limits.itest.ts`.
+    apiPort = Number(
+      process.env["RELAY_DISPATCHER_ITEST_API_PORT"] ??
+        4310 + Math.floor(Math.random() * 60),
+    );
     child = spawnApi(apiPort, CREDENTIAL);
     apiUrl = `http://127.0.0.1:${apiPort}`;
     await waitForHealth(`${apiUrl}/healthz`);

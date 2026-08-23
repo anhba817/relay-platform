@@ -2730,6 +2730,25 @@ export class Repository {
     return existing.length > 0 ? "already_a_member" : "not_found";
   }
 
+  /** How many deliveries an endpoint holds, scoped. Added for chapter 3.12's
+   * `expand` attack, which has to read the victim's side to prove nothing moved —
+   * and it lives HERE rather than in the test because the restored lint ban
+   * (R23, FR-043) puts the query engine in this directory and nowhere else. The
+   * isolation suite is written to that constraint rather than exempted from it,
+   * which is the whole point of restoring it in the same chapter. */
+  async countDeliveriesForEndpoint(endpointId: string): Promise<number> {
+    const rows = await this.db
+      .select({ id: webhookDeliveries.id })
+      .from(webhookDeliveries)
+      .where(
+        and(
+          eq(webhookDeliveries.endpointId, endpointId),
+          eq(webhookDeliveries.environmentId, this.environmentId),
+        ),
+      );
+    return rows.length;
+  }
+
   /** How many members a channel holds, scoped — FR-CHN-07's ceiling is checked
    * against this rather than against a count the caller supplies. */
   async countMembers(channelId: string): Promise<number> {
