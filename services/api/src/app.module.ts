@@ -10,6 +10,7 @@ import { AuthenticateMiddleware } from "./auth/authenticate.middleware";
 import { HealthController } from "./health.controller";
 import { InternalModule } from "./internal/internal.module";
 import { MessagesModule } from "./messages/messages.module";
+import { ChannelsModule } from "./channels/channels.module";
 import { ConsumerModule } from "./consumer/consumer.module";
 import { OutboxModule } from "./outbox/outbox.module";
 import { TenancyModule } from "./tenancy/tenancy.module";
@@ -25,6 +26,7 @@ import { RequestContextMiddleware } from "./request-context.middleware";
   imports: [
     AuthModule,
     MessagesModule,
+    ChannelsModule,
     InternalModule,
     TenancyModule,
     OutboxModule,

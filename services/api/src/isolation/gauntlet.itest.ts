@@ -181,6 +181,55 @@ describe("the isolation gauntlet", () => {
     expect(serialised).not.toContain(t.victim.environmentId);
   });
 
+  // ── the two routes this chapter added ──────────────────────────────────────────
+  //
+  // A chapter that adds an endpoint attacks it in the same chapter. The derivation
+  // found these before the classification did: `targets.itest.ts` went from 9 targets
+  // to 11 and failed naming both as unclassified.
+  it("POST /v1/channels/:channelId/members — refuses, and adds nobody", async () => {
+    attacked.add("POST /v1/channels/:channelId/members");
+    const verdict = await writeAttack(
+      url,
+      t.attacker.credential,
+      {
+        method: "POST",
+        path: `/v1/channels/${t.victim.channelId}/members`,
+        body: { user_ids: ["intruder"] },
+      },
+      {
+        method: "POST",
+        path: `/v1/channels/${ABSENT_UUID}/members`,
+        body: { user_ids: ["intruder"] },
+      },
+      () => t.victim.repo.listMembers(t.victim.channelId),
+    );
+    expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+    expect(verdict.stateChanged, "the victim gained a member").toBe(false);
+  });
+
+  it("POST /v1/channels — the other tenant's external_id is not interference", async () => {
+    attacked.add("POST /v1/channels");
+    // THIS ROUTE CARRIES NO IDENTIFIER TO FORGE, so the pair is not foreign-versus-
+    // absent. What a caller can present is the other tenant's own `external_id`, and
+    // the property is NON-INTERFERENCE rather than indistinguishability: the call must
+    // SUCCEED. Two tenants may use the same customer-supplied id — that is the whole
+    // point of scoping it per environment — and the victim's channel must be untouched.
+    const before = await t.victim.repo.getChannelByExternalId(t.victim.channelExternalId);
+    const res = await fetch(`${url}/v1/channels`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${t.attacker.credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ external_id: t.victim.channelExternalId, type: "public" }),
+    });
+    expect([200, 201]).toContain(res.status);
+    const created = (await res.json()) as { id?: string };
+    expect(created.id).not.toBe(t.victim.channelId);
+    const after = await t.victim.repo.getChannelByExternalId(t.victim.channelExternalId);
+    expect(after?.id).toBe(before?.id);
+  });
+
   // ── and the suite accounts for itself ───────────────────────────────────────────
   it("ran an attack for every route the classification says to attack", () => {
     const shouldAttack = CLASSIFICATIONS.filter((c) => c.shape !== "exempt").map(targetKey);

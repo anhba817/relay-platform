@@ -58,12 +58,30 @@ export class ProtocolErrorFilter implements ExceptionFilter {
             : status === 404
               ? "not_found"
               : "internal_error";
+    // `field` travels the way `code` does — the thrower names it, because only the
+    // thrower knows it. Omitted rather than null when there is nothing to name: a key
+    // that is always present and usually empty teaches a client to ignore it.
+    const field =
+      typeof response === "object" &&
+      response !== null &&
+      typeof (response as { field?: unknown }).field === "string"
+        ? (response as { field: string }).field
+        : null;
     const code: ErrorCode =
       named !== null && named in ERROR_CODES ? (named as ErrorCode) : ladder;
     const message =
       exception instanceof HttpException
         ? exception.message
         : "unexpected internal error";
+    // `field` travels the way `code` does — the thrower names it, because only the
+    // thrower knows it. Omitted rather than null when there is nothing to name: a
+    // key that is always present and usually empty teaches a client to ignore it.
+    const field =
+      typeof response === "object" &&
+      response !== null &&
+      typeof (response as { field?: unknown }).field === "string"
+        ? (response as { field: string }).field
+        : null;
     res.statusCode = status;
     res.setHeader("content-type", "application/json");
     res.end(
@@ -71,6 +89,7 @@ export class ProtocolErrorFilter implements ExceptionFilter {
         code,
         message,
         docs_url: docsUrl(code),
+        ...(field !== null ? { field } : {}),
       }),
     );
   }

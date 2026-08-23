@@ -103,6 +103,21 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     shape: "read",
   },
 
+  // ── the two routes this chapter adds, and the ORDER MATTERS ────────────────────
+  //
+  // The derivation found them before this list did. `targets.itest.ts` went from 9
+  // targets to 11 and named both as unclassified, on the build that registered the
+  // module and before anything here mentioned them. That is the failure the derivation
+  // exists to produce, and the classification is what changed in answer to it — never
+  // the derivation.
+  { method: "POST", path: "/v1/channels", accepts: "application", shape: "write" },
+  {
+    method: "POST",
+    path: "/v1/channels/:channelId/members",
+    accepts: "application",
+    shape: "write",
+  },
+
   // ── the internal surface: an end-user token, so a FOREIGN CREDENTIAL is the attack
   { method: "POST", path: "/internal/messages", accepts: "user", shape: "write" },
   { method: "POST", path: "/internal/backfill", accepts: "user", shape: "write" },

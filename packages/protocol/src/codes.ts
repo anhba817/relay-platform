@@ -46,6 +46,20 @@ export const ERROR_CODES = {
     "no such resource for this tenant — and DELIBERATELY the same answer as for a resource in another tenant (FR-TEN-05)",
   internal_error:
     "the platform failed in a way it did not anticipate; the request_id is what a support ticket needs",
+
+  // FR-CHN-07's ceiling: a channel holds at most 1,000 members and an add that would
+  // cross it is refused with 422 and this code.
+  //
+  // The SRS names this code in its own worked example for EIR-API-04, which is why it is
+  // spelled this way rather than `member_limit_exceeded` — the document got there first
+  // and an integrating developer will have read it.
+  //
+  // NOT `quota_exceeded`. That is a monthly, billable, resets-on-a-date refusal whose
+  // message promises a resume date; this is a structural limit on one channel that no
+  // amount of waiting changes. Same status, different fact, and a client that retries on
+  // the wrong one waits for ever.
+  channel_member_limit_exceeded:
+    "this channel already holds the maximum number of members; remove one before adding another",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
