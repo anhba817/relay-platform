@@ -43,7 +43,10 @@
         "RELAY_MAILPIT_URL",
         "RELAY_NOTIFICATION_RELAY",
         "RELAY_QUOTA_RELAY",
-        "RELAY_DOCS_BASE_URL"
+        "RELAY_DOCS_BASE_URL",
+        "RELAY_API_URL",
+        "RELAY_WS_URL",
+        "RELAY_DEMO_CREDENTIAL"
       ]
     },
     "//#lint:root": {

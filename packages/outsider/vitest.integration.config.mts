@@ -20,6 +20,15 @@ import { defineConfig } from "vitest/config";
 // look here: with no platform running, every test in this suite fails, and it
 // should — "the platform is not up" is the correct answer to a request to
 // integrate against it, not a reason to soften the suite.
+//
+// AND THE DEFAULT INTEGRATION LANE SKIPS IT TOO. `pnpm test:integration` is
+// `turbo run test:integration --filter=!@relay/outsider`, with `pnpm test:outsider`
+// as the way in. That lane needs stores and spawns what it talks to; this suite
+// needs the api and gateway ALREADY SERVING, from images that were built, with a
+// tenant already seeded. Folding it in would make every developer's integration run
+// depend on a compose profile they did not ask for — and the honest failure this
+// suite gives when the platform is absent would become noise everyone learns to
+// scroll past.
 export default defineConfig({
   test: {
     include: ["src/**/*.itest.ts"],

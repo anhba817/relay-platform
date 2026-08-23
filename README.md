@@ -30,17 +30,80 @@ cache hit; `pnpm turbo run test --force` re-earns the proof cold.
 ## The local infrastructure
 
 ```bash
-docker compose up -d --wait   # Postgres, Redis, NATS (JetStream), ClickHouse
+RELAY_POSTGRES_PORT=15432 docker compose up -d --wait   # Postgres, Redis, NATS, ClickHouse
 docker compose ps             # every service "(healthy)"
 docker compose down           # stop; volumes survive
 docker compose down -v        # stop AND reset all stored data
 ```
 
 `--wait` returns only when every store's healthcheck passes — started is not
-ready. Host ports default to the standard ones (5432/6379/4222/8123) and can
-be remapped via `RELAY_*_PORT` environment variables if something on your
-machine already holds them (see `compose.yaml`). The toolchain checks above
-never need Docker; chapter 1.2 explains the split.
+ready. The toolchain checks above never need Docker; chapter 1.2 explains the
+split.
+
+**`RELAY_POSTGRES_PORT=15432` is not decoration.** `compose.yaml` defaults every
+host port to the standard one (5432/6379/4222/8123), and the code defaults
+Postgres to **15432** — so a bare `docker compose up` publishes a database that
+`DATABASE_URL`'s default cannot reach. On a machine already running Postgres it is
+worse than a mismatch: four containers come up healthy and Postgres alone fails
+with `bind: address already in use`, which reads as a compose problem rather than a
+port-default one. The other three ports agree with their defaults and need nothing.
+
+**`docker compose up` starts STORES ONLY.** `api`, `gateway` and `dispatcher` sit
+behind `profiles: ["services"]`, so they need `--profile services` — and a
+`--build`, or you get whatever image was last built:
+
+```bash
+RELAY_POSTGRES_PORT=15432 docker compose --profile services build
+RELAY_POSTGRES_PORT=15432 docker compose --profile services up -d --wait
+```
+
+Skipping the build is a silent failure and a measured one: the sealed integration
+suite ran against a stale image and reported six failures — `404` for routes that
+exist and a `docs_url` from two chapters ago — none of which named the cause.
+
+## A demo tenant
+
+There is no public way to create an organisation or mint a key: sign-up ends at an
+OAuth consent screen and key management is the dashboard's chapter. So a script
+does it, and prints the credential on stdout with everything else on stderr:
+
+```bash
+RELAY_POSTGRES_PORT=15432 docker compose up -d --wait
+DATABASE_URL=postgres://relay:relay@localhost:15432/relay \
+  node services/api/dist/db/migrate.js          # needs `pnpm build` first
+RELAY_POSTGRES_PORT=15432 docker compose --profile services build
+RELAY_POSTGRES_PORT=15432 docker compose --profile services up -d --wait
+export RELAY_DEMO_CREDENTIAL=$(node scripts/seed-demo-tenant.mjs)
+```
+
+That order is load-bearing: the seed writes rows the api's schema must already
+accept, and the api must be serving that schema before anything asks it for
+something.
+
+**Which half of the constitution this closes.** The constitution asks that
+`docker compose up` yield a working local platform "including a seeded demo
+tenant". Compose starts stores rather than services, so no invocation of it can
+seed anything — this closes the INTENT and not the letter. A developer who wants
+the sentence to be literally true would need compose to run migrations and the
+seed as one-shot services, which would put schema management inside a file whose
+job is to start containers.
+
+Then the sealed integration, which starts nothing and talks only HTTP and
+WebSocket:
+
+```bash
+export RELAY_API_URL=http://localhost:4000 RELAY_WS_URL=ws://localhost:4001
+pnpm test:outsider
+```
+
+It is **not** part of `pnpm test:integration`, which is
+`turbo run test:integration --filter=!@relay/outsider`. That lane spawns what it
+talks to; this suite needs the api and gateway already serving, from images that
+were built, with a tenant already seeded.
+
+Re-running the seed is the ordinary case and it is idempotent on the organisation
+name. It reissues a key rather than reusing one, because a key's plaintext exists
+only at the moment it is minted — the row keeps a hash.
 
 ## Running the services
 
