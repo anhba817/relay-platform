@@ -2195,9 +2195,21 @@ export interface UserRow {
 export interface ChannelRow {
   id: string;
   external_id: string;
+  /** The column has been `"public" | "private"` with a CHECK constraint since
+   * chapter 2.1. NOTHING READS IT: history and send scope by `environment_id`
+   * alone and there is no membership check anywhere, so FR-CHN-05's private
+   * guarantee is unimplemented. The public create endpoint accepts `public` only
+   * (chapter 3.12, FR-047) — this type stays as the column is, because rows
+   * seeded before that endpoint existed can still say `private`. */
   type: "public" | "private";
   name: string | null;
+  metadata: Record<string, unknown>;
 }
+
+/** What `addMember` did. `not_found` deliberately covers "the channel is not
+ * yours", "the user is not yours" and "neither exists" — the caller must not be
+ * able to tell those apart (FR-018, FR-TEN-05). */
+export type AddMemberOutcome = "added" | "already_a_member" | "not_found";
 
 export interface MessageRow {
   id: string;
@@ -2540,15 +2552,38 @@ export class Repository {
     }));
   }
 
+  /** IDEMPOTENT, for `createChannel`'s reason and found the same way (chapter
+   * 3.12). This was a plain insert too, and the members endpoint creates a user
+   * on first membership — so a second identical request would have raised against
+   * `users_environment_id_external_id_unique` and answered `internal_error`. R14a
+   * named `addMember` and `createChannel`; this is the third function on the same
+   * request path and it had the same fault.
+   *
+   * Not a read-then-insert in the service, for the same reason as there:
+   * concurrent first-membership adds of one user race, and Principle II requires
+   * the unique index to be what enforces this rather than application memory. */
   async createUser(externalId: string, displayName?: string): Promise<UserRow> {
     const id = randomUUID();
-    await this.db.insert(users).values({
-      id,
-      environmentId: this.environmentId,
-      externalId,
-      displayName: displayName ?? null,
-    });
-    return { id, external_id: externalId, display_name: displayName ?? null };
+    const inserted = await this.db
+      .insert(users)
+      .values({
+        id,
+        environmentId: this.environmentId,
+        externalId,
+        displayName: displayName ?? null,
+      })
+      .onConflictDoNothing({ target: [users.environmentId, users.externalId] })
+      .returning({ id: users.id });
+
+    if (inserted.length > 0) {
+      return { id, external_id: externalId, display_name: displayName ?? null };
+    }
+    const existing = await this.getUserByExternalId(externalId);
+    if (existing === null) throw new Error(`user ${externalId} could not be created or read`);
+    // The DISPLAY NAME OF THE EXISTING ROW WINS. A second call is not an update:
+    // FR-CHN-04 asks for membership, and quietly renaming a user because someone
+    // re-sent a member list would be a write nobody asked for.
+    return existing;
   }
 
   async getUserByExternalId(externalId: string): Promise<UserRow | null> {
@@ -2568,20 +2603,57 @@ export class Repository {
     return rows[0] ?? null;
   }
 
+  /** IDEMPOTENT ON THE CUSTOMER'S OWN IDENTIFIER (FR-017, FR-CHN-02).
+   *
+   * This was a plain insert until chapter 3.12, which is fine for a fixture and
+   * cannot back an endpoint: a repeated `external_id` raises against
+   * `channels_environment_id_external_id_unique`, and `ProtocolErrorFilter`
+   * renders a unique violation as `internal_error`. The second call in an
+   * integration guide would have been a 500.
+   *
+   * `ON CONFLICT DO NOTHING RETURNING` and not a read-then-insert in the
+   * service: that races, and Principle II requires idempotency enforced at the
+   * storage layer by a unique index rather than in application memory. The
+   * fallback read is not the check — it is how the loser of a race learns what
+   * the winner wrote. */
   async createChannel(
     externalId: string,
     type: ChannelRow["type"],
     name?: string,
-  ): Promise<ChannelRow> {
+    metadata?: Record<string, unknown>,
+  ): Promise<ChannelRow & { created: boolean }> {
     const id = randomUUID();
-    await this.db.insert(channels).values({
-      id,
-      environmentId: this.environmentId,
-      externalId,
-      type,
-      name: name ?? null,
-    });
-    return { id, external_id: externalId, type, name: name ?? null };
+    const inserted = await this.db
+      .insert(channels)
+      .values({
+        id,
+        environmentId: this.environmentId,
+        externalId,
+        type,
+        name: name ?? null,
+        ...(metadata !== undefined ? { metadata } : {}),
+      })
+      .onConflictDoNothing({ target: [channels.environmentId, channels.externalId] })
+      .returning({ id: channels.id });
+
+    if (inserted.length > 0) {
+      return {
+        id,
+        external_id: externalId,
+        type,
+        name: name ?? null,
+        metadata: metadata ?? {},
+        created: true,
+      };
+    }
+    const existing = await this.getChannelByExternalId(externalId);
+    if (existing === null) {
+      // Nothing inserted and nothing there: the row belongs to another
+      // environment, which this repository is scoped away from. Callers see the
+      // same answer they would see for a channel that does not exist.
+      throw new Error(`channel ${externalId} could not be created or read`);
+    }
+    return { ...existing, created: false };
   }
 
   async getChannelByExternalId(externalId: string): Promise<ChannelRow | null> {
@@ -2591,6 +2663,7 @@ export class Repository {
         external_id: channels.externalId,
         type: sql<ChannelRow["type"]>`${channels.type}`,
         name: channels.name,
+        metadata: sql<Record<string, unknown>>`${channels.metadata}`,
       })
       .from(channels)
       .where(
@@ -2609,6 +2682,7 @@ export class Repository {
         external_id: channels.externalId,
         type: sql<ChannelRow["type"]>`${channels.type}`,
         name: channels.name,
+        metadata: sql<Record<string, unknown>>`${channels.metadata}`,
       })
       .from(channels)
       .where(eq(channels.environmentId, this.environmentId))
@@ -2619,15 +2693,54 @@ export class Repository {
    * channel: the double-scoped SELECT below is what makes a foreign channel
    * id useless. INSERT ... SELECT is where the builder falls short — this
    * is the layer's one raw SQL island, permitted by ADR-16 and kept inside
-   * the wall like everything else. */
-  async addMember(channelId: string, userId: string): Promise<boolean> {
-    const result = await this.db.execute(
+   * the wall like everything else.
+   *
+   * THREE OUTCOMES, NOT A BOOLEAN (chapter 3.12, R14a). Until then this returned
+   * `false` for all of: the channel is not yours, the user is not yours, and you
+   * asked twice. Conflating the first two is right and is the whole point — a
+   * foreign id must be indistinguishable from an absent one. Conflating the third
+   * with them is wrong, and it cannot back an endpoint: `members`' primary key is
+   * `(channel_id, user_id)`, so before the `ON CONFLICT` below a repeat raised a
+   * unique violation that reached the wire as `internal_error`.
+   *
+   * `not_found` keeps the conflation the isolation property needs. The follow-up
+   * read distinguishes it from `already_a_member` — and it is a read, not a
+   * check-then-write: the insert already happened. */
+  async addMember(channelId: string, userId: string): Promise<AddMemberOutcome> {
+    const inserted = await this.db.execute(
       sql`INSERT INTO members (channel_id, user_id)
           SELECT c.id, u.id FROM channels c, users u
           WHERE c.id = ${channelId} AND c.environment_id = ${this.environmentId}
-            AND u.id = ${userId} AND u.environment_id = ${this.environmentId}`,
+            AND u.id = ${userId} AND u.environment_id = ${this.environmentId}
+          ON CONFLICT (channel_id, user_id) DO NOTHING`,
     );
-    return (result.rowCount ?? 0) > 0;
+    if ((inserted.rowCount ?? 0) > 0) return "added";
+
+    const existing = await this.db
+      .select({ userId: members.userId })
+      .from(members)
+      .innerJoin(channels, eq(channels.id, members.channelId))
+      .where(
+        and(
+          eq(members.channelId, channelId),
+          eq(members.userId, userId),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      );
+    return existing.length > 0 ? "already_a_member" : "not_found";
+  }
+
+  /** How many members a channel holds, scoped — FR-CHN-07's ceiling is checked
+   * against this rather than against a count the caller supplies. */
+  async countMembers(channelId: string): Promise<number> {
+    const rows = await this.db
+      .select({ userId: members.userId })
+      .from(members)
+      .innerJoin(channels, eq(channels.id, members.channelId))
+      .where(
+        and(eq(members.channelId, channelId), eq(channels.environmentId, this.environmentId)),
+      );
+    return rows.length;
   }
 
   async listMembers(channelId: string): Promise<string[]> {

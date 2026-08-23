@@ -28,6 +28,9 @@ export interface Tenant {
   userId: string;
   userExternalId: string;
   channelId: string;
+  /** The customer-supplied identifier, so the create attack can present the other
+   * tenant's own external id. */
+  channelExternalId: string;
   messageId: string;
   endpointId: string;
   repo: Repository;
@@ -66,6 +69,7 @@ async function seedTenant(db: Db, label: string): Promise<Tenant> {
     userId: user.id,
     userExternalId,
     channelId: channel.id,
+    channelExternalId: `${label}-channel`,
     messageId: message.id,
     endpointId: endpoint.id,
     repo,

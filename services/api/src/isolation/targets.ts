@@ -98,6 +98,14 @@ export const CLASSIFICATIONS: readonly Classification[] = [
 
   // ── write, public ───────────────────────────────────────────────────────────
   { method: "POST", path: "/v1/channels/:channelId/messages", accepts: "application", shape: "write" },
+  // Chapter 3.12's two new routes, and the order they were added in is the point.
+  // The derivation found them first: `targets.itest.ts` went from 22 to 24 and
+  // named them as unclassified, on the build that registered the module and
+  // before anything here mentioned them. That is the failure the derivation
+  // exists to produce (FR-021), and the classification is what changed in answer
+  // to it — never the derivation.
+  { method: "POST", path: "/v1/channels", accepts: "application", shape: "write" },
+  { method: "POST", path: "/v1/channels/:channelId/members", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks/:id/rotate-secret", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks/:id/enable", accepts: "application", shape: "write" },

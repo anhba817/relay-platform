@@ -52,6 +52,15 @@ export class ProtocolErrorFilter implements ExceptionFilter {
       exception instanceof HttpException
         ? exception.message
         : "unexpected internal error";
+    // `field` travels the way `code` does — the thrower names it, because only the
+    // thrower knows it. Omitted rather than null when there is nothing to name: a
+    // key that is always present and usually empty teaches a client to ignore it.
+    const field =
+      typeof response === "object" &&
+      response !== null &&
+      typeof (response as { field?: unknown }).field === "string"
+        ? (response as { field: string }).field
+        : null;
     res.statusCode = status;
     res.setHeader("content-type", "application/json");
     // FOUR FIELDS AS OF CHAPTER 3.8, and constitution V has asked for four since
@@ -72,6 +81,7 @@ export class ProtocolErrorFilter implements ExceptionFilter {
         message,
         docs_url: `https://relay.example/docs/errors/${code}`,
         request_id: String(res.getHeader("X-Request-Id") ?? ""),
+        ...(field !== null ? { field } : {}),
       }),
     );
   }

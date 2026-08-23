@@ -60,19 +60,38 @@ describe("tenant isolation is structural (FR-TEN-05)", () => {
   it("membership writes with foreign ids affect zero rows", async () => {
     const user = await repoA.getUserByExternalId("tuan");
     const channel = await repoA.getChannelByExternalId("support");
-    expect(await repoA.addMember(channel!.id, user!.id)).toBe(true);
-    // B holds A's REAL ids — and still cannot write or read through them.
-    expect(await repoB.addMember(channel!.id, user!.id)).toBe(false);
+    expect(await repoA.addMember(channel!.id, user!.id)).toBe("added");
+    // Asked twice is a SUCCESS and not a failure, and telling those apart is
+    // what chapter 3.12 changed here: the endpoint over this call has to be
+    // idempotent, and a unique violation reached the wire as `internal_error`.
+    expect(await repoA.addMember(channel!.id, user!.id)).toBe("already_a_member");
+    // B holds A's REAL ids — and still cannot write or read through them. The
+    // answer is `not_found`, which is also what B gets for ids that exist
+    // nowhere: three refusals, one word, on purpose.
+    expect(await repoB.addMember(channel!.id, user!.id)).toBe("not_found");
     expect(await repoB.listMembers(channel!.id)).toEqual([]);
     expect(await repoB.channelsForUser(user!.id)).toEqual([]);
     expect(await repoA.listMembers(channel!.id)).toEqual([user!.id]);
   });
 
   it("uniqueness is per-tenant (DR-02): both tenants may own the same external_id", async () => {
-    await expect(
-      repoB.createUser("tuan", "A different Tuan"),
-    ).resolves.toBeTruthy();
-    await expect(repoA.createUser("tuan", "Duplicate in A")).rejects.toThrow();
+    // B's own Tuan is a DIFFERENT row. That is the per-tenant half.
+    const inB = await repoB.createUser("tuan", "A different Tuan");
+    const inA = await repoA.getUserByExternalId("tuan");
+    expect(inB.id).not.toBe(inA!.id);
+
+    // THE OBSERVATION CHANGED IN CHAPTER 3.12 AND THE PROPERTY DID NOT. This
+    // used to assert that a repeat within one tenant REJECTS, which observed the
+    // unique index by watching it raise. `createUser` is now idempotent — the
+    // members endpoint creates a user on first membership, so a repeated request
+    // would otherwise have answered `internal_error` — and the index is what
+    // makes that work rather than something that got removed. So the assertion
+    // is now that a repeat returns THE SAME ROW: still one user per tenant per
+    // external id, observed through the outcome instead of through an exception.
+    const again = await repoA.createUser("tuan", "Duplicate in A");
+    expect(again.id).toBe(inA!.id);
+    // And the existing display name wins: a second call is not an update.
+    expect(again.display_name).toBe(inA!.display_name);
   });
 });
 

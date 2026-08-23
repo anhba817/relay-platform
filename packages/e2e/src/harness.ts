@@ -51,7 +51,33 @@ const forwarded = (...names: string[]): Record<string, string> =>
  * layer, imported from its build output. There is no admin API to create an
  * environment, a user or a channel yet — that is Part 3's tenancy work — and
  * inventing one for a test would be inventing product. The import is a
- * test-only seam with a named retirement, like 2.3's `listMessagesRaw`. */
+ * test-only seam with a named retirement, like 2.3's `listMessagesRaw`.
+ *
+ * REASSESSED IN CHAPTER 3.12 (T063a), and two of the three now have an API.
+ * `POST /v1/channels` and `POST /v1/channels/:channelId/members` are public, and
+ * the members route creates a user on first membership — so `createChannel`,
+ * `createUser` and `addMember` could all come off this seam today. The list it
+ * still NEEDS is shorter than the list it uses:
+ *
+ *   still needed   createEnvironment   no admin API, and none is planned before
+ *                                      the dashboard
+ *                  createApiKey        the same, and for the same chapter
+ *                  sendMessage         only to write an UNATTRIBUTED row, which
+ *                                      is what `journey 4` needs a foreign tenant
+ *                                      to hold; the public send writes exactly
+ *                                      that, so this one is convenience rather
+ *                                      than necessity
+ *   no longer       createChannel      POST /v1/channels
+ *                  createUser         created on first membership
+ *                  addMember          POST /v1/channels/:channelId/members
+ *
+ * NOT MIGRATED HERE, and the reason is the one this chapter keeps running into:
+ * `packages/e2e` is excluded from the coverage run by name, so moving its seeding
+ * to public HTTP would prove nothing the branch figures can see, and it would
+ * rewrite four journeys in a chapter about isolation. `services/gateway/src/
+ * public-surface.itest.ts` makes the same claim where the coverage run does look,
+ * and `packages/outsider` makes the stronger one in a package that cannot import
+ * this file at all. The migration is chapter 3.13's, with the rest of FR-CHN. */
 interface Seeder {
   createEnvironment: (
     db: unknown,

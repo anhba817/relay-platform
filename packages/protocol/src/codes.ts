@@ -54,6 +54,19 @@ export const ERROR_CODES = {
   // (NFR-SEC-06).
   wrong_credential_service:
     "the credential's service is not permitted on this route; the message names the service presented and the services allowed",
+  // Chapter 3.12. FR-CHN-07's ceiling: a channel holds at most 1,000 members and
+  // an add that would cross it is refused with 422 and this code.
+  //
+  // The SRS names this code in its own worked example for EIR-API-04, which is
+  // the reason it is spelled this way rather than `member_limit_exceeded` — the
+  // document got there first and an integrating developer will have read it.
+  //
+  // NOT `quota_exceeded`. That one is a monthly, billable, resets-on-a-date
+  // refusal and its message promises a resume date; this is a structural limit on
+  // one channel that no amount of waiting changes. Same status code, different
+  // fact, and a client that retries on the wrong one waits for ever.
+  channel_member_limit_exceeded:
+    "the channel already holds its maximum members; the message names the limit and the channel",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

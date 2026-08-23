@@ -234,6 +234,71 @@ describe("the isolation gauntlet", () => {
   });
 
   // ── T031a: the three internal routes that take an end-user token ────────────
+  // ── Chapter 3.12's own two routes, attacked on the build that added them ────
+  //
+  // FR-021: a chapter that adds an endpoint attacks it in the same chapter. The
+  // derivation found these before this file mentioned them — `targets.itest.ts`
+  // went from 22 to 24 and failed naming both as unclassified.
+  describe("write: the channel surface this chapter added", () => {
+    it("POST /v1/channels/:channelId/members", async () => {
+      const verdict = await writeAttack(
+        url,
+        tenants.attacker.credential,
+        {
+          method: "POST",
+          path: `/v1/channels/${tenants.victim.channelId}/members`,
+          body: { user_ids: ["intruder"] },
+        },
+        {
+          method: "POST",
+          path: `/v1/channels/${nowhereId()}/members`,
+          body: { user_ids: ["intruder"] },
+        },
+        () => tenants.victim.repo.listMembers(tenants.victim.channelId),
+      );
+      expect(verdict.differences).toEqual([]);
+      expect(verdict.stateChanged).toBe(false);
+    });
+
+    // POST /v1/channels CARRIES NO IDENTIFIER TO FORGE, so the pair here is not
+    // foreign-versus-absent. What a caller can present is the other tenant's own
+    // `external_id`, and the property is non-interference rather than
+    // indistinguishability: the call must SUCCEED — two tenants may use the same
+    // customer-supplied id, which is the whole point of scoping it per
+    // environment — and it must neither return the victim's channel nor touch it.
+    //
+    // Getting this wrong would not look like a leak. It would look like a
+    // convenience: "the channel already exists, here it is."
+    it("POST /v1/channels with the other tenant's external id makes a NEW channel", async () => {
+      const before = await tenants.victim.repo.getChannelByExternalId(
+        tenants.victim.channelExternalId,
+      );
+      expect(before).not.toBeNull();
+
+      const res = await fetch(`${url}/v1/channels`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${tenants.attacker.credential}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          external_id: tenants.victim.channelExternalId,
+          type: "public",
+        }),
+      });
+      expect(res.status).toBe(201);
+      const created = (await res.json()) as { id: string; external_id: string };
+      expect(created.external_id).toBe(tenants.victim.channelExternalId);
+      expect(created.id).not.toBe(tenants.victim.channelId);
+
+      // The victim's row is untouched — same id, same name.
+      const after = await tenants.victim.repo.getChannelByExternalId(
+        tenants.victim.channelExternalId,
+      );
+      expect(after).toEqual(before);
+    });
+  });
+
   describe("internal, end-user token: a token minted in one environment is refused in another", () => {
     let attackerToken: string;
 
