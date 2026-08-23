@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { createLogger, serve, type Logger } from "@relay/service-kit";
 import { Redis } from "ioredis";
+import { docsUrl } from "@relay/protocol";
 import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -258,7 +259,12 @@ describe("one counter, two services (chapter 3.8)", () => {
     api = await startApi();
     limits = createGatewayLimits(REDIS_URL);
     redis = new Redis(REDIS_URL);
-    server = serve({ service: "gateway", health: () => ({}), logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
     attachSessions({
       server,
       api: createApiClient(api.url),

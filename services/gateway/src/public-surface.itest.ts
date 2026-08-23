@@ -8,6 +8,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { createLogger, serve, type Logger } from "@relay/service-kit";
+import { docsUrl } from "@relay/protocol";
 import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -109,7 +110,12 @@ describe("a channel, a member and a message, all over the public API", () => {
 
   beforeAll(async () => {
     api = await startApi();
-    server = serve({ service: "gateway", health: () => ({}), logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
     // THE FAN-OUT IS NOT OPTIONAL FOR DELIVERY, which is easy to miss because a
     // gateway without one still connects, still authenticates and still acks a
     // send. `attachSessions` takes `fanout` as an option, and without it a

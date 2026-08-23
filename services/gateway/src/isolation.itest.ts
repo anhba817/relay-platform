@@ -7,7 +7,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { createLogger, serve, type Logger } from "@relay/service-kit";
-import { frameSchema } from "@relay/protocol";
+import { frameSchema, docsUrl } from "@relay/protocol";
 import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -169,7 +169,12 @@ describe("the socket gauntlet", () => {
   beforeAll(async () => {
     api = await startApi();
     tenants = await seedSocketTenants(api.url);
-    server = serve({ service: "gateway", health: () => ({}), logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
     attachSessions({ server, api: createApiClient(api.url), logger: silent });
     await new Promise<void>((resolve) => server.listen(0, resolve));
     wsUrl = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -385,7 +390,12 @@ describe("a client uttering a server frame is refused, frame by frame", () => {
   beforeAll(async () => {
     api = await startApi();
     tenants = await seedSocketTenants(api.url);
-    server = serve({ service: "gateway", health: () => ({}), logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
     attachSessions({ server, api: createApiClient(api.url), logger: silent });
     await new Promise<void>((resolve) => server.listen(0, resolve));
     wsUrl = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;

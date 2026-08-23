@@ -1,4 +1,4 @@
-import { CLOSE_CODES, frameSchema } from "@relay/protocol";
+import { CLOSE_CODES, frameSchema, docsUrl } from "@relay/protocol";
 import { createLogger, serve, type Logger } from "@relay/service-kit";
 
 import { createApiClient } from "./api-client.js";
@@ -27,6 +27,9 @@ export function createServer(logger?: Logger) {
       protocol: { frames, close_codes: closeCodes },
     }),
     logger: log,
+    // The registry owns the URL; `service-kit` owns no dependencies. So the URL
+    // crosses the boundary as data (chapter 3.12, FR-027, R9).
+    notFoundDocsUrl: docsUrl("not_found"),
   });
   // The socket server rides the SAME listener as health — one port, two
   // protocols, which is what an upgrade handshake is for.

@@ -1,3 +1,4 @@
+import { docsUrl } from "@relay/protocol";
 import { randomUUID } from "node:crypto";
 
 import { WebSocket } from "ws";
@@ -66,6 +67,7 @@ async function boot(api: Omit<ApiClient, "reportUsage">): Promise<Harness> {
     service: "gateway",
     health: () => ({}),
     logger: silent,
+    notFoundDocsUrl: docsUrl("not_found"),
   });
   const sessions = attachSessions({
     server,

@@ -1,10 +1,11 @@
 import {
   BadRequestException,
-  HttpException,
   HttpStatus,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+
+import { protocolError } from "../protocol-error";
 
 import {
   ChannelNotFoundError,
@@ -83,11 +84,9 @@ export class MessagesService {
         // mechanism — a thrower naming its own code — is what this uses. The
         // filter builds the four-field envelope and derives `docs_url` from the
         // code.
-        throw new HttpException(
-          {
-            code: "quota_exceeded",
-            message: error.publicMessage(),
-          },
+        throw protocolError(
+          "quota_exceeded",
+          error.publicMessage(),
           HttpStatus.PAYMENT_REQUIRED,
         );
       }

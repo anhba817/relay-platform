@@ -1,7 +1,6 @@
 import {
   Controller,
   HttpCode,
-  HttpException,
   HttpStatus,
   Inject,
   Post,
@@ -9,6 +8,8 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
+
+import { protocolError } from "../protocol-error";
 
 import type { InternalSessionResponse } from "@relay/protocol";
 
@@ -89,8 +90,9 @@ export class SessionController {
       );
     } catch (error) {
       if (error instanceof QuotaExceededError) {
-        throw new HttpException(
-          { code: "quota_exceeded", message: error.publicMessage() },
+        throw protocolError(
+          "quota_exceeded",
+          error.publicMessage(),
           HttpStatus.PAYMENT_REQUIRED,
         );
       }

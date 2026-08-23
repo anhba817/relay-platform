@@ -1,5 +1,7 @@
 import type { ServerResponse } from "node:http";
 
+import { docsUrl, ERROR_CODES, type ErrorCode } from "@relay/protocol";
+
 import {
   Catch,
   HttpException,
@@ -37,9 +39,18 @@ export class ProtocolErrorFilter implements ExceptionFilter {
       typeof (response as { code?: unknown }).code === "string"
         ? (response as { code: string }).code
         : null;
-    const code =
-      named ??
-      (status === 400
+    // TYPED AS `ErrorCode` (chapter 3.12, FR-025). The ladder emitted five codes
+    // that were not in the registry for twenty-two chapters — `invalid_request`,
+    // `forbidden`, `not_found`, `internal_error` and the frame codes — and
+    // `docs_url` is derived from the code, so each one shipped a link to a page
+    // that could not exist. With the annotation, an unregistered code stops
+    // compiling here instead of reaching a customer.
+    //
+    // `named` is checked against the registry rather than trusted: a thrower can
+    // put any string in `code`, and `ProtocolErrorFilter` is the last place that
+    // can notice before it becomes a URL.
+    const ladder: ErrorCode =
+      status === 400
         ? "invalid_request"
         : status === 401
           ? "unauthorized"
@@ -47,7 +58,9 @@ export class ProtocolErrorFilter implements ExceptionFilter {
             ? "forbidden"
             : status === 404
               ? "not_found"
-              : "internal_error");
+              : "internal_error";
+    const code: ErrorCode =
+      named !== null && named in ERROR_CODES ? (named as ErrorCode) : ladder;
     const message =
       exception instanceof HttpException
         ? exception.message
@@ -79,7 +92,7 @@ export class ProtocolErrorFilter implements ExceptionFilter {
       JSON.stringify({
         code,
         message,
-        docs_url: `https://relay.example/docs/errors/${code}`,
+        docs_url: docsUrl(code),
         request_id: String(res.getHeader("X-Request-Id") ?? ""),
         ...(field !== null ? { field } : {}),
       }),

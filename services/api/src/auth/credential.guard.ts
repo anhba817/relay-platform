@@ -1,12 +1,12 @@
 import {
-  ForbiddenException,
-  HttpException,
   Injectable,
   SetMetadata,
   UnauthorizedException,
   type CanActivate,
   type ExecutionContext,
 } from "@nestjs/common";
+
+import { protocolError } from "../protocol-error";
 import { Reflector } from "@nestjs/core";
 
 import type { PlatformService } from "./authenticate.middleware";
@@ -106,12 +106,9 @@ export class CredentialGuard implements CanActivate {
     // BEFORE the principal check, so an address over its allowance is refused
     // whether or not the credential it just presented would have worked.
     if (req[OVER_AUTH_THRESHOLD] === true) {
-      throw new HttpException(
-        {
-          code: "rate_limited",
-          message:
-            "too many failed authentication attempts from this address; retry shortly",
-        },
+      throw protocolError(
+        "rate_limited",
+        "too many failed authentication attempts from this address; retry shortly",
         429,
       );
     }
@@ -127,12 +124,13 @@ export class CredentialGuard implements CanActivate {
     );
 
     if (matchingKind.length === 0) {
-      throw new ForbiddenException({
-        code: "wrong_credential_type",
-        message: `this route expects ${expectation(accepted)}; ${describePrincipalKind(
+      throw protocolError(
+        "wrong_credential_type",
+        `this route expects ${expectation(accepted)}; ${describePrincipalKind(
           principal.kind,
         )} was presented`,
-      });
+        403,
+      );
     }
 
     // FR-044. The class is right; the question left is whether THIS SERVICE may
@@ -150,12 +148,12 @@ export class CredentialGuard implements CanActivate {
         .filter(isPlatformSpec)
         .flatMap((spec) => spec.platform as readonly string[]);
       if (!permitted.includes(principal.service)) {
-        throw new ForbiddenException({
-          code: "wrong_credential_service",
-          message:
-            `"${principal.service}" is not permitted on this route ` +
+        throw protocolError(
+          "wrong_credential_service",
+          `"${principal.service}" is not permitted on this route ` +
             `(${permitted.join(" or ")})`,
-        });
+          403,
+        );
       }
     }
 

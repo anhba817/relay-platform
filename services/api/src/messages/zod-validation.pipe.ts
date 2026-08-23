@@ -1,4 +1,6 @@
-import { BadRequestException, type PipeTransform } from "@nestjs/common";
+import type { PipeTransform } from "@nestjs/common";
+
+import { protocolError } from "../protocol-error";
 import type { ZodType } from "zod";
 
 // Boundary validation (chapter 2.2). safeParse, never parse: a throw
@@ -28,11 +30,12 @@ export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {
       // An empty path means the whole body failed (a non-object, say), and then
       // there is no field to name and the key is omitted rather than sent empty.
       const path = issue?.path.join(".");
-      throw new BadRequestException({
-        code: "invalid_request",
-        message: issue?.message ?? "invalid body",
-        ...(path !== undefined && path.length > 0 ? { field: path } : {}),
-      });
+      throw protocolError(
+        "invalid_request",
+        issue?.message ?? "invalid body",
+        400,
+        path !== undefined && path.length > 0 ? path : undefined,
+      );
     }
     return result.data;
   }

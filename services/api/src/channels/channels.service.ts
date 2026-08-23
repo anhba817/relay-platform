@@ -1,4 +1,6 @@
-import { HttpException, HttpStatus, Injectable, NotFoundException } from "@nestjs/common";
+import { HttpStatus, Injectable, NotFoundException } from "@nestjs/common";
+
+import { protocolError } from "../protocol-error";
 
 import { Repository, type ChannelRow } from "../db/repository";
 import { CHANNEL_MEMBER_LIMIT, type AddMembersBody, type CreateChannelBody } from "./channels.schema";
@@ -66,13 +68,10 @@ export class ChannelsService {
     // exactly that.
     const existing = await this.repo.countMembers(channelId);
     if (existing + body.user_ids.length > CHANNEL_MEMBER_LIMIT) {
-      throw new HttpException(
-        {
-          code: "channel_member_limit_exceeded",
-          message:
-            `this channel holds ${existing} of ${CHANNEL_MEMBER_LIMIT} members; ` +
-            `adding ${body.user_ids.length} would exceed the limit`,
-        },
+      throw protocolError(
+        "channel_member_limit_exceeded",
+        `this channel holds ${existing} of ${CHANNEL_MEMBER_LIMIT} members; ` +
+          `adding ${body.user_ids.length} would exceed the limit`,
         HttpStatus.UNPROCESSABLE_ENTITY,
       );
     }

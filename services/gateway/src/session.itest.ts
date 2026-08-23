@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 
 import { createLogger, serve, type Logger } from "@relay/service-kit";
+import { docsUrl } from "@relay/protocol";
 import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -214,7 +215,12 @@ describe("the socket's credentials (chapter 3.2)", () => {
     // No port argument: `startApi` picks its own, for the reasons written above
     // it. This describe is where the fixed-port fault was found.
     api = await startApi();
-    server = serve({ service: "gateway", health: () => ({}), logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
     attachSessions({ server, api: createApiClient(api.url), logger: silent });
     await new Promise<void>((resolve) => server.listen(0, resolve));
     url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -359,7 +365,12 @@ describe("the cap at the door (chapter 3.11, US3)", () => {
 
   beforeAll(async () => {
     api = await startApi();
-    server = serve({ service: "gateway", health: () => ({}), logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
     const sessions = attachSessions({
       server,
       api: createApiClient(api.url),

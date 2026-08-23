@@ -4,7 +4,9 @@ import type { Duplex } from "node:stream";
 
 import {
   CLOSE_CODES,
+  docsUrl,
   frameSchema,
+  type ErrorCode,
   type Frame,
   type Message,
 } from "@relay/protocol";
@@ -69,7 +71,7 @@ function refuseUpgrade(socket: Duplex, decision: Decision): void {
   const body = JSON.stringify({
     code: "rate_limited",
     message: "too many connections; retry after the window resets",
-    docs_url: "https://relay.example/docs/errors/rate_limited",
+    docs_url: docsUrl("rate_limited"),
     request_id: newRequestId(),
   });
   socket.write(
@@ -89,9 +91,14 @@ function refuseUpgrade(socket: Duplex, decision: Decision): void {
   socket.destroy();
 }
 
+/** `ErrorCode`, not `string` (chapter 3.12, FR-025). Every code this function is
+ * given becomes a `docs_url`, so a typo used to ship a link to a page that could
+ * not exist — and the gateway is the surface where nobody sees a 404 until a
+ * customer clicks it. Narrowing the parameter is what makes the registry the
+ * vocabulary rather than a suggestion. */
 function sendError(
   socket: WebSocket,
-  code: string,
+  code: ErrorCode,
   message: string,
   requestId: string = newRequestId(),
 ): void {
@@ -100,7 +107,7 @@ function sendError(
     payload: {
       code,
       message,
-      docs_url: `https://relay.example/docs/errors/${code}`,
+      docs_url: docsUrl(code),
       request_id: requestId,
     },
   });

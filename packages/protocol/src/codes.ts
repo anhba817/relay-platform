@@ -67,6 +67,60 @@ export const ERROR_CODES = {
   // fact, and a client that retries on the wrong one waits for ever.
   channel_member_limit_exceeded:
     "the channel already holds its maximum members; the message names the limit and the channel",
+
+  // ── THE FIVE THE PLATFORM HAS ALWAYS SENT AND NEVER REGISTERED (chapter 3.12,
+  // FR-024) ────────────────────────────────────────────────────────────────────
+  //
+  // `ProtocolErrorFilter` maps a status to a code when the thrower names none,
+  // and those codes went out on the wire for twenty-two chapters without being in
+  // this object. The registry called itself "the documented vocabulary" while
+  // documenting eight of thirteen — and `docs_url` is derived from the code, so
+  // every one of these five shipped a link to a page that could not exist.
+  //
+  // Registering them is what makes the filter's ladder typable: with it annotated
+  // `ErrorCode`, a code that is not here stops compiling instead of reaching a
+  // customer with a 404 for a docs link.
+  invalid_request:
+    "the request body, query or path failed validation; `field` names the first offending key",
+  forbidden: "the credential is valid and is not permitted to do this",
+  not_found:
+    "no such resource for this tenant — and DELIBERATELY the same answer as for a resource in another tenant (FR-TEN-05)",
+  internal_error:
+    "the platform failed in a way it did not anticipate; the request_id is what a support ticket needs",
+  // Chapter 3.11's. A connection belongs to one environment for its lifetime, and
+  // a second report naming a different one is a bug in the reporter rather than a
+  // state to reconcile — so it is refused rather than absorbed.
+  connection_environment_conflict:
+    "this connection was first reported for a different environment; a connection belongs to one environment for its whole life",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
+
+/** The published reference, and the one place the URL is built (FR-027,
+ * `contracts/errors.md` §2).
+ *
+ * THE DEBT THIS CLOSES. `docs_url` has been in the error envelope since chapter
+ * 1.3 and constitution V calls it a reachable-page promise. Six construction sites
+ * built it with a template literal against `https://relay.example`, a host that
+ * does not resolve, and two codes — `rate_limited` (3.8) and `quota_exceeded`
+ * (3.10, 3.11) — shipped links to pages that did not exist even in principle.
+ * Chapter 3.11 declined to add a third instance and named the debt; a chapter whose
+ * exit criterion is "integrates on public documentation alone" cannot ship a
+ * fourth.
+ *
+ * THE CODE IS THE ANCHOR, VERBATIM. No slug transform, no case change, no
+ * separator swap — the reference's `h2` headings ARE the codes, and
+ * `slugifyHeading` in the tutorial site keeps `_` so `## quota_exceeded` anchors
+ * at `#quota_exceeded`. Any transform here would be the same transform maintained
+ * in two repositories with no test able to see both sides.
+ *
+ * The base is overridable so a preview deployment can point at itself. It is read
+ * per call rather than captured at module load: a test that sets the variable in
+ * `beforeAll` would otherwise get the value from whenever this module was first
+ * imported. */
+export const DEFAULT_DOCS_BASE_URL = "https://relay.dev/docs/error-reference";
+
+export function docsUrl(code: ErrorCode): string {
+  const base = process.env["RELAY_DOCS_BASE_URL"] ?? DEFAULT_DOCS_BASE_URL;
+  return `${base}#${code}`;
+}

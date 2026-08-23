@@ -1,12 +1,13 @@
 import {
   Body,
-  ConflictException,
   Controller,
   HttpCode,
   Inject,
   Post,
   UseGuards,
 } from "@nestjs/common";
+
+import { protocolError } from "../protocol-error";
 
 import {
   internalUsageReportRequestSchema,
@@ -83,11 +84,11 @@ export class UsageController {
       // a code for four statuses and calls everything else `internal_error`, and
       // 409 is not one of the four.
       if (error instanceof ConnectionEnvironmentConflictError) {
-        throw new ConflictException({
-          code: "connection_environment_conflict",
-          message:
-            "this connection was first reported for a different environment",
-        });
+        throw protocolError(
+          "connection_environment_conflict",
+          "this connection was first reported for a different environment",
+          409,
+        );
       }
       throw error;
     }

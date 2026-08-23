@@ -6,7 +6,9 @@ import type { AddressInfo } from "node:net";
 
 import { createLogger, type Logger } from "@relay/service-kit";
 import { serve } from "@relay/service-kit";
-import { CLOSE_CODES, type Frame } from "@relay/protocol";
+import { CLOSE_CODES, type Frame,
+  docsUrl,
+} from "@relay/protocol";
 
 import type { InternalSendResponse, Message } from "@relay/protocol";
 
@@ -173,6 +175,7 @@ async function boot(
     service: "gateway",
     health: () => ({}),
     logger: silent,
+    notFoundDocsUrl: docsUrl("not_found"),
   });
   const sessions = attachSessions({
     server,

@@ -1,3 +1,4 @@
+import { docsUrl } from "@relay/protocol";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { Inject, Injectable, type NestMiddleware } from "@nestjs/common";
@@ -119,7 +120,7 @@ export class RateLimitMiddleware implements NestMiddleware {
           JSON.stringify({
             code: "rate_limited",
             message: "too many sign-up attempts from this address; retry shortly",
-            docs_url: "https://relay.example/docs/errors/rate_limited",
+            docs_url: docsUrl("rate_limited"),
             request_id: String(res.getHeader("X-Request-Id") ?? ""),
           }),
         );
@@ -217,7 +218,7 @@ export class RateLimitMiddleware implements NestMiddleware {
         JSON.stringify({
           code: "rate_limited",
           message: `too many ${what} for this environment; retry after ${retryAfter} seconds`,
-          docs_url: "https://relay.example/docs/errors/rate_limited",
+          docs_url: docsUrl("rate_limited"),
           request_id: String(res.getHeader("X-Request-Id") ?? ""),
         }),
       );
