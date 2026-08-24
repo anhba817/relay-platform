@@ -50,7 +50,12 @@ export type Authentication =
   /** Chapter 3.11. The api answered, and the answer was "this environment has
    * spent its month". Carries the api's own message, because the resume date is
    * in it and a close reason string has nowhere to put one. */
-  | { outcome: "over_quota"; message: string };
+  | { outcome: "over_quota"; message: string }
+  /** Chapter 3.15, FR-031. The api answered, the token is perfectly good, and the user
+   * is banned in this environment. Its own outcome and its own close code (4003), not a
+   * reuse of `refused`: 4001 means "your credential is bad", which a client acts on by
+   * re-authenticating, and re-authenticating succeeds and connects to the same refusal. */
+  | { outcome: "banned" };
 
 export async function authenticate(
   api: ApiClient,
@@ -69,6 +74,10 @@ export async function authenticate(
     if ("quotaExceeded" in session) {
       return { outcome: "over_quota", message: session.quotaExceeded };
     }
+    // A BAN IS NOT A CREDENTIAL REFUSAL EITHER. The api read `users.banned_at` and put a
+    // boolean on this response; the gateway has no database and does not need one to
+    // enforce it.
+    if (session.banned) return { outcome: "banned" };
     return {
       outcome: "ok",
       identity: {

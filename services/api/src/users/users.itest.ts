@@ -777,4 +777,121 @@ describe("a user's channel listing", () => {
     });
     expect(still.status).toBe(200);
   });
+
+  // ══ THE BAN (chapter 3.15, FR-031, FR-032, SC-013) ══════════════════════════
+
+  const ban = (user: string, key = credential) =>
+    fetch(`${url}/v1/users/${user}/ban`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}` },
+    });
+
+  const unban = (user: string, key = credential) =>
+    fetch(`${url}/v1/users/${user}/ban`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${key}` },
+    });
+
+  const sendAs = (channelId: string, token: string, text: string) =>
+    fetch(`${url}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text }),
+    });
+
+  // ── T152: banned cannot send, history survives, lifting restores ────────────
+  it("refuses a banned user's send and restores it when the ban lifts", async () => {
+    const channel = await repo.createChannel("ban-witness", "public");
+    const speaker = await repo.createUser("bannable", "Bannable");
+    await repo.addMember(channel.id, speaker.id);
+    const token = await tokenFor("bannable");
+
+    // THE CONTROL FIRST. A refusal proves nothing unless the same call worked a moment
+    // ago — chapter 3.12's fourteen green tests are why this line exists.
+    expect((await sendAs(channel.id, token, "before the ban")).status).toBe(201);
+
+    expect((await ban("bannable")).status).toBe(200);
+    const refused = await sendAs(channel.id, token, "during the ban");
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { code: string }).code).toBe("user_banned");
+
+    // HISTORY IS UNTOUCHED. A ban is not a deletion: their earlier message is still
+    // there and still theirs, readable by the tenant.
+    const history = await fetch(`${url}/v1/channels/${channel.id}/messages?limit=10`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    const messages = (await history.json()) as {
+      messages: Array<{ text: string | null; user: string | null }>;
+    };
+    expect(messages.messages.some((m) => m.text === "before the ban")).toBe(true);
+    expect(messages.messages.some((m) => m.text === "during the ban")).toBe(false);
+
+    expect((await unban("bannable")).status).toBe(200);
+    expect((await sendAs(channel.id, token, "after the ban")).status).toBe(201);
+  });
+
+  it("answers 200 on a repeated ban and a repeated unban", async () => {
+    await repo.createUser("twice-banned", "Twice");
+    expect((await ban("twice-banned")).status).toBe(200);
+    expect((await ban("twice-banned")).status).toBe(200);
+    expect((await unban("twice-banned")).status).toBe(200);
+    expect((await unban("twice-banned")).status).toBe(200);
+  });
+
+  it("answers 404 for a user this tenant does not have, and for a deleted one", async () => {
+    expect((await ban("never-heard-of")).status).toBe(404);
+    const gone = await repo.createUser("ban-then-delete", "Gone");
+    await repo.deleteUser(gone.id);
+    // A DELETED USER CANNOT BE BANNED, and does not need to be: every route naming them
+    // answers 404 and their session carries no channels. Banning one would be a state
+    // with no observable difference.
+    expect((await ban("ban-then-delete")).status).toBe(404);
+  });
+
+  // ── T154: the two edge cases the spec names ─────────────────────────────────
+  it("bans a private channel's member without removing them", async () => {
+    // THE BAN IS TENANT-SCOPED, so it is not a removal. The membership survives, the
+    // channel still lists them, and lifting the ban restores everything with nobody
+    // re-added.
+    const priv = await repo.createChannel("ban-private", "private");
+    const member2 = await repo.createUser("private-bannable", "Private Bannable");
+    await repo.addMember(priv.id, member2.id);
+    const token = await tokenFor("private-bannable");
+    expect((await sendAs(priv.id, token, "a member speaks")).status).toBe(201);
+
+    await ban("private-bannable");
+    const refused = await sendAs(priv.id, token, "still a member, still banned");
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { code: string }).code).toBe("user_banned");
+    // Still a member, and the listing still shows the channel.
+    expect(await repo.isMember(priv.id, member2.id)).toBe(true);
+    const listed = (await (await list("private-bannable", "?limit=100")).json()) as {
+      data: Array<{ external_id: string }>;
+    };
+    expect(listed.data.map((c) => c.external_id)).toContain("ban-private");
+
+    await unban("private-bannable");
+    expect((await sendAs(priv.id, token, "and back")).status).toBe(201);
+  });
+
+  it("does not let implicit creation undo a ban", async () => {
+    // A token minted for a banned user's identifier must not revive them. `createUser`
+    // is idempotent and touches no other column, so the row — and the ban on it —
+    // survives a mint. The upsert is the route that clears state, and it clears
+    // `deleted_at` only.
+    const target = await repo.createUser("mint-after-ban", "Minted");
+    await ban("mint-after-ban");
+    const token = await tokenFor("mint-after-ban");
+    expect(token.length).toBeGreaterThan(0);
+
+    const channel = await repo.createChannel("mint-room", "public");
+    await repo.addMember(channel.id, target.id);
+    const refused = await sendAs(channel.id, token, "minted my way in");
+    expect(refused.status).toBe(403);
+
+    // And an upsert naming them does not lift it either: the upsert clears `deleted_at`
+    // because FR-030 asks it to, and says nothing about `banned_at`.
+    await upsert([{ external_id: "mint-after-ban", display_name: "Renamed" }]);
+    expect((await sendAs(channel.id, token, "upserted my way in")).status).toBe(403);
+  });
 });

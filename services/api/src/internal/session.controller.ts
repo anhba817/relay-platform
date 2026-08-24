@@ -102,6 +102,15 @@ export class SessionController {
     return {
       environment_id: principal.environmentId,
       user: principal.userExternalId,
+      // Chapter 3.15, FR-031. THE ROW IS ALREADY IN HAND — `getUserByExternalId` above
+      // reads it for the channel list — so carrying the ban costs one field and no query.
+      // The gateway refuses the socket; this route only reports the fact, because the
+      // gateway has no database and the column is in Postgres.
+      //
+      // A USER THIS ENVIRONMENT HAS NEVER SEEN IS NOT BANNED. `user` is null for a
+      // verified token naming somebody with no row, which chapter 2.5 decided is a user
+      // with no channels rather than an error — and a user with no row has no ban either.
+      banned: user?.banned_at != null,
       channel_ids: user ? await this.repo.channelsForUser(user.id) : [],
       limits: {
         connect: policy.limits.connect,

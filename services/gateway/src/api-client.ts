@@ -32,13 +32,34 @@ import {
 export class ApiError extends Error {
   readonly status: number;
 
-  constructor(what: string, status: number) {
+  /** The api's own error code and message, when it sent an envelope (chapter 3.15).
+   *
+   * THEY WERE THROWN AWAY UNTIL NOW, and it cost more than it looked. The socket's send
+   * path forwards a 401 by hand and answers `internal_error` for everything else, so
+   * every refusal the api can give a socket send — `user_banned` this chapter,
+   * **`channel_archived` since this feature's archive phase** — reached the client as
+   * "send failed". Chapter 3.14 built thirteen codes and one registry precisely so a
+   * client could tell refusals apart, and one hop discarded all of it.
+   *
+   * `undefined` when the response carried no envelope: a proxy's HTML 502, a timeout, a
+   * body that is not JSON. The caller then has nothing to forward and says so, which is
+   * the honest answer rather than a guessed code. */
+  readonly code: string | undefined;
+  readonly publicMessage: string | undefined;
+
+  constructor(
+    what: string,
+    status: number,
+    envelope?: { code?: string; message?: string },
+  ) {
     super(`${what} failed: ${status}`);
     this.name = "ApiError";
     // Declared and assigned rather than a constructor parameter property:
     // `erasableSyntaxOnly` is on everywhere except the api (ADR-15, chapter
     // 1.4), and the gateway keeps that guarantee.
     this.status = status;
+    this.code = envelope?.code;
+    this.publicMessage = envelope?.message;
   }
 }
 
@@ -107,7 +128,25 @@ export function createApiClient(
     schema: { safeParse: (value: unknown) => { success: boolean; data?: T } },
     what: string,
   ): Promise<T> {
-    if (!res.ok) throw new ApiError(what, res.status);
+    if (!res.ok) {
+      // The envelope, if there is one. Read defensively: this is an error path, and a
+      // body that fails to parse must not replace the api's status with a JSON
+      // exception the caller cannot act on.
+      let envelope: { code?: string; message?: string } | undefined;
+      try {
+        const body: unknown = await res.json();
+        if (typeof body === "object" && body !== null && "code" in body) {
+          const { code, message } = body as { code?: unknown; message?: unknown };
+          envelope = {
+            ...(typeof code === "string" ? { code } : {}),
+            ...(typeof message === "string" ? { message } : {}),
+          };
+        }
+      } catch {
+        envelope = undefined;
+      }
+      throw new ApiError(what, res.status, envelope);
+    }
     const parsed = schema.safeParse(await res.json());
     if (!parsed.success || parsed.data === undefined) {
       throw new Error(`${what} returned a payload the contract does not allow`);

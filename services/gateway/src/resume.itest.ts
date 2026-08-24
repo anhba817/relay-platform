@@ -126,6 +126,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -160,6 +163,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -188,6 +194,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -234,6 +243,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -273,6 +285,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -312,6 +327,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.

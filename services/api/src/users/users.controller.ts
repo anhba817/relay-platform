@@ -120,4 +120,24 @@ export class UsersController {
   async deleteUser(@Param("externalId") externalId: string) {
     return this.users.deleteUser(externalId);
   }
+
+  /** The ban pair (chapter 3.15, FR-031).
+   *
+   * TWO ROUTES ON ONE PATH RATHER THAN A `PATCH` WITH A BOOLEAN. `POST …/ban` and
+   * `DELETE …/ban` say what they do in the method, and a customer's reconciliation loop
+   * can issue either without reading the current state first. A `{"banned": false}` body
+   * would be a second way to spell the same thing.
+   *
+   * `@HttpCode(200)` on the POST for the reason the upsert has it: nothing is created,
+   * and banning an already-banned user is a 200 too. */
+  @Post(":externalId/ban")
+  @HttpCode(200)
+  async ban(@Param("externalId") externalId: string) {
+    return this.users.setBanned(externalId, true);
+  }
+
+  @Delete(":externalId/ban")
+  async unban(@Param("externalId") externalId: string) {
+    return this.users.setBanned(externalId, false);
+  }
 }

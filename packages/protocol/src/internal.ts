@@ -137,6 +137,22 @@ export const internalSessionResponseSchema = z.strictObject({
   environment_id: z.string().min(1),
   user: z.string().min(1),
   channel_ids: z.array(z.string().min(1)),
+  /** Chapter 3.15, FR-031. Whether this user is banned in this environment.
+   *
+   * IT RIDES THIS RESPONSE FOR THE REASON THE LIMITS DO: the gateway has no database and
+   * must not gain one, `banned_at` is a column in Postgres, and the api is the only
+   * service that reads Postgres. So the ban travels on the one call the gateway already
+   * makes at connect — no new table reaches the gateway and no new round trip is added.
+   *
+   * A BOOLEAN AND NOT THE TIMESTAMP. The gateway's question is "may this socket open",
+   * which is a yes or a no; handing it `banned_at` would invite it to decide policy from
+   * a date, and policy lives where the column does.
+   *
+   * `.default(false)` so an api built before this chapter still satisfies the schema
+   * during a rolling deploy — the gateway then treats a missing field as "not banned",
+   * which is the pre-chapter behaviour and the safe direction to be wrong in for one
+   * deploy window. */
+  banned: z.boolean().default(false),
   /** Chapter 3.8. The two limits the gateway enforces, resolved from the
    * environment's policy with nulls already turned into defaults.
    *

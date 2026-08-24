@@ -49,6 +49,9 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
         ? {
             environment_id: "env-1",
             user: "tuan",
+            // Chapter 3.15: the api now reports whether the user is banned, and a stub
+            // that does not say is a stub that has not thought about it.
+            banned: false,
             channel_ids: [CHANNEL],
             // Chapter 3.8. The limits ride the session response because the
             // gateway has no database to read them from — so the stub supplies
@@ -857,6 +860,9 @@ describe("the socket's limits (chapter 3.8)", () => {
         session: async () => ({
           environment_id: "env-1",
           user: "tuan",
+          // Chapter 3.15: the api now reports whether the user is banned, and a stub
+          // that does not say is a stub that has not thought about it.
+          banned: false,
           channel_ids: [CHANNEL],
           limits: { connect: 2, send: 600 },
         }),
@@ -890,6 +896,9 @@ describe("the socket's limits (chapter 3.8)", () => {
         session: async () => ({
           environment_id: "env-1",
           user: "tuan",
+          // Chapter 3.15: the api now reports whether the user is banned, and a stub
+          // that does not say is a stub that has not thought about it.
+          banned: false,
           channel_ids: [CHANNEL],
           limits: { connect: 3_000, send: configured },
         }),

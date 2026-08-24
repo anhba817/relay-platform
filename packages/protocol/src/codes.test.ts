@@ -7,9 +7,17 @@ import { CLOSE_CODES, ERROR_CODES, docsUrl, DEFAULT_DOCS_BASE_URL } from "./code
 // collide or go blank as chapters add to the registry.
 
 describe("close codes cover EIR-WS-06's four classes", () => {
-  it("contains exactly 4001, 4002, 4008, 4009", () => {
+  // AND ONE MORE THAN FOUR, SINCE CHAPTER 3.15. `4003` is a ban, which is none of
+  // EIR-WS-06's classes: the token verifies, names a real user and is in date, and the
+  // user is refused anyway. Reusing 4001 would tell a client to re-authenticate, which
+  // succeeds at minting a token and fails again at connect.
+  //
+  // THIS ASSERTION IS WHY THE NUMBER IS DELIBERATE. It failed on the build that added
+  // 4003 — an exact-set assertion is the only kind that makes a new close code a decision
+  // rather than an accident, and updating it is the act of making that decision.
+  it("contains exactly 4001, 4002, 4003, 4008, 4009", () => {
     expect(Object.keys(CLOSE_CODES).map(Number).sort()).toEqual([
-      4001, 4002, 4008, 4009,
+      4001, 4002, 4003, 4008, 4009,
     ]);
   });
 

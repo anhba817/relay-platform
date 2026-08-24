@@ -126,6 +126,10 @@ interface Reader {
   waitFor: <T = Record<string, unknown>>(type: string, timeoutMs?: number) => Promise<T>;
   frames: () => { type: string }[];
   opened: () => Promise<void>;
+  /** The close code, once it arrives (chapter 3.15, T151). Added because a refusal at
+   * connect IS a close code — the frame is only the explanation — and asserting the
+   * frame alone would pass whether the socket closed 4003, 4001 or not at all. */
+  closedWith: (timeoutMs?: number) => Promise<number>;
 }
 
 function read(socket: WebSocket): Reader {
@@ -160,7 +164,16 @@ function read(socket: WebSocket): Reader {
     }
   };
 
-  return { socket, waitFor, frames: () => [...buffer], opened };
+  const closedWith = async (timeoutMs = 5_000): Promise<number> => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (closed !== null) return closed;
+      if (Date.now() > deadline) throw new Error("socket never closed");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
+
+  return { socket, waitFor, frames: () => [...buffer], opened, closedWith };
 }
 
 /** Absence needs a deadline rather than a race, so three of the four attacks below
@@ -418,6 +431,74 @@ describe("the socket gauntlet", () => {
     expect(Object.keys(ack.payload.cursor)).not.toContain(tenants.victim.channelId);
     await quiet(1_000);
     expect(client.frames().filter((f) => f.type === "message.created")).toEqual([]);
+  });
+
+  // ── T151, T153: THE BAN AT THE DOOR, AND WHAT IT DOES TO AN OPEN SOCKET ───
+  //
+  // FR-032 asks what a ban does to a connection that is ALREADY OPEN, and T153 named two
+  // candidate answers — "closed at the next heartbeat" and "closed immediately" — noting
+  // they differ in whether the gateway has to be told.
+  //
+  // **THE ANSWER IS NEITHER, AND IT IS ALREADY BUILT.** A banned socket stops being able
+  // to SEND the instant the ban lands, because a socket send goes through the api's
+  // `/internal/messages`, which is the same repository path the ban check sits at the top
+  // of. It keeps RECEIVING until it closes for any other reason, because delivery never
+  // asks the api anything.
+  //
+  // That is not a compromise invented here — it is the shape chapter 3.2 already chose
+  // for an expired token, whose comment in `session.ts` says it in as many words: "the
+  // socket is still up and still RECEIVES, because delivery never asks the api anything.
+  // Writing does."
+  //
+  // WHY NOT CLOSE IT. Closing an open socket on ban needs the api to tell the gateway,
+  // which is new plumbing on the fan-out for an event that happens rarely; re-checking at
+  // each heartbeat needs an api call on every ping of every connection. Both buy the
+  // difference between "cannot speak" and "cannot listen", for a user the tenant has
+  // already silenced.
+  it("refuses a banned user at connect with 4003, not 4001", async () => {
+    await tenants.attacker.banSelf();
+    try {
+      const client = connect(tenants.attacker.token);
+      // The error frame arrives first, because a close reason is a short string.
+      const err = await client.waitFor<{ payload: { code: string } }>("error");
+      expect(err.payload.code).toBe("user_banned");
+      const closed = await client.closedWith();
+      // 4003 AND NOT 4001. The token is valid and the user is refused; 4001 would send a
+      // client round the re-authentication loop for ever.
+      expect(closed).toBe(4003);
+    } finally {
+      await tenants.attacker.unbanSelf();
+    }
+  });
+
+  it("stops an already-open socket from sending, and keeps delivering to it", async () => {
+    const client = connect(tenants.victim.token);
+    await client.waitFor("connection.ack");
+
+    await tenants.victim.banSelf();
+    try {
+      // SENDING STOPS. The frame is accepted by the gateway and refused by the api, so
+      // the client is told rather than disconnected.
+      client.socket.send(
+        JSON.stringify({
+          type: "message.send",
+          payload: {
+            idem_key: randomUUID(),
+            channel: tenants.victim.channelId,
+            text: "banned mid-connection",
+          },
+        }),
+      );
+      const err = await client.waitFor<{ payload: { code: string } }>("error");
+      expect(err.payload.code).toBe("user_banned");
+
+      // AND THE SOCKET IS STILL OPEN. Stated as an assertion because it is the half of
+      // FR-032 a reader will not guess: a ban silences a connection, it does not sever
+      // it, and the next reconnect is where the door closes.
+      expect(client.socket.readyState).toBe(1);
+    } finally {
+      await tenants.victim.unbanSelf();
+    }
   });
 
   // ── T144: A DELETED USER'S MESSAGE STILL REACHES A SOCKET (FR-028) ────────

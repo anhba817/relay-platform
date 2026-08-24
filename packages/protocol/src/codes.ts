@@ -7,6 +7,18 @@
 export const CLOSE_CODES = {
   4001: "invalid or expired token",
   4002: "protocol violation",
+  // Chapter 3.15, FR-031. A FIFTH CODE, AND NOT A REUSE OF 4001.
+  //
+  // A banned user's token is perfectly valid — it verifies, it names a real user, it is
+  // in date. Closing 4001 tells a client to re-authenticate, which succeeds at minting a
+  // token and fails again at connect: an infinite loop against a wall. That is the same
+  // argument this file already makes for `wrong_credential_type` and `quota_exceeded` —
+  // "a client that cannot tell them apart retries the wrong one for ever".
+  //
+  // EIR-WS-06 names four classes to distinguish — authentication, quota, shutdown,
+  // protocol violation — and a ban is none of them. Numbered here, the way chapter 1.3
+  // numbered 4002 and 4008.
+  4003: "banned in this environment",
   4008: "quota exhausted",
   4009: "server shutdown (drain)",
 } as const;
@@ -132,6 +144,20 @@ export const ERROR_CODES = {
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
+
+/** Whether a string the api sent is a code this registry defines (chapter 3.15).
+ *
+ * FOR FORWARDING, and forwarding is the only thing that needs it. The gateway's socket
+ * send relays the api's refusal code to the client — `user_banned`, `channel_archived` —
+ * instead of flattening every 4xx to `internal_error`. It receives that code as a plain
+ * string off a JSON body, and putting an unregistered string on the wire would defeat the
+ * registry this file exists to be.
+ *
+ * A TYPE GUARD RATHER THAN A CAST, so the narrowing is checked once here instead of
+ * asserted at every call site. */
+export function isErrorCode(value: string): value is ErrorCode {
+  return Object.hasOwn(ERROR_CODES, value);
+}
 
 /** The published reference, and the one place the URL is built (FR-027,
  * `contracts/errors.md` §2).

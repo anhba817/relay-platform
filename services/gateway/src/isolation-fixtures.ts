@@ -68,6 +68,10 @@ export interface SocketTenant {
    * later test's profile PATCH answer 404. Phase 7 hit the same class twice: a test that
    * mutates a shared fixture breaks whichever test runs after it, and the fix is a
    * fixture of its own rather than an ordering constraint nobody can see. */
+  /** Ban and unban this tenant's own user through the public route (chapter 3.15,
+   * T153). */
+  banSelf: () => Promise<void>;
+  unbanSelf: () => Promise<void>;
   seedDeletable: () => Promise<{
     userExternalId: string;
     channelId: string;
@@ -181,6 +185,20 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
           headers: { authorization: `Bearer ${key.credential}` },
         });
         if (!res.ok) throw new Error(`archive for ${label}: ${res.status}`);
+      },
+      banSelf: async () => {
+        const res = await fetch(`${apiUrl}/v1/users/${userExternalId}/ban`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${key.credential}` },
+        });
+        if (!res.ok) throw new Error(`ban ${userExternalId}: ${res.status}`);
+      },
+      unbanSelf: async () => {
+        const res = await fetch(`${apiUrl}/v1/users/${userExternalId}/ban`, {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${key.credential}` },
+        });
+        if (!res.ok) throw new Error(`unban ${userExternalId}: ${res.status}`);
       },
       seedDeletable: async () => {
         const label2 = `${label}-del-${Math.random().toString(36).slice(2, 7)}`;

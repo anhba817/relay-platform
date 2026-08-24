@@ -207,4 +207,23 @@ export class UsersService {
     await this.repo.deleteUser(user.id);
     return { external_id: externalId, deleted: true };
   }
+
+  /** Ban and unban, tenant-wide (chapter 3.15, FR-031, FR-032).
+   *
+   * BOTH IDEMPOTENT AND BOTH 200. Banning a banned user and unbanning an unbanned one
+   * are the ordinary outcomes of a retry, and the caller's intent is satisfied either
+   * way. A 409 here would make a customer's reconciliation loop — "ensure these users
+   * are banned" — have to distinguish success from success.
+   *
+   * A DELETED USER CANNOT BE BANNED, because `requireUser` 404s them. They already
+   * cannot connect: the session route resolves the user and a deleted row has no
+   * channels, and every route naming them answers 404. Banning one would be a state with
+   * no observable difference.
+   */
+  async setBanned(externalId: string, banned: boolean): Promise<{ external_id: string; banned: boolean }> {
+    const user = await this.requireUser(externalId);
+    if (banned) await this.repo.banUser(user.id);
+    else await this.repo.unbanUser(user.id);
+    return { external_id: externalId, banned };
+  }
 }
