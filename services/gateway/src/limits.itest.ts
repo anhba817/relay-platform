@@ -14,7 +14,7 @@ import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 // THE LANE'S PORT MAP, and it is a map because two files drawing from one range
-// is the same fault as two files sharing a fixed port (chapter 3.12, T077):
+// is the same fault as two files sharing a fixed port (chapter 3.13, T077):
 //
 //   4100-4300  gateway/limits.itest.ts          api
 //   4310-4370  dispatcher/dispatcher.itest.ts   api
@@ -133,7 +133,7 @@ async function startApi(): Promise<ApiUnderTest> {
   const key = await seeder.createApiKey(db, { environmentId: environment.id });
 
   // A RANDOM HIGH PORT, and this file is the last one in the lane to get one
-  // (chapter 3.12, FR-041). It bound a fixed 4124, which is the fault
+  // (chapter 3.13, FR-041). It bound a fixed 4124, which is the fault
   // `session.itest.ts` documents at length and had to learn twice: a previous
   // run's child can still hold the port, the new child exits on EADDRINUSE, the
   // health check gets a 200 from the OLD api — a different environment and a

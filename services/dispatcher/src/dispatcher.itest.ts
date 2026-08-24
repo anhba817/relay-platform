@@ -364,7 +364,7 @@ describe("the dispatcher", () => {
     second = customerEndpoint();
     secondUrl = await second.listen();
 
-    // A RANDOM HIGH PORT (chapter 3.12, T077). This bound a fixed 4131, which is
+    // A RANDOM HIGH PORT (chapter 3.13, T077). This bound a fixed 4131, which is
     // the second instance of the fault CLAUDE.md names only for
     // `limits.itest.ts` — the audit is what found it. The integration lane runs
     // one package at a time, so nothing races this file WITHIN a run; what does

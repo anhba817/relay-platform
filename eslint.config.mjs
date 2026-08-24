@@ -244,7 +244,7 @@ export default tseslint.config(
     },
   },
   {
-    // THE SEAL ON `packages/outsider` (chapter 3.12, FR-030, FR-034, R12).
+    // THE SEAL ON `packages/outsider` (chapter 3.14, FR-030, FR-034, R12).
     //
     // That package holds one suite that behaves like a customer, and the claim it
     // makes — an integration built from published documentation alone — is worth

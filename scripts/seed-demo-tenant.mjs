@@ -1,4 +1,4 @@
-// A tenant an outsider can integrate against (chapter 3.12, FR-032).
+// A tenant an outsider can integrate against (chapter 3.14, FR-032).
 //
 // The constitution asks that `docker compose up` yield a working local platform
 // "including a seeded demo tenant". Nothing seeded one, and until this chapter

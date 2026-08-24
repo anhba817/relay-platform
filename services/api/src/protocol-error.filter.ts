@@ -39,7 +39,7 @@ export class ProtocolErrorFilter implements ExceptionFilter {
       typeof (response as { code?: unknown }).code === "string"
         ? (response as { code: string }).code
         : null;
-    // TYPED AS `ErrorCode` (chapter 3.12, FR-025). The ladder emitted five codes
+    // TYPED AS `ErrorCode` (chapter 3.14, FR-025). The ladder emitted five codes
     // that were not in the registry for twenty-two chapters — `invalid_request`,
     // `forbidden`, `not_found`, `internal_error` and the frame codes — and
     // `docs_url` is derived from the code, so each one shipped a link to a page

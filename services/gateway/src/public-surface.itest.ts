@@ -213,7 +213,7 @@ describe("a channel, a member and a message, all over the public API", () => {
 
   // A MESSAGE SENT OVER THE PUBLIC REST API CANNOT REACH A SOCKET AT ALL, and
   // that is the platform's behaviour rather than this test's shortcoming. Pinned
-  // here because chapter 3.12's exit criterion is that an outsider integrates on
+  // here because chapter 3.14's exit criterion is that an outsider integrates on
   // the documentation alone, and this is the sentence that documentation has to
   // contain.
   //

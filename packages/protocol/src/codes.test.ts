@@ -42,7 +42,7 @@ describe("error codes stay unique and described", () => {
   });
 });
 
-// ── THE PLATFORM HALF OF THE CLOSURE CHECK (chapter 3.12, FR-025, SC-011) ─────
+// ── THE PLATFORM HALF OF THE CLOSURE CHECK (chapter 3.14, FR-025, SC-011) ─────
 //
 // Every code the platform can emit is in `ERROR_CODES`. The tutorial repository
 // holds the other half — that every code has a section in the published reference,

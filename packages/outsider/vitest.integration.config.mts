@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 
-// THE SEALED INTEGRATION (chapter 3.12, FR-030, FR-031).
+// THE SEALED INTEGRATION (chapter 3.14, FR-030, FR-031).
 //
 // This package holds one suite that behaves like a customer: it reads two URLs
 // and a credential from the environment, speaks HTTP and WebSocket, and knows

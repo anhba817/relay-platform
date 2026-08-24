@@ -305,7 +305,7 @@ export async function plant(
     [s.environmentId, s.organisationId, s.deliveryEndpointId, BAIT_ROWS],
   );
 
-  // bait 5: the four usage tables, ONE ROW EACH (chapter 3.12, FR-036).
+  // bait 5: the four usage tables, ONE ROW EACH (chapter 3.13, FR-036).
   //
   // Chapter 3.12 added these four to the trigger array, and being in the array is
   // not the same as being watched: with no sentinel row in a table, the trigger

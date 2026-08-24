@@ -28,7 +28,7 @@ export function createServer(logger?: Logger) {
     }),
     logger: log,
     // The registry owns the URL; `service-kit` owns no dependencies. So the URL
-    // crosses the boundary as data (chapter 3.12, FR-027, R9).
+    // crosses the boundary as data (chapter 3.14, FR-027, R9).
     notFoundDocsUrl: docsUrl("not_found"),
   });
   // The socket server rides the SAME listener as health — one port, two

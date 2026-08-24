@@ -161,7 +161,7 @@ describe("an exemption that names one table", () => {
   });
 });
 
-// ── THE FOUR USAGE TABLES (chapter 3.12, FR-038, SC-017) ─────────────────────
+// ── THE FOUR USAGE TABLES (chapter 3.13, FR-038, SC-017) ─────────────────────
 //
 // Chapters 3.10 and 3.11 added `usage_periods`, `usage_active_users`,
 // `quota_notifications` and `usage_connections`, and neither added them to

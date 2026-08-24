@@ -56,7 +56,7 @@ export interface ServeOptions {
   health: () => Record<string, unknown>;
   logger?: Logger;
   /** The `docs_url` for the not-found envelope this server answers unknown routes
-   * with (chapter 3.12, FR-027).
+   * with (chapter 3.14, FR-027).
    *
    * REQUIRED, AND THE DEPENDENCY INVERTS RATHER THAN BEING ADDED. The obvious move
    * is to import `docsUrl` from `@relay/protocol` here — and this package declares
@@ -78,7 +78,7 @@ export interface ServeOptions {
  * answers with the service's health payload, and unknown routes get the
  * EIR-API-04 error shape.
  *
- * The docs_url is no longer a placeholder — chapter 3.12 made it a required option
+ * The docs_url is no longer a placeholder — chapter 3.14 made it a required option
  * and the caller derives it from `@relay/protocol`'s registry, which is how a
  * package with no dependencies can still emit a URL the registry owns. */
 export function serve(options: ServeOptions): Server {

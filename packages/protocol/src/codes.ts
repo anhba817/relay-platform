@@ -117,7 +117,7 @@ export const ERROR_CODES = {
   user_banned:
     "the user is banned in this environment and can neither connect nor send; their existing messages remain",
 
-  // ── THE FIVE THE PLATFORM HAS ALWAYS SENT AND NEVER REGISTERED (chapter 3.12,
+  // ── THE FIVE THE PLATFORM HAS ALWAYS SENT AND NEVER REGISTERED (chapter 3.14,
   // FR-024) ────────────────────────────────────────────────────────────────────
   //
   // `ProtocolErrorFilter` maps a status to a code when the thrower names none,

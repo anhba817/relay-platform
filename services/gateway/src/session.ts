@@ -92,7 +92,7 @@ function refuseUpgrade(socket: Duplex, decision: Decision): void {
   socket.destroy();
 }
 
-/** `ErrorCode`, not `string` (chapter 3.12, FR-025). Every code this function is
+/** `ErrorCode`, not `string` (chapter 3.14, FR-025). Every code this function is
  * given becomes a `docs_url`, so a typo used to ship a link to a page that could
  * not exist — and the gateway is the surface where nobody sees a 404 until a
  * customer clicks it. Narrowing the parameter is what makes the registry the

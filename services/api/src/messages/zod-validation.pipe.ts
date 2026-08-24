@@ -15,7 +15,7 @@ export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {
     const result = this.schema.safeParse(value);
     if (!result.success) {
       const issue = result.error.issues[0];
-      // WHICH FIELD, and chapter 3.12 is where that stopped being optional.
+      // WHICH FIELD, and chapter 3.14 is where that stopped being optional.
       //
       // EIR-API-04's error shape has carried a `field` since chapter 1.3 and
       // `errorFrameSchema` declares it — and nothing in the api had ever set it.

@@ -2682,7 +2682,7 @@ export class Repository {
 
   /** IDEMPOTENT ON THE CUSTOMER'S OWN IDENTIFIER (FR-017, FR-CHN-02).
    *
-   * This was a plain insert until chapter 3.12, which is fine for a fixture and
+   * This was a plain insert until chapter 3.13, which is fine for a fixture and
    * cannot back an endpoint: a repeated `external_id` raises against
    * `channels_environment_id_external_id_unique`, and `ProtocolErrorFilter`
    * renders a unique violation as `internal_error`. The second call in an
@@ -2772,7 +2772,7 @@ export class Repository {
    * is the layer's one raw SQL island, permitted by ADR-16 and kept inside
    * the wall like everything else.
    *
-   * THREE OUTCOMES, NOT A BOOLEAN (chapter 3.12, R14a). Until then this returned
+   * THREE OUTCOMES, NOT A BOOLEAN (chapter 3.13, R14a). Until then this returned
    * `false` for all of: the channel is not yours, the user is not yours, and you
    * asked twice. Conflating the first two is right and is the whole point — a
    * foreign id must be indistinguishable from an absent one. Conflating the third

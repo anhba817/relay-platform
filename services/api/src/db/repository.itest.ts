@@ -62,7 +62,7 @@ describe("tenant isolation is structural (FR-TEN-05)", () => {
     const channel = await repoA.getChannelByExternalId("support");
     expect(await repoA.addMember(channel!.id, user!.id)).toBe("added");
     // Asked twice is a SUCCESS and not a failure, and telling those apart is
-    // what chapter 3.12 changed here: the endpoint over this call has to be
+    // what chapter 3.13 changed here: the endpoint over this call has to be
     // idempotent, and a unique violation reached the wire as `internal_error`.
     expect(await repoA.addMember(channel!.id, user!.id)).toBe("already_a_member");
     // B holds A's REAL ids — and still cannot write or read through them. The
