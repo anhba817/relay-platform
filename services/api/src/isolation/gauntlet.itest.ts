@@ -490,6 +490,42 @@ describe("the isolation gauntlet", () => {
     }
   });
 
+  // ── the profile: a read pair and a write pair over the same path ────────────────
+  //
+  // Two routes on one path, and they take different attacks: `GET` is a read pair —
+  // the foreign external id and one that exists nowhere must be indistinguishable —
+  // and `PATCH` is a write, so the victim's own row has to be read back afterwards.
+  //
+  // THE VICTIM'S STATE IS THE PROFILE ITSELF, not a count. A PATCH that leaked
+  // through would show up as a display name the victim never set, which is the one
+  // thing a status code cannot report.
+  it("GET /v1/users/:externalId — a foreign profile answers as an absent one", async () => {
+    attacked.add("GET /v1/users/:externalId");
+    const verdict = await readAttack(
+      url,
+      t.attacker.credential,
+      { method: "GET", path: `/v1/users/${t.victim.userExternalId}` },
+      { method: "GET", path: `/v1/users/nobody-${ABSENT_UUID}` },
+    );
+    expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+  });
+
+  it("PATCH /v1/users/:externalId — a foreign profile is not written", async () => {
+    attacked.add("PATCH /v1/users/:externalId");
+    const body = { display_name: "written by the attacker" };
+    const verdict = await writeAttack(
+      url,
+      t.attacker.credential,
+      { method: "PATCH", path: `/v1/users/${t.victim.userExternalId}`, body },
+      { method: "PATCH", path: `/v1/users/nobody-${ABSENT_UUID}`, body },
+      // Through the victim's own repository, scoped to its environment — the profile
+      // as the victim would read it.
+      () => t.victim.repo.getUserByExternalId(t.victim.userExternalId),
+    );
+    expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+    expect(verdict.stateChanged, "the victim's profile moved").toBe(false);
+  });
+
   // ── the read position: `either`, so it is attacked as both ──────────────────────
   //
   // The first route on the users controller that genuinely takes both credential

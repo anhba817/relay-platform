@@ -145,6 +145,8 @@ describe("the gauntlet's target list derives from the running application", () =
       // This chapter's, and the first `list` shape the classification has had.
       "GET /v1/users/:externalId/channels",
       "PUT /v1/users/:externalId/channels/:channelId/read",
+      "GET /v1/users/:externalId",
+      "PATCH /v1/users/:externalId",
     ];
     const keys = derived.map(targetKey);
     const missing = ADDED.filter((k) => !keys.includes(k));
