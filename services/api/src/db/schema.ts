@@ -437,6 +437,16 @@ export const readPositions = pgTable(
     // `channels.last_sequence` is refused (FR-018) — a position nothing can reach makes
     // every later count wrong.
     sequence: bigint("sequence", { mode: "number" }).notNull(),
+    // WRITTEN BY EVERY POSITION WRITE AND READ BY NOTHING, and that is a decision rather
+    // than an oversight (chapter 3.16's `gaps.md` §5).
+    //
+    // Chapters 3.15 and 3.16 exist because five columns had no reader, so leaving a sixth
+    // behind needs a sentence or it becomes the next feature's finding. The two options
+    // were a reader — an operations view answering "when did this user last catch up" —
+    // or a migration dropping it. Kept, on the expectation that the reader arrives.
+    //
+    // A column nobody chose to keep and a column somebody chose to keep look identical in
+    // a schema. This comment is the only thing that tells them apart.
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
