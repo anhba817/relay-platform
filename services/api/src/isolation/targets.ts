@@ -130,6 +130,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   { method: "GET", path: "/v1/channels/:channelId", accepts: "application", shape: "read" },
   { method: "POST", path: "/v1/channels/:channelId/join", accepts: "user", shape: "write" },
   { method: "POST", path: "/v1/channels/:channelId/members/remove", accepts: "application", shape: "write" },
+  { method: "PATCH", path: "/v1/channels/:channelId/members/:userExternalId", accepts: "application", shape: "write" },
 
   // ── the internal surface: an end-user token, so a FOREIGN CREDENTIAL is the attack
   { method: "POST", path: "/internal/messages", accepts: "user", shape: "write" },
