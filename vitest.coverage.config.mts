@@ -111,8 +111,36 @@ export default defineConfig({
         // guard. Measured at 97.74; pinned at 97, one point below, for the run-to-
         // run swing this provider has (a function of forty on `session.ts` moved
         // 87.80 -> 85.36 on identical code).
+        //
+        // ── THE USER SURFACE RAISED BRANCHES, 85 -> 90 ────────────────────────────
+        //
+        // The first time this file's branch ratchet has moved UP. The chapter added
+        // roughly six hundred lines here — the listing with its unread arithmetic, the
+        // read position that only moves forward, bulk upsert, the deletion that keeps
+        // the row, the ban — and branches measured **91.53%** against a pin of 85.
+        //
+        // PINNED AT 90 AND NOT 91. 91.53 clears 91 by half a point, which is inside
+        // the swing this provider has shown; 90 locks in most of the gain and leaves
+        // the next chapter more than a rounding error of room. A ratchet that has to
+        // be lowered next chapter teaches people to lower ratchets.
+        //
+        // AND LINES STAY AT 97 THOUGH THEY MEASURE 98.14, for the same reason and with
+        // the same arithmetic: 97.74 last chapter, 98.14 now, a 0.4 swing on code that
+        // did not change in between.
+        //
+        // WHAT IS STILL UNCOVERED, and each is the class the note above names — a
+        // throw for a state the surrounding code says cannot arise:
+        //
+        //   119   no such environment, in a mint whose caller already resolved it
+        //   805   a channel neither inserted nor readable: the loser of an ON
+        //         CONFLICT race finding no row, which needs the winner's row deleted
+        //         between two statements of one call, and nothing deletes channels
+        //   1899  an idempotency key that conflicted while its message is missing
+        //   2060  the private-channel arm of the history read, whose OTHER arm every
+        //         test takes — the one branch here that is reachable, and the chapter
+        //         that gives a user a history page is where it gets its case
         "services/api/src/db/repository.ts": {
-          branches: 85,
+          branches: 90,
           functions: 100,
           lines: 97,
           statements: 95,
