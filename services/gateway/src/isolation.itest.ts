@@ -420,6 +420,78 @@ describe("the socket gauntlet", () => {
     expect(client.frames().filter((f) => f.type === "message.created")).toEqual([]);
   });
 
+  // ── T134: THE PROFILE IS STORED AND THE WIRE DID NOT MOVE ─────────────────
+  //
+  // Chapter 3.15 gives `users.display_name`, `users.avatar_url` and `users.metadata` a
+  // route that writes them and a route that reads them. **None of that reaches a
+  // socket.** `connection.ack` names who you are with a bare external id string, and
+  // `messageSchema` carries `user` the same way — no display name, no avatar, no
+  // metadata.
+  //
+  // ASSERTED RATHER THAN ASSUMED, because "we did not change the protocol" is the claim a
+  // test replaces. A later change that enriched `user` into an object would break every
+  // client parsing frames against the published schema.
+  //
+  // THE MESSAGE HALF IS CHECKED AGAINST THE SCHEMA AND NOT AGAINST A LIVE FRAME, because
+  // no `message.created` ever arrives in this suite: `say()` writes through the
+  // repository, the api publishes to no fan-out, and nothing here drains the outbox.
+  // Chapter 3.12 recorded that as its own finding — a REST-sent message reaches no socket,
+  // ever — and `public-surface.itest.ts` is what pins it. Waiting for a frame here is a
+  // 5-second timeout, which is how this test was written the first time.
+  it("keeps the socket's identity a bare external id, whatever the profile holds", async () => {
+    // A full profile written through the public route.
+    const patched = await fetch(`${api.url}/v1/users/${tenants.victim.userExternalId}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${tenants.victim.credential}`,
+      },
+      body: JSON.stringify({
+        display_name: "A Name On The Wire",
+        avatar_url: "https://cdn.example.com/face.png",
+        metadata: { seen: "by nobody" },
+      }),
+    });
+    expect(patched.status).toBe(200);
+
+    // THE LIVE HALF: the handshake, after the profile exists.
+    const client = connect(tenants.victim.token);
+    const ack = await client.waitFor<{ payload: { user: unknown } }>("connection.ack");
+    expect(typeof ack.payload.user).toBe("string");
+    expect(ack.payload.user).toBe(tenants.victim.userExternalId);
+
+    // THE CONTRACT HALF: the frame union refuses an enriched identity. If somebody widens
+    // `messageSchema.user` to an object, this stops failing — and that is the change this
+    // assertion exists to catch, because it is the one that breaks published clients.
+    const enriched = frameSchema.safeParse({
+      type: "message.created",
+      payload: {
+        id: randomUUID(),
+        channel: tenants.victim.channelId,
+        seq: 1,
+        user: { id: tenants.victim.userExternalId, display_name: "A Name On The Wire" },
+        text: "hello",
+        created_at: new Date().toISOString(),
+      },
+    });
+    expect(enriched.success).toBe(false);
+
+    // And the six keys, exactly: a seventh would also have to be added deliberately.
+    const bare = frameSchema.safeParse({
+      type: "message.created",
+      payload: {
+        id: randomUUID(),
+        channel: tenants.victim.channelId,
+        seq: 1,
+        user: tenants.victim.userExternalId,
+        text: "hello",
+        created_at: new Date().toISOString(),
+        avatar_url: "https://cdn.example.com/face.png",
+      },
+    });
+    expect(bare.success).toBe(false);
+  });
+
   // ── THE SAME-TENANT NON-MEMBER, ON THE SOCKET (chapter 3.15, T087) ─────────
   //
   // The protocol's frame union has exactly one inbound member — `message.send` —

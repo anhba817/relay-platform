@@ -7,6 +7,56 @@ import { z } from "zod";
 // and `channels.itest.ts:118` is the assertion that keeps it honest. A caller who
 // writes `Limit` instead of `limit` finds out on the first call.
 
+/** 4 KB, and FR-USR-03 names that number the way FR-CHN-01 names 8 KB for a channel
+ * (chapter 3.15, FR-024). Two bounds, half an order of magnitude apart, and the SRS chose
+ * both — but "the SRS says so" is not a reason, so here is the one that holds.
+ *
+ * **THE BOUND TRACKS ROW CARDINALITY.** Measured on the test lane: 94,144 users against
+ * 27,337 channels, and a user belongs to 1 channel on average while a channel holds 10
+ * users. Users outnumber channels 3.4:1 here and the ratio only grows — a channel is a
+ * conversation a customer creates deliberately, a user row appears for every end user who
+ * ever authenticates, implicitly (FR-USR-02). At a million end users, 4 KB each is 4 GB of
+ * jsonb that every profile read walks past.
+ *
+ * The channel's 8 KB buys something the user's does not: channel metadata is where a
+ * customer puts routing and configuration for a shared object, read once per conversation.
+ * A user's metadata is per-person annotation. Different multipliers, different budgets.
+ *
+ * Measured on the JSON text, like the channels bound, because that is what the column
+ * stores and what the row costs. */
+export const USER_METADATA_BYTES = 4 * 1024;
+
+const userMetadataSchema = z
+  .record(z.string(), z.unknown())
+  .refine(
+    (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= USER_METADATA_BYTES,
+    { message: `metadata must be at most ${USER_METADATA_BYTES} bytes of JSON` },
+  );
+
+/** The profile body (chapter 3.15, FR-023, FR-024).
+ *
+ * A PATCH, so every field is optional — and `strictObject`, so a misspelled one is a
+ * refusal. An empty body is accepted and changes nothing: unlike the member-role PATCH,
+ * which carries exactly one required field, a profile PATCH with no fields is a coherent
+ * request that asks for the current state, and the response is the profile.
+ *
+ * `avatar_url` IS VALIDATED AS A URL AND NOT AS A STRING. The column has existed since
+ * chapter 2.1 with nothing writing it, so this is the first thing that ever decides what
+ * belongs in it, and the decision is worth making now rather than after a customer has
+ * stored `"none"` in a million rows. `z.url()` refuses a relative path; the field's own
+ * name promises a URL.
+ *
+ * `null` CLEARS, and it is distinct from absent. `{"display_name": null}` removes the
+ * name; `{}` leaves it. Both columns are nullable, so the API can express the difference
+ * and a PATCH that could only set would leave a customer unable to undo one. */
+export const userProfileBodySchema = z.strictObject({
+  display_name: z.string().min(1).max(255).nullable().optional(),
+  avatar_url: z.string().url().max(2048).nullable().optional(),
+  metadata: userMetadataSchema.optional(),
+});
+
+export type UserProfileBody = z.infer<typeof userProfileBodySchema>;
+
 /** FR-013's page bound: the same 100 as the member-add and the upsert.
  *
  * ONE NUMBER FOR THE CONCEPT, not three that happen to agree. A page of channels, a

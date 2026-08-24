@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Put,
   Query,
   UseGuards,
@@ -13,8 +14,10 @@ import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 import {
   listingQuerySchema,
   readPositionBodySchema,
+  userProfileBodySchema,
   type ListingQuery,
   type ReadPositionBody,
+  type UserProfileBody,
 } from "./users.schema";
 import { UsersService } from "./users.service";
 
@@ -65,5 +68,28 @@ export class UsersController {
     @Body(new ZodValidationPipe(readPositionBodySchema)) body: ReadPositionBody,
   ): Promise<{ sequence: number }> {
     return this.users.setReadPosition(externalId, channelId, body.sequence);
+  }
+
+  /** The profile, read and written (chapter 3.15, FR-023, FR-024).
+   *
+   * TWO OF ITS THREE FIELDS HAVE NEVER BEEN WRITTEN BY ANY ROUTE. `users.avatar_url` and
+   * `users.metadata` have been in the schema since chapter 2.1 with no reference outside
+   * tests. This pair of routes is what the feature's headline was about.
+   *
+   * `:externalId` LAST IN THE FILE AND NOT FIRST. Nest matches routes in declaration
+   * order, so `GET :externalId` declared above `GET :externalId/channels` would still be
+   * fine — the paths differ in segment count — but keeping the more specific route first
+   * is the habit that stops the next route from shadowing something. */
+  @Get(":externalId")
+  async readProfile(@Param("externalId") externalId: string) {
+    return this.users.readProfile(externalId);
+  }
+
+  @Patch(":externalId")
+  async updateProfile(
+    @Param("externalId") externalId: string,
+    @Body(new ZodValidationPipe(userProfileBodySchema)) body: UserProfileBody,
+  ) {
+    return this.users.updateProfile(externalId, body);
   }
 }

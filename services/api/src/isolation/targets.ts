@@ -113,6 +113,23 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     shape: "list",
   },
 
+  // Chapter 3.15. The profile pair. `read` for the GET; the PATCH is a `write` whose
+  // attack is a foreign external id under an own credential — a tenant must not be able
+  // to rename another tenant's user, and the refusal is the same 404 a user who does not
+  // exist gets, because in this tenant they do not.
+  {
+    method: "GET",
+    path: "/v1/users/:externalId",
+    accepts: "application",
+    shape: "read",
+  },
+  {
+    method: "PATCH",
+    path: "/v1/users/:externalId",
+    accepts: "application",
+    shape: "write",
+  },
+
   // Chapter 3.15. The route that names TWO tenant-owned identifiers, which is why
   // T082a attacks it both ways round: a foreign user with an own channel and an own
   // user with a foreign channel are different code paths, and one scoped read can mask

@@ -448,4 +448,110 @@ describe("a user's channel listing", () => {
     const res = await setRead("lister", c.id, one.seq, await tokenFor("lister"));
     expect(res.status).toBe(200);
   });
+
+  // ══ THE PROFILE (chapter 3.15, FR-023, FR-024, SC-011) ══════════════════════
+
+  const profile = (user: string, key = credential) =>
+    fetch(`${url}/v1/users/${user}`, { headers: { authorization: `Bearer ${key}` } });
+
+  const patchProfile = (user: string, body: unknown, key = credential) =>
+    fetch(`${url}/v1/users/${user}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify(body),
+    });
+
+  // ── T131: the round trip, all three fields (SC-011) ─────────────────────────
+  it("round-trips display name, avatar url and metadata", async () => {
+    await repo.createUser("profiled", "Before");
+    const res = await patchProfile("profiled", {
+      display_name: "After",
+      avatar_url: "https://cdn.example.com/a/b.png",
+      metadata: { team: "support", tier: 3 },
+    });
+    expect(res.status).toBe(200);
+
+    const body = (await (await profile("profiled")).json()) as {
+      external_id: string;
+      display_name: string | null;
+      avatar_url: string | null;
+      metadata: Record<string, unknown>;
+    };
+    expect(body).toEqual({
+      external_id: "profiled",
+      display_name: "After",
+      avatar_url: "https://cdn.example.com/a/b.png",
+      metadata: { team: "support", tier: 3 },
+    });
+  });
+
+  it("patches one field without clearing the others", async () => {
+    await patchProfile("profiled", { display_name: "Renamed" });
+    const body = (await (await profile("profiled")).json()) as {
+      display_name: string | null;
+      avatar_url: string | null;
+      metadata: Record<string, unknown>;
+    };
+    // ABSENT IS NOT NULL. The two fields left out of the patch keep their values.
+    expect(body.display_name).toBe("Renamed");
+    expect(body.avatar_url).toBe("https://cdn.example.com/a/b.png");
+    expect(body.metadata).toEqual({ team: "support", tier: 3 });
+  });
+
+  it("clears a field when the patch names it null", async () => {
+    await patchProfile("profiled", { avatar_url: null });
+    const body = (await (await profile("profiled")).json()) as { avatar_url: string | null };
+    expect(body.avatar_url).toBeNull();
+  });
+
+  it("accepts an empty patch and changes nothing", async () => {
+    const before = await (await profile("profiled")).text();
+    const res = await patchProfile("profiled", {});
+    expect(res.status).toBe(200);
+    expect(await (await profile("profiled")).text()).toBe(before);
+  });
+
+  // ── T132: FR-024's two bounds, each naming its field ────────────────────────
+  it("refuses metadata over 4 KB with 400 and names the field", async () => {
+    const res = await patchProfile("profiled", {
+      metadata: { blob: "x".repeat(4 * 1024) },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string; field?: string };
+    expect(body.code).toBe("invalid_request");
+    expect(body.field).toBe("metadata");
+  });
+
+  it("accepts metadata just under 4 KB", async () => {
+    // THE CONTROL FOR THE BOUND. Without it, a refusal that rejected all metadata would
+    // pass the test above.
+    const res = await patchProfile("profiled", { metadata: { blob: "x".repeat(4_000) } });
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses a malformed avatar url with 400 and names the field", async () => {
+    const res = await patchProfile("profiled", { avatar_url: "not-a-url" });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string; field?: string };
+    expect(body.code).toBe("invalid_request");
+    expect(body.field).toBe("avatar_url");
+  });
+
+  it("refuses an unknown profile field rather than ignoring it", async () => {
+    const res = await patchProfile("profiled", { displayName: "camelCase" });
+    expect(res.status).toBe(400);
+  });
+
+  // ── T129: a deleted user has no profile, on both routes ──────────────────────
+  it("answers 404 on both profile routes for a deleted user", async () => {
+    const gone = await repo.createUser("profile-deleted", "Going");
+    expect((await profile("profile-deleted")).status).toBe(200);
+    await repo.markUserDeleted(gone.id);
+    expect((await profile("profile-deleted")).status).toBe(404);
+    expect((await patchProfile("profile-deleted", { display_name: "x" })).status).toBe(404);
+  });
+
+  it("answers 404 for a user this tenant does not have", async () => {
+    expect((await profile("nobody-at-all")).status).toBe(404);
+  });
 });

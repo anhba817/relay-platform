@@ -1,8 +1,12 @@
 import { HttpStatus, Injectable, NotFoundException } from "@nestjs/common";
 
 import { protocolError } from "../protocol-error";
-import { Repository } from "../db/repository";
-import { encodeCursor, type ListingQuery } from "./users.schema";
+import { Repository, type UserRow } from "../db/repository";
+import {
+  encodeCursor,
+  type ListingQuery,
+  type UserProfileBody,
+} from "./users.schema";
 
 /** The user surface (chapter 3.15, FR-013 and the clauses after it).
  *
@@ -22,12 +26,48 @@ export class UsersService {
    * senderless row, so "authored by a deleted user" and "authored by nobody" are
    * different states and only one of them is the clause. The marker is what makes the
    * row invisible to the API without making the message anonymous. */
-  private async requireUser(externalId: string): Promise<{ id: string }> {
+  private async requireUser(externalId: string): Promise<UserRow> {
     const user = await this.repo.getUserByExternalId(externalId);
     if (!user || user.deleted_at !== null) {
       throw new NotFoundException("user not found");
     }
-    return { id: user.id };
+    return user;
+  }
+
+  /** The profile as the API shapes it (FR-023).
+   *
+   * `deleted_at` IS NOT ON THE WIRE. It is read on every route that names a user and it
+   * decides a 404; a client never sees a deleted user at all, so returning the marker
+   * would be returning a field whose only possible value is null. */
+  private static profile(user: UserRow): {
+    external_id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+    metadata: Record<string, unknown>;
+  } {
+    return {
+      external_id: user.external_id,
+      display_name: user.display_name,
+      avatar_url: user.avatar_url,
+      metadata: user.metadata,
+    };
+  }
+
+  async readProfile(externalId: string): Promise<ReturnType<typeof UsersService.profile>> {
+    return UsersService.profile(await this.requireUser(externalId));
+  }
+
+  async updateProfile(
+    externalId: string,
+    patch: UserProfileBody,
+  ): Promise<ReturnType<typeof UsersService.profile>> {
+    const user = await this.requireUser(externalId);
+    const updated = await this.repo.updateUserProfile(user.id, patch);
+    // `null` here means the row went away between the two statements — a deletion racing
+    // a patch. 404 is the same answer the read gives, which is the answer that does not
+    // depend on which of the two won.
+    if (updated === null) throw new NotFoundException("user not found");
+    return UsersService.profile(updated);
   }
 
   async listChannels(

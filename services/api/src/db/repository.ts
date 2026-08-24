@@ -2191,6 +2191,12 @@ export interface UserRow {
   id: string;
   external_id: string;
   display_name: string | null;
+  /** Chapter 3.15, FR-023. Both columns have existed since chapter 2.1 and **no route
+   * has ever written or read either one** — two of the four dead columns this feature
+   * exists to give readers. They are on the row rather than fetched by a second query
+   * because every caller that wants a profile wants all of it. */
+  avatar_url: string | null;
+  metadata: Record<string, unknown>;
   /** Chapter 3.15, FR-017. A deleted user KEEPS THEIR ROW: `ON DELETE SET NULL` on
    * `messages.user_id` would satisfy the letter of "messages are preserved" and break
    * delivery, because `backfill.controller`'s `toFrame` drops a senderless row — so
@@ -2610,6 +2616,8 @@ export class Repository {
         id,
         external_id: externalId,
         display_name: displayName ?? null,
+        avatar_url: null,
+        metadata: {},
         deleted_at: null,
       };
     }
@@ -2627,6 +2635,8 @@ export class Repository {
         id: users.id,
         external_id: users.externalId,
         display_name: users.displayName,
+        avatar_url: users.avatarUrl,
+        metadata: users.metadata,
         deletedAt: users.deletedAt,
       })
       .from(users)
@@ -2643,6 +2653,8 @@ export class Repository {
           id: row.id,
           external_id: row.external_id,
           display_name: row.display_name,
+          avatar_url: row.avatar_url,
+          metadata: (row.metadata ?? {}) as Record<string, unknown>,
           deleted_at: row.deletedAt === null ? null : toIso(row.deletedAt),
         };
   }
@@ -3018,6 +3030,69 @@ export class Repository {
         ),
       );
     return rows.map((r) => r.channel_id);
+  }
+
+  /** Write a user's profile (chapter 3.15, FR-023, FR-024).
+   *
+   * THE FIRST WRITER `users.avatar_url` AND `users.metadata` HAVE EVER HAD. Both columns
+   * have been in the schema since chapter 2.1 with zero references outside tests — two of
+   * the four columns this feature was specified to give readers, and giving them a reader
+   * meant giving them a writer first.
+   *
+   * PARTIAL BY CONSTRUCTION, and `undefined` is not `null`. A field absent from the patch
+   * is absent from the `set`, so it keeps its value; a field present and null is written
+   * null, which clears it. `exactOptionalPropertyTypes` makes the two distinguishable in
+   * the type rather than by convention (ADR-15's strictness).
+   *
+   * AN EMPTY PATCH DOES NOT ISSUE AN UPDATE. Drizzle throws on a `set` with no columns,
+   * and issuing `SET` with nothing to set would be a write that means nothing anyway. The
+   * caller gets the current row, which is the honest answer to a request that asked for no
+   * change.
+   *
+   * SCOPED AND ALIVE. The `where` carries the environment and `deleted_at IS NULL`: a
+   * deleted user's profile is not editable, and the route above answers 404 for the same
+   * reason. Returning null is how the caller tells "no such user" from "wrote nothing". */
+  async updateUserProfile(
+    userId: string,
+    patch: {
+      display_name?: string | null | undefined;
+      avatar_url?: string | null | undefined;
+      metadata?: Record<string, unknown> | undefined;
+    },
+  ): Promise<UserRow | null> {
+    const set: Record<string, unknown> = {};
+    if (patch.display_name !== undefined) set["displayName"] = patch.display_name;
+    if (patch.avatar_url !== undefined) set["avatarUrl"] = patch.avatar_url;
+    if (patch.metadata !== undefined) set["metadata"] = patch.metadata;
+
+    if (Object.keys(set).length > 0) {
+      const updated = await this.db
+        .update(users)
+        .set(set)
+        .where(
+          and(
+            eq(users.id, userId),
+            eq(users.environmentId, this.environmentId),
+            isNull(users.deletedAt),
+          ),
+        )
+        .returning({ externalId: users.externalId });
+      if (updated.length === 0) return null;
+      return this.getUserByExternalId(updated[0]!.externalId);
+    }
+
+    const [row] = await this.db
+      .select({ externalId: users.externalId })
+      .from(users)
+      .where(
+        and(
+          eq(users.id, userId),
+          eq(users.environmentId, this.environmentId),
+          isNull(users.deletedAt),
+        ),
+      )
+      .limit(1);
+    return row === undefined ? null : this.getUserByExternalId(row.externalId);
   }
 
   /** Record a read position (chapter 3.15, FR-017, FR-018).
