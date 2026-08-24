@@ -73,6 +73,12 @@ export class MessagesService {
   async history(
     channelId: string,
     { cursor, direction, limit }: HistoryQuery,
+    /** Who is reading (FR-002). Threaded for the same reason `send`
+     * threads it: the membership check lives in the repository, and a check gated
+     * on a parameter no caller fills in is a check that never fires. This route
+     * dropped the caller for twenty-three chapters — the same defect as the send
+     * path on the same controller, found one analysis pass later. */
+    userId?: string,
   ): Promise<{
     messages: MessageWithSender[];
     next_cursor: string | null;
@@ -84,7 +90,11 @@ export class MessagesService {
     // same — but it leaves a client unable to tell "no such conversation"
     // from "no messages yet", and it made one resource answer two ways
     // depending on the verb.
-    if (!(await this.repo.channelExists(channelId))) {
+    // VISIBILITY, NOT EXISTENCE (FR-003). `channelExists` answered
+    // only the first half, and the difference was a leak: an absent channel gave
+    // 404 while a private channel a non-member read gave 200 with an empty page.
+    // One predicate now produces both refusals, so the two answers cannot diverge.
+    if (!(await this.repo.channelVisibleTo(channelId, userId))) {
       throw new NotFoundException("channel not found");
     }
 
@@ -95,6 +105,7 @@ export class MessagesService {
       anchor = decoded;
     }
     const messages = await this.repo.listMessages(channelId, {
+      ...(userId !== undefined && { userId }),
       limit,
       ...(direction === "newer"
         ? { afterSeq: anchor ?? 0 }
