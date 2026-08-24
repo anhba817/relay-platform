@@ -222,8 +222,27 @@ describe("a user's channel listing", () => {
   });
 
   // ── T117: the cursor's refusals ─────────────────────────────────────────────
-  it("refuses a malformed cursor with 400 and names the field", async () => {
-    const res = await list("lister", "?cursor=not-a-cursor");
+  // THREE WAYS A CURSOR CAN BE MALFORMED, and each is its own arm: the base64 does not
+  // decode to JSON, the JSON decodes to the wrong shape, or the timestamp inside it is
+  // not a date. All three answer identically, which is the point — a client learns "your
+  // cursor is not a cursor" and nothing about which internal check caught it — and all
+  // three need their own test, because one refusal reaching the wire says nothing about
+  // whether the other two paths work.
+  it.each([
+    ["not JSON at all", "not-a-cursor"],
+    [
+      "JSON of the wrong shape",
+      Buffer.from(JSON.stringify({ nope: 1 }), "utf8").toString("base64url"),
+    ],
+    [
+      "a timestamp that is not a date",
+      Buffer.from(
+        JSON.stringify({ a: "the day before yesterday", id: "00000000-0000-4000-8000-000000000000" }),
+        "utf8",
+      ).toString("base64url"),
+    ],
+  ])("refuses a cursor that is %s with 400 and names the field", async (_what, cursor) => {
+    const res = await list("lister", `?cursor=${cursor}`);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { code: string; field?: string };
     expect(body.code).toBe("invalid_request");

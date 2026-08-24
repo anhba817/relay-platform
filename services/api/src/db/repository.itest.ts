@@ -429,3 +429,73 @@ describe("the listing's tombstone rule and its clamp (chapter 3.15)", () => {
     expect(rows.find((r) => r.external_id === "clamped")!.unread).toBe(0);
   });
 });
+
+// ── THE ARMS THE ROUTES CANNOT REACH (chapter 3.15, T174a, T174b) ─────────────
+//
+// Every one of these is a repository function answering "no" to something its own route
+// answers first. `deleteUser` on an id that does not exist, `updateUserProfile` on a
+// deleted row, an upsert that creates without a display name — the service layer 404s or
+// validates ahead of each, so the arm is unreachable THROUGH the API and perfectly
+// reachable one layer down.
+//
+// IN-PROCESS ON PURPOSE (T174b). Five of this feature's tests drive new repository code
+// through the gateway's api CHILD PROCESS, whose coverage is not attributable. Chapter 3.5
+// added six operations to this file the same way and branches went 85.91% → 78.22% on the
+// next run: the instrument was right and the code was untested.
+describe("the repository's own refusals (chapter 3.15)", () => {
+  it("returns false when deleting a user that does not exist", async () => {
+    expect(await repoA.deleteUser("00000000-0000-4000-8000-000000000000")).toBe(false);
+  });
+
+  it("returns null when patching a deleted user's profile", async () => {
+    const doomed = await repoA.createUser("arm-patch-deleted", "Doomed");
+    await repoA.deleteUser(doomed.id);
+    // The route answers 404 before reaching this, because `requireUser` reads the marker.
+    // One layer down, the `isNull(deletedAt)` in the WHERE is what refuses.
+    expect(await repoA.updateUserProfile(doomed.id, { display_name: "nope" })).toBeNull();
+    // And the same for an empty patch, which takes the other branch entirely — no UPDATE
+    // is issued, so the refusal comes from the SELECT.
+    expect(await repoA.updateUserProfile(doomed.id, {})).toBeNull();
+  });
+
+  it("returns null for an empty patch on a user that does not exist", async () => {
+    expect(
+      await repoA.updateUserProfile("00000000-0000-4000-8000-000000000001", {}),
+    ).toBeNull();
+  });
+
+  it("creates through the upsert with no profile fields at all", async () => {
+    const { user, status } = await repoA.upsertUser("arm-bare-upsert", {});
+    expect(status).toBe("created");
+    expect(user.display_name).toBeNull();
+    expect(user.avatar_url).toBeNull();
+    expect(user.metadata).toEqual({});
+  });
+
+  it("updates an avatar through the upsert", async () => {
+    await repoA.upsertUser("arm-avatar", { display_name: "First" });
+    const { user, status } = await repoA.upsertUser("arm-avatar", {
+      avatar_url: "https://cdn.example.com/arm.png",
+    });
+    expect(status).toBe("updated");
+    expect(user.avatar_url).toBe("https://cdn.example.com/arm.png");
+    // The name the entry omitted is untouched, which is the other side of the same branch.
+    expect(user.display_name).toBe("First");
+  });
+
+  it("reports a last message with no author as null", async () => {
+    // AN UNATTRIBUTED MESSAGE, which is what a key-authenticated REST send writes — no
+    // `userId`, by design since chapter 3.3. The listing's `last_message.user` is then
+    // null, and that arm has no route that can reach it: every send through the public
+    // channel route now carries a user, and the internal one resolves theirs.
+    const reader = await repoA.createUser("arm-no-author", "Reader");
+    const channel = await repoA.createChannel("arm-unattributed", "public");
+    await repoA.addMember(channel.id, reader.id);
+    await repoA.sendMessage(channel.id, { text: "from the tenant, not a user" });
+
+    const { rows } = await repoA.listChannelsForUser(reader.id, { limit: 10 });
+    const row = rows.find((r) => r.external_id === "arm-unattributed")!;
+    expect(row.last_message?.text).toBe("from the tenant, not a user");
+    expect(row.last_message?.user).toBeNull();
+  });
+});

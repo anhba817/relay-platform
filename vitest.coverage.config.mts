@@ -167,8 +167,31 @@ export default defineConfig({
         // It now reads 90.71%, above where the chapter found it and below 91, so
         // the pin stays at 90 rather than moving to a number the next chapter
         // would have to earn back.
+        //
+        // CHAPTER 3.15 RAISED IT, which is the first time this file's branch ratchet has
+        // moved up. The feature added roughly 600 lines here — the membership check, the
+        // visibility predicate, bulk removal, roles, archiving, the ban, the read
+        // position, the listing with its unread arithmetic — and branches went
+        // **89.51% → 92.11%**. Chapter 3.5's precedent was the opposite: six operations
+        // on this file took branches 85.91% → 78.22% on the next run.
+        //
+        // PINNED AT 91 AND NOT 92, on the reasoning above. 92.11 clears 92 by a tenth,
+        // which is the thin margin chapter 3.12 declined to pin against; 91 locks in most
+        // of the gain and leaves the next chapter more than a rounding error of room.
+        //
+        // WHAT IS STILL UNCOVERED, and every one is the same class the comment above
+        // names: three `could not be created or read` throws — `createChannel`,
+        // `createUser`, `upsertUser` — each the loser of an `ON CONFLICT` race finding no
+        // row, which means the winner's row was deleted between two statements of one
+        // call. Nothing in the api deletes from either table.
+        //
+        // A FOURTH ONE WAS REMOVED RATHER THAN NAMED. `upsertUser` first read the row,
+        // threw if absent, updated it, read it back and threw again — two statements for
+        // one impossible state. The third instance of that class took lines to 98.92% and
+        // the gate went red against its pin of 99; the instrument was right, because the
+        // second throw said nothing the first had not. One throw, and lines read 99.13%.
         "services/api/src/db/repository.ts": {
-          branches: 90,
+          branches: 91,
           functions: 100,
           lines: 99,
           statements: 97,
@@ -296,11 +319,69 @@ export default defineConfig({
         // from storage before any user is created. The one uncovered branch is the
         // `not_found` outcome after a successful scoped read — the channel deleted
         // between two statements of one call — which nothing in the api can do.
+        //
+        // CHAPTER 3.15 RAISED THIS TOO, and T174d predicted the opposite. That task
+        // expected `functions: 100` to go red on the first partially-covered new
+        // function — the file gains read-by-id, join, archive, unarchive, bulk removal
+        // and role-setting — and it did not, because every one of the six has a route
+        // test in `channels.itest.ts` or the gauntlet. Measured 96.97 / 86.54 / 100 /
+        // 96.97 against a pin of 94 / 75 / 100 / 94.
+        //
+        // The prediction was reasonable and the reason it failed is worth keeping: a new
+        // method reached only through a child process would have done exactly what T174d
+        // feared, which is what T174b checks for separately.
         "services/api/src/channels/channels.service.ts": {
-          branches: 75,
+          branches: 86,
           functions: 100,
-          lines: 94,
-          statements: 94,
+          lines: 96,
+          statements: 96,
+        },
+
+        // ── CHAPTER 3.15's USER SURFACE ────────────────────────────────────────
+        //
+        // The controller and the schema at 100 on everything, and they earn it: the
+        // controller is eight handlers that delegate, and the schema's every refusal path
+        // is driven — including all THREE ways a cursor can be malformed, which needed
+        // three tests because one refusal reaching the wire says nothing about whether
+        // the other two paths work.
+        "services/api/src/users/users.controller.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/users/users.schema.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // The service holds the decisions: which refusal a read position gets, whether a
+        // user is alive, what a partial profile patch leaves alone. 97.62 / 90.91 / 100 /
+        // 97.62 — the two uncovered statements are `requireUser`'s and `updateProfile`'s
+        // 404 throws reached from a direction no route takes.
+        "services/api/src/users/users.service.ts": {
+          branches: 90,
+          functions: 100,
+          lines: 97,
+          statements: 97,
+        },
+
+        // A FLOOR, NOT AN ACHIEVEMENT. `messages.service.ts` measures 70.83 / 61.76 /
+        // 100 / 70.83, and the six uncovered statements are all PRE-EXISTING: the quota
+        // refusal and its rethrow (chapter 3.10) and the history cursor's decode (chapter
+        // 2.4). This feature's additions to the file — the ban mapping, the archive
+        // mapping, the visibility predicate on the history path — are covered.
+        //
+        // Pinned anyway, because an unpinned file is a figure that can slide (chapter
+        // 3.11's T033c) and this feature changed the file. A ratchet at 61 does not bless
+        // 61; it forbids 60. Raising it is the next chapter's work, and the arms are named
+        // here so that chapter knows what it is buying.
+        "services/api/src/messages/messages.service.ts": {
+          branches: 61,
+          functions: 100,
+          lines: 70,
+          statements: 70,
         },
 
         "services/api/src/webhooks/disable.ts": {

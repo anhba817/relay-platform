@@ -2674,7 +2674,11 @@ export class Repository {
           external_id: row.external_id,
           display_name: row.display_name,
           avatar_url: row.avatar_url,
-          metadata: (row.metadata ?? {}) as Record<string, unknown>,
+          // `as` AND NOT `?? {}`. The column is `notNull().default({})`, so the driver
+          // never hands back null — and chapter 3.12 removed `addMember`'s
+          // `(inserted.rowCount ?? 0)` for exactly this reason: an arm nothing can take,
+          // bought for nothing, in the one file constitution VI asks 100% of.
+          metadata: row.metadata as Record<string, unknown>,
           banned_at: row.bannedAt === null ? null : toIso(row.bannedAt),
           deleted_at: row.deletedAt === null ? null : toIso(row.deletedAt),
         };
@@ -3112,7 +3116,20 @@ export class Repository {
       };
     }
 
-    const existing = await this.db
+    // ONE UNREACHABLE THROW, NOT TWO, and the count is the reason. An earlier version
+    // read the row, threw if it was absent, updated it, read it back, and threw again if
+    // THAT was absent — two statements for one impossible state (the winner of an
+    // `ON CONFLICT` race having its row deleted between two statements of the same call,
+    // which nothing in the api can do). `repository.ts` already carried two throws of
+    // that class from chapter 3.12 and its lines ratchet sat at 99; a third took the file
+    // to 98.92 and the gate went red. The instrument was right: the second throw bought
+    // nothing the first did not already say.
+    //
+    // The pre-image is read for ONE fact the update cannot return — whether the row was
+    // deleted before this call, which is what makes the difference between `updated` and
+    // `revived`. `UPDATE ... RETURNING` gives post-update values, so there is no way to
+    // learn it from the write itself.
+    const [before] = await this.db
       .select({ id: users.id, deletedAt: users.deletedAt })
       .from(users)
       .where(
@@ -3122,29 +3139,26 @@ export class Repository {
         ),
       )
       .limit(1);
-    const row = existing[0];
-    if (row === undefined) {
-      throw new Error(`user ${externalId} could not be created or read`);
-    }
-    const revived = row.deletedAt !== null;
 
-    await this.db
-      .update(users)
-      .set({
-        // Absent stays absent, exactly as the single PATCH treats it — except
-        // `deleted_at`, which a revival always clears.
-        ...(profile.display_name === undefined
-          ? {}
-          : { displayName: profile.display_name }),
-        ...(profile.avatar_url === undefined ? {} : { avatarUrl: profile.avatar_url }),
-        ...(profile.metadata === undefined ? {} : { metadata: profile.metadata }),
-        deletedAt: null,
-      })
-      .where(and(eq(users.id, row.id), eq(users.environmentId, this.environmentId)));
+    if (before !== undefined) {
+      await this.db
+        .update(users)
+        .set({
+          // Absent stays absent, exactly as the single PATCH treats it — except
+          // `deleted_at`, which a revival always clears.
+          ...(profile.display_name === undefined
+            ? {}
+            : { displayName: profile.display_name }),
+          ...(profile.avatar_url === undefined ? {} : { avatarUrl: profile.avatar_url }),
+          ...(profile.metadata === undefined ? {} : { metadata: profile.metadata }),
+          deletedAt: null,
+        })
+        .where(and(eq(users.id, before.id), eq(users.environmentId, this.environmentId)));
+    }
 
     const after = await this.getUserByExternalId(externalId);
-    if (after === null) throw new Error(`user ${externalId} vanished mid-upsert`);
-    return { user: after, status: revived ? "revived" : "updated" };
+    if (after === null) throw new Error(`user ${externalId} could not be created or read`);
+    return { user: after, status: before?.deletedAt != null ? "revived" : "updated" };
   }
 
   /** Ban and unban a user, tenant-wide (chapter 3.15, FR-031, FR-032).
