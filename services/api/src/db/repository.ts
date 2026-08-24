@@ -876,7 +876,14 @@ export class Repository {
   ): Promise<MessageRow> {
     return this.db.transaction(async (tx) => {
       const [channel] = await tx
-        .select({ id: channels.id, lastSequence: channels.lastSequence })
+        .select({
+          id: channels.id,
+          lastSequence: channels.lastSequence,
+          // `channels.type` has been a `"public" | "private"` column
+          // with a CHECK since chapter 2.1 and nothing decided on it until now — it
+          // was returned by the create route and consulted by nothing.
+          type: channels.type,
+        })
         .from(channels)
         .where(
           and(
@@ -886,6 +893,51 @@ export class Repository {
         )
         .for("update");
       if (!channel) throw new ChannelNotFoundError(channelId);
+
+      // MEMBERSHIP, FOR A PRIVATE CHANNEL, WHEN A USER IS SENDING
+      // (FR-001, FR-CHN-05).
+      //
+      // HERE AND NOT IN A HANDLER, because constitution I says isolation is
+      // enforced in data access. Two controllers reach this function and neither
+      // can be trusted to remember a rule the other also needs.
+      //
+      // GATED ON `userId`, and the parameter is the whole distinction:
+      //
+      //     userId present    a USER is sending. Membership applies.
+      //     userId absent     the TENANT is sending through an application key.
+      //                       It acts for the customer, carries no user, and sees
+      //                       private channels (FR-005).
+      //
+      // And that gate is only honest because the channel-control chapter made the public route
+      // supply a user. It called `messages.send(channelId, body)` with none, and
+      // `MessagesController` declared no `@Accepts` until the sender chapter — so the
+      // guard fell back to `EITHER` and a user token was accepted there. A check gated on a parameter
+      // no caller fills in is a check that never fires, and this one did not, on
+      // the only send path a customer's own client uses.
+      //
+      // `ChannelNotFoundError` AND NOT A 403. SC-002 requires the answer for a
+      // private channel the caller cannot see to be byte-identical to a channel
+      // that does not exist — same status, same body but for `request_id` — and
+      // send is one of the verbs it covers. A `403 not_a_member` here would
+      // announce that the channel exists, which is the leak FR-003 forbids and
+      // exactly what the isolation harness's indistinguishability oracle was built to
+      // catch. The refusal above throws the same error for the same reason.
+      //
+      // FR-021a's ORDER is ban, then membership and visibility, then archive. The
+      // ban goes ahead of the channel read entirely, so a banned user gets one
+      // answer for every channel id; the archive check goes below this one, so a
+      // non-member of a private archived channel never learns it exists from
+      // `channel_archived`. Both arrive with their own columns' chapters; this is
+      // the middle of the three.
+      if (channel.type === "private" && userId !== undefined) {
+        const [membership] = await tx
+          .select({ userId: members.userId })
+          .from(members)
+          .where(and(eq(members.channelId, channelId), eq(members.userId, userId)))
+          .limit(1);
+        if (!membership) throw new ChannelNotFoundError(channelId);
+      }
+
       const seq = channel.lastSequence + 1;
       const id = randomUUID();
 

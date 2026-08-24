@@ -37,10 +37,23 @@ interface Seeder {
       name?: string,
     ) => Promise<{ id: string }>;
     addMember: (channelId: string, userId: string) => Promise<boolean>;
+    // WIDENED TO WHAT THE REPOSITORY ACTUALLY TAKES AND RETURNS. This cast is a
+    // hand-written declaration of another package's function — the gateway may not
+    // import service source — so it can be narrower than the truth without anything
+    // failing. It was, in both directions: no `userExternalId` and no `seq`, both of
+    // which the real signature has carried since the sender field arrived. A cast
+    // that omits a parameter makes passing it a type error, which is how this was
+    // found: by needing the parameter, not by reading the cast.
     sendMessage: (
       channelId: string,
-      input: { text: string; userId?: string },
-    ) => Promise<{ id: string }>;
+      input: {
+        text: string;
+        userId?: string;
+        userExternalId?: string;
+        metadata?: Record<string, unknown>;
+        idempotencyKey?: string;
+      },
+    ) => Promise<{ id: string; seq: number }>;
   };
 }
 
@@ -50,6 +63,25 @@ export interface SocketTenant {
   userExternalId: string;
   userId: string;
   channelId: string;
+  /** A private channel in the same environment that this tenant's user is NOT a
+   * member of. */
+  privateChannelId: string;
+  /** That private channel's history, read with the APPLICATION key — which sees
+   * private channels (FR-005) — so a refused send can be checked against the
+   * rows rather than against its own error frame. */
+  privateHistory: () => Promise<string>;
+  /** A token for `userExternalId`, minted through the api's own dev-token route so
+   * the signing secret never leaves the api — research R1's rule, and the reason
+   * the gateway asks rather than verifies. */
+  token: string;
+  /** Put a message in this tenant's channel, so a foreign subscriber has something
+   * it must not receive. */
+  say: (text: string) => Promise<{ id: string; seq: number }>;
+  /** This tenant's own channel history, read with its own credential through the
+   * public route. A write attack has to be checked against the victim's state and
+   * not against the attacker's refusal: a refusal that changed a row is still a
+   * breach, and only the victim's side of the wire can tell. */
+  history: () => Promise<string>;
 }
 
 export interface SocketTenants {
@@ -117,6 +149,14 @@ export async function seedSocketTenants(): Promise<SocketTenants> {
   const seeder = require_(join(dist, "db", "repository.js")) as Seeder;
   const db = client.createDb(client.createPool());
 
+  // THE API STARTS FIRST NOW, and the order is forced rather than tidier. This
+  // chapter's fixture needs two things the previous one did not: a token minted
+  // through the api's own dev-token route, and a history read over the public route
+  // — both of which need a URL. Seeding before starting left `apiUrl` and `token`
+  // out of scope inside this closure, which the compiler said and a reader would
+  // not: the fields were named in the interface and filled in nowhere.
+  const api = await startApi();
+
   const seed = async (label: string): Promise<SocketTenant> => {
     const environment = await seeder.createEnvironment(db, {
       name: `socket-isolation-${label}-${randomUUID().slice(0, 8)}`,
@@ -126,7 +166,11 @@ export async function seedSocketTenants(): Promise<SocketTenants> {
     const user = await repo.createUser(userExternalId, `${label} user`);
     const channel = await repo.createChannel(`${label}-channel`, "public");
     await repo.addMember(channel.id, user.id);
-    await repo.sendMessage(channel.id, { text: `${label} says something`, userId: user.id });
+    // A PRIVATE channel in the same tenant, and this user is NOT a
+    // member of it. The four cross-tenant shapes all attack with another tenant's
+    // identifiers; a non-member of your own tenant is a different fixture, and the
+    // socket needs one too because `message.send` reaches the same check.
+    const privateChannel = await repo.createChannel(`${label}-private`, "private");
     const key = await seeder.createApiKey(db, { environmentId: environment.id });
     return {
       environmentId: environment.id,
@@ -134,12 +178,33 @@ export async function seedSocketTenants(): Promise<SocketTenants> {
       userExternalId,
       userId: user.id,
       channelId: channel.id,
+      privateChannelId: privateChannel.id,
+      // Minted through the api rather than signed here: the signing secret never
+      // leaves the api (research R1), which is also why the gateway asks the api to
+      // verify rather than verifying itself.
+      token: await mintToken(api.url, key.credential, userExternalId),
+      say: (text: string) =>
+        repo.sendMessage(channel.id, { text, userId: user.id, userExternalId }),
+      privateHistory: async () => {
+        const res = await fetch(
+          `${api.url}/v1/channels/${privateChannel.id}/messages?limit=100`,
+          { headers: { authorization: `Bearer ${key.credential}` } },
+        );
+        if (!res.ok) throw new Error(`private history for ${label}: ${res.status}`);
+        return res.text();
+      },
+      history: async () => {
+        const res = await fetch(`${api.url}/v1/channels/${channel.id}/messages?limit=100`, {
+          headers: { authorization: `Bearer ${key.credential}` },
+        });
+        if (!res.ok) throw new Error(`history for ${label}: ${res.status}`);
+        return res.text();
+      },
     };
   };
 
   const attacker = await seed("attacker");
   const victim = await seed("victim");
-  const api = await startApi();
   return { attacker, victim, apiUrl: api.url, stop: api.stop };
 }
 
