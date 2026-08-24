@@ -35,8 +35,24 @@ const silent: Logger = createLogger("gateway", () => {});
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..", "..", "..");
 
+/** 120 SECONDS, NOT 30, and the number is measured (chapter 3.15's Phase 1).
+ *
+ * This suite spawns an api child and waits for its health endpoint. Thirty seconds is
+ * ample in the integration lane, where the whole suite finishes in **6 s**. Under
+ * `pnpm coverage` the same suite takes **90.9 s** — v8 instrumentation on a NestJS boot
+ * is most of that — and the child blew the 30 s deadline every run: one failed suite,
+ * six tests skipped, and an `afterAll` that then timed out at 60 s waiting on a
+ * half-started server.
+ *
+ * A generous deadline costs nothing when the api is healthy: the loop polls every 100 ms
+ * and returns on the first success. It only changes how long a genuinely dead api takes
+ * to say so.
+ *
+ * Chapter 3.12's battery blew this same 30 s at run 11 for an unrelated reason — two
+ * Next.js dev servers compiling an MDX page while the child had 30 s to boot. Both
+ * failures were the deadline being tight rather than the api being broken. */
 async function waitForHealth(url: string): Promise<void> {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + 120_000;
   for (;;) {
     try {
       if ((await fetch(url)).ok) return;
