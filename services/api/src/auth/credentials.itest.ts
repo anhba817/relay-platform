@@ -501,4 +501,129 @@ describe("credentials", () => {
       ).toBeNull();
     });
   });
+
+  // ══ FR-USR-02: A USER ROW ON FIRST AUTHENTICATION (chapter 3.15) ════════════
+  //
+  // FR-039a and FR-039b arrived from research after the spec's nine stories were
+  // written, so these have no story label — their coverage is two edge cases and SC-020.
+  describe("a user record is created implicitly on first authentication", () => {
+    const internalSend = (token: string, channel: string, text: string) =>
+      fetch(`${url}/internal/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ channel_id: channel, text }),
+      });
+
+    // ── T158: SC-020, end to end ─────────────────────────────────────────────
+    it("mints for an unknown identifier and the send is accepted", async () => {
+      const fresh = `never-seen-${Math.random().toString(36).slice(2, 8)}`;
+      const repo = new Repository(db, env.id);
+      expect(await repo.getUserByExternalId(fresh)).toBeNull();
+
+      const minted = await devToken(key.credential, { user: fresh });
+      expect(minted.status).toBe(200);
+      const { token } = (await minted.json()) as { token: string };
+
+      // THE ROW EXISTS NOW, and this is the assertion the requirement is about.
+      const created = await repo.getUserByExternalId(fresh);
+      expect(created).not.toBeNull();
+
+      // AND THE SEND WORKS. Before this chapter the same sequence answered
+      // `400 "unknown user"` — a message naming the caller rather than the cause,
+      // which is what implicit creation exists to prevent.
+      await repo.addMember(channelId, created!.id);
+      const sent = await internalSend(token, channelId, "my first message");
+      expect(sent.status).toBe(201);
+    });
+
+    // ── T159: one row, whichever arrives first (FR-039b, FR-039c) ────────────
+    it("converges on one row whether authentication or membership comes first", async () => {
+      const repo = new Repository(db, env.id);
+      const viaAuth = `via-auth-${Math.random().toString(36).slice(2, 8)}`;
+      const viaMember = `via-member-${Math.random().toString(36).slice(2, 8)}`;
+
+      // Authentication first, then membership.
+      await devToken(key.credential, { user: viaAuth });
+      const first = await repo.getUserByExternalId(viaAuth);
+      await repo.addMember(channelId, first!.id);
+      expect((await repo.getUserByExternalId(viaAuth))!.id).toBe(first!.id);
+
+      // Membership first, then authentication — the same row comes back.
+      const seeded = await repo.createUser(viaMember, "Seeded By Membership");
+      await devToken(key.credential, { user: viaMember });
+      const after = await repo.getUserByExternalId(viaMember);
+      expect(after!.id).toBe(seeded.id);
+      // AND THE DISPLAY NAME SURVIVED. `createUser` is idempotent and does not
+      // update — a mint that renamed a user to nothing would be a write nobody asked
+      // for, which is the argument that function's own comment makes.
+      expect(after!.display_name).toBe("Seeded By Membership");
+    });
+
+    it("mints twice for the same identifier and creates one row", async () => {
+      const twice = `twice-${Math.random().toString(36).slice(2, 8)}`;
+      const repo = new Repository(db, env.id);
+      await devToken(key.credential, { user: twice });
+      const one = await repo.getUserByExternalId(twice);
+      await devToken(key.credential, { user: twice });
+      const two = await repo.getUserByExternalId(twice);
+      expect(two!.id).toBe(one!.id);
+    });
+
+    // ── T160: the status does not say which happened ─────────────────────────
+    it("answers identically whether the user existed or not", async () => {
+      const repo = new Repository(db, env.id);
+      const existing = `existing-${Math.random().toString(36).slice(2, 8)}`;
+      await repo.createUser(existing, "Already Here");
+      const absent = `absent-${Math.random().toString(36).slice(2, 8)}`;
+
+      const a = await devToken(key.credential, { user: existing });
+      const b = await devToken(key.credential, { user: absent });
+      expect(a.status).toBe(b.status);
+      // The bodies' SHAPES, not their contents — a token and an expiry differ by
+      // construction. A status or a field that told the caller which happened would be
+      // a membership oracle: mint tokens for guessed ids and read the answer.
+      const bodyA = (await a.json()) as Record<string, unknown>;
+      const bodyB = (await b.json()) as Record<string, unknown>;
+      expect(Object.keys(bodyA).sort()).toEqual(Object.keys(bodyB).sort());
+      expect(Object.keys(bodyA).sort()).toEqual(["expires_at", "token"]);
+    });
+
+    // ── T161: a mint cannot lift a ban or a deletion ─────────────────────────
+    it("does not undo a ban", async () => {
+      const repo = new Repository(db, env.id);
+      const banned = `banned-${Math.random().toString(36).slice(2, 8)}`;
+      const row = await repo.createUser(banned, "Banned");
+      await repo.addMember(channelId, row.id);
+      await repo.banUser(row.id);
+
+      const minted = await devToken(key.credential, { user: banned });
+      expect(minted.status).toBe(200);
+      const { token } = (await minted.json()) as { token: string };
+
+      // The mint succeeded and the ban stands: `createUser` touches no column on an
+      // existing row, so `banned_at` survives it.
+      expect((await repo.getUserByExternalId(banned))!.banned_at).not.toBeNull();
+      const refused = await internalSend(token, channelId, "minted past the ban");
+      expect(refused.status).toBe(403);
+      expect(((await refused.json()) as { code: string }).code).toBe("user_banned");
+    });
+
+    it("reuses a deleted user's row without reviving them (FR-030)", async () => {
+      const repo = new Repository(db, env.id);
+      const gone = `deleted-${Math.random().toString(36).slice(2, 8)}`;
+      const row = await repo.createUser(gone, "Deleted");
+      await repo.deleteUser(row.id);
+
+      const minted = await devToken(key.credential, { user: gone });
+      expect(minted.status).toBe(200);
+
+      const after = await repo.getUserByExternalId(gone);
+      // THE SAME ROW, and still deleted. FR-030 says presenting the id again reuses the
+      // row; it does not say a MINT undoes a deletion. `POST /v1/users` is the route
+      // that clears `deleted_at`, because that is a customer's server saying "this user
+      // is back" — a token mint says only "somebody asked for a token".
+      expect(after!.id).toBe(row.id);
+      expect(after!.deleted_at).not.toBeNull();
+    });
+  });
 });

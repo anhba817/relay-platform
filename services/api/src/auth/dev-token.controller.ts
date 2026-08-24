@@ -12,7 +12,7 @@ import {
 import { z } from "zod";
 
 import type { Db } from "../db/client";
-import { environmentSigningSecret } from "../db/repository";
+import { environmentSigningSecret, Repository } from "../db/repository";
 import { AUTH_DB } from "./authenticate.middleware";
 import { Accepts, CredentialGuard } from "./credential.guard";
 import type { RequestWithPrincipal } from "./principal";
@@ -76,6 +76,31 @@ export class DevTokenController {
     if (environment.kind !== "development") {
       throw new NotFoundException("Cannot POST /auth/dev-token");
     }
+
+    // ── THE USER ROW, CREATED IF ABSENT (chapter 3.15, FR-039a, FR-039b) ────
+    //
+    // FR-USR-02: "a user record shall be created implicitly on first
+    // authentication if it does not exist." Nothing did it, and the gap had a
+    // symptom: mint a token for an identifier with no row, send through
+    // `POST /internal/messages`, and the api answered **`400 "unknown user"`** — a
+    // message that names the caller rather than the cause, which is exactly what
+    // implicit creation exists to prevent.
+    //
+    // CHAPTER 3.13'S IDEMPOTENT `createUser`, and that is the whole implementation.
+    // It is `ON CONFLICT DO NOTHING` on `(environment_id, external_id)`, so
+    // authentication and membership converge on one row for one identifier no
+    // matter which arrives first, and a second mint creates nothing.
+    //
+    // AND THE RESPONSE DOES NOT SAY WHICH HAPPENED. A status or field
+    // distinguishing "created" from "existed" would be a membership oracle: a
+    // caller could enumerate which external ids a tenant has by minting tokens
+    // and reading the answer. The token is the answer either way.
+    //
+    // IT ALSO CANNOT LIFT A BAN OR A DELETION. `createUser` touches no column on
+    // an existing row — its own comment is about refusing to rename anybody — so
+    // `banned_at` and `deleted_at` survive a mint. `upsertUser` is the route that
+    // clears state, and it clears only `deleted_at`, because FR-030 asks it to.
+    await new Repository(this.db, principal.environmentId).createUser(body.user);
 
     const { token, expiresAt } = await mintUserToken(environment.signingSecret, {
       user: body.user,
