@@ -143,6 +143,21 @@ export class ChannelsService {
     });
   }
 
+  /** Archive and unarchive (chapter 3.15, FR-020, FR-020a).
+   *
+   * Both answer 200 whether or not the state changed. "Already archived" is not an
+   * error: the customer asked for the channel to be archived and it is. What DOES
+   * refuse is a channel that is not there — the same not-found every other route
+   * here gives, so absence and foreignness stay one answer.
+   */
+  async setArchived(channelId: string, archived: boolean): Promise<{ archived: boolean }> {
+    const found = archived
+      ? await this.repo.archiveChannel(channelId)
+      : await this.repo.unarchiveChannel(channelId);
+    if (!found) throw this.notFound();
+    return { archived };
+  }
+
   /** Set one member's role by external id (chapter 3.15, FR-011).
    *
    * THE CHANNEL FIRST, then the user, then the membership — each refusing with the

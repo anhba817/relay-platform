@@ -370,6 +370,40 @@ describe("the socket gauntlet", () => {
     );
     await quiet(1_000);
     expect(afterRemoval.frames().filter((f) => f.type === "message.created")).toEqual([]);
+
+    // PUT IT BACK. This test mutates state every later test in the file leans on,
+    // and the next one to need it failed on its control rather than on its subject.
+    await tenants.attacker.rejoinSelf();
+  });
+
+  // ── AN ARCHIVED CHANNEL AND THE SOCKET (chapter 3.16, FR-022a) ──────────────
+  //
+  // T078a. FR-022 asks two things and only one of them had a task for eleven
+  // analysis passes: whether an archived channel appears in a listing (it does, with
+  // a flag) and **whether the socket delivers anything for it**. This is the second.
+  //
+  // THE ANSWER IS THAT NOTHING CHANGES, AND THE GATEWAY NEEDS NO EDIT. Archiving
+  // stops writes and touches no membership, so the channel stays in the session and
+  // the resume cursor is still accepted. Nothing new arrives because nothing new can
+  // be sent — the refusal is at the write, not at the subscription.
+  //
+  // A NO-OP PROVED RATHER THAN ASSUMED. "We changed nothing so nothing broke" is the
+  // sentence this test exists to replace: archiving could plausibly have been
+  // implemented by removing memberships, and then a member would silently lose the
+  // channel from their session.
+  it("keeps an archived channel in the session and its cursor accepted", async () => {
+    await tenants.attacker.archiveOwnChannel();
+
+    const client = connect(
+      tenants.attacker.token,
+      `&cursor=${tenants.attacker.channelId}:0`,
+    );
+    const ack = await client.waitFor<{
+      payload: { cursor: Record<string, number> };
+    }>("connection.ack");
+    expect(Object.keys(ack.payload.cursor)).toContain(tenants.attacker.channelId);
+
+    await tenants.attacker.unarchiveOwnChannel();
   });
 
   // ── T047: the resume ───────────────────────────────────────────────────────

@@ -32,6 +32,12 @@ describe("POST /v1/channels/:channelId/messages", () => {
   let foreignChannelId: string;
   let privateChannelId: string;
   let tokenFor: (user: string) => Promise<string>;
+  /** Suite-scoped so a test can build its OWN fixture rather than lean on shared
+   * state an earlier test may have changed. T072b's first draft used
+   * `privateChannelId` and failed on its control: T057 above removes `insider` from
+   * that channel, so by then the "member" was not one. A test that depends on the
+   * order it runs in is a test that will fail for a reason it does not name. */
+  let repo: Repository;
 
   beforeAll(async () => {
     const db = createDb(createPool());
@@ -49,7 +55,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
     // SAME tenant, and a way to mint their tokens. The private channel is created
     // through the repository because `POST /v1/channels` does not accept `private`
     // until the read paths enforce it (FR-009's ordering).
-    const repo = new Repository(db, env.id);
+    repo = new Repository(db, env.id);
     privateChannelId = (await repo.createChannel("members-only", "private")).id;
     const member = await repo.createUser("insider", "An Insider");
     await repo.addMember(privateChannelId, member.id);
@@ -270,6 +276,38 @@ describe("POST /v1/channels/:channelId/messages", () => {
     );
     const body = (await history.json()) as { messages: { user: string | null }[] };
     expect(body.messages.some((m) => m.user === "insider")).toBe(true);
+  });
+
+  it("an archived PRIVATE channel answers a non-member as an absent one does", async () => {
+    // T072b, and the point of FR-021a's order. Reverse the last two checks — archive
+    // before membership — and this test goes red: the non-member would get
+    // `channel_archived` and learn the channel exists. Asserted with the oracle
+    // rather than by reading the code, because the order is only observable from
+    // outside as a pair of answers.
+    // Its own channel and its own member, for the reason `repo` is suite-scoped.
+    const channel = (await repo.createChannel("archived-private", "private")).id;
+    const member = await repo.getUserByExternalId("insider");
+    await repo.addMember(channel, member!.id);
+    await fetch(`${url}/v1/channels/${channel}/archive`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${credential}` },
+    });
+
+    const outsider = await tokenFor("outsider");
+    const refused = await sendAs(outsider, channel);
+    const absent = await sendAs(outsider, "00000000-0000-4000-8000-000000000000");
+    expect(refused.status).toBe(absent.status);
+    expect(withoutRequestId(await refused.json())).toEqual(
+      withoutRequestId(await absent.json()),
+    );
+
+    // The control that makes it mean something: a MEMBER of the same archived
+    // channel gets `channel_archived`, so the archive check is live and it is the
+    // ORDER that hides it from the non-member.
+    const insider = await tokenFor("insider");
+    const asMember = await sendAs(insider, channel);
+    expect(asMember.status).toBe(403);
+    expect(((await asMember.json()) as { code: string }).code).toBe("channel_archived");
   });
 
   it("refuses a token minted for an identifier with no user row", async () => {

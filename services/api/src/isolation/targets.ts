@@ -120,6 +120,8 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   { method: "POST", path: "/v1/channels/:channelId/join", accepts: "user", shape: "write" },
   { method: "POST", path: "/v1/channels/:channelId/members/remove", accepts: "application", shape: "write" },
   { method: "PATCH", path: "/v1/channels/:channelId/members/:userExternalId", accepts: "application", shape: "write" },
+  { method: "POST", path: "/v1/channels/:channelId/archive", accepts: "application", shape: "write" },
+  { method: "DELETE", path: "/v1/channels/:channelId/archive", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks/:id/rotate-secret", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks/:id/enable", accepts: "application", shape: "write" },

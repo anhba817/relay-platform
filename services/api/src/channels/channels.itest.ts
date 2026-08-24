@@ -617,4 +617,101 @@ describe("the public channel surface", () => {
       expect(a).toEqual(c);
     });
   });
+
+  // ── ARCHIVING (chapter 3.15, FR-020, FR-021, FR-021a) ──────────────────────
+  //
+  // `channels.archived_at` was declared in chapter 2.1 and had ZERO non-test
+  // references until this chapter — measured, not assumed (T007). Archiving stops
+  // new messages and keeps everything already written.
+  describe("archiving a channel", () => {
+    let archived: string;
+
+    const archive = (channel: string) =>
+      fetch(`${url}/v1/channels/${channel}/archive`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${credential}` },
+      });
+    const unarchive = (channel: string) =>
+      fetch(`${url}/v1/channels/${channel}/archive`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${credential}` },
+      });
+    const sendTo = (channel: string) =>
+      fetch(`${url}/v1/channels/${channel}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${credential}` },
+        body: JSON.stringify({ text: "attempted after archiving" }),
+      });
+
+    beforeAll(async () => {
+      archived = (await repo.createChannel("archivable", "public")).id;
+      await repo.sendMessage(archived, { text: "written before archiving" });
+    });
+
+    it("refuses a send with its own code, distinct from not-found and banned", async () => {
+      // T074, and FR-021's actual requirement: three refusals a client acts on
+      // differently. The comparison used to be against `not_a_member`, which cannot
+      // appear on this path at all — private channels answer not-found and public
+      // ones permit the send.
+      expect((await archive(archived)).status).toBe(200);
+      const refused = await sendTo(archived);
+      expect(refused.status).toBe(403);
+      const body = (await refused.json()) as { code: string; message: string };
+      expect(body.code).toBe("channel_archived");
+      expect(body.code).not.toBe("not_found");
+      expect(body.code).not.toBe("user_banned");
+      // The message says history is unchanged, which is the thing a client needs to
+      // know next: this is not data loss.
+      expect(body.message).toContain("history");
+    });
+
+    it("still serves history while archived (FR-020)", async () => {
+      const res = await fetch(`${url}/v1/channels/${archived}/messages?limit=10`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { messages: { text: string | null }[] };
+      expect(body.messages.some((m) => m.text === "written before archiving")).toBe(true);
+    });
+
+    it("is idempotent in both directions (FR-020a)", async () => {
+      // Archiving an archived channel and unarchiving an active one both answer 200.
+      // "Already archived" is not an error: the customer asked for the channel to be
+      // archived and it is.
+      expect((await archive(archived)).status).toBe(200);
+      expect((await unarchive(archived)).status).toBe(200);
+      expect((await unarchive(archived)).status).toBe(200);
+      // And sending works again, with nothing lost.
+      expect((await sendTo(archived)).status).toBe(201);
+    });
+
+    it("answers an absent channel as it answers a foreign one", async () => {
+      const absent = await archive("00000000-0000-4000-8000-000000000000");
+      const foreign = await archive(foreignChannelId);
+      expect(absent.status).toBe(foreign.status);
+      const a = withoutRequestId(await absent.json());
+      const b = withoutRequestId(await foreign.json());
+      expect(a).toEqual(b);
+    });
+
+    it("does not change what a user has left unread (FR-022, T078)", async () => {
+      // The edge case the spec names, and this is where "the count is still true"
+      // gets a definition: archiving writes ONE column on `channels` and touches no
+      // message and no read position. So `last_sequence` is what it was, every read
+      // position is what it was, and the arithmetic between them is unchanged.
+      //
+      // Asserted on the sequence rather than on a count, because the count is phase
+      // 12's route — this is the invariant that makes the count safe, tested where it
+      // can be tested.
+      const target = (await repo.createChannel("archive-unread", "public")).id;
+      const before = (await repo.sendMessage(target, { text: "unread by somebody" })).seq;
+      await archive(target);
+      const after = await repo.listMessages(target, { limit: 10 });
+      expect(after.map((m) => m.seq)).toContain(before);
+      // And the channel's sequence did not move: archiving is not a write to the log.
+      const reread = await repo.getChannelById(target);
+      expect(reread).not.toBeNull();
+      expect((await repo.listMessages(target, { limit: 10 })).length).toBe(1);
+    });
+  });
 });

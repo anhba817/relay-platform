@@ -57,6 +57,9 @@ export interface SocketTenant {
   privateHistory: () => Promise<string>;
   /** Removes this tenant's user from its own channel via the public route. */
   removeSelf: () => Promise<void>;
+  rejoinSelf: () => Promise<void>;
+  archiveOwnChannel: () => Promise<void>;
+  unarchiveOwnChannel: () => Promise<void>;
   /** A token for `userExternalId`, minted through the api's own dev-token route so
    * the signing secret never leaves the api — research R1's rule, and the reason
    * the gateway asks rather than verifies. */
@@ -135,6 +138,42 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
           },
         );
         if (!res.ok) throw new Error(`removeSelf for ${label}: ${res.status}`);
+      },
+      /** Archive and unarchive this tenant's own channel through the public routes,
+       * so the socket test observes the API's effect rather than a direct write. */
+      /** Put the membership back. A test that mutates shared fixture state has to
+       * restore it: T058 removed the attacker from their own channel and did not,
+       * and T078a two tests later failed on its control because the "member" was no
+       * longer one. The fixture's invariant — this tenant's user is a member of this
+       * tenant's channel — belongs to every test in the file, not to the first one
+       * that gets there. */
+      rejoinSelf: async () => {
+        const res = await fetch(
+          `${apiUrl}/v1/channels/${channel.id}/members`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${key.credential}`,
+            },
+            body: JSON.stringify({ user_ids: [userExternalId] }),
+          },
+        );
+        if (!res.ok) throw new Error(`rejoinSelf for ${label}: ${res.status}`);
+      },
+      archiveOwnChannel: async () => {
+        const res = await fetch(`${apiUrl}/v1/channels/${channel.id}/archive`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${key.credential}` },
+        });
+        if (!res.ok) throw new Error(`archive for ${label}: ${res.status}`);
+      },
+      unarchiveOwnChannel: async () => {
+        const res = await fetch(`${apiUrl}/v1/channels/${channel.id}/archive`, {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${key.credential}` },
+        });
+        if (!res.ok) throw new Error(`unarchive for ${label}: ${res.status}`);
       },
       privateHistory: async () => {
         const res = await fetch(

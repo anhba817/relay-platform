@@ -2247,6 +2247,20 @@ export class ChannelNotFoundError extends Error {
   }
 }
 
+/** A write refused because the channel is archived (chapter 3.15, FR-020, FR-021).
+ *
+ * A TYPED DOMAIN ERROR, not a `protocolError` thrown from here. The repository has
+ * raised `ChannelNotFoundError` since chapter 2.2 and let the service map it to a
+ * status — the data layer knows the fact, the service knows the wire. Reaching for
+ * `protocolError` here would put an HTTP status in the layer whose whole job is to
+ * not know about HTTP. */
+export class ChannelArchivedError extends Error {
+  constructor(public readonly channelId: string) {
+    super(`channel archived: ${channelId}`);
+    this.name = "ChannelArchivedError";
+  }
+}
+
 /** Timestamps cross the wire as RFC 3339 strings (constitution: UTC,
  * millisecond precision) — the driver hands back a Date or a string
  * depending on the column and the query shape. */
@@ -2753,6 +2767,47 @@ export class Repository {
     return existing.length > 0 ? "already_a_member" : "not_found";
   }
 
+  /** Archive and unarchive, both idempotent (chapter 3.15, FR-020, FR-020a).
+   *
+   * IDEMPOTENT BY THE WRITE, not by a read-then-write: setting `archived_at` on an
+   * already-archived channel writes the same state, and a caller who asks twice
+   * meant it once. The returned boolean says whether the channel was FOUND, not
+   * whether anything changed — "already archived" and "archived just now" are the
+   * same answer to the customer, which is what idempotent means here.
+   *
+   * `now()` FROM THE DATABASE rather than the app clock, because nothing compares
+   * this timestamp against another statement's value. `sendMessage` takes its period
+   * from the app clock for the opposite reason: two statements there need the same
+   * value and only one of them can be `now()`.
+   */
+  async archiveChannel(channelId: string): Promise<boolean> {
+    const updated = await this.db
+      .update(channels)
+      .set({ archivedAt: sql`now()` })
+      .where(
+        and(
+          eq(channels.id, channelId),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      )
+      .returning({ id: channels.id });
+    return updated.length > 0;
+  }
+
+  async unarchiveChannel(channelId: string): Promise<boolean> {
+    const updated = await this.db
+      .update(channels)
+      .set({ archivedAt: null })
+      .where(
+        and(
+          eq(channels.id, channelId),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      )
+      .returning({ id: channels.id });
+    return updated.length > 0;
+  }
+
   /** Set a member's role (chapter 3.15, FR-011).
    *
    * SCOPED THROUGH THE CHANNEL, like every other write to `members`: that table
@@ -2986,6 +3041,9 @@ export class Repository {
           // with a CHECK since chapter 2.1 and nothing decided on it until now — it
           // was returned by the create route and consulted by nothing.
           type: channels.type,
+          // Chapter 3.15. Declared in chapter 2.1 and read by NOTHING until here:
+          // zero non-test references, measured rather than assumed (T007).
+          archivedAt: channels.archivedAt,
         })
         .from(channels)
         .where(
@@ -3040,6 +3098,25 @@ export class Repository {
           .limit(1);
         if (!membership) throw new ChannelNotFoundError(channelId);
       }
+
+      // ARCHIVE, AFTER VISIBILITY AND NOT BEFORE (chapter 3.15, FR-020, FR-021,
+      // FR-021a).
+      //
+      // The order is the requirement, not an implementation detail. Put this check
+      // above the membership one and a non-member of a private ARCHIVED channel
+      // learns it exists from `channel_archived` — a refusal that reveals what it is
+      // refusing, which is the defect chapter 3.12's fifth analysis pass caught one
+      // phase before shipping.
+      //
+      // So: ban, then membership and visibility, then archive. The ban's slot is
+      // ahead of the channel read entirely — a banned user gets one answer for every
+      // channel id, including ids that do not exist — and it is EMPTY here on
+      // purpose: `users.banned_at` has no reader until chapter 3.16 gives it one at
+      // T155a. Leaving the slot visible is the point; a reader who finds two checks
+      // where the requirement names three should be able to see which is missing.
+      //
+      // History stays readable while archived (FR-020). Only the write refuses.
+      if (channel.archivedAt !== null) throw new ChannelArchivedError(channelId);
 
       // THE CAP, CHECKED BEFORE THE MESSAGE IS WRITTEN (chapter 3.10, FR-RTL-08).
       //

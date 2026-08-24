@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -125,6 +126,27 @@ export class ChannelsController {
       // of anything, and reporting `false` would imply it could become one.
       is_member: isMember,
     };
+  }
+
+  /** Archive and unarchive (chapter 3.15, FR-020, FR-020a).
+   *
+   * ACTION-STYLE, and a pair rather than a `PATCH` with a boolean: "archive this"
+   * and "unarchive this" are two things a customer does, and a body carrying
+   * `{"archived": false}` makes the client assemble a state instead of naming an
+   * action. `POST …/ban` and `POST …/members/remove` take the same shape.
+   *
+   * The tenant's routes. A member does not archive the channel they are in.
+   */
+  @Post(":channelId/archive")
+  @HttpCode(HttpStatus.OK)
+  async archive(@Param("channelId") channelId: string) {
+    return this.channels.setArchived(channelId, true);
+  }
+
+  @Delete(":channelId/archive")
+  @HttpCode(HttpStatus.OK)
+  async unarchive(@Param("channelId") channelId: string) {
+    return this.channels.setArchived(channelId, false);
   }
 
   /** One member's role (chapter 3.15, FR-011, FR-011a).
