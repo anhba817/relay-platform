@@ -113,13 +113,41 @@ async function startApi(): Promise<ApiUnderTest> {
     environmentId: environment.id,
   });
 
-  const port = Number(process.env.RELAY_SESSION_ITEST_API_PORT ?? 4123);
+  // PORT=0, AND THE PORT READ BACK FROM THE CHILD. This bound a fixed 4123 behind an
+  // environment variable nothing set — so every run took the same port, and a
+  // previous run's child still holding it answers the health check from a DIFFERENT
+  // environment. Every token this run minted is then refused by an api that has never
+  // heard of it, which reads as a credential fault and is a busy port.
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
-    // No outbox relay in this child. This suite is about the
-    // socket's credentials; a background loop draining a table that chapter
-    // The outbox chapter's suite is asserting on turns two unrelated test files into a race.
-    env: { ...process.env, PORT: String(port), RELAY_OUTBOX_RELAY: "off" },
+    // No outbox relay in this child. This suite is about the socket's credentials; a
+    // background loop draining a table the outbox chapter's suite is asserting on
+    // turns two unrelated test files into a race.
+    env: { ...process.env, PORT: "0", RELAY_OUTBOX_RELAY: "off" },
     stdio: ["ignore", "pipe", "pipe"],
+  });
+  const port = await new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("api never reported a port")), 30_000);
+    let buffered = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      buffered += chunk.toString();
+      for (const line of buffered.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { msg?: string; port?: number };
+          if (parsed.msg === "listening" && typeof parsed.port === "number") {
+            clearTimeout(timer);
+            resolve(parsed.port);
+            return;
+          }
+        } catch {
+          /* a partial line; the next chunk completes it */
+        }
+      }
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`api exited before listening (code ${String(code)})`));
+    });
   });
   const url = `http://127.0.0.1:${port}`;
   await waitForHealth(`${url}/healthz`);

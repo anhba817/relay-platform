@@ -342,6 +342,35 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     });
     return child;
   };
+  /** THE PORT THE CHILD BOUND, READ FROM ITS OWN LOG LINE.
+   *
+   * `capture` already buffers every line, so the port was already here — it just was
+   * not being read. Both services log `{"msg":"listening","port":N}` once the server
+   * is up, and that line is a stronger readiness signal than a health probe: a probe
+   * can pass against a DIFFERENT process holding the port, which is exactly what a
+   * fixed port makes possible. */
+  const boundPort = async (name: string, what: string): Promise<number> => {
+    const lines = output.get(name)!;
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      for (const chunk of lines) {
+        for (const line of chunk.split("\n")) {
+          if (!line.trim().startsWith("{")) continue;
+          try {
+            const parsed = JSON.parse(line) as { msg?: string; port?: number };
+            if (parsed.msg === "listening" && typeof parsed.port === "number") {
+              return parsed.port;
+            }
+          } catch {
+            /* a partial line; the next chunk completes it */
+          }
+        }
+      }
+      if (Date.now() > deadline) throw new Error(dump(`${what} never reported a port`));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+
   const dump = (what: string) => {
     const lines = [`${what}; child output follows:`];
     for (const [name, log] of output) {
@@ -375,36 +404,48 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     RELAY_EVENT_CONSUMER: "off",
   };
 
-  const apiPort = Number(process.env.RELAY_E2E_API_PORT ?? 4100);
+  // THE LAST FIXED PORT IN THE REPOSITORY, AND IT FAILED THE WAY THE OTHERS DID.
+  //
+  // This read `Number(process.env.RELAY_E2E_API_PORT ?? 4100)`, and the gateways took
+  // `apiPort + 1 + i` — a band derived from it. Run on its own the lane is green; run
+  // straight after a lane that spawns api children it failed twice with every test
+  // SKIPPED, because a child that cannot bind never becomes healthy and the whole
+  // file dies in setup. That reads like a broken journey and is a busy port.
+  //
+  // `PORT=0` for every child, and the port read back from the line it logs. The
+  // gateways no longer derive theirs from the api's, so there is no band to collide
+  // with and no arithmetic to keep true.
   children.push(
     capture(
       "api",
       spawn("node", [join(REPO, "services", "api", "dist", "main.js")], {
-        env: { ...env, PORT: String(apiPort) },
+        env: { ...env, PORT: "0" },
         stdio: ["ignore", "pipe", "pipe"],
       }),
     ),
   );
+  const apiPort = await boundPort("api", "api");
   const apiUrl = `http://127.0.0.1:${apiPort}`;
   await waitForHealth(`${apiUrl}/healthz`, "api");
   say(`api up on ${apiPort}`);
 
   const urls: string[] = [];
   for (let i = 0; i < gateways; i++) {
-    const port = apiPort + 1 + i;
+    const name = `gateway ${i + 1}`;
     children.push(
       capture(
-        `gateway ${i + 1}`,
+        name,
         spawn("pnpm", ["exec", "tsx", "src/main.ts"], {
           cwd: join(REPO, "services", "gateway"),
-          env: { ...env, PORT: String(port), RELAY_API_URL: apiUrl },
+          env: { ...env, PORT: "0", RELAY_API_URL: apiUrl },
           stdio: ["ignore", "pipe", "pipe"],
         }),
       ),
     );
-    await waitForHealth(`http://127.0.0.1:${port}/healthz`, `gateway ${i + 1}`);
+    const port = await boundPort(name, name);
+    await waitForHealth(`http://127.0.0.1:${port}/healthz`, name);
     urls.push(`ws://127.0.0.1:${port}`);
-    say(`gateway ${i + 1} up on ${port}`);
+    say(`${name} up on ${port}`);
   }
 
   const environments: string[] = [];

@@ -100,4 +100,40 @@ describe("the gauntlet's target list derives from the running application", () =
     );
     expect(attacked + counts.exempt).toBe(derived.length);
   });
+
+  // ── SC-014: EVERY ROUTE THIS CHAPTER ADDS, NAMED ──────────────────────────
+  //
+  // A LIST RATHER THAN A NUMBER, and the number it replaced is why. It read
+  // `expect(derived.length).toBe(24 + BUILT_SO_FAR)` — twenty-four being another
+  // chapter's closing count, carried here as a literal and true of a tree this one
+  // is not. It failed `expected 17 to be 30`, and neither figure told a reader
+  // which route was missing.
+  //
+  // Named, the failure says which. And the direction that matters is both: a route
+  // added and never classified fails the accounting test above; a route classified
+  // and never built fails this one, because the derivation reads the running
+  // router.
+  it("derives exactly the six routes this chapter adds, and nothing else new", () => {
+    const ADDED = [
+      "GET /v1/channels/:channelId",
+      "POST /v1/channels/:channelId/join",
+      "POST /v1/channels/:channelId/members/remove",
+      "PATCH /v1/channels/:channelId/members/:userExternalId",
+      "POST /v1/channels/:channelId/archive",
+      "DELETE /v1/channels/:channelId/archive",
+    ];
+    const keys = derived.map(targetKey);
+    const missing = ADDED.filter((k) => !keys.includes(k));
+    expect(missing, `classified here and not on the router: ${missing.join(", ")}`)
+      .toEqual([]);
+  });
+
+  it("leaves nothing exempt by omission (FR-033a)", () => {
+    // Every exempt entry carries a reason — asserted above — and every DERIVED
+    // target matches an entry. What this adds is the direction that catches a route
+    // quietly dropped from the classification list: the entry count and the derived
+    // count are the same number, so a deletion here fails rather than reducing
+    // coverage silently.
+    expect(CLASSIFICATIONS.length).toBe(derived.length);
+  });
 });

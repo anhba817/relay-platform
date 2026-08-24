@@ -370,4 +370,45 @@ describe("the socket refuses another tenant's identifiers", () => {
     }
     socket.close();
   }, 20_000);
+
+  // ── THE SAME-TENANT NON-MEMBER, ON THE SOCKET (T087) ───────────────────────
+  //
+  // The protocol's frame union has exactly one inbound member — `message.send` — so
+  // there is no "subscribe" frame to attack: what a socket may see is decided at
+  // connect, from the session's channel list, and a cursor is the only thing a client
+  // gets to assert about it. So the socket's version of "a non-member reaches a
+  // private channel" is a cursor naming one.
+  //
+  // The tenant's own user is not a member of the tenant's own private channel —
+  // `seedSocketTenants` creates it and adds nobody — which makes this the same-tenant
+  // case rather than the cross-tenant one every other attack here uses.
+  it("a same-tenant non-member's cursor for a private channel is not accepted", async () => {
+    const socket = new WebSocket(
+      `${url}/v1/ws?token=${t.attacker.token}&cursor=${t.attacker.privateChannelId}:0`,
+    );
+    const frames = collect(socket);
+    const ack = await firstFrame(socket, "connection.ack");
+    const cursor = (ack.payload as { cursor?: Record<string, number> }).cursor ?? {};
+    expect(Object.keys(cursor)).not.toContain(t.attacker.privateChannelId);
+
+    // THE CONTROL IS THE REMOVAL TEST ABOVE: the same token's cursor for a channel it
+    // IS a member of gets accepted there. Without that pair, an empty cursor set here
+    // would pass whether the session was scoped or simply broken.
+    await quiet(1_000);
+    expect(frames().filter((f) => f.type === "message.created")).toEqual([]);
+    socket.close();
+  });
+
+  // ── T048: the subscribe ────────────────────────────────────────────────────
+  it("nothing from the other tenant's channel is delivered", async () => {
+    const socket = new WebSocket(`${url}/v1/ws?token=${t.attacker.token}`);
+    const frames = collect(socket);
+    await firstFrame(socket, "connection.ack");
+    await t.victim.say(`the victim speaks ${randomUUID()}`);
+    // A DEADLINE RATHER THAN A RACE, and longer than the others because this one is
+    // waiting on a fan-out that has to travel through Redis before it could arrive.
+    await quiet(1_500);
+    expect(frames().filter((f) => f.type === "message.created")).toEqual([]);
+    socket.close();
+  });
 });

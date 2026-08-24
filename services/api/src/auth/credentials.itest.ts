@@ -121,7 +121,28 @@ describe("credentials", () => {
       environmentId: env.id,
       name: "once",
     });
-    const secret = minted.credential.split("_").at(-1)!;
+    // THE SECRET IS WHAT FOLLOWS THE PREFIX, NOT WHAT FOLLOWS THE LAST UNDERSCORE.
+    //
+    // This read `credential.split("_").at(-1)`, and the secret is base64url — whose
+    // alphabet INCLUDES `_`. So the split returned whatever came after the secret's
+    // own last underscore: usually a long tail, and the assertion passed for the
+    // right reason; occasionally two characters, and it passed for no reason at all.
+    //
+    // Then it failed. `expected '[{"public_id":…' not to contain 'WA'` — a
+    // two-character tail that appears inside the base64 SALT stored beside it, which
+    // reads like the api leaking the secret it had just hashed. Measured cause, not
+    // guessed: the salt in that row was `7XKYdYc_ottu61KbLY4dWA`.
+    //
+    // The prefix is a known constant and the row stores it, so removing it by length
+    // is exact and cannot depend on the secret's contents.
+    // `minted.prefix` IS THE ANSWER AND IT WAS ALREADY BEING RETURNED. The first
+    // repair of this used `lastIndexOf("_")`, which is the SAME fault a second time:
+    // the last underscore in the credential can belong to the secret.
+    const secret = minted.credential.slice(minted.prefix.length);
+    // A GUARD, because the whole failure above was an assertion on a short string.
+    // A secret this test can compare has to be long enough that a chance collision
+    // is not the thing being measured.
+    expect(secret.length, "the secret is too short to assert on").toBeGreaterThan(20);
 
     // Nothing in the row it left behind contains what was returned. Read with
     // a plain string rather than drizzle's `sql` helper: the query engine lives

@@ -48,9 +48,26 @@ export function createServer(logger?: Logger) {
 }
 
 if (import.meta.main) {
-  const port = Number(process.env.PORT ?? 4001);
+  const requested = Number(process.env.PORT ?? 4001);
   const logger = createLogger("gateway");
-  createServer(logger).listen(port, () => {
+  const server = createServer(logger);
+  server.listen(requested, () => {
+    // THE PORT IT GOT, NOT THE PORT IT ASKED FOR — the same fix the api carries, and
+    // for eleven chapters only the api carried it.
+    //
+    // `PORT=0` asks the operating system for a free port, which is what a test
+    // spawning a service should do. But a parent can only use the number if the
+    // child reports it, and logging `requested` prints 0. The api reads the bound
+    // address back; this did not, so `PORT=0` was safe for one of the two services
+    // and nothing said which. The e2e journey found it by asking: `api up on 37763`,
+    // then `gateway 1 never became healthy` — a health probe against port zero.
+    //
+    // NOTHING NOTICED BECAUSE NOTHING ASKED. Every suite that spawned a gateway used
+    // a fixed port, so the logged value was always the value it had passed in and
+    // always correct by accident.
+    const address = server.address() as { port?: number } | string | null;
+    const port =
+      typeof address === "object" && address !== null ? (address.port ?? requested) : requested;
     logger.log("info", "listening", { port });
   });
 }
