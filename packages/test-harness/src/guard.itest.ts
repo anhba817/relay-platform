@@ -237,6 +237,52 @@ describe("the four usage tables chapters 3.10 and 3.11 left unguarded", () => {
     ).rejects.toThrow(new RegExp(`\\(id ${u.usageNotificationId}\\)`));
   });
 
+  // ── THE GUARD'S TENTH TABLE (chapter 3.16, FR-017) ─────────────────────────
+  //
+  // `read_positions` carries `environment_id` and therefore belongs in the array.
+  // `members` does not carry one and is deliberately absent — the catalogue calls
+  // it `hop` and no trigger watches it, which is the asymmetry a reader adding an
+  // eleventh table has to choose between.
+  //
+  // Driven rather than asserted from the array, for the reason this whole block
+  // exists: chapters 3.10 and 3.11 put four tables in the array and the guard did
+  // not watch them, because a trigger with no sentinel row to match is a WHEN
+  // clause that never fires. T024 removes this table's name and confirms these
+  // three go red.
+  it("refuses a cross-environment write to read_positions, naming the table", async () => {
+    await expect(
+      guarded.query("delete from read_positions where environment_id = $1", [
+        u.environmentId,
+      ]),
+    ).rejects.toThrow(/global-operation guard.*public\.read_positions/s);
+  });
+
+  it("prints the read position's row, because it has no id column", async () => {
+    // `(channel_id, user_id)` and no `id`, so the message falls through to
+    // `to_jsonb(OLD)::text` — the expression chapter 3.13 installed for the three
+    // usage tables in the same position. Asserting on the channel id inside the
+    // printed row is what distinguishes "printed the row" from "printed
+    // undefined", which is the failure this is here to catch.
+    await expect(
+      guarded.query("update read_positions set sequence = 1 where environment_id = $1", [
+        u.environmentId,
+      ]),
+    ).rejects.toThrow(new RegExp(`\\(id \\{.*${u.readChannelId}.*\\}\\)`, "s"));
+  });
+
+  it("lets a named exemption write a read position, and the write lands", async () => {
+    const r = await permitted.query(
+      "update read_positions set sequence = 7 where environment_id = $1",
+      [u.environmentId],
+    );
+    expect(r.rowCount).toBeGreaterThan(0);
+    const back = await permitted.query(
+      "select sequence from read_positions where environment_id = $1",
+      [u.environmentId],
+    );
+    expect(Number(back.rows[0].sequence)).toBe(7);
+  });
+
   // And the permitted connection still WRITES, which is the failure mode this
   // whole file exists for: a BEFORE trigger returning OLD claims to permit and
   // silently discards. Four tables added means four new chances at it.

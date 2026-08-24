@@ -68,6 +68,43 @@ export const ERROR_CODES = {
   channel_member_limit_exceeded:
     "the channel already holds its maximum members; the message names the limit and the channel",
 
+  // ── CHAPTERS 3.15 AND 3.16 (FR-021, FR-031, research R11) ────────────────────
+  //
+  // Three refusals a client acts on differently, which is the test this registry
+  // sets: `channel_member_limit_exceeded` above is separate from `quota_exceeded`
+  // because one resets on a date and the other never does. Reusing `forbidden` for
+  // all three would leave a client unable to tell "join the channel" from "wait for
+  // the archive to lift" from "contact support".
+  //
+  // `not_a_member` HAS EXACTLY ONE EMITTER, and saying so here saves the next
+  // reader a search. A PRIVATE channel the caller cannot see answers the not-found
+  // envelope, byte-identical to a channel that does not exist — SC-002 covers send
+  // along with the three reads, and a 403 naming the membership would announce that
+  // the channel exists. A PUBLIC channel permits a tenant user to read, send and
+  // join without membership (FR-004). What is left is the read-position route on a
+  // public channel: a read position is per-member state, keyed by channel and user,
+  // and removal deletes the row — so refusing a non-member there is the same rule
+  // the rest of the table keeps.
+  not_a_member:
+    "the user is not a member of this channel; the message names neither the channel's contents nor its members",
+  // Chapter 3.15. Archiving prevents new messages and preserves history, and this
+  // is the refusal a send gets.
+  //
+  // ONLY ONCE THE CALLER CAN SEE THE CHANNEL. FR-021a fixes the order at ban, then
+  // membership and visibility, then archive — reverse the last two and a non-member
+  // of a private archived channel learns it exists from this code, which is the leak
+  // FR-003 forbids.
+  channel_archived:
+    "the channel is archived and accepts no new messages; history is still readable",
+  // Chapter 3.16. A ban is tenant-scope: no connecting and no sending anywhere in
+  // the environment, while the banned user's history stays readable by others.
+  //
+  // CHECKED BEFORE THE CHANNEL IS RESOLVED, so a banned user gets the same answer
+  // for every channel id. Resolve first and this becomes the existence oracle the
+  // membership refusal is not allowed to be.
+  user_banned:
+    "the user is banned in this environment and can neither connect nor send; their existing messages remain",
+
   // ── THE FIVE THE PLATFORM HAS ALWAYS SENT AND NEVER REGISTERED (chapter 3.12,
   // FR-024) ────────────────────────────────────────────────────────────────────
   //

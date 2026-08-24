@@ -88,6 +88,15 @@ export const memberships = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.organisationId, t.humanId] }),
+    // A HUMAN'S ROLE IN AN ORGANISATION (FR-TEN-07), and NOT a channel role.
+    //
+    // `members.role` below is the other one: `('owner','moderator','member')`, a user's
+    // role in a channel (FR-CHN-04). Different tables, different subjects, and ONE WORD
+    // different — `admin` here, `moderator` there. A migration that reused this constraint
+    // for channel members would accept `admin` on a channel member, refuse `moderator`,
+    // and look correct in review. Chapter 3.15's research found that before writing it;
+    // the comment sits on both sides because a warning on one side is a warning the next
+    // person does not find.
     check(
       "memberships_role_check",
       sql`${t.role} IN ('owner','admin','member')`,
@@ -231,6 +240,24 @@ export const users = pgTable(
     avatarUrl: text("avatar_url"),
     metadata: jsonb("metadata").notNull().default({}),
     bannedAt: timestamp("banned_at", { withTimezone: true }),
+    // A DELETED USER KEEPS THIS ROW (chapter 3.15, FR-USR-05, research R7).
+    //
+    // This column is in no SRS clause. It arrived from designing the deletion path:
+    // `messages.user_id`, `members.user_id` and `usage_active_users.user_id` all
+    // reference `users.id`, and FR-USR-05 asks that a deleted user's messages be
+    // preserved "as authored by a deleted user".
+    //
+    // `ON DELETE SET NULL` would satisfy the letter of that and break delivery.
+    // `backfill.controller`'s `toFrame` drops senderless rows because `messageSchema`
+    // requires `user`, so "authored by a deleted user" and "authored by nobody" are
+    // different states and only the first is deliverable. `ON DELETE CASCADE` deletes
+    // the messages the clause says to keep.
+    //
+    // So the row survives with its profile fields cleared, and this marker is what says
+    // the row is deleted. `(environment_id, external_id)` stays unique, which is why
+    // presenting the same external id again reuses this row and clears the marker
+    // (FR-030) rather than creating a second identity.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [
     unique("users_environment_id_external_id_unique").on(
@@ -255,6 +282,27 @@ export const channels = pgTable(
       .notNull()
       .default(0), // ADR-03
     archivedAt: timestamp("archived_at", { withTimezone: true }),
+    // WHEN THIS CHANNEL LAST TOOK A MESSAGE (chapter 3.15, FR-014).
+    //
+    // A denormalised value, and the 145× is why. FR-CHN-08 wants a user's channels
+    // ordered by most recent activity. `last_sequence` above cannot do it — it is a
+    // per-channel counter, so two channels both at 50 say nothing about which was
+    // active more recently. The alternative is `max(messages.created_at)` per channel,
+    // measured at 2,000 channels and 1,000,000 messages:
+    //
+    //     aggregate over messages    159 ms   → Seq Scan, every message, every listing
+    //     this column, indexed         1.1 ms
+    //
+    // The test lane answered the aggregate in 0.87 ms because its busiest environment
+    // holds 579 messages, which is the number that would have settled the question the
+    // wrong way (research R4).
+    //
+    // The write path already advances `last_sequence` in one statement; this moves with
+    // it, in the same transaction. Nothing else writes it: a member joining, a rename or
+    // an archive is not activity.
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     unique("channels_environment_id_external_id_unique").on(
@@ -262,6 +310,12 @@ export const channels = pgTable(
       t.externalId,
     ), // DR-02
     check("channels_type_check", sql`${t.type} IN ('public','private')`),
+    // The listing's ordering, scoped first (FR-013). Environment leads because every
+    // listing is inside one and the planner can then walk the timestamp backward.
+    index("channels_environment_last_activity").on(
+      t.environmentId,
+      t.lastActivityAt.desc(),
+    ),
   ],
 );
 
@@ -315,11 +369,80 @@ export const members = pgTable(
     joinedAt: timestamp("joined_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // A USER'S ROLE IN A CHANNEL (chapter 3.15, FR-CHN-04), default `member`.
+    //
+    // The default is what lets chapter 3.13's `addMember` keep working unchanged and
+    // gives every existing row a value the CHECK accepts.
+    role: text("role").notNull().default("member"),
   },
   (t) => [
     primaryKey({ columns: [t.channelId, t.userId] }),
+    // ITS OWN CONSTRAINT, and NOT `memberships_role_check` above.
+    //
+    // `memberships.role` is `('owner','admin','member')` — a human's role in an
+    // organisation, FR-TEN-07. This one is `('owner','moderator','member')` — FR-CHN-04's
+    // three. One word apart, and reusing the other constraint here would accept `admin`
+    // on a channel member, refuse `moderator`, and read as correct in review.
+    check("members_role_check", sql`${t.role} IN ('owner','moderator','member')`),
     // Hot-path index (SAD §6.3): the resume path's "which channels am I in".
     index("members_user_channel").on(t.userId, t.channelId),
+  ],
+);
+
+// HOW FAR EACH USER HAS READ IN EACH CHANNEL (chapter 3.15, FR-017, research R6).
+//
+// The only entity in this feature with no storage before it. Verified absent: no
+// `last_read`, `read_at` or equivalent column anywhere in this file.
+//
+// THE UNREAD COUNT NEEDS NO COUNTER. It is
+// `greatest(channels.last_sequence - sequence, 0)`, because the write path already
+// maintains `last_sequence` and chapter 2.2 made it the sequencing authority. Three
+// shapes measured on one page of 50 channels against 1,000,000 messages:
+//
+//     count rows past the position     9.8–13.4 ms
+//     a cached counter on the position  1.2– 2.1 ms
+//     last_sequence - this column       1.1– 4.5 ms
+//
+// The cached counter is no faster and adds a value that can go stale. The approximation
+// this accepts, and FR-016 asks for it to be stated: a tombstoned message still occupies
+// a sequence, so a deleted message counts as one unread. Counting rows instead is 10x the
+// cost on the query a client runs to render its first screen.
+//
+// `environment_id` IS DENORMALISED HERE, DELIBERATELY. `channel_id` already determines
+// it. The column exists because feature 030's guard watches tables that carry one, and a
+// table without it is a table the guard cannot refuse a cross-environment delete on.
+// `members` above is the counter-example and the reason this is worth saying: it has no
+// `environment_id`, so `tenant-scope.itest.ts` classifies it as `hop` — reached through a
+// foreign key — and no trigger protects it. A read position is per-user state that a
+// tenant's own operations mutate, so it takes the stronger classification.
+//
+// NO `id` COLUMN, and the guard's refusal message is why that matters: it interpolates a
+// key, and chapter 3.13 installed
+// `coalesce(to_jsonb(OLD) ->> 'id', to_jsonb(OLD)::text)` for exactly this case.
+export const readPositions = pgTable(
+  "read_positions",
+  {
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    channelId: uuid("channel_id")
+      .notNull()
+      .references(() => channels.id),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    // The last sequence this user has read. Advances forwards only: a write naming a
+    // lower value is accepted and changes nothing, so a client replaying an old
+    // acknowledgement cannot move the count backwards. A value past
+    // `channels.last_sequence` is refused (FR-018) — a position nothing can reach makes
+    // every later count wrong.
+    sequence: bigint("sequence", { mode: "number" }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.channelId, t.userId] }),
   ],
 );
 

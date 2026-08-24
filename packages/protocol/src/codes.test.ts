@@ -51,10 +51,14 @@ describe("error codes stay unique and described", () => {
 // that is not in this object cannot be constructed anywhere in the platform without
 // failing the build. This suite checks the shape of the object those types rest on.
 describe("the registry is the whole vocabulary (FR-024)", () => {
-  it("holds thirteen codes", () => {
+  it("holds sixteen codes", () => {
     // A number, so adding one is a visible edit rather than a silent widening. The
     // count is here and not in a comment because a comment does not fail.
-    expect(Object.keys(ERROR_CODES)).toHaveLength(13);
+    //
+    // Thirteen until chapters 3.15 and 3.16 added `not_a_member`,
+    // `channel_archived` and `user_banned` — three refusals a client acts on
+    // differently, which is the test this registry sets.
+    expect(Object.keys(ERROR_CODES)).toHaveLength(16);
   });
 
   it("contains the five the status ladder emits", () => {
@@ -74,7 +78,26 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
   });
 
   it("contains every code the socket surface sends", () => {
-    for (const code of ["invalid_frame", "unknown_frame_type", "rate_limited", "quota_exceeded"]) {
+    for (const code of [
+      "invalid_frame",
+      "unknown_frame_type",
+      "rate_limited",
+      "quota_exceeded",
+      // Chapter 3.16. A banned user is refused at connect, so the socket says this
+      // one too — and a non-member's send over a socket answers the same way REST
+      // does, which for a private channel is the not-found envelope and not a code
+      // of its own.
+      "user_banned",
+    ]) {
+      expect(ERROR_CODES, code).toHaveProperty(code);
+    }
+  });
+
+  it("contains the three the channel surface adds", () => {
+    // `not_a_member` has one emitter — the read-position route on a public channel —
+    // and it is here rather than at that call site for the reason chapter 3.2 gave
+    // when it registered `wrong_credential_type` instead of inventing it inline.
+    for (const code of ["not_a_member", "channel_archived", "user_banned"]) {
       expect(ERROR_CODES, code).toHaveProperty(code);
     }
   });

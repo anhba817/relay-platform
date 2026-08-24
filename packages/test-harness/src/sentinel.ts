@@ -71,6 +71,10 @@ export interface Sentinel {
   usageUserId: string;
   usageConnectionId: string;
   usageNotificationId: string;
+  /** Chapter 3.16's read-position bait. `read_positions` references both a channel
+   * and a user, and the sentinel had no channel — the usage user is reused because
+   * it is already in this environment and one new id is enough. */
+  readChannelId: string;
   /** `__sentinel__:<owner>`, on every row, so a failure says whose it is. */
   name: string;
 }
@@ -100,6 +104,7 @@ export function sentinelFor(owner: string): Sentinel {
     usageUserId: id("usage-user"),
     usageConnectionId: id("usage-connection"),
     usageNotificationId: id("usage-notification"),
+    readChannelId: id("read-channel"),
     name: `__sentinel__:${owner}`,
   };
 }
@@ -347,6 +352,33 @@ export async function plant(
              now() - interval '2 hours')
      ON CONFLICT (id) DO NOTHING`,
     [s.usageNotificationId, s.environmentId, s.organisationId],
+  );
+
+  // bait 6: `read_positions`, the guard's tenth table (chapter 3.16).
+  //
+  // One row, for the same reason as bait 5: the trigger fires on the first
+  // sentinel row a statement touches, so one is enough for it, and the reader
+  // mechanism's `BAIT_ROWS` is for defeating an unbounded batch.
+  //
+  // NOT CLAIMABLE BY CONSTRUCTION, which is the check T024a asks for rather than
+  // a state to plant carefully. `quota_notifications` had to be planted already
+  // delivered because `drainQuotaNotifications` claims undelivered rows across
+  // every environment — the law that cost thirteen failures in two unrelated
+  // files. Nothing in the platform drains read positions at all: no global sweep,
+  // no relay, no batch. There is no state that makes this row claimable, so
+  // there is no state to get wrong.
+  //
+  // It needs a channel, and the sentinel had none — hence `readChannelId`. The
+  // user is the usage user, already in this environment.
+  await q(
+    `INSERT INTO channels (id, environment_id, external_id, type, name)
+     VALUES ($1, $2, $3, 'public', $4) ON CONFLICT (id) DO NOTHING`,
+    [s.readChannelId, s.environmentId, `${s.name}:read`, s.name],
+  );
+  await q(
+    `INSERT INTO read_positions (environment_id, channel_id, user_id, sequence)
+     VALUES ($1, $2, $3, 0) ON CONFLICT DO NOTHING`,
+    [s.environmentId, s.readChannelId, s.usageUserId],
   );
 }
 

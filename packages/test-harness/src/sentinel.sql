@@ -116,6 +116,14 @@ END $$;
 -- UPDATE or DELETE on any of them passed for two chapters. Confirmed against a
 -- running database rather than read off this file: `pg_trigger` held five
 -- `__sentinel_guard_*` rows and none of them was a usage table.
+--
+-- TEN AS OF CHAPTER 3.16. `read_positions` carries `environment_id`, so it belongs
+-- here, and it has no `id` — which is what the message expression above was changed
+-- for. `members` is the counter-example and is deliberately absent: it has no
+-- `environment_id`, so the catalogue classifies it as `hop` and no trigger watches
+-- it. Adding a table to this array is not the same as the guard watching it, which
+-- is why `guard.itest.ts` drives each one and why removing a name from here has to
+-- turn a test red.
 DO $$
 DECLARE
   t text;
@@ -132,7 +140,10 @@ BEGIN
     'usage_periods',
     'usage_active_users',
     'quota_notifications',
-    'usage_connections'
+    'usage_connections',
+    -- Chapter 3.16's table. Per-user read positions, keyed
+    -- `(channel_id, user_id)` with no `id` column.
+    'read_positions'
   ] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS __sentinel_guard_%1$s ON %1$I', t);
     EXECUTE format(
