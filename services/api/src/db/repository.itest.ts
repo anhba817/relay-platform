@@ -126,3 +126,96 @@ describe("idempotency must not disarm DR-01 (chapter 2.3)", () => {
     expect(rows).toHaveLength(1);
   });
 });
+
+// ── A PRIVATE CHANNEL IS PRIVATE (chapter 3.15, FR-001, FR-CHN-05) ────────────
+//
+// `channels.type` has been a `"public" | "private"` column with a CHECK since
+// chapter 2.1, and until this chapter nothing DECIDED on it. It was selected and
+// returned by the create route, so it was read; no conditional anywhere branched
+// on it. Chapter 3.12's fifth analysis pass caught `POST /v1/channels` about to
+// accept `private` while that was still true.
+//
+// THESE CHANNELS ARE CREATED THROUGH THE REPOSITORY, not the API, and the reason
+// is FR-009's ordering: `POST /v1/channels` accepts `private` only once the read
+// paths and the send path enforce it, which is the end of the next phase.
+// `createChannel(externalId, type, …)` has always taken a type.
+//
+// AND THE REFUSAL IS THE NOT-FOUND ERROR, not a 403. SC-002 requires send's
+// answer for a private channel the caller cannot see to be byte-identical to a
+// channel that does not exist, and `ChannelNotFoundError` is what the absent
+// channel throws. A `403 not_a_member` would announce that the channel exists.
+describe("a private channel refuses a non-member's send (FR-001)", () => {
+  it("refuses a user of the tenant who is not a member, as if the channel were absent", async () => {
+    const channel = await repoA.createChannel("private-send", "private");
+    const stranger = await repoA.createUser("stranger", "A Stranger");
+
+    // The same error an absent channel raises, which is the whole property.
+    const absent = "00000000-0000-4000-8000-000000000000";
+    const forAbsent = await repoA
+      .sendMessage(absent, { userId: stranger.id, text: "nowhere" })
+      .catch((error: unknown) => error);
+    const forPrivate = await repoA
+      .sendMessage(channel.id, { userId: stranger.id, text: "not mine" })
+      .catch((error: unknown) => error);
+
+    expect(forPrivate).toBeInstanceOf(Error);
+    expect((forPrivate as Error).constructor).toBe(
+      (forAbsent as Error).constructor,
+    );
+  });
+
+  it("leaves the channel's message count unchanged after the refusal (SC-003)", async () => {
+    // A refusal that still writes a row is not a refusal, and the status code
+    // cannot tell you which one you have — only the rows can.
+    const channel = await repoA.createChannel("private-count", "private");
+    const stranger = await repoA.createUser("count-stranger", "Counter");
+    const before = await repoA.listMessagesRaw(channel.id);
+
+    await expect(
+      repoA.sendMessage(channel.id, { userId: stranger.id, text: "should not land" }),
+    ).rejects.toThrow();
+
+    const after = await repoA.listMessagesRaw(channel.id);
+    expect(after).toHaveLength(before.length);
+  });
+
+  it("accepts a member's send to the same channel", async () => {
+    // The control. Two refusals for unrelated reasons are also indistinguishable,
+    // which is what chapter 3.12's fourteen passing tests turned out to be
+    // measuring — so the attacker has to be shown working before its failure
+    // means anything.
+    const channel = await repoA.createChannel("private-member", "private");
+    const member = await repoA.createUser("member", "A Member");
+    expect(await repoA.addMember(channel.id, member.id)).toBe("added");
+
+    const sent = await repoA.sendMessage(channel.id, {
+      userId: member.id,
+      text: "mine to send",
+    });
+    expect(sent.seq).toBe(1);
+  });
+
+  it("accepts an application credential with no user (FR-005)", async () => {
+    // `userId` absent means the TENANT is sending: it acts for the customer,
+    // carries no user, and is the customer's own server. FR-005 asked for this to
+    // be stated rather than assumed, and the assumption is that a private channel
+    // is not private FROM ITS OWNER.
+    const channel = await repoA.createChannel("private-app", "private");
+    const sent = await repoA.sendMessage(channel.id, { text: "from the tenant" });
+    expect(sent.seq).toBe(1);
+  });
+
+  it("does not check membership on a public channel", async () => {
+    // FR-004's answer for the other type: any authenticated user of the tenant may
+    // send to a public channel without being a member. The column becomes live
+    // only because the two types differ — require membership for both and
+    // `channels.type` still decides nothing.
+    const channel = await repoA.createChannel("public-send", "public");
+    const outsider = await repoA.createUser("public-outsider", "Outsider");
+    const sent = await repoA.sendMessage(channel.id, {
+      userId: outsider.id,
+      text: "public is open",
+    });
+    expect(sent.seq).toBe(1);
+  });
+});

@@ -33,6 +33,7 @@ describe("the internal surface", () => {
   let url: string;
   let env: { id: string };
   let channelId: string;
+  let privateChannelId: string;
   /** Chapter 3.2: the gateway forwards the END USER'S token instead of
    * asserting two identity headers, so this suite mints tokens the same way the
    * dev-token endpoint does — with the environment's own signing secret. */
@@ -45,6 +46,12 @@ describe("the internal surface", () => {
     const user = await repo.createUser("tuan", "Tuan");
     channelId = (await repo.createChannel("fleet", "public")).id;
     await repo.addMember(channelId, user.id);
+    // Chapter 3.15: the socket's route reaches the same `sendMessage`, so the
+    // membership check has to hold here too — this is the caller R1 counted and
+    // the one that always supplied a user.
+    privateChannelId = (await repo.createChannel("fleet-private", "private")).id;
+    await repo.addMember(privateChannelId, user.id);
+    await repo.createUser("stranger", "A Stranger");
     const signingSecret = (await environmentSigningSecret(db, env.id))!
       .signingSecret;
     tokenFor = async (subject: string) =>
@@ -161,5 +168,32 @@ describe("the internal surface", () => {
       headers: { authorization: "Bearer not-a-token" },
     });
     expect(res.status).toBe(401);
+  });
+
+  // ── THE SOCKET'S ROUTE INHERITS THE CHECK (chapter 3.15, FR-001) ────────────
+  //
+  // `POST /internal/messages` resolves the user from the forwarded token and then
+  // calls the same `messages.send` the public route does, so one check in
+  // `repository.sendMessage` covers both doors. Chapter 3.12 recorded this route
+  // as checking nothing; what it was missing was a check, not a caller — it has
+  // always supplied `user.id` (`internal.controller.ts:65`).
+  it("refuses a non-member's send to a private channel, as if it were absent", async () => {
+    const refused = await send(
+      { channel_id: privateChannelId, text: "not mine" },
+      "stranger",
+    );
+    const absent = await send(
+      { channel_id: "00000000-0000-4000-8000-000000000000", text: "nowhere" },
+      "stranger",
+    );
+    expect(refused.status).toBe(absent.status);
+  });
+
+  it("accepts a member's send to the same private channel", async () => {
+    const accepted = await send(
+      { channel_id: privateChannelId, text: "mine to send" },
+      "tuan",
+    );
+    expect(accepted.status).toBe(201);
   });
 });

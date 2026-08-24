@@ -48,6 +48,13 @@ export interface SocketTenant {
   credential: string;
   userExternalId: string;
   channelId: string;
+  /** A private channel in the same environment that this tenant's user is NOT a
+   * member of (chapter 3.15). */
+  privateChannelId: string;
+  /** That private channel's history, read with the APPLICATION key — which sees
+   * private channels (FR-005) — so a refused send can be checked against the
+   * rows rather than against its own error frame. */
+  privateHistory: () => Promise<string>;
   /** A token for `userExternalId`, minted through the api's own dev-token route so
    * the signing secret never leaves the api — research R1's rule, and the reason
    * the gateway asks rather than verifies. */
@@ -94,6 +101,11 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
     const user = await repo.createUser(userExternalId, `${label} user`);
     const channel = await repo.createChannel(`${label}-channel`, "public");
     await repo.addMember(channel.id, user.id);
+    // Chapter 3.15: a PRIVATE channel in the same tenant, and this user is NOT a
+    // member of it. The four cross-tenant shapes all attack with another tenant's
+    // identifiers; a non-member of your own tenant is a different fixture, and the
+    // socket needs one too because `message.send` reaches the same check.
+    const privateChannel = await repo.createChannel(`${label}-private`, "private");
     const key = await seeder.createApiKey(db, { environmentId: environment.id });
     const token = await mintToken(apiUrl, key.credential, userExternalId);
     return {
@@ -101,9 +113,18 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
       credential: key.credential,
       userExternalId,
       channelId: channel.id,
+      privateChannelId: privateChannel.id,
       token,
       say: (text: string) =>
         repo.sendMessage(channel.id, { text, userId: user.id, userExternalId }),
+      privateHistory: async () => {
+        const res = await fetch(
+          `${apiUrl}/v1/channels/${privateChannel.id}/messages?limit=100`,
+          { headers: { authorization: `Bearer ${key.credential}` } },
+        );
+        if (!res.ok) throw new Error(`private history for ${label}: ${res.status}`);
+        return res.text();
+      },
       history: async () => {
         const res = await fetch(`${apiUrl}/v1/channels/${channel.id}/messages?limit=100`, {
           headers: { authorization: `Bearer ${key.credential}` },

@@ -33,9 +33,15 @@ export class MessagesService {
   async send(
     channelId: string,
     body: SendMessageBody,
-    /** Chapter 2.6: who wrote it. Optional because a key-authenticated public
-     * send is unattributed (3.2's recorded bound); the internal route always
-     * knows. */
+    /** Chapter 2.6: who wrote it. Optional because an APPLICATION-key send is
+     * unattributed — it acts for the tenant and there is no user to name.
+     *
+     * IT IS NO LONGER OPTIONAL FOR A USER TOKEN. Chapter 3.15 made the public
+     * route resolve its principal (T031a): the membership check in `sendMessage`
+     * is gated on this parameter, and until then the public route supplied none,
+     * so the check could not fire on the route a customer's client actually calls.
+     * "A key-authenticated public send is unattributed" was the old bound and it
+     * described the whole route; now it describes one of its two credentials. */
     userId?: string,
     /** Chapter 3.3: the same person as a CONSUMER will see them. The event
      * envelope carries external ids, and the internal route already holds this

@@ -274,6 +274,54 @@ describe("the socket gauntlet", () => {
     expect(after).toBe(before);
   });
 
+  // ── THE SOCKET'S SEND INTO A PRIVATE CHANNEL OF ITS OWN TENANT ─────────────
+  //
+  // Chapter 3.15, FR-001. Every attack above crosses a tenant boundary; this one
+  // does not. The attacker's own tenant holds a private channel they are not a
+  // member of, and the socket reaches the same `repository.sendMessage` the REST
+  // route does — through `api-client` to `POST /internal/messages`, which has
+  // always supplied the user id.
+  //
+  // THE SAME ANSWER AS A CHANNEL THAT DOES NOT EXIST, on this surface too. A
+  // socket error frame carries a code rather than a status, so the comparison is
+  // between two frames: the refusal for a private channel the caller cannot see
+  // and the refusal for an id that exists nowhere.
+  it("a send into its own tenant's private channel is refused as if absent, and that channel gains nothing", async () => {
+    const client = connect(tenants.attacker.token);
+    await client.waitFor("connection.ack");
+
+    const text = `not a member ${randomUUID()}`;
+    client.socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: tenants.attacker.privateChannelId,
+          text,
+        },
+      }),
+    );
+    const refused = await client.waitFor<{ payload: { code: string } }>("error");
+
+    client.socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: "00000000-0000-4000-8000-000000000000",
+          text: `nowhere ${randomUUID()}`,
+        },
+      }),
+    );
+    const absent = await client.waitFor<{ payload: { code: string } }>("error");
+
+    expect(refused.payload.code).toBe(absent.payload.code);
+
+    // And read the channel's state rather than inferring it from the refusal.
+    const after = await tenants.attacker.privateHistory();
+    expect(after).not.toContain(text);
+  });
+
   // ── T047: the resume ───────────────────────────────────────────────────────
   it("a cursor naming the other tenant's channel backfills nothing", async () => {
     await tenants.victim.say(`before the resume ${randomUUID()}`);

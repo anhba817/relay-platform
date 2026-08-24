@@ -5,6 +5,8 @@ import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
+import { mintUserToken } from "../auth/user-token";
+import { environmentSigningSecret } from "../db/repository";
 import { createDb, createPool } from "../db/client";
 import { createApiKey, createEnvironment, Repository } from "../db/repository";
 // The comparison this suite invented, now shared. Chapter 3.12 moved it into
@@ -28,6 +30,8 @@ describe("POST /v1/channels/:channelId/messages", () => {
   let credential: string;
   let channelId: string;
   let foreignChannelId: string;
+  let privateChannelId: string;
+  let tokenFor: (user: string) => Promise<string>;
 
   beforeAll(async () => {
     const db = createDb(createPool());
@@ -40,6 +44,26 @@ describe("POST /v1/channels/:channelId/messages", () => {
     foreignChannelId = (
       await new Repository(db, other.id).createChannel("theirs", "public")
     ).id;
+
+    // Chapter 3.15's fixtures: a private channel, one member, one stranger of the
+    // SAME tenant, and a way to mint their tokens. The private channel is created
+    // through the repository because `POST /v1/channels` does not accept `private`
+    // until the read paths enforce it (FR-009's ordering).
+    const repo = new Repository(db, env.id);
+    privateChannelId = (await repo.createChannel("members-only", "private")).id;
+    const member = await repo.createUser("insider", "An Insider");
+    await repo.addMember(privateChannelId, member.id);
+    await repo.createUser("outsider", "An Outsider");
+    const signingSecret = (await environmentSigningSecret(db, env.id))!
+      .signingSecret;
+    tokenFor = async (subject: string) =>
+      (
+        await mintUserToken(signingSecret, {
+          user: subject,
+          environmentId: env.id,
+          ttlSeconds: 3600,
+        })
+      ).token;
     app = (
       await Test.createTestingModule({ imports: [AppModule] }).compile()
     ).createNestApplication({ logger: false });
@@ -107,5 +131,73 @@ describe("POST /v1/channels/:channelId/messages", () => {
     expect(withoutRequestId(await foreign.json())).toEqual(
       withoutRequestId(await missing.json()),
     );
+  });
+
+  // ── THE ROUTE A CUSTOMER'S CLIENT ACTUALLY CALLS (chapter 3.15, FR-001) ───────
+  //
+  // The membership check lives in `repository.sendMessage` and is gated on `userId`
+  // being present. `repository.itest.ts` proves the check EXISTS by driving that
+  // function directly with a user id. Only these tests prove it FIRES, because for
+  // twenty-three chapters this controller called `messages.send(channelId, body)`
+  // with no user at all — and `MessagesController` declares no `@Accepts`, so the
+  // guard falls back to `EITHER` and a user token is accepted here.
+  //
+  // So the repository test passed while the route it protects was open. A repository
+  // test proves a check exists; only a route test proves it fires.
+  describe("a private channel over the public route (FR-001, SC-002)", () => {
+    const sendAs = async (token: string, channel: string, text = "hello") =>
+      fetch(`${url}/v1/channels/${channel}/messages`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ text }),
+      });
+
+    it("refuses a non-member's send with the not-found envelope, body and all", async () => {
+      const token = await tokenFor("outsider");
+      const refused = await sendAs(token, privateChannelId);
+      const absent = await sendAs(token, "00000000-0000-4000-8000-000000000000");
+
+      expect(refused.status).toBe(absent.status);
+      // Byte-identical but for `request_id`, which is SC-002's actual requirement —
+      // matching status codes is the easy half and says nothing on its own.
+      // Deleting rather than destructuring: an unused binding is a lint error and
+      // the intent is a removal either way. `request_id` is the one field that
+      // differs by construction — it names the request, not the resource — which is
+      // why chapter 3.12's oracle drops exactly this one and nothing else.
+      const strip = (b: Record<string, unknown>) => {
+        delete b.request_id;
+        return b;
+      };
+      expect(strip((await refused.json()) as Record<string, unknown>)).toEqual(
+        strip((await absent.json()) as Record<string, unknown>),
+      );
+    });
+
+    it("accepts a member's send to the same channel", async () => {
+      // The control, and it is not optional. Two refusals for unrelated reasons are
+      // also indistinguishable — a token the guard rejects outright would pass the
+      // test above while proving nothing about membership.
+      const token = await tokenFor("insider");
+      const accepted = await sendAs(token, privateChannelId, "mine to send");
+      expect(accepted.status).toBe(201);
+    });
+
+    it("accepts an application key's send to the same private channel (FR-005)", async () => {
+      const accepted = await send({ text: "from the tenant" }, privateChannelId);
+      expect(accepted.status).toBe(201);
+    });
+
+    it("refuses a token minted for an identifier with no user row", async () => {
+      // `POST /auth/dev-token` mints tokens for identifiers that need not exist, so
+      // before chapter 3.15 this send SUCCEEDED, unattributed — and an unattributed
+      // send is one the membership check waves through. A user with no row is a
+      // member of nothing. FR-039a removes the case by creating the row at mint time.
+      const token = await tokenFor("never-seen-before");
+      const refused = await sendAs(token, privateChannelId);
+      expect(refused.status).toBe(400);
+    });
   });
 });
