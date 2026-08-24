@@ -322,6 +322,56 @@ describe("the socket gauntlet", () => {
     expect(after).not.toContain(text);
   });
 
+  // ── A REMOVED MEMBER'S RECONNECTION (chapter 3.15, SC-004) ──────────────────
+  //
+  // T058. The session is built from `members` — `channelsForUser` selects from that
+  // table, and `repository.backfill` joins it per cursor — so removal takes the
+  // channel out of the next session without the gateway knowing anything about
+  // removal.
+  //
+  // ASSERTED ON THE ACCEPTED CURSOR, and the two attempts before this one are worth
+  // recording because both were unfalsifiable:
+  //
+  //   1. Looking for the channel id in `connection.ack`'s payload. That frame carries
+  //      `user`, `cursor`, `resume_ok`, `truncated` and no channel list.
+  //   2. Sending a message and waiting for `message.created`. **This suite attaches
+  //      no fan-out** — `attachSessions({server, api, logger})` passes none, so
+  //      `fanout?.publish` is a no-op and nothing is ever delivered here. The control
+  //      hung for five seconds and timed out.
+  //
+  // The ack's `cursor` is what the server ACCEPTED, so it is the one place the
+  // session's membership decision is visible from outside. The control below shows a
+  // member's cursor being accepted, which is what makes the removal assertion mean
+  // something.
+  it("a removed member's resume cursor is no longer accepted", async () => {
+    await tenants.attacker.say(`before removal ${randomUUID()}`);
+
+    const asMember = connect(
+      tenants.attacker.token,
+      `&cursor=${tenants.attacker.channelId}:0`,
+    );
+    const first = await asMember.waitFor<{
+      payload: { cursor: Record<string, number> };
+    }>("connection.ack");
+    // The control: while they are a member, the server takes the cursor.
+    expect(Object.keys(first.payload.cursor)).toContain(tenants.attacker.channelId);
+
+    await tenants.attacker.removeSelf();
+
+    const afterRemoval = connect(
+      tenants.attacker.token,
+      `&cursor=${tenants.attacker.channelId}:0`,
+    );
+    const second = await afterRemoval.waitFor<{
+      payload: { cursor: Record<string, number> };
+    }>("connection.ack");
+    expect(Object.keys(second.payload.cursor)).not.toContain(
+      tenants.attacker.channelId,
+    );
+    await quiet(1_000);
+    expect(afterRemoval.frames().filter((f) => f.type === "message.created")).toEqual([]);
+  });
+
   // ── T047: the resume ───────────────────────────────────────────────────────
   it("a cursor naming the other tenant's channel backfills nothing", async () => {
     await tenants.victim.say(`before the resume ${randomUUID()}`);

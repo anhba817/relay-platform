@@ -118,6 +118,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // the controller's class-level `"application"`.
   { method: "GET", path: "/v1/channels/:channelId", accepts: "application", shape: "read" },
   { method: "POST", path: "/v1/channels/:channelId/join", accepts: "user", shape: "write" },
+  { method: "POST", path: "/v1/channels/:channelId/members/remove", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks/:id/rotate-secret", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks/:id/enable", accepts: "application", shape: "write" },

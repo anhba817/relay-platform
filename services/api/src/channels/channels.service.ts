@@ -3,7 +3,12 @@ import { HttpStatus, Injectable, NotFoundException } from "@nestjs/common";
 import { protocolError } from "../protocol-error";
 
 import { Repository, type ChannelRow } from "../db/repository";
-import { CHANNEL_MEMBER_LIMIT, type AddMembersBody, type CreateChannelBody } from "./channels.schema";
+import {
+  CHANNEL_MEMBER_LIMIT,
+  type AddMembersBody,
+  type CreateChannelBody,
+  type RemoveMembersBody,
+} from "./channels.schema";
 
 // THE TWO ENDPOINTS PART 3 NEEDED AND NOBODY HAD BUILT (FR-016 to FR-019).
 //
@@ -23,6 +28,13 @@ export interface CreatedChannel {
    * integrating developer can act on — chapter 2.3 drew the same line for a
    * duplicate send. */
   created: boolean;
+}
+
+export interface MemberRemoval {
+  external_id: string;
+  /** `removed` if a membership row went away, `not_a_member` otherwise — including
+   * when the external id belongs to no user this tenant knows. */
+  result: "removed" | "not_a_member";
 }
 
 export interface MemberResult {
@@ -80,6 +92,49 @@ export class ChannelsService {
     if (channel.type === "private" && isMember === false) throw this.notFound();
 
     return { channel, isMember };
+  }
+
+  /** Remove members by EXTERNAL id, reporting each (chapter 3.15, FR-006, FR-007).
+   *
+   * THE CHANNEL IS READ SCOPED FIRST, the same ordering `addMembers` states below
+   * and for the same reason: a foreign channel id and one that exists nowhere both
+   * fail that read, so both answer alike and neither reveals the other tenant's
+   * channel. A private channel the caller cannot see answers the same way — this is
+   * a tenant credential's route, and the tenant sees its own private channels
+   * (FR-005), so in practice only absence and foreignness refuse here.
+   *
+   * A USER THAT DOES NOT EXIST REPORTS `not_a_member`, per entry, rather than
+   * failing the request. It is not a member — that is simply true — and answering
+   * anything else would make this route a membership oracle for user ids: a caller
+   * could sweep external ids and learn which ones this tenant knows. One bad entry
+   * must not refuse the other ninety-nine.
+   */
+  async removeMembers(
+    channelId: string,
+    body: RemoveMembersBody,
+  ): Promise<MemberRemoval[]> {
+    if (!(await this.repo.channelExists(channelId))) throw this.notFound();
+
+    // External ids to row ids, and the ones with no row are already answered: no
+    // user, no membership. `getUserByExternalId` is scoped, so an id belonging to
+    // another tenant resolves to nothing here — which is the same answer as an id
+    // belonging to nobody, and deliberately so.
+    const resolved = new Map<string, string | null>();
+    for (const externalId of body.user_ids) {
+      const user = await this.repo.getUserByExternalId(externalId);
+      resolved.set(externalId, user?.id ?? null);
+    }
+
+    const ids = [...resolved.values()].filter((id): id is string => id !== null);
+    const outcomes = await this.repo.removeMembers(channelId, ids);
+
+    return body.user_ids.map((externalId) => {
+      const id = resolved.get(externalId) ?? null;
+      return {
+        external_id: externalId,
+        result: id === null ? "not_a_member" : (outcomes.get(id) ?? "not_a_member"),
+      };
+    });
   }
 
   /** A user joining a channel themselves (chapter 3.15, FR-CHN-03).

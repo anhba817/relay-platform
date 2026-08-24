@@ -245,6 +245,33 @@ describe("POST /v1/channels/:channelId/messages", () => {
     expect(body.messages.length).toBeGreaterThan(0);
   });
 
+  it("refuses a removed member's send, and their messages stay (SC-004, SC-005)", async () => {
+    // T057. This is phase 3's check reading a row that is now gone — no new code
+    // path, which is the point: removal takes the membership away and the check
+    // that was already there does the rest.
+    const token = await tokenFor("insider");
+    const sent = await sendAs(token, privateChannelId, "written while a member");
+    expect(sent.status).toBe(201);
+
+    await fetch(`${url}/v1/channels/${privateChannelId}/members/remove`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${credential}` },
+      body: JSON.stringify({ user_ids: ["insider"] }),
+    });
+
+    const refused = await sendAs(token, privateChannelId, "after removal");
+    const absent = await sendAs(token, "00000000-0000-4000-8000-000000000000");
+    expect(refused.status).toBe(absent.status);
+
+    // And what they wrote is still there, read with the tenant's key.
+    const history = await fetch(
+      `${url}/v1/channels/${privateChannelId}/messages?limit=100`,
+      { headers: { authorization: `Bearer ${credential}` } },
+    );
+    const body = (await history.json()) as { messages: { user: string | null }[] };
+    expect(body.messages.some((m) => m.user === "insider")).toBe(true);
+  });
+
   it("refuses a token minted for an identifier with no user row", async () => {
       // `POST /auth/dev-token` mints tokens for identifiers that need not exist, so
       // before chapter 3.15 this send SUCCEEDED, unattributed — and an unattributed

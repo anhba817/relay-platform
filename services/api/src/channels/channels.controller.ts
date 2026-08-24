@@ -17,8 +17,16 @@ import type { RequestWithPrincipal } from "../auth/principal";
 import { Repository } from "../db/repository";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 import { ChannelsService } from "./channels.service";
-import { addMembersBodySchema, createChannelBodySchema } from "./channels.schema";
-import type { AddMembersBody, CreateChannelBody } from "./channels.schema";
+import {
+  addMembersBodySchema,
+  createChannelBodySchema,
+  removeMembersBodySchema,
+} from "./channels.schema";
+import type {
+  AddMembersBody,
+  CreateChannelBody,
+  RemoveMembersBody,
+} from "./channels.schema";
 
 // THE PUBLIC CHANNEL SURFACE (FR-016, FR-019, data-model.md §7).
 //
@@ -114,6 +122,25 @@ export class ChannelsController {
       // of anything, and reporting `false` would imply it could become one.
       is_member: isMember,
     };
+  }
+
+  /** Remove members, up to a hundred, reporting each (chapter 3.15, FR-006, FR-007).
+   *
+   * AN ACTION-STYLE `POST`, NOT `DELETE` WITH A BODY. A body on `DELETE` is legal
+   * and unreliable — proxies and some clients drop it — and this feature already
+   * sets the action-style precedent with `POST …/archive` and `POST …/ban`. The
+   * singular `DELETE …/members/:userExternalId` the contract carried for ten
+   * analysis passes is gone rather than kept beside this: "up to 100" covers one,
+   * and two routes for one job is two classification entries, two tests and two
+   * chances to disagree.
+   */
+  @Post(":channelId/members/remove")
+  @HttpCode(HttpStatus.OK)
+  async removeMembers(
+    @Param("channelId") channelId: string,
+    @Body(new ZodValidationPipe(removeMembersBodySchema)) body: RemoveMembersBody,
+  ) {
+    return { results: await this.channels.removeMembers(channelId, body) };
   }
 
   /** The user-initiated half of FR-CHN-03 (chapter 3.15).

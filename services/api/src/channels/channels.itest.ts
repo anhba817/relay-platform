@@ -389,4 +389,130 @@ describe("the public channel surface", () => {
       expect(await second.json()).toMatchObject({ type: "private" });
     });
   });
+
+  // ── REMOVAL, BULK, BECAUSE THE REQUIREMENT ALWAYS WAS (chapter 3.15) ────────
+  //
+  // FR-006 says "up to 100 in one request" and FR-007 says the result is reported
+  // per user — chapter 3.13's add shape in both halves. The contract specified a
+  // single-user `DELETE` for ten analysis passes, having read "the shape chapter
+  // 3.13 chose" as *named outcomes* and dropped *bulk*. Every pass compared
+  // requirements to tasks, both said "removal", and identifier coverage read 100%.
+  // Comparing US2's scenario 4 — which names a hundred users — to the route's path,
+  // which named one, is what found it.
+  describe("POST /v1/channels/:channelId/members/remove (FR-006, FR-007)", () => {
+    let target: string;
+
+    const remove = (channel: string, users: string[], key = credential) =>
+      fetch(`${url}/v1/channels/${channel}/members/remove`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+        body: JSON.stringify({ user_ids: users }),
+      });
+
+    beforeAll(async () => {
+      target = (await repo.createChannel("removals", "public")).id;
+      await addMembers(target, { user_ids: ["stays", "goes", "also-goes"] });
+    });
+
+    it("reports one result per user, in request order, mixing outcomes", async () => {
+      const res = await remove(target, ["goes", "never-a-member", "also-goes"]);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        results: [
+          { external_id: "goes", result: "removed" },
+          // A user that does not exist is NOT a member — simply true — and answering
+          // anything else would make this a membership oracle for user ids.
+          { external_id: "never-a-member", result: "not_a_member" },
+          { external_id: "also-goes", result: "removed" },
+        ],
+      });
+      // One bad entry did not refuse the other two.
+      expect(await repo.countMembers(target)).toBe(1);
+    });
+
+    it("is idempotent: removing a non-member says so rather than failing", async () => {
+      const res = await remove(target, ["goes"]);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        results: [{ external_id: "goes", result: "not_a_member" }],
+      });
+    });
+
+    it("takes 100 in one request and refuses 101, naming the field", async () => {
+      const hundred = Array.from({ length: 100 }, (_, i) => `bulk-${i}`);
+      const ok = await remove(target, hundred);
+      expect(ok.status).toBe(200);
+      expect(((await ok.json()) as { results: unknown[] }).results).toHaveLength(100);
+
+      const tooMany = await remove(target, [...hundred, "one-too-many"]);
+      expect(tooMany.status).toBe(400);
+      const body = (await tooMany.json()) as { code: string; field?: string };
+      expect(body.code).toBe("invalid_request");
+      expect(body.field).toBe("user_ids");
+    });
+
+    it("answers a channel that does not exist as it answers a foreign one", async () => {
+      const absent = await remove("00000000-0000-4000-8000-000000000000", ["goes"]);
+      const foreign = await remove(foreignChannelId, ["goes"]);
+      expect(absent.status).toBe(foreign.status);
+      expect(withoutRequestId(await absent.json())).toEqual(
+        withoutRequestId(await foreign.json()),
+      );
+    });
+
+    // THE READ POSITION GOES WITH THE MEMBERSHIP, and that assertion lives in
+    // phase 12 rather than here — deliberately, twice over.
+    //
+    // Writing it here needed a read position to exist, and `setReadPosition` does
+    // not until phase 12. The first attempt planted one with raw SQL and the lint
+    // rule refused it: "the query engine lives inside the repository layer only
+    // (constitution I, ADR-16)". That rule is right and the test was wrong — a suite
+    // that reaches past the repository to set up state is testing something other
+    // than what the platform does.
+    //
+    // So `removeMembers` deletes the row (see the repository), and phase 12 asserts
+    // the consequence a customer can see: a re-added member's unread count starts at
+    // the channel's whole history. A test placed before the thing it tests is the
+    // fourth instance of that class in this feature.
+    it("keeps the removed member's messages, attributed to them (FR-008, SC-005)", async () => {
+      const author = await repo.createUser("author", "An Author");
+      await repo.addMember(target, author.id);
+      const sent = await repo.sendMessage(target, {
+        userId: author.id,
+        userExternalId: "author",
+        text: "written while a member",
+      });
+
+      await remove(target, ["author"]);
+
+      const history = await repo.listMessages(target, { limit: 100 });
+      const kept = history.find((m) => m.seq === sent.seq);
+      expect(kept).toBeDefined();
+      // Still theirs. `messages.user_id` points at a row that still exists, which is
+      // the whole reason deletion keeps the user row rather than nulling the author.
+      expect(kept?.user).toBe("author");
+    });
+
+    it("does not stop a removed member reading or sending to a PUBLIC channel", async () => {
+      // T060, and it is the case that makes FR-004's table load-bearing rather than
+      // decorative: membership was never what permitted this. A removal from a
+      // public channel takes away the subscription and nothing else.
+      const token = await tokenFor("outsider");
+      await addMembers(publicChannelId, { user_ids: ["outsider"] });
+      await remove(publicChannelId, ["outsider"]);
+
+      const read = await fetch(`${url}/v1/channels/${publicChannelId}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(read.status).toBe(200);
+      expect(await read.json()).toMatchObject({ is_member: false });
+
+      const sent = await fetch(`${url}/v1/channels/${publicChannelId}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text: "still open to me" }),
+      });
+      expect(sent.status).toBe(201);
+    });
+  });
 });

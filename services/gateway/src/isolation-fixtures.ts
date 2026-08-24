@@ -55,6 +55,8 @@ export interface SocketTenant {
    * private channels (FR-005) — so a refused send can be checked against the
    * rows rather than against its own error frame. */
   privateHistory: () => Promise<string>;
+  /** Removes this tenant's user from its own channel via the public route. */
+  removeSelf: () => Promise<void>;
   /** A token for `userExternalId`, minted through the api's own dev-token route so
    * the signing secret never leaves the api — research R1's rule, and the reason
    * the gateway asks rather than verifies. */
@@ -117,6 +119,23 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
       token,
       say: (text: string) =>
         repo.sendMessage(channel.id, { text, userId: user.id, userExternalId }),
+      /** Remove this tenant's own user from its own public channel, through the
+       * public route — so the test asserts the consequence of the API rather than of
+       * a direct write. */
+      removeSelf: async () => {
+        const res = await fetch(
+          `${apiUrl}/v1/channels/${channel.id}/members/remove`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${key.credential}`,
+            },
+            body: JSON.stringify({ user_ids: [userExternalId] }),
+          },
+        );
+        if (!res.ok) throw new Error(`removeSelf for ${label}: ${res.status}`);
+      },
       privateHistory: async () => {
         const res = await fetch(
           `${apiUrl}/v1/channels/${privateChannel.id}/messages?limit=100`,
