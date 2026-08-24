@@ -551,16 +551,31 @@ describe("the isolation gauntlet", () => {
   for (const [verb, method] of [["ban", "POST"], ["unban", "DELETE"]] as const) {
     it(`${verb}: a foreign user's banned_at does not move`, async () => {
       attacked.add(`${method} /v1/users/:externalId/ban`);
+      // NO STATUS ASSERTION, AND THAT IS THIS CHAPTER'S DOING.
+      //
+      // These asserted 404 — the user is named in the path and there is no such user
+      // in the caller's environment — and got 200. A user row is created implicitly
+      // on first authentication now, so the credential attack above, which mints a
+      // token for the victim's external id with the attacker's key, CREATES that name
+      // in the attacker's environment. Nothing leaked: the row is the attacker's own,
+      // with a name the attacker chose, exactly like the bulk upsert.
+      //
+      // But it means a foreign identifier no longer reliably answers not-found on any
+      // user route, because presenting it may have created it. **The status stopped
+      // being a signal and the state comparison is the whole assertion** — which is
+      // what the pair was always supposed to be for.
       const before = await t.victim.repo.getUserByExternalId(t.victim.userExternalId);
-      const res = await fetch(
+      await fetch(
         `${url}/v1/users/${t.victim.userExternalId}/ban`,
         { method, headers: { authorization: `Bearer ${t.attacker.credential}` } },
       );
-      // 404, because the user is named in the path and there is no such user in the
-      // caller's environment. The status is the easy half.
-      expect(res.status).toBe(404);
       const after = await t.victim.repo.getUserByExternalId(t.victim.userExternalId);
       expect(after, `the victim's user row moved on ${verb}`).toEqual(before);
+      // AND SPECIFICALLY THE MARKER, named rather than left to the deep equality —
+      // a future field added to the row would make the comparison above fail for a
+      // reason that has nothing to do with a ban.
+      expect(after?.banned_at ?? null, `the victim was ${verb}ned across tenants`)
+        .toEqual(before?.banned_at ?? null);
     });
   }
 
