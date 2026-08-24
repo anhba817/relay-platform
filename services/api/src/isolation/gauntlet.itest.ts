@@ -384,6 +384,21 @@ describe("the isolation gauntlet", () => {
       ["read history", "GET", (c) => `/v1/channels/${c}/messages?limit=10`],
       ["send", "POST", (c) => `/v1/channels/${c}/messages`, { text: "not mine" }],
       ["join", "POST", (c) => `/v1/channels/${c}/join`],
+      // THE FIFTH VERB (SC-001a, chapter 3.15's T121a). Its route is built in the
+      // unread-count phase rather than with the other four, so it joins the oracle
+      // here — the verb list is the authority and the count of verbs is not written
+      // down anywhere, which is the fix for a number that went three, then four,
+      // then five while its verification task stayed at three.
+      //
+      // THE USER IN THE PATH IS THE STRANGER'S OWN EXTERNAL ID. Under a user token the
+      // route's subject and the path's user are the same person, so this attacks the
+      // channel and nothing else — a mismatched pair is a different test (T082a).
+      [
+        "set a read position",
+        "PUT",
+        (c) => `/v1/users/${same.stranger.externalId}/channels/${c}/read`,
+        { sequence: 0 },
+      ],
     ];
 
     for (const [name, method, path, body] of verbs) {

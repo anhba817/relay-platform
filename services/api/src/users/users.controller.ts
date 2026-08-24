@@ -1,14 +1,21 @@
 import {
+  Body,
   Controller,
   Get,
   Param,
+  Put,
   Query,
   UseGuards,
 } from "@nestjs/common";
 
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
-import { listingQuerySchema, type ListingQuery } from "./users.schema";
+import {
+  listingQuerySchema,
+  readPositionBodySchema,
+  type ListingQuery,
+  type ReadPositionBody,
+} from "./users.schema";
 import { UsersService } from "./users.service";
 
 /** The user surface (chapter 3.15).
@@ -35,5 +42,28 @@ export class UsersController {
     @Query(new ZodValidationPipe(listingQuerySchema)) query: ListingQuery,
   ): Promise<{ data: Array<Record<string, unknown>>; next_cursor: string | null }> {
     return this.users.listChannels(externalId, query);
+  }
+
+  /** A read position for the user the path names (chapter 3.15, FR-017).
+   *
+   * `@Accepts("application", "user")` AT THE METHOD LEVEL, and it is the only route on
+   * this controller that takes a user token: a user records their own position, and the
+   * tenant records one on behalf of the user it names. Method-level wins over the
+   * class-level `@Accepts("application")` because the guard resolves
+   * `[handler, class]` in that order.
+   *
+   * `:channelId` IS THE UUID, like every other channel route in this API.
+   * `contracts/listing.md` writes it `:channelExternalId`, and that file says of itself
+   * that its paths are written with the customer's identifiers in place while the router
+   * names channel parameters `:channelId` — a classification entry copied from it
+   * verbatim will not match a derived target. */
+  @Put(":externalId/channels/:channelId/read")
+  @Accepts("application", "user")
+  async setReadPosition(
+    @Param("externalId") externalId: string,
+    @Param("channelId") channelId: string,
+    @Body(new ZodValidationPipe(readPositionBodySchema)) body: ReadPositionBody,
+  ): Promise<{ sequence: number }> {
+    return this.users.setReadPosition(externalId, channelId, body.sequence);
   }
 }

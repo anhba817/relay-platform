@@ -30,7 +30,22 @@ export type Shape = "read" | "list" | "write" | "credential" | "exempt";
  * request naming one environment with an identifier from another. A `write` shape
  * alone cannot tell those apart, and an earlier draft of this chapter gave all
  * eight the platform attack (research R5). */
-export type CredentialClass = "application" | "user" | "platform" | "none";
+/** And `"either"`, added by chapter 3.15 for the first route that genuinely takes both
+ * (FR-017's read position: a user records their own, and the tenant records one for the
+ * user it names). Recording it as `"user"` alone would understate which attacks apply —
+ * both do, and `PUT /v1/users/:externalId/channels/:channelId/read` is attacked with a
+ * user token in the gauntlet's same-tenant block and with a tenant credential in T082a's
+ * two-identifier pair.
+ *
+ * This field is documentation for which attack applies, not part of the match:
+ * `targetKey` is method and path. So a wrong value here misleads a reader rather than
+ * letting a route through unattacked — which is why the value is stated exactly. */
+export type CredentialClass =
+  | "application"
+  | "user"
+  | "either"
+  | "platform"
+  | "none";
 
 interface Classified {
   method: string;
@@ -96,6 +111,20 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     path: "/v1/users/:externalId/channels",
     accepts: "application",
     shape: "list",
+  },
+
+  // Chapter 3.15. The route that names TWO tenant-owned identifiers, which is why
+  // T082a attacks it both ways round: a foreign user with an own channel and an own
+  // user with a foreign channel are different code paths, and one scoped read can mask
+  // the other.
+  //
+  // `either` because a user records their own position and the tenant records one for
+  // the user it names — the only route on the users controller that takes both.
+  {
+    method: "PUT",
+    path: "/v1/users/:externalId/channels/:channelId/read",
+    accepts: "either",
+    shape: "write",
   },
 
   // ── read ────────────────────────────────────────────────────────────────────

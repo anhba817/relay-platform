@@ -73,3 +73,14 @@ export const listingQuerySchema = z.strictObject({
 });
 
 export type ListingQuery = z.infer<typeof listingQuerySchema>;
+
+/** The read-position body (chapter 3.15, FR-017).
+ *
+ * `strictObject` and a required non-negative integer. Zero is legal and means "I have
+ * read nothing", which is also what a missing row means — a client that wants to reset
+ * writes 0 rather than deleting anything. */
+export const readPositionBodySchema = z.strictObject({
+  sequence: z.number().int().min(0),
+});
+
+export type ReadPositionBody = z.infer<typeof readPositionBodySchema>;

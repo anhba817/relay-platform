@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { HttpStatus, Injectable, NotFoundException } from "@nestjs/common";
 
+import { protocolError } from "../protocol-error";
 import { Repository } from "../db/repository";
 import { encodeCursor, type ListingQuery } from "./users.schema";
 
@@ -43,17 +44,75 @@ export class UsersService {
     });
     return {
       data: rows.map((r) => ({
-        id: r.external_id,
+        // BOTH IDS, the shape `POST /v1/channels` already returns. `contracts/listing.md`
+        // showed `"id": "c_support"` — an external id under the name `id` — which would
+        // have made `id` mean the uuid on one route and the customer's own string on
+        // another, in one API. The contract is corrected; the create route's shape wins
+        // because it shipped.
+        id: r.id,
+        external_id: r.external_id,
         type: r.type,
         name: r.name,
         role: r.role,
         archived_at: r.archived_at,
+        unread: r.unread,
         last_activity_at: r.last_activity_at,
+        last_message: r.last_message,
       })),
       next_cursor:
         nextCursor === null
           ? null
           : encodeCursor(nextCursor.activityAt.toISOString(), nextCursor.id),
     };
+  }
+
+  /** Record a read position for the user the path names (chapter 3.15, FR-017, FR-018).
+   *
+   * THE MEMBERSHIP THIS REFUSAL TALKS ABOUT IS THE PATH'S USER, NOT THE CALLER. Under an
+   * application credential the caller has no membership at all — it is the tenant — so
+   * "the caller is not a member" is a sentence about nothing on this route. The
+   * authorization table's member and non-member columns said nothing for this row until
+   * an analysis pass noticed that, and the same mistake sat in five other places.
+   *
+   * AND THIS IS `not_a_member`'s ONLY EMITTER IN THE WHOLE FEATURE. A read position is
+   * per-member state keyed by channel and user, and removal deletes the row with the
+   * membership, so refusing a non-member here is the rule the rest of the table keeps.
+   * Everywhere else a private channel answers the not-found envelope instead, because a
+   * 403 would announce that the channel exists.
+   *
+   * SO THE ORDER MATTERS: visibility first, then membership. A private channel the user
+   * is not in answers 404 — indistinguishable from a channel that does not exist. A
+   * PUBLIC channel they are not in answers 403 `not_a_member`, which reveals only that a
+   * public channel exists, and a public channel is readable by any user of the tenant
+   * anyway. */
+  async setReadPosition(
+    externalId: string,
+    channelId: string,
+    sequence: number,
+  ): Promise<{ sequence: number }> {
+    const user = await this.requireUser(externalId);
+
+    // Visibility for THE PATH'S USER, which is what makes the two refusals different.
+    if (!(await this.repo.channelVisibleTo(channelId, user.id))) {
+      throw new NotFoundException("channel not found");
+    }
+    if (!(await this.repo.isMember(channelId, user.id))) {
+      throw protocolError(
+        "not_a_member",
+        "the user is not a member of this channel",
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    const written = await this.repo.setReadPosition(channelId, user.id, sequence);
+    if (written === null) {
+      throw protocolError(
+        "invalid_request",
+        "sequence is past the channel's last message",
+        HttpStatus.BAD_REQUEST,
+        "sequence",
+      );
+    }
+    return { sequence: written.sequence };
   }
 }

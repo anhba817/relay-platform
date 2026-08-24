@@ -350,3 +350,82 @@ describe("the listing's keyset survives a shared last_activity_at (chapter 3.15)
     expect(tied.map((r) => r.id)).toEqual(expected);
   });
 });
+
+// ── THE TOMBSTONE, AND THE CLAMP (chapter 3.15, FR-016, FR-019) ───────────────
+//
+// BOTH STATES ARE UNREACHABLE THROUGH THE API, for different reasons, and both are
+// constructed here because this suite may hold raw SQL.
+//
+// FR-MSG-08 — "deleting a message shall replace its content with a tombstone retaining
+// sequence number, author, timestamps" — IS NOT IMPLEMENTED. `messages.deleted_at` and a
+// null `text` are in the schema, `backfill.controller` passes `text` straight through so
+// a null already reaches the wire, and NOTHING IN THE PLATFORM WRITES EITHER. The
+// tombstone is a live reader with no writer, which is the reverse of the dead columns
+// this feature is otherwise about. The listing's rule for it is implemented and tested
+// now so the day FR-MSG-08's chapter ships, the count and the preview already agree.
+describe("the listing's tombstone rule and its clamp (chapter 3.15)", () => {
+  it("reports a tombstoned last message with a null text, and still counts it", async () => {
+    const user = await repoA.createUser("tomb-reader", "Tomb Reader");
+    const channel = await repoA.createChannel("tombstoned", "public");
+    await repoA.addMember(channel.id, user.id);
+    await repoA.sendMessage(channel.id, { text: "kept", userId: user.id });
+    const last = await repoA.sendMessage(channel.id, { text: "doomed", userId: user.id });
+
+    // What FR-MSG-08 will do when it exists.
+    await db.execute(
+      sql`UPDATE messages SET text = NULL, deleted_at = now() WHERE id = ${last.id}`,
+    );
+
+    const { rows } = await repoA.listChannelsForUser(user.id, { limit: 10 });
+    const row = rows.find((r) => r.external_id === "tombstoned")!;
+
+    // THE ROW AT `last_sequence`, NOT THE LAST ROW WITH TEXT. Walking back would be a
+    // second query per channel and would disagree with the count beside it.
+    expect(row.last_message?.sequence).toBe(last.seq);
+    expect(row.last_message?.text).toBeNull();
+    expect(row.last_message?.user).not.toBeNull();
+
+    // AND THE APPROXIMATION FR-016 REQUIRES BE STATED (T124): a deleted message still
+    // counts as one unread, because a tombstone keeps its sequence and therefore its
+    // place in the arithmetic. Counting rows instead would make a deleted message stop
+    // being unread, at 10x the cost on the query a client runs to render its first
+    // screen.
+    expect(row.unread).toBe(2);
+  });
+
+  it("reports null for a channel that has never had a message", async () => {
+    const user = await repoA.createUser("empty-reader", "Empty Reader");
+    const channel = await repoA.createChannel("never-used", "public");
+    await repoA.addMember(channel.id, user.id);
+    const { rows } = await repoA.listChannelsForUser(user.id, { limit: 10 });
+    const row = rows.find((r) => r.external_id === "never-used")!;
+    // DISTINCT FROM A TOMBSTONE. `last_sequence` is 0, no row carries sequence 0, so the
+    // subquery finds nothing — where a tombstone IS a row and reports itself with a null
+    // text. A client can tell "no messages" from "the last one was deleted".
+    expect(row.last_message).toBeNull();
+    expect(row.unread).toBe(0);
+  });
+
+  // ── T127: the clamp's arm ───────────────────────────────────────────────────
+  it("clamps a read position above the channel's end to zero rather than negative", async () => {
+    const user = await repoA.createUser("clamp-reader", "Clamp Reader");
+    const channel = await repoA.createChannel("clamped", "public");
+    await repoA.addMember(channel.id, user.id);
+    await repoA.sendMessage(channel.id, { text: "one", userId: user.id });
+
+    // `setReadPosition` REFUSES THIS, which is why the arm needs planting. The clamp is
+    // defence against a bug — a position past `last_sequence` cannot be written and
+    // `last_sequence` never goes backwards — so this is the only way the branch is ever
+    // covered. Chapter 3.12 found three instruments that had never produced output for
+    // exactly this reason.
+    expect(await repoA.setReadPosition(channel.id, user.id, 99)).toBeNull();
+    await db.execute(
+      sql`INSERT INTO read_positions (environment_id, channel_id, user_id, sequence)
+          SELECT environment_id, ${channel.id}, ${user.id}, 99 FROM channels WHERE id = ${channel.id}
+          ON CONFLICT (channel_id, user_id) DO UPDATE SET sequence = 99`,
+    );
+
+    const { rows } = await repoA.listChannelsForUser(user.id, { limit: 10 });
+    expect(rows.find((r) => r.external_id === "clamped")!.unread).toBe(0);
+  });
+});
