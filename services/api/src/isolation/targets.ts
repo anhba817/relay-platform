@@ -22,12 +22,29 @@ export type Shape = "read" | "write" | "credential" | "list" | "exempt";
 
 /** Which credential class the route accepts, and therefore which attack applies.
  *
- * A `write` shape alone cannot tell these apart. A route taking an end-user token is
- * already scoped to one environment, so the attack is a FOREIGN CREDENTIAL. A route
- * taking an application key is scoped too, but by a different resolution — and a route
- * that accepts either is attacked as both, which is why `either` is a class rather
- * than a shrug. */
-export type CredentialClass = "application" | "user" | "either" | "none";
+ * NOT IN `data-model.md` §2, and added here because T031 and T031a need it. The
+ * internal surface is two credential classes: three routes take an end-user token,
+ * which IS scoped to one environment, so a foreign credential is the attack; five
+ * take a platform credential, which carries no environment, so the attack is a
+ * request naming one environment with an identifier from another. A `write` shape
+ * alone cannot tell those apart, and an earlier draft of this chapter gave all
+ * eight the platform attack (research R5). */
+/** And `"either"`, added by the channel-control chapter for the first route that genuinely takes both
+ * (FR-017's read position: a user records their own, and the tenant records one for the
+ * user it names). Recording it as `"user"` alone would understate which attacks apply —
+ * both do, and `PUT /v1/users/:externalId/channels/:channelId/read` is attacked with a
+ * user token in the gauntlet's same-tenant block and with a tenant credential in T082a's
+ * two-identifier pair.
+ *
+ * This field is documentation for which attack applies, not part of the match:
+ * `targetKey` is method and path. So a wrong value here misleads a reader rather than
+ * letting a route through unattacked — which is why the value is stated exactly. */
+export type CredentialClass =
+  | "application"
+  | "user"
+  | "either"
+  | "platform"
+  | "none";
 
 interface Classified {
   method: string;
@@ -109,6 +126,20 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     path: "/v1/users/:externalId/channels",
     accepts: "application",
     shape: "list",
+  },
+
+  // The route that names TWO tenant-owned identifiers, which is why
+  // T082a attacks it both ways round: a foreign user with an own channel and an own
+  // user with a foreign channel are different code paths, and one scoped read can mask
+  // the other.
+  //
+  // `either` because a user records their own position and the tenant records one for
+  // the user it names — the only route on the users controller that takes both.
+  {
+    method: "PUT",
+    path: "/v1/users/:externalId/channels/:channelId/read",
+    accepts: "either",
+    shape: "write",
   },
 
   // ── read ────────────────────────────────────────────────────────────────────

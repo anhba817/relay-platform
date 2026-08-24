@@ -319,6 +319,21 @@ describe("the isolation gauntlet", () => {
       ["read history", "GET", (c) => `/v1/channels/${c}/messages?limit=10`],
       ["send", "POST", (c) => `/v1/channels/${c}/messages`, { text: "not mine" }],
       ["join", "POST", (c) => `/v1/channels/${c}/join`],
+      // THE FIFTH VERB (SC-001a, THE CHANNEL-CONTROL CHAPTER'S T121a). Its route is built in the
+      // unread-count phase rather than with the other four, so it joins the oracle
+      // here — the verb list is the authority and the count of verbs is not written
+      // down anywhere, which is the fix for a number that went three, then four,
+      // then five while its verification task stayed at three.
+      //
+      // THE USER IN THE PATH IS THE STRANGER'S OWN EXTERNAL ID. Under a user token the
+      // route's subject and the path's user are the same person, so this attacks the
+      // channel and nothing else — a mismatched pair is a different test (T082a).
+      [
+        "set a read position",
+        "PUT",
+        (c) => `/v1/users/${same.stranger.externalId}/channels/${c}/read`,
+        { sequence: 0 },
+      ],
     ];
 
     for (const [name, method, path, body] of verbs) {
@@ -473,6 +488,38 @@ describe("the isolation gauntlet", () => {
         expect(verdict.stateChanged, "the victim's channel or members moved").toBe(false);
       });
     }
+  });
+
+  // ── the read position: `either`, so it is attacked as both ──────────────────────
+  //
+  // The first route on the users controller that genuinely takes both credential
+  // classes — a user records their own position, and the tenant records one for the
+  // user it names — so `accepts: "either"` is a statement about which attacks apply
+  // rather than a shrug. Both do.
+  //
+  // AND THE VICTIM'S STATE IS ITS UNREAD COUNT, read through the listing. There is no
+  // getter for a read position, and adding one for a test would be a method the
+  // product does not need; the count is what the position is FOR, and a write that
+  // moved somebody else's position shows up there.
+  it("PUT .../channels/:channelId/read — a foreign channel changes no position", async () => {
+    attacked.add("PUT /v1/users/:externalId/channels/:channelId/read");
+    const verdict = await writeAttack(
+      url,
+      t.attacker.credential,
+      {
+        method: "PUT",
+        path: `/v1/users/${t.victim.userExternalId}/channels/${t.victim.channelId}/read`,
+        body: { sequence: 1 },
+      },
+      {
+        method: "PUT",
+        path: `/v1/users/${t.victim.userExternalId}/channels/${ABSENT_UUID}/read`,
+        body: { sequence: 1 },
+      },
+      () => t.victim.repo.listChannelsForUser(t.victim.userId, { limit: 50 }),
+    );
+    expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+    expect(verdict.stateChanged, "the victim's unread count moved").toBe(false);
   });
 
   // ── list: the shape whose refusal is an EMPTY page ──────────────────────────────
