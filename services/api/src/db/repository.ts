@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, gt, lt, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "./client";
 import {
@@ -799,6 +799,72 @@ export class Repository {
         ),
       );
     return existing.length > 0 ? "already_a_member" : "not_found";
+  }
+
+  /** Remove members by user id, up to a hundred in one call, reporting each
+   * (FR-006, FR-007, FR-008).
+   *
+   * BULK, BECAUSE THE REQUIREMENT ALWAYS WAS. FR-006 says "up to 100 in one
+   * request" and FR-007 says the result is reported per user — which is chapter
+   * the endpoints chapter's `addMembers` shape in both halves. `contracts/membership.md` specified a
+   * single-user `DELETE …/members/:userExternalId` for ten analysis passes, having
+   * read "the shape the channel-endpoints chapter chose" as *named outcomes* and dropped *bulk*.
+   * Every pass compared requirements to tasks, both said "removal", and identifier
+   * coverage read 100% the whole time.
+   *
+   * NO MESSAGES ARE TOUCHED (FR-008). The removed user's messages stay in history
+   * attributed to them: `messages.user_id` still points at a row that still exists,
+   * and their socket stops receiving the channel on its next resume because the
+   * session is built from `members`.
+   *
+   * NO READ POSITION TO REMOVE YET, AND THAT IS AN OBLIGATION AND NOT A GAP.
+   * `read_positions` is per-member state keyed by `(channel_id, user_id)`, so
+   * leaving a removed member's row would leave a non-member's position in a
+   * per-member table. The table arrives in the next chapter, and the delete has to
+   * arrive with it — this comment is here so that the chapter which creates the
+   * table finds the requirement rather than deducing it. `channels.itest.ts` gets
+   * the case in the same edit.
+   * SCOPED THROUGH THE CHANNEL, and the caller has already read it scoped. `members`
+   * carries no `environment_id` — the catalogue calls it a `hop` — so the join is
+   * what keeps a foreign channel's rows out of reach.
+   */
+  async removeMembers(
+    channelId: string,
+    userIds: string[],
+  ): Promise<Map<string, "removed" | "not_a_member">> {
+    const outcome = new Map<string, "removed" | "not_a_member">();
+    if (userIds.length === 0) return outcome;
+
+    // ONE STATEMENT FOR THE BATCH, and `inArray` rather than a built string.
+    //
+    // The first draft of this method interpolated the ids into raw SQL with
+    // `sql.raw(\`ARRAY['${'${'}userIds.join("','")}']::uuid[]\`)`. It typechecked and it
+    // would have worked, and it is an injection hole in the one layer that must not
+    // have one: these ids arrive in a request body. `inArray` parameterises, which
+    // is the only reason to reach for the query builder over a template here.
+    //
+    // A hundred round trips to answer one request is the cost chapter 2.4 measured
+    // away on the read path; there is no reason to reintroduce it on this one.
+    const deleted = await this.db
+      .delete(members)
+      .where(
+        and(
+          eq(members.channelId, channelId),
+          inArray(members.userId, userIds),
+          // The channel scoped, in the same statement. `members` carries no
+          // `environment_id` — the catalogue calls it a `hop` — so this EXISTS is
+          // what keeps another tenant's rows out of reach.
+          sql`EXISTS (SELECT 1 FROM channels c WHERE c.id = ${channelId}
+                       AND c.environment_id = ${this.environmentId})`,
+        ),
+      )
+      .returning({ userId: members.userId });
+    const removed = new Set(deleted.map((r) => r.userId));
+
+    for (const id of userIds) {
+      outcome.set(id, removed.has(id) ? "removed" : "not_a_member");
+    }
+    return outcome;
   }
 
   /** How many members a channel holds, scoped — FR-CHN-07's ceiling is checked

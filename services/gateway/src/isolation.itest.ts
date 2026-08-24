@@ -226,6 +226,62 @@ describe("the socket refuses another tenant's identifiers", () => {
     expect(after).not.toContain(text);
   });
 
+  // ── A REMOVED MEMBER'S RECONNECTION (SC-004) ────────────────────────────────
+  //
+  // T058. The session is built from `members` — `channelsForUser` selects from that
+  // table, and `repository.backfill` joins it per cursor — so removal takes the
+  // channel out of the next session without the gateway knowing anything about
+  // removal.
+  //
+  // ASSERTED ON THE ACCEPTED CURSOR, and the two attempts before this one are worth
+  // recording because both were unfalsifiable:
+  //
+  //   1. Looking for the channel id in `connection.ack`'s payload. That frame carries
+  //      `user`, `cursor`, `resume_ok`, `truncated` and no channel list.
+  //   2. Sending a message and waiting for `message.created`. **This suite attaches
+  //      no fan-out** — `attachSessions({server, api, logger})` passes none, so
+  //      `fanout?.publish` is a no-op and nothing is ever delivered here. The control
+  //      hung for five seconds and timed out.
+  //
+  // The ack's `cursor` is what the server ACCEPTED, so it is the one place the
+  // session's membership decision is visible from outside. The control below shows a
+  // member's cursor being accepted, which is what makes the removal assertion mean
+  // something.
+  it("a removed member's resume cursor is no longer accepted", async () => {
+    // A CONTROL AND THE CASE, in that order, on one fixture. Asserting only that a
+    // removed member's cursor is refused would pass against a server that accepts no
+    // cursor at all — so the same token presents the same cursor twice, and the
+    // difference between the two acks is the whole assertion.
+    await t.attacker.say(`before removal ${randomUUID()}`);
+
+    const asMember = new WebSocket(
+      `${url}/v1/ws?token=${t.attacker.token}&cursor=${t.attacker.channelId}:0`,
+    );
+    const first = await firstFrame(asMember, "connection.ack");
+    const beforeCursor = (first.payload as { cursor?: Record<string, number> }).cursor ?? {};
+    expect(Object.keys(beforeCursor)).toContain(t.attacker.channelId);
+    asMember.close();
+
+    // Through the PUBLIC ROUTE, so the test asserts the consequence of the API rather
+    // than of a direct write — a repository call would prove the session reads
+    // `members` and nothing about whether the endpoint gets there.
+    await t.attacker.removeSelf();
+
+    const afterRemoval = new WebSocket(
+      `${url}/v1/ws?token=${t.attacker.token}&cursor=${t.attacker.channelId}:0`,
+    );
+    const frames = collect(afterRemoval);
+    const second = await firstFrame(afterRemoval, "connection.ack");
+    const afterCursor = (second.payload as { cursor?: Record<string, number> }).cursor ?? {};
+    expect(Object.keys(afterCursor)).not.toContain(t.attacker.channelId);
+
+    // And nothing is backfilled from it either. The ack's cursor is what the server
+    // ACCEPTED; this is what it DELIVERED, and the two can disagree.
+    await quiet(1_000);
+    expect(frames().filter((f) => f.type === "message.created")).toEqual([]);
+    afterRemoval.close();
+  });
+
   // ── T047: the resume ───────────────────────────────────────────────────────
   it("a cursor naming the other tenant's channel backfills nothing", async () => {
     // Something to backfill, planted before the socket opens — a resume that finds an

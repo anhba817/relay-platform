@@ -57,9 +57,21 @@ export const addMembersBodySchema = z.strictObject({
   user_ids: z.array(z.string().min(1).max(255)).min(1).max(100),
 });
 
+/** FR-006's page: at most 100 users in one removal, the same bound as the add.
+ *
+ * THE SAME NUMBER FOR THE SAME REASON, not by symmetry. Both routes take a list a
+ * customer's server assembled, and a bound that differed between them would be two
+ * numbers to remember for one concept. `strictObject`, so a misspelled key is a
+ * refusal rather than a silently ignored typo. */
+export const removeMembersBodySchema = z.strictObject({
+  user_ids: z.array(z.string().min(1).max(255)).min(1).max(100),
+});
+
 export type AddMembersBody = z.infer<typeof addMembersBodySchema>;
 
 /** FR-CHN-07. A structural limit on one channel, not a monthly quota — see
  * `channel_member_limit_exceeded` in the registry for why it is not
  * `quota_exceeded`. */
 export const CHANNEL_MEMBER_LIMIT = 1000;
+
+export type RemoveMembersBody = z.infer<typeof removeMembersBodySchema>;
