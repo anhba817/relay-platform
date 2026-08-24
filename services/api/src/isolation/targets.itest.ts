@@ -147,6 +147,8 @@ describe("the gauntlet's target list derives from the running application", () =
       "PUT /v1/users/:externalId/channels/:channelId/read",
       "GET /v1/users/:externalId",
       "PATCH /v1/users/:externalId",
+      "POST /v1/users",
+      "DELETE /v1/users/:externalId",
     ];
     const keys = derived.map(targetKey);
     const missing = ADDED.filter((k) => !keys.includes(k));

@@ -490,6 +490,79 @@ describe("the isolation gauntlet", () => {
     }
   });
 
+  // ── bulk upsert and deletion: A ROUTE THAT ECHOES ITS INPUT HAS NO PAIR ─────────
+  //
+  // Both of these were written as `writeAttack` and both failed, correctly:
+  //
+  //     body {"data":[{"external_id":"victim-…-user","status":"created",…}]}  (foreign)
+  //     vs   {"data":[{"external_id":"absent-0000…","status":"created",…}]}  (absent)
+  //
+  // The pair every other attack asserts — the foreign identifier and one that exists
+  // nowhere must be indistinguishable — cannot hold here, because the response
+  // ECHOES the identifier it was given. The two answers differ by construction, in
+  // the one field the request chose, and no amount of correct scoping changes that.
+  //
+  // THIS IS A THIRD DISTINCTION IN THE SHAPE TAXONOMY, after `list`. A `write` shape
+  // presumes a pair; a route whose body reflects its input can only be checked
+  // against the victim's state. `POST /v1/users` also takes its identifiers in the
+  // BODY rather than the path, so there is no foreign id in a URL to compare at all.
+  //
+  // So these two assert the half that carries the property: the victim's row, read
+  // before and after, through the victim's own repository.
+  it("POST /v1/users — a foreign external id creates in the caller's tenant only", async () => {
+    attacked.add("POST /v1/users");
+    const before = await t.victim.repo.getUserByExternalId(t.victim.userExternalId);
+    const res = await fetch(`${url}/v1/users`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${t.attacker.credential}`,
+      },
+      body: JSON.stringify({ users: [{ external_id: t.victim.userExternalId }] }),
+    });
+    // A SUCCESS IS THE EXPECTED ANSWER, and that is the point. The id is a string in
+    // the caller's own namespace: two tenants may both have a user called `alice`,
+    // and `(environment_id, external_id)` is what keeps them apart. The upsert
+    // SHOULD succeed — in the attacker's environment.
+    expect(res.status).toBe(200);
+    const after = await t.victim.repo.getUserByExternalId(t.victim.userExternalId);
+    expect(after, "the victim's user row moved").toEqual(before);
+  });
+
+  it("DELETE /v1/users/:externalId — the same id in two tenants deletes one", async () => {
+    attacked.add("DELETE /v1/users/:externalId");
+    // THE COLLISION, MADE EXPLICIT AND OWNED BY THIS TEST. The first version presented
+    // the victim's id and expected a 404 — and got a 200, because the upsert test above
+    // had just created that id in the attacker's environment. A test that depends on a
+    // sibling's side effect is the shared-fixture mutation this suite keeps finding.
+    //
+    // So the collision is seeded here: both tenants hold a user with the SAME external
+    // id, which is legal — `(environment_id, external_id)` is the uniqueness — and the
+    // delete then has two candidate rows and must choose by credential. That is a
+    // stronger attack than a foreign id with no local twin, because a scoping bug and a
+    // correct answer are the same status code.
+    const shared = t.victim.userExternalId;
+    await t.attacker.repo.createUser(shared, "the attacker's own");
+
+    const before = await t.victim.repo.getUserByExternalId(shared);
+    const res = await fetch(`${url}/v1/users/${shared}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${t.attacker.credential}` },
+    });
+    expect(res.status).toBe(200);
+
+    // DELETION SETS `deleted_at` AND CLEARS THE PROFILE — the row stays. So its
+    // EXISTENCE proves nothing and the comparison has to be on the whole row.
+    const after = await t.victim.repo.getUserByExternalId(shared);
+    expect(after, "the victim's user row moved").toEqual(before);
+    expect(after?.deleted_at ?? null, "the victim's user was marked deleted").toBeNull();
+
+    // And the attacker's own row IS deleted, which is what makes the assertion above
+    // about scoping rather than about the delete failing altogether.
+    const mine = await t.attacker.repo.getUserByExternalId(shared);
+    expect(mine?.deleted_at ?? null, "the caller's own user was not deleted").not.toBeNull();
+  });
+
   // ── the profile: a read pair and a write pair over the same path ────────────────
   //
   // Two routes on one path, and they take different attacks: `GET` is a read pair —
