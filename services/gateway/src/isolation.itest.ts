@@ -420,6 +420,36 @@ describe("the socket gauntlet", () => {
     expect(client.frames().filter((f) => f.type === "message.created")).toEqual([]);
   });
 
+  // ── THE SAME-TENANT NON-MEMBER, ON THE SOCKET (chapter 3.15, T087) ─────────
+  //
+  // The protocol's frame union has exactly one inbound member — `message.send` —
+  // so there is no "subscribe" frame to attack: what a socket may see is decided at
+  // connect, from the session's channel list, and a cursor is the only thing a
+  // client gets to assert about it. So the socket's version of "a non-member
+  // reaches a private channel" is a cursor naming one.
+  //
+  // The tenant's own user is not a member of the tenant's own private channel —
+  // `seedSocketTenants` creates it and adds nobody — which makes this the
+  // same-tenant case rather than the cross-tenant one every other attack here uses.
+  it("a same-tenant non-member's cursor for a private channel is not accepted", async () => {
+    const client = connect(
+      tenants.attacker.token,
+      `&cursor=${tenants.attacker.privateChannelId}:0`,
+    );
+    const ack = await client.waitFor<{
+      payload: { cursor: Record<string, number> };
+    }>("connection.ack");
+    expect(Object.keys(ack.payload.cursor)).not.toContain(
+      tenants.attacker.privateChannelId,
+    );
+
+    // The control is two tests up: the SAME token's cursor for a channel it IS a
+    // member of gets accepted. Without that, an empty cursor set here would pass
+    // whether the session was scoped or simply broken.
+    await quiet(1_000);
+    expect(client.frames().filter((f) => f.type === "message.created")).toEqual([]);
+  });
+
   // ── T048: the subscribe ────────────────────────────────────────────────────
   it("nothing from the other tenant's channel is delivered", async () => {
     const client = connect(tenants.attacker.token);

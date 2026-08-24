@@ -104,4 +104,31 @@ describe("the gauntlet's target list derives from the running application", () =
     );
     expect(attacked + exempt).toBe(derived.length);
   });
+
+  // ── SC-014: THE COUNT MOVED BY EXACTLY WHAT THIS FEATURE ADDS ──────────────
+  //
+  // Chapter 3.12 closed at **24** derived targets, recorded in
+  // `specs/033-chapter-3-12/baseline.txt` and re-measured at the start of this
+  // feature (T008). Chapters 3.15 and 3.16 add fourteen routes, so the closing
+  // number is 38.
+  //
+  // A NUMBER RATHER THAN A DELTA, because a delta cannot fail: `after - before`
+  // computed from the same run is an identity. This is the figure a reader can
+  // check against the route table, and the route table lists which fourteen.
+  it("has grown from chapter 3.12's 24 by exactly the routes this feature adds", () => {
+    // The routes built so far. This assertion moves ONE line per phase, which is
+    // the point: a phase that adds a route and forgets to classify it fails the
+    // test above, and a phase that adds a route nobody planned fails this one.
+    const BUILT_SO_FAR = 6;
+    expect(derived.length).toBe(24 + BUILT_SO_FAR);
+  });
+
+  it("leaves nothing exempt by omission (FR-033a)", () => {
+    // Every exempt entry carries a reason — asserted above — and every DERIVED
+    // target matches an entry. What this adds is the direction that catches a route
+    // quietly dropped from the classification list: the entry count and the derived
+    // count are the same number, so a deletion here fails rather than reducing
+    // coverage silently.
+    expect(CLASSIFICATIONS.length).toBe(derived.length);
+  });
 });
