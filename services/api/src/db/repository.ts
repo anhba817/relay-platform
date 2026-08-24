@@ -568,6 +568,11 @@ export interface UserRow {
    * because every caller that wants a profile wants all of it. */
   avatar_url: string | null;
   metadata: Record<string, unknown>;
+  /** FR-031. Read on the send path and at connect. Like `deleted_at`, it
+   * is selected rather than filtered so a caller can tell the states apart — a
+   * repository that hid banned users would make the ban unobservable and the refusal
+   * untestable. */
+  banned_at: string | null;
   /** FR-017. A deleted user KEEPS THEIR ROW: `ON DELETE SET NULL` on
    * `messages.user_id` would satisfy the letter of "messages are preserved" and break
    * delivery, because `backfill.controller`'s `toFrame` drops a senderless row — so
@@ -649,6 +654,19 @@ export class ChannelArchivedError extends Error {
   }
 }
 
+/** A write or a connect refused because the user is banned (FR-031).
+ *
+ * FIRST IN FR-021a's ORDER, and the ban check runs BEFORE the channel is read at all —
+ * so a banned user gets one answer for every channel id, whether it exists, belongs to
+ * somebody else, or was invented. Any other position leaks: check the channel first and
+ * a banned user learns which channel ids are real. */
+export class UserBannedError extends Error {
+  constructor(public readonly userId: string) {
+    super(`user banned: ${userId}`);
+    this.name = "UserBannedError";
+  }
+}
+
 /** Timestamps cross the wire as RFC 3339 strings (constitution: UTC,
  * millisecond precision) — the driver hands back a Date or a string
  * depending on the column and the query shape. */
@@ -688,6 +706,7 @@ export class Repository {
         display_name: displayName ?? null,
         avatar_url: null,
         metadata: {},
+        banned_at: null,
         deleted_at: null,
       };
     }
@@ -707,6 +726,7 @@ export class Repository {
         display_name: users.displayName,
         avatar_url: users.avatarUrl,
         metadata: users.metadata,
+        bannedAt: users.bannedAt,
         deletedAt: users.deletedAt,
       })
       .from(users)
@@ -725,6 +745,7 @@ export class Repository {
           display_name: row.display_name,
           avatar_url: row.avatar_url,
           metadata: (row.metadata ?? {}) as Record<string, unknown>,
+          banned_at: row.bannedAt === null ? null : toIso(row.bannedAt),
           deleted_at: row.deletedAt === null ? null : toIso(row.deletedAt),
         };
   }
@@ -1142,6 +1163,7 @@ export class Repository {
           display_name: profile.display_name ?? null,
           avatar_url: profile.avatar_url ?? null,
           metadata: profile.metadata ?? {},
+          banned_at: null,
           deleted_at: null,
         },
         status: "created",
@@ -1181,6 +1203,44 @@ export class Repository {
     const after = await this.getUserByExternalId(externalId);
     if (after === null) throw new Error(`user ${externalId} vanished mid-upsert`);
     return { user: after, status: revived ? "revived" : "updated" };
+  }
+
+  /** Ban and unban a user, tenant-wide (FR-031, FR-032).
+   *
+   * TENANT-SCOPED AND NOT A REMOVAL. A ban stops the user connecting and sending
+   * anywhere in the environment; it takes no membership away and hides no history. So
+   * banning a member of a private channel leaves them a member — the channel's other
+   * members still see their messages, and lifting the ban restores everything without
+   * anybody being re-added. `deleteUser` is the operation that removes memberships, and
+   * these two are deliberately not it.
+   *
+   * IDEMPOTENT, both directions, and neither reports which happened. Unlike the deletion,
+   * nothing downstream needs to tell "banned now" from "was already banned": the route
+   * answers 200 either way because the caller's intent — this user must not connect — is
+   * satisfied either way.
+   *
+   * `banned_at` HAD NO WRITER, the same omission `channels.archived_at` had. The column
+   * has been in the schema since chapter 2.1 with zero references outside tests. */
+  async banUser(userId: string): Promise<void> {
+    await this.db
+      .update(users)
+      .set({ bannedAt: new Date() })
+      .where(
+        and(
+          eq(users.id, userId),
+          eq(users.environmentId, this.environmentId),
+          isNull(users.bannedAt),
+        ),
+      );
+  }
+
+  async unbanUser(userId: string): Promise<void> {
+    await this.db
+      .update(users)
+      .set({ bannedAt: null })
+      .where(
+        and(eq(users.id, userId), eq(users.environmentId, this.environmentId)),
+      );
   }
 
   /** Delete a user, keeping the row (FR-027, FR-028, FR-029).
@@ -1574,6 +1634,30 @@ export class Repository {
     },
   ): Promise<MessageRow> {
     return this.db.transaction(async (tx) => {
+
+      // ── THE BAN, FIRST, AND AHEAD OF THE CHANNEL READ (FR-031, FR-021a) ─────
+      //
+      // T072 left this slot and only Phase 15 can fill it, because until now nothing
+      // wrote `banned_at`. The position is the requirement: **before the channel is
+      // resolved**, so a banned user gets one answer for every channel id — real,
+      // foreign or invented. Put it after the channel read and the refusal for a
+      // channel that exists differs from the refusal for one that does not, and a
+      // banned user can enumerate channel ids.
+      //
+      // ONLY FOR AN ATTRIBUTED SEND. A key-authenticated REST send carries no user, so
+      // there is nobody to be banned; the tenant acting for itself is not a banned
+      // user's send by proxy, because the tenant is who bans.
+      if (userId !== undefined) {
+        const [sender] = await tx
+          .select({ bannedAt: users.bannedAt })
+          .from(users)
+          .where(
+            and(eq(users.id, userId), eq(users.environmentId, this.environmentId)),
+          )
+          .limit(1);
+        if (sender?.bannedAt != null) throw new UserBannedError(userId);
+      }
+
       const [channel] = await tx
         .select({
           id: channels.id,

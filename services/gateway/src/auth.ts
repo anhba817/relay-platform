@@ -29,7 +29,13 @@ export type { Identity } from "./api-client.js";
 export type Authentication =
   | { outcome: "ok"; identity: Identity; channelIds: string[] }
   | { outcome: "refused" }
-  | { outcome: "unavailable"; error: string };
+  | { outcome: "unavailable"; error: string }
+  /** FR-031. The api answered, the token is perfectly good, and the user is banned in
+   * this environment. Its own outcome and its own close code (4003), not a reuse of
+   * `refused`: 4001 means "your credential is bad", which a client acts on by
+   * re-authenticating — and re-authenticating succeeds and connects to the same
+   * refusal. A client that cannot tell those apart retries for ever. */
+  | { outcome: "banned" };
 
 export async function authenticate(
   api: ApiClient,
@@ -42,6 +48,12 @@ export async function authenticate(
     // malformed, mis-signed, for another environment, over-long — arrives here
     // as one outcome, because the socket has one close code for all of them.
     if (session === null) return { outcome: "refused" };
+    // A quota refusal is not a credential refusal: the token is perfectly good
+    // and the month is not.
+    // A BAN IS NOT A CREDENTIAL REFUSAL EITHER. The api read `users.banned_at` and put a
+    // boolean on this response; the gateway has no database and does not need one to
+    // enforce it.
+    if (session.banned) return { outcome: "banned" };
     return {
       outcome: "ok",
       identity: {

@@ -117,6 +117,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // The api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
       }),
       backfill: async () => {
@@ -148,6 +151,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // The api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
       }),
       backfill: async () => {
@@ -173,6 +179,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // The api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
       }),
       backfill: async () => ({
@@ -216,6 +225,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // The api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
       }),
       backfill: async () => ({
@@ -252,6 +264,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // The api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
       }),
       backfill: async () => ({
@@ -288,6 +303,9 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
+        // The api now reports whether the user is banned, and a stub
+        // that does not say is a stub that has not thought about it.
+        banned: false,
         channel_ids: [CHANNEL],
       }),
       backfill: async () => {

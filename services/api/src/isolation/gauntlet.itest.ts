@@ -361,6 +361,54 @@ describe("the isolation gauntlet", () => {
       expect(body.messages.some((m) => m.text === "not mine")).toBe(false);
     });
 
+    // ── T155a: THE BAN'S OWN PAIR (FR-021a, FR-031) ──────────────────────────
+    //
+    // T072 left the slot and only Phase 15 could fill it, because until then nothing
+    // wrote `banned_at`. The ban check runs **before the channel is read**, which is what
+    // this pair asserts: a banned user gets `user_banned` for a channel that exists and
+    // for one that does not, and the two answers are byte-identical.
+    //
+    // ANY OTHER POSITION LEAKS. Check the channel first and the refusal for a real
+    // channel differs from the refusal for an invented one — so a banned user can
+    // enumerate channel ids by watching which refusal comes back. That is the same defect
+    // as the archived-channel leak one requirement over, and this is the half of FR-021a
+    // that could not be tested until now.
+    describe("a banned user gets one answer for every channel id", () => {
+      it("refuses a real channel and an invented one identically", async () => {
+        await fetch(`${url}/v1/users/${same.stranger.externalId}/ban`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${same.credential}` },
+        });
+        try {
+          const real = await asUser(
+            same.stranger.token,
+            "POST",
+            `/v1/channels/${same.publicChannelId}/messages`,
+            { text: "banned but real" },
+          );
+          const invented = await asUser(
+            same.stranger.token,
+            "POST",
+            `/v1/channels/${nowhereId()}/messages`,
+            { text: "banned and invented" },
+          );
+          expect(real.status).toBe(403);
+          expect(invented.status).toBe(403);
+          const a = withoutRequestId(await real.json());
+          const b = withoutRequestId(await invented.json());
+          expect(a).toEqual(b);
+          expect((a as { code: string }).code).toBe("user_banned");
+        } finally {
+          // Unbanned in a `finally`, because every other test in this block uses the
+          // same stranger and a leaked ban would turn their refusals into this one.
+          await fetch(`${url}/v1/users/${same.stranger.externalId}/ban`, {
+            method: "DELETE",
+            headers: { authorization: `Bearer ${same.credential}` },
+          });
+        }
+      });
+    });
+
     it("a PUBLIC channel of the same tenant is open to the same non-member (FR-004)", async () => {
       // The other half of what makes `channels.type` decide something. If both types
       // refused, the column would still be deciding nothing.
@@ -489,6 +537,32 @@ describe("the isolation gauntlet", () => {
       });
     }
   });
+
+  // ── the ban: a write whose effect is a refusal somewhere else ───────────────────
+  //
+  // A ban is the first state on this platform whose whole purpose is to change what a
+  // DIFFERENT request does. So the victim's state to read is not a row that looks
+  // different — it is `banned_at`, and the assertion is that the caller's ban did not
+  // land on somebody else's user.
+  //
+  // BOTH DIRECTIONS OF THE VERB, because an unban is a write too and the route pair is
+  // the same shape. A scoping bug that could ban across tenants can unban across them,
+  // and the second is worse: it removes a refusal the customer asked for.
+  for (const [verb, method] of [["ban", "POST"], ["unban", "DELETE"]] as const) {
+    it(`${verb}: a foreign user's banned_at does not move`, async () => {
+      attacked.add(`${method} /v1/users/:externalId/ban`);
+      const before = await t.victim.repo.getUserByExternalId(t.victim.userExternalId);
+      const res = await fetch(
+        `${url}/v1/users/${t.victim.userExternalId}/ban`,
+        { method, headers: { authorization: `Bearer ${t.attacker.credential}` } },
+      );
+      // 404, because the user is named in the path and there is no such user in the
+      // caller's environment. The status is the easy half.
+      expect(res.status).toBe(404);
+      const after = await t.victim.repo.getUserByExternalId(t.victim.userExternalId);
+      expect(after, `the victim's user row moved on ${verb}`).toEqual(before);
+    });
+  }
 
   // ── bulk upsert and deletion: A ROUTE THAT ECHOES ITS INPUT HAS NO PAIR ─────────
   //

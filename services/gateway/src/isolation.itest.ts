@@ -40,39 +40,100 @@ function declaredFrameTypes(): string[] {
   return types;
 }
 
-async function closeCode(socket: WebSocket): Promise<number> {
-  return new Promise((resolve, reject) => {
-    socket.on("close", (code) => resolve(code));
-    socket.on("error", () => undefined);
-    setTimeout(() => reject(new Error("no close within 5s")), 5_000);
-  });
+/** A SOCKET WITH A BUFFER, and the buffer is the point.
+ *
+ * The obvious shape — await `open`, then attach a `message` listener, then read —
+ * loses the handshake. `connection.ack` is sent the moment the upgrade completes,
+ * and awaiting `open` yields to the event loop first: the frame arrives with no
+ * listener attached and is gone. Every test in this file that waited for a second
+ * frame timed out at exactly 5000ms until the listener moved to construction time.
+ *
+ * So frames are collected from the instant the socket exists, and `waitFor` reads
+ * the buffer before it waits. */
+interface Reader {
+  socket: WebSocket;
+  waitFor: <T = Record<string, unknown>>(type: string, timeoutMs?: number) => Promise<T>;
+  frames: () => { type: string }[];
+  opened: () => Promise<void>;
+  /** The close code, once it arrives (T151). Added because a refusal at
+   * connect IS a close code — the frame is only the explanation — and asserting the
+   * frame alone would pass whether the socket closed 4003, 4001 or not at all. */
+  closedWith: (timeoutMs?: number) => Promise<number>;
 }
 
-async function firstFrame(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    socket.on("message", (raw) => {
-      const frame = JSON.parse(raw.toString()) as Record<string, unknown>;
-      if (frame.type === type) resolve(frame);
+function read(socket: WebSocket): Reader {
+  const buffer: { type: string }[] = [];
+  let closed: number | null = null;
+  socket.on("message", (raw) => buffer.push(JSON.parse(raw.toString()) as { type: string }));
+  socket.on("close", (code) => {
+    closed = code;
+  });
+  socket.on("error", () => undefined);
+
+  const opened = () =>
+    new Promise<void>((resolve, reject) => {
+      if (socket.readyState === WebSocket.OPEN) return resolve();
+      socket.on("open", () => resolve());
+      socket.on("close", (code) => reject(new Error(`closed ${code} before opening`)));
+      setTimeout(() => reject(new Error("socket never opened")), 5_000);
     });
-    socket.on("close", (code) => reject(new Error(`closed ${code}`)));
-    setTimeout(() => reject(new Error(`no ${type} within 5s`)), 5_000);
-  });
-}
 
-/** ABSENCE NEEDS A DEADLINE RATHER THAN A RACE. `firstFrame` resolves on the frame it
- * is waiting for, which is the right shape for "this is refused" and no shape at all
- * for "nothing was delivered". This buffers everything a socket receives so a test can
- * wait a fixed window and then read what the buffer holds. */
-function collect(socket: WebSocket): () => Record<string, unknown>[] {
-  const frames: Record<string, unknown>[] = [];
-  socket.on("message", (raw) => {
-    frames.push(JSON.parse(raw.toString()) as Record<string, unknown>);
-  });
-  return () => [...frames];
+  const waitFor = async <T>(type: string, timeoutMs = 5_000): Promise<T> => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const found = buffer.find((f) => f.type === type);
+      if (found) return found as T;
+      if (closed !== null) throw new Error(`closed ${closed} before a ${type} arrived`);
+      if (Date.now() > deadline) {
+        throw new Error(
+          `no ${type} within ${timeoutMs}ms — saw ${buffer.map((f) => f.type).join(", ") || "nothing"}`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  };
+
+  const closedWith = async (timeoutMs = 5_000): Promise<number> => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (closed !== null) return closed;
+      if (Date.now() > deadline) throw new Error("socket never closed");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
+
+  return { socket, waitFor, frames: () => [...buffer], opened, closedWith };
 }
 
 async function quiet(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** OPEN AND BUFFER IN ONE STEP. Every socket in this file goes through here, because
+ * `read` has to attach its listener at construction time — the whole point of the
+ * buffer — and a `new WebSocket(…)` written inline is a socket whose handshake frame
+ * nobody is listening for. */
+/** EVERY SOCKET THIS FILE OPENS, so `afterAll` can close them.
+ *
+ * `server.close()` waits for its connections. A test that asserts a refusal has no
+ * reason to close the socket it was refused on, and fifteen tests leaving one open
+ * each made the teardown hook time out at 10s — with every test passing, which reads
+ * as a suite that works and a harness that does not. */
+const sockets: WebSocket[] = [];
+
+function connect(base: string, token: string, query = ""): Reader {
+  const socket = new WebSocket(`${base}/v1/ws?token=${token}${query}`);
+  sockets.push(socket);
+  return read(socket);
+}
+
+function closeAll(): void {
+  for (const socket of sockets) {
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+      socket.close();
+    }
+  }
+  sockets.length = 0;
 }
 
 describe("the socket refuses another tenant's identifiers", () => {
@@ -94,6 +155,9 @@ describe("the socket refuses another tenant's identifiers", () => {
   }, 90_000);
 
   afterAll(async () => {
+    // SOCKETS FIRST. `server.close()` waits for its connections, so a socket left
+    // open by a passing test is a teardown that hangs.
+    closeAll();
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     t?.stop();
   });
@@ -106,19 +170,19 @@ describe("the socket refuses another tenant's identifiers", () => {
   });
 
   it("a connection ack names nothing belonging to the other tenant", async () => {
-    const socket = new WebSocket(`${url}/v1/ws?token=${t.attacker.token}`);
-    const ack = await firstFrame(socket, "connection.ack");
+    const socket = connect(url, t.attacker.token);
+    const ack = await socket.waitFor("connection.ack");
     const serialised = JSON.stringify(ack);
     expect(serialised).not.toContain(t.victim.channelId);
     expect(serialised).not.toContain(t.victim.environmentId);
     expect(serialised).not.toContain(t.victim.userId);
-    socket.close();
+    socket.socket.close();
   }, 20_000);
 
   it("message.send to the other tenant's channel is refused", async () => {
-    const socket = new WebSocket(`${url}/v1/ws?token=${t.attacker.token}`);
-    await firstFrame(socket, "connection.ack");
-    socket.send(
+    const socket = connect(url, t.attacker.token);
+    await socket.waitFor("connection.ack");
+    socket.socket.send(
       JSON.stringify({
         type: "message.send",
         payload: {
@@ -128,14 +192,14 @@ describe("the socket refuses another tenant's identifiers", () => {
         },
       }),
     );
-    const error = await firstFrame(socket, "error");
+    const error = await socket.waitFor("error");
     const payload = error.payload as { code?: string; message?: string };
     // The refusal must not name what it refused. An error that echoes the channel id
     // back tells the attacker the channel exists, which is the leak the HTTP gauntlet
     // proves is absent on every route — the socket does not get an exemption.
     expect(JSON.stringify(payload)).not.toContain(t.victim.channelId);
     expect(payload.code).toBeTruthy();
-    socket.close();
+    socket.socket.close();
   }, 20_000);
 
   it("every declared frame type that is not message.send is refused inbound", async () => {
@@ -150,23 +214,23 @@ describe("the socket refuses another tenant's identifiers", () => {
     const inboundOnly = declaredFrameTypes().filter((type) => type !== "message.send");
     expect(inboundOnly.length).toBeGreaterThan(0);
     for (const type of inboundOnly) {
-      const socket = new WebSocket(`${url}/v1/ws?token=${t.attacker.token}`);
-      await firstFrame(socket, "connection.ack");
-      socket.send(JSON.stringify({ type, payload: {} }));
-      const error = await firstFrame(socket, "error");
+      const socket = connect(url, t.attacker.token);
+      await socket.waitFor("connection.ack");
+      socket.socket.send(JSON.stringify({ type, payload: {} }));
+      const error = await socket.waitFor("error");
       expect((error.payload as { code?: string }).code, `${type} was not refused`).toBeTruthy();
-      socket.close();
+      socket.socket.close();
     }
 
     // `message.ack` carries `{ seq }`, which is the easiest valid server frame to
     // build — so it is the one that proves the rule rather than the parser.
-    const socket = new WebSocket(`${url}/v1/ws?token=${t.attacker.token}`);
-    await firstFrame(socket, "connection.ack");
-    socket.send(JSON.stringify({ type: "message.ack", payload: { seq: 1 } }));
-    const error = await firstFrame(socket, "error");
+    const socket = connect(url, t.attacker.token);
+    await socket.waitFor("connection.ack");
+    socket.socket.send(JSON.stringify({ type: "message.ack", payload: { seq: 1 } }));
+    const error = await socket.waitFor("error");
     expect((error.payload as { code?: string }).code).toBe("unknown_frame_type");
     // A protocol violation closes the connection (EIR-WS-06's 4002).
-    await expect(closeCode(socket)).resolves.toBe(4002);
+    await expect(socket.closedWith()).resolves.toBe(4002);
   }, 60_000);
 
   // ── THE SOCKET'S SEND INTO A PRIVATE CHANNEL OF ITS OWN TENANT ─────────────
@@ -189,19 +253,19 @@ describe("the socket refuses another tenant's identifiers", () => {
     //
     // ONE SOCKET FOR BOTH, because opening a second would let a difference in
     // connection state stand in for a difference in the answer.
-    const socket = new WebSocket(`${url}/v1/ws?token=${t.attacker.token}`);
-    await firstFrame(socket, "connection.ack");
+    const socket = connect(url, t.attacker.token);
+    await socket.waitFor("connection.ack");
 
     const text = `not a member ${randomUUID()}`;
-    socket.send(
+    socket.socket.send(
       JSON.stringify({
         type: "message.send",
         payload: { idem_key: randomUUID(), channel: t.attacker.privateChannelId, text },
       }),
     );
-    const refused = await firstFrame(socket, "error");
+    const refused = await socket.waitFor("error");
 
-    socket.send(
+    socket.socket.send(
       JSON.stringify({
         type: "message.send",
         payload: {
@@ -211,8 +275,8 @@ describe("the socket refuses another tenant's identifiers", () => {
         },
       }),
     );
-    const absent = await firstFrame(socket, "error");
-    socket.close();
+    const absent = await socket.waitFor("error");
+    socket.socket.close();
 
     const refusedCode = (refused.payload as { code?: string }).code;
     expect(refusedCode, "the private-channel send was not refused at all").toBeTruthy();
@@ -254,24 +318,20 @@ describe("the socket refuses another tenant's identifiers", () => {
     // difference between the two acks is the whole assertion.
     await t.attacker.say(`before removal ${randomUUID()}`);
 
-    const asMember = new WebSocket(
-      `${url}/v1/ws?token=${t.attacker.token}&cursor=${t.attacker.channelId}:0`,
-    );
-    const first = await firstFrame(asMember, "connection.ack");
+    const asMember = connect(url, t.attacker.token, `&cursor=${t.attacker.channelId}:0`);
+    const first = await asMember.waitFor("connection.ack");
     const beforeCursor = (first.payload as { cursor?: Record<string, number> }).cursor ?? {};
     expect(Object.keys(beforeCursor)).toContain(t.attacker.channelId);
-    asMember.close();
+    asMember.socket.close();
 
     // Through the PUBLIC ROUTE, so the test asserts the consequence of the API rather
     // than of a direct write — a repository call would prove the session reads
     // `members` and nothing about whether the endpoint gets there.
     await t.attacker.removeSelf();
 
-    const afterRemoval = new WebSocket(
-      `${url}/v1/ws?token=${t.attacker.token}&cursor=${t.attacker.channelId}:0`,
-    );
-    const frames = collect(afterRemoval);
-    const second = await firstFrame(afterRemoval, "connection.ack");
+    const afterRemoval = connect(url, t.attacker.token, `&cursor=${t.attacker.channelId}:0`);
+    const frames = afterRemoval.frames;
+    const second = await afterRemoval.waitFor("connection.ack");
     const afterCursor = (second.payload as { cursor?: Record<string, number> }).cursor ?? {};
     expect(Object.keys(afterCursor)).not.toContain(t.attacker.channelId);
 
@@ -279,7 +339,7 @@ describe("the socket refuses another tenant's identifiers", () => {
     // ACCEPTED; this is what it DELIVERED, and the two can disagree.
     await quiet(1_000);
     expect(frames().filter((f) => f.type === "message.created")).toEqual([]);
-    afterRemoval.close();
+    afterRemoval.socket.close();
 
     // PUT IT BACK. This test mutates state every later test in the file leans on,
     // and the next one to need it failed on its control rather than on its subject.
@@ -304,13 +364,11 @@ describe("the socket refuses another tenant's identifiers", () => {
   it("keeps an archived channel in the session and its cursor accepted", async () => {
     await t.attacker.archiveOwnChannel();
     try {
-      const socket = new WebSocket(
-        `${url}/v1/ws?token=${t.attacker.token}&cursor=${t.attacker.channelId}:0`,
-      );
-      const ack = await firstFrame(socket, "connection.ack");
+      const socket = connect(url, t.attacker.token, `&cursor=${t.attacker.channelId}:0`);
+      const ack = await socket.waitFor("connection.ack");
       const cursor = (ack.payload as { cursor?: Record<string, number> }).cursor ?? {};
       expect(Object.keys(cursor)).toContain(t.attacker.channelId);
-      socket.close();
+      socket.socket.close();
     } finally {
       // IN A `finally`, BECAUSE THE TEST ABOVE LEARNED THIS THE OTHER WAY. It left a
       // removed membership behind and the next test failed on its control rather
@@ -327,11 +385,9 @@ describe("the socket refuses another tenant's identifiers", () => {
     const text = `before the resume ${randomUUID()}`;
     await t.victim.say(text);
 
-    const socket = new WebSocket(
-      `${url}/v1/ws?token=${t.attacker.token}&cursor=${t.victim.channelId}:1`,
-    );
-    const frames = collect(socket);
-    const ack = await firstFrame(socket, "connection.ack");
+    const socket = connect(url, t.attacker.token, `&cursor=${t.victim.channelId}:1`);
+    const frames = socket.frames;
+    const ack = await socket.waitFor("connection.ack");
 
     // THE ACK ECHOES WHAT THE SERVER ACCEPTED, not what the client presented. A
     // channel this token cannot see is not in it — and asserting on the echo is the
@@ -348,7 +404,7 @@ describe("the socket refuses another tenant's identifiers", () => {
     // And the buffer is not empty for an unrelated reason — the ack is in it, so a
     // collector that attached too late would fail here rather than pass vacuously.
     expect(frames().some((f) => f.type === "connection.ack")).toBe(true);
-    socket.close();
+    socket.socket.close();
   });
 
   it("a token minted by one tenant cannot open a session for the other", async () => {
@@ -360,18 +416,86 @@ describe("the socket refuses another tenant's identifiers", () => {
       t.victim.userExternalId,
     ).catch(() => null); // refused at the mint is the stronger answer
     if (borrowed === null) return;
-    const socket = new WebSocket(`${url}/v1/ws?token=${borrowed}`);
+    const socket = connect(url, borrowed);
     try {
-      const ack = await firstFrame(socket, "connection.ack");
+      const ack = await socket.waitFor("connection.ack");
       expect(JSON.stringify(ack)).not.toContain(t.victim.channelId);
     } catch {
       // A closed socket is a refusal, which is also correct.
-      await expect(closeCode(socket)).resolves.toBeGreaterThan(0);
+      await expect(socket.closedWith()).resolves.toBeGreaterThan(0);
     }
-    socket.close();
+    socket.socket.close();
   }, 20_000);
 
   // ── THE SAME-TENANT NON-MEMBER, ON THE SOCKET (T087) ───────────────────────
+
+  // ── T151, T153: THE BAN AT THE DOOR, AND WHAT IT DOES TO AN OPEN SOCKET ───
+  //
+  // FR-032 asks what a ban does to a connection that is ALREADY OPEN, and T153 named two
+  // candidate answers — "closed at the next heartbeat" and "closed immediately" — noting
+  // they differ in whether the gateway has to be told.
+  //
+  // **THE ANSWER IS NEITHER, AND IT IS ALREADY BUILT.** A banned socket stops being able
+  // to SEND the instant the ban lands, because a socket send goes through the api's
+  // `/internal/messages`, which is the same repository path the ban check sits at the top
+  // of. It keeps RECEIVING until it closes for any other reason, because delivery never
+  // asks the api anything.
+  //
+  // That is not a compromise invented here — it is the shape the credentials chapter already chose
+  // for an expired token, whose comment in `session.ts` says it in as many words: "the
+  // socket is still up and still RECEIVES, because delivery never asks the api anything.
+  // Writing does."
+  //
+  // WHY NOT CLOSE IT. Closing an open socket on ban needs the api to tell the gateway,
+  // which is new plumbing on the fan-out for an event that happens rarely; re-checking at
+  // each heartbeat needs an api call on every ping of every connection. Both buy the
+  // difference between "cannot speak" and "cannot listen", for a user the tenant has
+  // already silenced.
+  it("refuses a banned user at connect with 4003, not 4001", async () => {
+    await t.attacker.banSelf();
+    try {
+      const client = connect(url, t.attacker.token);
+      // The error frame arrives first, because a close reason is a short string.
+      const err = await client.waitFor<{ payload: { code: string } }>("error");
+      expect(err.payload.code).toBe("user_banned");
+      const closed = await client.closedWith();
+      // 4003 AND NOT 4001. The token is valid and the user is refused; 4001 would send a
+      // client round the re-authentication loop for ever.
+      expect(closed).toBe(4003);
+    } finally {
+      await t.attacker.unbanSelf();
+    }
+  });
+
+  it("stops an already-open socket from sending, and keeps delivering to it", async () => {
+    const client = connect(url, t.victim.token);
+    await client.waitFor("connection.ack");
+
+    await t.victim.banSelf();
+    try {
+      // SENDING STOPS. The frame is accepted by the gateway and refused by the api, so
+      // the client is told rather than disconnected.
+      client.socket.send(
+        JSON.stringify({
+          type: "message.send",
+          payload: {
+            idem_key: randomUUID(),
+            channel: t.victim.channelId,
+            text: "banned mid-connection",
+          },
+        }),
+      );
+      const err = await client.waitFor<{ payload: { code: string } }>("error");
+      expect(err.payload.code).toBe("user_banned");
+
+      // AND THE SOCKET IS STILL OPEN. Stated as an assertion because it is the half of
+      // FR-032 a reader will not guess: a ban silences a connection, it does not sever
+      // it, and the next reconnect is where the door closes.
+      expect(client.socket.readyState).toBe(1);
+    } finally {
+      await t.victim.unbanSelf();
+    }
+  });
 
   // ── T144: A DELETED USER'S MESSAGE STILL REACHES A SOCKET (FR-028) ────────
   //
@@ -404,14 +528,12 @@ describe("the socket refuses another tenant's identifiers", () => {
     // A REMAINING MEMBER RESUMES. The deletion took the doomed user's own membership, so
     // their session no longer carries the channel — and the case that matters is that the
     // message survives for everybody else.
-    const socket = new WebSocket(
-      `${url}/v1/ws?token=${witnessToken}&cursor=${channelId}:0`,
-    );
-    const ack = await firstFrame(socket, "connection.ack");
+    const socket = connect(url, witnessToken, `&cursor=${channelId}:0`);
+    const ack = await socket.waitFor("connection.ack");
     const cursor = (ack.payload as { cursor?: Record<string, number> }).cursor ?? {};
     expect(Object.keys(cursor)).toContain(channelId);
 
-    const mine = await firstFrame(socket, "message.created");
+    const mine = await socket.waitFor("message.created");
     // THE FRAME ARRIVED, and its `user` is the deleted user's external id. Both halves
     // matter: absent means `toFrame` dropped the row, and a null `user` means
     // `messageSchema` would have refused it.
@@ -419,7 +541,7 @@ describe("the socket refuses another tenant's identifiers", () => {
     expect((mine.payload as Record<string, unknown>)["user"]).toBe(userExternalId);
     const frame = mine.payload as Record<string, unknown>;
     expect(frame["text"]).toBe("sent before the deletion");
-    socket.close();
+    socket.socket.close();
   });
 
   // ── T134: THE PROFILE IS STORED AND THE WIRE DID NOT MOVE ─────────────────
@@ -457,8 +579,8 @@ describe("the socket refuses another tenant's identifiers", () => {
     expect(patched.status).toBe(200);
 
     // THE LIVE HALF: the handshake, after the profile exists.
-    const socket = new WebSocket(`${url}/v1/ws?token=${t.victim.token}`);
-    const ack = await firstFrame(socket, "connection.ack");
+    const socket = connect(url, t.victim.token);
+    const ack = await socket.waitFor("connection.ack");
     const identity = (ack.payload as { user?: unknown }).user;
     expect(typeof identity).toBe("string");
     expect(identity).toBe(t.victim.userExternalId);
@@ -493,7 +615,7 @@ describe("the socket refuses another tenant's identifiers", () => {
       },
     });
     expect(bare.success).toBe(false);
-    socket.close();
+    socket.socket.close();
   });
 
   //
@@ -507,11 +629,9 @@ describe("the socket refuses another tenant's identifiers", () => {
   // `seedSocketTenants` creates it and adds nobody — which makes this the same-tenant
   // case rather than the cross-tenant one every other attack here uses.
   it("a same-tenant non-member's cursor for a private channel is not accepted", async () => {
-    const socket = new WebSocket(
-      `${url}/v1/ws?token=${t.attacker.token}&cursor=${t.attacker.privateChannelId}:0`,
-    );
-    const frames = collect(socket);
-    const ack = await firstFrame(socket, "connection.ack");
+    const socket = connect(url, t.attacker.token, `&cursor=${t.attacker.privateChannelId}:0`);
+    const frames = socket.frames;
+    const ack = await socket.waitFor("connection.ack");
     const cursor = (ack.payload as { cursor?: Record<string, number> }).cursor ?? {};
     expect(Object.keys(cursor)).not.toContain(t.attacker.privateChannelId);
 
@@ -520,19 +640,19 @@ describe("the socket refuses another tenant's identifiers", () => {
     // would pass whether the session was scoped or simply broken.
     await quiet(1_000);
     expect(frames().filter((f) => f.type === "message.created")).toEqual([]);
-    socket.close();
+    socket.socket.close();
   });
 
   // ── T048: the subscribe ────────────────────────────────────────────────────
   it("nothing from the other tenant's channel is delivered", async () => {
-    const socket = new WebSocket(`${url}/v1/ws?token=${t.attacker.token}`);
-    const frames = collect(socket);
-    await firstFrame(socket, "connection.ack");
+    const socket = connect(url, t.attacker.token);
+    const frames = socket.frames;
+    await socket.waitFor("connection.ack");
     await t.victim.say(`the victim speaks ${randomUUID()}`);
     // A DEADLINE RATHER THAN A RACE, and longer than the others because this one is
     // waiting on a fan-out that has to travel through Redis before it could arrive.
     await quiet(1_500);
     expect(frames().filter((f) => f.type === "message.created")).toEqual([]);
-    socket.close();
+    socket.socket.close();
   });
 });

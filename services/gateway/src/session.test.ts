@@ -43,7 +43,14 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // fake except the ANSWER.
     session: async (token) =>
       token === VALID_TOKEN
-        ? { environment_id: "env-1", user: "tuan", channel_ids: [CHANNEL] }
+        ? {
+            environment_id: "env-1",
+            user: "tuan",
+            // The api now reports whether the user is banned, and a stub
+            // that does not say is a stub that has not thought about it.
+            banned: false,
+            channel_ids: [CHANNEL],
+          }
         : null,
     backfill: async () => ({}),
     sendMessage: async () => committed(42),

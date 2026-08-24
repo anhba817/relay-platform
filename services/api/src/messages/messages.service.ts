@@ -7,6 +7,7 @@ import {
 
 import {
   ChannelArchivedError,
+  UserBannedError,
   ChannelNotFoundError,
   Repository,
   type MessageRow,
@@ -59,6 +60,23 @@ export class MessagesService {
         }),
       });
     } catch (error) {
+      // THE BAN, FIRST IN THE ORDER AND FIRST IN THE MAPPING (FR-031, FR-021a).
+      //
+      // 403 `user_banned`, and it is thrown before the channel is resolved — so this
+      // refusal is the same for a channel that exists, one that belongs to another
+      // tenant, and one that was invented. The gauntlet asserts exactly that pair.
+      //
+      // NOT the not-found envelope, unlike the private-channel refusal. A ban is a fact
+      // about the CALLER, not about the channel, so saying so reveals nothing about what
+      // channels exist — and a client that cannot tell "you are banned" from "no such
+      // channel" retries for ever against a wall.
+      if (error instanceof UserBannedError) {
+        throw protocolError(
+          "user_banned",
+          "this user is banned in this environment and cannot send messages",
+          HttpStatus.FORBIDDEN,
+        );
+      }
       if (error instanceof ChannelArchivedError) {
         // 403 AND ITS OWN CODE (FR-021). Distinct from not-found, because the
         // channel is there and the caller can see it, and distinct from

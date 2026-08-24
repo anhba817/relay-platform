@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 
-import { CLOSE_CODES, type ErrorCode, type Frame, type Message, docsUrl, frameSchema } from "@relay/protocol";
+import {
+  CLOSE_CODES,
+  docsUrl,
+  frameSchema,
+  type ErrorCode,
+  type Frame,
+  type Message,
+  isErrorCode,
+} from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
 import { WebSocketServer, type WebSocket } from "ws";
 
@@ -138,6 +146,26 @@ export function attachSessions({
           });
           return;
         }
+        if (result.outcome === "banned") {
+          // FR-031. THE SHAPE OF THE QUOTA REFUSAL, for the same reason:
+          // the handshake completes so a close code has a socket to arrive on, and an
+          // error frame goes first because a close reason is a short string.
+          //
+          // 4003 AND NOT 4001. The token is valid; the user is refused. Closing 4001
+          // would send a client round the re-authentication loop for ever, which is the
+          // argument `codes.ts` makes for having distinct codes at all.
+          sendError(
+            ws,
+            "user_banned",
+            "this user is banned in this environment and cannot connect",
+          );
+          ws.close(4003, CLOSE_CODES[4003]);
+          logger.log("info", "connection.rejected", { reason: "user_banned" });
+          return;
+        }
+        // NO SEND LIMIT ARGUMENT YET. `authenticate` returns the limits with the
+        // session in movement VII, where the limiter is written; `open` takes four
+        // parameters until then rather than a fifth nothing can supply.
         void open(ws, result.identity, result.channelIds, req.url ?? "/");
       });
     })();
@@ -443,6 +471,32 @@ export function attachSessions({
           "unauthorized",
           "the token this connection was opened with has expired; " +
             "reconnect with a fresh one to send again",
+        );
+        return;
+      }
+      // ── THE API'S OWN REFUSAL, FORWARDED ───────────────────────────────────
+      //
+      // A 4xx from the api is a fact about this request, and the api already named it:
+      // `user_banned` for a banned sender, `channel_archived` for a closed channel,
+      // `not_a_member`, `invalid_request`. Flattening those to `internal_error` told a
+      // client to retry something that will never succeed, and hid two of this feature's
+      // own refusals behind "send failed".
+      //
+      // ONLY 4xx, AND ONLY A REGISTERED CODE. A 5xx is not the client's business and its
+      // body is not a contract; an unregistered string would put a code on the wire that
+      // `codes.ts` does not define, which is the thing the error-registry chapter's registry exists to
+      // prevent. Anything that fails either test stays `internal_error`.
+      if (
+        error instanceof ApiError &&
+        error.status >= 400 &&
+        error.status < 500 &&
+        error.code !== undefined &&
+        isErrorCode(error.code)
+      ) {
+        sendError(
+          connection.socket,
+          error.code,
+          error.publicMessage ?? "the request was refused",
         );
         return;
       }
