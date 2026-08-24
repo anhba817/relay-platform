@@ -1,15 +1,18 @@
 import {
   BadRequestException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 
 import {
+  ChannelArchivedError,
   ChannelNotFoundError,
   Repository,
   type MessageRow,
   type MessageWithSender,
 } from "../db/repository";
+import { protocolError } from "../protocol-error";
 import { decodeCursor, encodeCursor } from "./cursor";
 import type { HistoryQuery, SendMessageBody } from "./messages.schema";
 
@@ -56,6 +59,18 @@ export class MessagesService {
         }),
       });
     } catch (error) {
+      if (error instanceof ChannelArchivedError) {
+        // 403 AND ITS OWN CODE (FR-021). Distinct from not-found, because the
+        // channel is there and the caller can see it, and distinct from
+        // `user_banned`, because one lifts when somebody unarchives and the other
+        // when somebody unbans. A client that cannot tell them apart retries the
+        // wrong one for ever.
+        throw protocolError(
+          "channel_archived",
+          "this channel is archived and accepts no new messages; its history is unchanged",
+          HttpStatus.FORBIDDEN,
+        );
+      }
       if (error instanceof ChannelNotFoundError) {
         // A CONSTANT message: echoing the id back would make the foreign-id
         // answer differ from the missing-id answer, and "different" is

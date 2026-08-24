@@ -280,6 +280,44 @@ describe("the socket refuses another tenant's identifiers", () => {
     await quiet(1_000);
     expect(frames().filter((f) => f.type === "message.created")).toEqual([]);
     afterRemoval.close();
+
+    // PUT IT BACK. This test mutates state every later test in the file leans on,
+    // and the next one to need it failed on its control rather than on its subject.
+    await t.attacker.rejoinSelf();
+  });
+
+  // ── AN ARCHIVED CHANNEL AND THE SOCKET (FR-022a) ───────────────────────────
+  //
+  // T078a. FR-022 asks two things and only one of them had a task for eleven
+  // analysis passes: whether an archived channel appears in a listing (it does, with
+  // a flag) and **whether the socket delivers anything for it**. This is the second.
+  //
+  // THE ANSWER IS THAT NOTHING CHANGES, AND THE GATEWAY NEEDS NO EDIT. Archiving
+  // stops writes and touches no membership, so the channel stays in the session and
+  // the resume cursor is still accepted. Nothing new arrives because nothing new can
+  // be sent — the refusal is at the write, not at the subscription.
+  //
+  // A NO-OP PROVED RATHER THAN ASSUMED. "We changed nothing so nothing broke" is the
+  // sentence this test exists to replace: archiving could plausibly have been
+  // implemented by removing memberships, and then a member would silently lose the
+  // channel from their session.
+  it("keeps an archived channel in the session and its cursor accepted", async () => {
+    await t.attacker.archiveOwnChannel();
+    try {
+      const socket = new WebSocket(
+        `${url}/v1/ws?token=${t.attacker.token}&cursor=${t.attacker.channelId}:0`,
+      );
+      const ack = await firstFrame(socket, "connection.ack");
+      const cursor = (ack.payload as { cursor?: Record<string, number> }).cursor ?? {};
+      expect(Object.keys(cursor)).toContain(t.attacker.channelId);
+      socket.close();
+    } finally {
+      // IN A `finally`, BECAUSE THE TEST ABOVE LEARNED THIS THE OTHER WAY. It left a
+      // removed membership behind and the next test failed on its control rather
+      // than on its subject. An assertion that throws must still put the state back,
+      // or the diagnosis lands in a file that did nothing wrong.
+      await t.attacker.unarchiveOwnChannel();
+    }
   });
 
   // ── T047: the resume ───────────────────────────────────────────────────────
