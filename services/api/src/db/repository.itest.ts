@@ -280,3 +280,73 @@ describe("members_role_check names the channel's three (FR-011, R8)", () => {
     expect(await repoA.memberRole(channel.id, user.id)).toBe("owner");
   });
 });
+
+// ── T113: THE TIE AT A PAGE BOUNDARY (chapter 3.15, FR-013) ───────────────────
+//
+// HERE AND NOT IN `users.itest.ts`, because constructing the tie takes a raw UPDATE:
+// `last_activity_at` is written from the message's `created_at`, `now()` is the
+// transaction timestamp, and every send is its own transaction — so two channels
+// cannot be made to share the value through the API. This suite is on the
+// driver-exempt list (the layer under test IS the query layer); the route suite is
+// not, and adding a setter to the repository so it could reach one would have put a
+// method in production code whose only caller is a test.
+describe("the listing's keyset survives a shared last_activity_at (chapter 3.15)", () => {
+  it("returns each tied channel exactly once across pages", async () => {
+    const user = await repoA.createUser("tie-lister", "Tie Lister");
+    const shared = new Date("2026-08-20T12:00:00.000Z");
+    const ids: string[] = [];
+    for (const label of ["tie-a", "tie-b", "tie-c"]) {
+      const c = await repoA.createChannel(label, "public");
+      await repoA.addMember(c.id, user.id);
+      ids.push(c.id);
+    }
+    // All three at the same instant, to the millisecond.
+    await db.execute(
+      sql`UPDATE channels SET last_activity_at = ${shared} WHERE id IN (${sql.join(
+        ids.map((id) => sql`${id}`),
+        sql`, `,
+      )})`,
+    );
+
+    const seen: string[] = [];
+    let after: { activityAt: Date; id: string } | undefined;
+    for (let page = 0; page < 6; page++) {
+      const { rows, nextCursor } = await repoA.listChannelsForUser(user.id, {
+        limit: 1,
+        ...(after === undefined ? {} : { after }),
+      });
+      seen.push(...rows.map((r) => r.external_id));
+      if (nextCursor === null) break;
+      after = nextCursor;
+    }
+
+    // THREE ROWS, ONCE EACH. A keyset on the timestamp alone would either skip the
+    // second tied row (using `<`) or return the first one for ever (using `<=`);
+    // both failures are invisible without a tie in the fixture.
+    expect(seen).toHaveLength(3);
+    expect(new Set(seen)).toEqual(new Set(["tie-a", "tie-b", "tie-c"]));
+  });
+
+  it("orders tied channels by id descending, so the order is total", async () => {
+    const user = await repoA.createUser("tie-order", "Tie Order");
+    const shared = new Date("2026-08-19T12:00:00.000Z");
+    const made: string[] = [];
+    for (const label of ["order-a", "order-b"]) {
+      const c = await repoA.createChannel(label, "public");
+      await repoA.addMember(c.id, user.id);
+      made.push(c.id);
+    }
+    await db.execute(
+      sql`UPDATE channels SET last_activity_at = ${shared} WHERE id IN (${sql.join(
+        made.map((id) => sql`${id}`),
+        sql`, `,
+      )})`,
+    );
+    const { rows } = await repoA.listChannelsForUser(user.id, { limit: 10 });
+    const tied = rows.filter((r) => r.external_id.startsWith("order-"));
+    // Whichever uuid sorts higher comes first — the point is that SOME total order
+    // exists and the query commits to it, not which id wins.
+    const expected = [...made].sort().reverse();
+    expect(tied.map((r) => r.id)).toEqual(expected);
+  });
+});

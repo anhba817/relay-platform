@@ -2191,6 +2191,17 @@ export interface UserRow {
   id: string;
   external_id: string;
   display_name: string | null;
+  /** Chapter 3.15, FR-017. A deleted user KEEPS THEIR ROW: `ON DELETE SET NULL` on
+   * `messages.user_id` would satisfy the letter of "messages are preserved" and break
+   * delivery, because `backfill.controller`'s `toFrame` drops a senderless row — so
+   * "authored by a deleted user" and "authored by nobody" are different states and
+   * only one of them is the clause.
+   *
+   * Every route that names a user in its path reads this and answers 404. It is
+   * selected here rather than filtered in the query so a caller can tell the two
+   * apart: a repository that hid deleted rows would make the marker unobservable and
+   * the deletion untestable. */
+  deleted_at: string | null;
 }
 
 export interface ChannelRow {
@@ -2592,7 +2603,15 @@ export class Repository {
       .returning({ id: users.id });
 
     if (inserted.length > 0) {
-      return { id, external_id: externalId, display_name: displayName ?? null };
+      // `deleted_at: null` on the fresh row, stated rather than spread: a user
+      // created now is not deleted, and an insert that returned the field would cost
+      // a column in the RETURNING clause to learn what the code already knows.
+      return {
+        id,
+        external_id: externalId,
+        display_name: displayName ?? null,
+        deleted_at: null,
+      };
     }
     const existing = await this.getUserByExternalId(externalId);
     if (existing === null) throw new Error(`user ${externalId} could not be created or read`);
@@ -2608,6 +2627,7 @@ export class Repository {
         id: users.id,
         external_id: users.externalId,
         display_name: users.displayName,
+        deletedAt: users.deletedAt,
       })
       .from(users)
       .where(
@@ -2616,7 +2636,15 @@ export class Repository {
           eq(users.externalId, externalId),
         ),
       );
-    return rows[0] ?? null;
+    const row = rows[0];
+    return row === undefined
+      ? null
+      : {
+          id: row.id,
+          external_id: row.external_id,
+          display_name: row.display_name,
+          deleted_at: row.deletedAt === null ? null : toIso(row.deletedAt),
+        };
   }
 
   /** IDEMPOTENT ON THE CUSTOMER'S OWN IDENTIFIER (FR-017, FR-CHN-02).
@@ -2992,6 +3020,126 @@ export class Repository {
     return rows.map((r) => r.channel_id);
   }
 
+  /** Mark a user deleted, keeping the row (chapter 3.15, FR-017).
+   *
+   * THE ROW SURVIVES ON PURPOSE. `ON DELETE SET NULL` on `messages.user_id` would
+   * satisfy "messages are preserved" and break delivery: `toFrame` drops a senderless
+   * row from a resume, so a deleted author would silently remove their messages from
+   * every reconnecting client. The marker keeps authorship and removes the user from
+   * the API.
+   *
+   * IDEMPOTENT, and it reports which happened. Deleting a user twice is not an error —
+   * a customer's retry after a timeout is the ordinary case — but the caller still has
+   * to be able to answer 404 the second time, and `false` is how it knows.
+   *
+   * The deletion route is this method's production caller and arrives in a later
+   * phase. It exists now because the listing has to answer 404 for a deleted user,
+   * and a 404 branch with no way to reach it is a branch no test can cover. */
+  async markUserDeleted(userId: string): Promise<boolean> {
+    const updated = await this.db
+      .update(users)
+      .set({ deletedAt: new Date() })
+      .where(
+        and(
+          eq(users.id, userId),
+          eq(users.environmentId, this.environmentId),
+          isNull(users.deletedAt),
+        ),
+      )
+      .returning({ id: users.id });
+    return updated.length > 0;
+  }
+
+  /** A user's channels, most recently active first, keyset-paginated (chapter
+   * 3.15, FR-013, FR-CHN-08).
+   *
+   * `id` IS PART OF THE KEY AND NOT DECORATION. `last_activity_at` is not unique:
+   * two channels can take a message in the same millisecond, and a keyset on a
+   * non-unique column either skips a row or repeats one at every page boundary
+   * where a tie straddles it. Postgres row comparison — `(a, b) < (x, y)` — gives
+   * the strict lexicographic "everything after this exact row" the cursor means,
+   * in one predicate the planner can drive an index with.
+   *
+   * MEMBERSHIP IS THE JOIN, NOT A FILTER AFTER THE FACT (FR-015). The listing set
+   * is the membership set: `members_user_channel` is an index on
+   * `(user_id, channel_id)`, so the join drives from the user's own rows and a
+   * channel they are not in is never a candidate. A public channel they could read
+   * by id does not appear here — the read set and the subscription set are
+   * deliberately different sets, and the chapter says so.
+   *
+   * ARCHIVED CHANNELS APPEAR, with `archived_at` on the row (FR-022). A customer
+   * who archived a channel still has to be able to find it, and hiding it here
+   * would make the archive a delete.
+   *
+   * SCOPED THROUGH `users`, the way `channelsForUser` is: `members` carries no
+   * `environment_id` of its own (it is a hop table, two links from a tenant), so
+   * the scope is asserted on the parent that has one. */
+  async listChannelsForUser(
+    userId: string,
+    { limit, after }: { limit: number; after?: { activityAt: Date; id: string } },
+  ): Promise<{
+    rows: Array<{
+      id: string;
+      external_id: string;
+      type: ChannelRow["type"];
+      name: string | null;
+      role: string;
+      archived_at: string | null;
+      last_activity_at: string;
+      last_sequence: number;
+    }>;
+    nextCursor: { activityAt: Date; id: string } | null;
+  }> {
+    // ONE ROW MORE THAN ASKED FOR, which is how the caller learns whether there is
+    // a next page without a second count query. The extra row is dropped before
+    // returning and its predecessor becomes the cursor.
+    const rows = await this.db
+      .select({
+        id: channels.id,
+        externalId: channels.externalId,
+        type: sql<ChannelRow["type"]>`${channels.type}`,
+        name: channels.name,
+        role: members.role,
+        archivedAt: channels.archivedAt,
+        lastActivityAt: channels.lastActivityAt,
+        lastSequence: channels.lastSequence,
+      })
+      .from(members)
+      .innerJoin(channels, eq(channels.id, members.channelId))
+      .innerJoin(users, eq(users.id, members.userId))
+      .where(
+        and(
+          eq(members.userId, userId),
+          eq(users.environmentId, this.environmentId),
+          eq(channels.environmentId, this.environmentId),
+          after === undefined
+            ? undefined
+            : sql`(${channels.lastActivityAt}, ${channels.id}) < (${after.activityAt}, ${after.id})`,
+        ),
+      )
+      .orderBy(desc(channels.lastActivityAt), desc(channels.id))
+      .limit(limit + 1);
+
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      rows: page.map((r) => ({
+        id: r.id,
+        external_id: r.externalId,
+        type: r.type,
+        name: r.name,
+        role: r.role,
+        archived_at: r.archivedAt === null ? null : toIso(r.archivedAt),
+        last_activity_at: toIso(r.lastActivityAt),
+        last_sequence: r.lastSequence,
+      })),
+      nextCursor:
+        rows.length > limit && last !== undefined
+          ? { activityAt: last.lastActivityAt, id: last.id }
+          : null,
+    };
+  }
+
   /** The write path (chapters 2.2 + 2.3): sequence assignment under the
    * channel row lock (ADR-03), with idempotency enforcement via the
    * partial unique index (DR-03). The transaction IS the ordering
@@ -3192,9 +3340,27 @@ export class Repository {
       }
 
       // The sequence is spent only by a message that actually landed.
+      //
+      // AND `lastActivityAt` MOVES IN THE SAME STATEMENT (chapter 3.15, FR-014).
+      // The listing orders a user's channels by their most recent activity, and
+      // FR-014's answer to what that means is: a message. Not a join, not a
+      // rename, not an archive — a column that moved for those would order by
+      // something its own name does not say, which is what T108 tests.
+      //
+      // ONE STATEMENT AND NO NEW TRANSACTION. The write path already updates this
+      // row here, so the column costs an extra assignment rather than an extra
+      // round trip. It also lands on the INSERTED branch only, beside the
+      // sequence: a recognised idempotent retry returned above without reaching
+      // this line, which is the behaviour the ordering wants — a duplicate send
+      // is not new activity.
+      //
+      // `createdAt` FROM THE ROW, NOT `now()`. The message carries a timestamp
+      // the database assigned; reading the clock a second time here would let the
+      // ordering key and the message it orders by disagree by microseconds, and
+      // the cursor is keyed on this column.
       await tx
         .update(channels)
-        .set({ lastSequence: seq })
+        .set({ lastSequence: seq, lastActivityAt: inserted[0]!.createdAt })
         .where(eq(channels.id, channel.id));
 
       const createdAt = toIso(inserted[0]!.createdAt);

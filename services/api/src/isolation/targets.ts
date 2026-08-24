@@ -86,6 +86,17 @@ export const CLASSIFICATIONS: readonly Classification[] = [
 
   // ── list ────────────────────────────────────────────────────────────────────
   { method: "GET", path: "/v1/webhooks", accepts: "application", shape: "list" },
+  // Chapter 3.15. A `list` and not a `read`: the attack on a listing is that a
+  // foreign identifier returns somebody else's rows, and the refusal that matters is
+  // an EMPTY page rather than an error — a 404 for a foreign user id is right here
+  // because the user is named in the path, but the shape's own assertion is that no
+  // row from another environment ever appears in a 200.
+  {
+    method: "GET",
+    path: "/v1/users/:externalId/channels",
+    accepts: "application",
+    shape: "list",
+  },
 
   // ── read ────────────────────────────────────────────────────────────────────
   { method: "GET", path: "/v1/webhooks/:id", accepts: "application", shape: "read" },
