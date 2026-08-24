@@ -46,6 +46,88 @@ export class ChannelsService {
     return { channel, created };
   }
 
+  /** One channel by id, with the caller's membership (chapter 3.15, FR-003a, FR-003).
+   *
+   * THE ANSWER FOR A PRIVATE CHANNEL THE CALLER CANNOT SEE IS THE NOT-FOUND
+   * ENVELOPE, and it has to be byte-identical to the answer for a channel that does
+   * not exist — SC-002, over the same oracle chapter 3.12 built for cross-tenant
+   * pairs. A `403` naming the membership would announce that the channel exists,
+   * which is what FR-003 forbids. So both paths raise the same exception with the
+   * same constant message, and the message names no id: echoing it back would make
+   * the two answers differ, and different is itself a disclosure.
+   *
+   * `userId` ABSENT MEANS THE TENANT IS ASKING. An application credential acts for
+   * the customer, carries no user, and sees private channels (FR-005) — so it gets
+   * the row and a membership of `null`, because the tenant is not a member of
+   * anything. A user token gets `true` or `false`.
+   *
+   * FR-004's answer for the other type: a `public` channel is readable by any
+   * authenticated user of the tenant, member or not. The column decides something
+   * only because the two types differ. */
+  async read(
+    channelId: string,
+    userId?: string,
+  ): Promise<{
+    channel: ChannelRow & { archived_at: Date | null };
+    isMember: boolean | null;
+  }> {
+    const channel = await this.repo.getChannelById(channelId);
+    if (!channel) throw this.notFound();
+
+    const isMember =
+      userId === undefined ? null : await this.repo.isMember(channelId, userId);
+
+    if (channel.type === "private" && isMember === false) throw this.notFound();
+
+    return { channel, isMember };
+  }
+
+  /** A user joining a channel themselves (chapter 3.15, FR-CHN-03).
+   *
+   * FR-CHN-03's exact words are that any authenticated user of the tenant "may read
+   * and join" a public channel, and JOIN is the hard half: reading needs no new
+   * operation, joining is a user acting on their own behalf rather than the tenant
+   * adding somebody. `POST …/members` is the tenant's route; this is the user's.
+   *
+   * A PRIVATE CHANNEL ANSWERS AS IF ABSENT. Not "you may not join" — that would
+   * announce it exists, and joining is one of the verbs SC-001 covers.
+   *
+   * THE CEILING IS READ, NOT REIMPLEMENTED. Chapter 3.13 counts members from
+   * storage and refuses at 1,000 with `channel_member_limit_exceeded`; a second
+   * count with its own limit here would be a second answer to one question. */
+  async join(channelId: string, userId: string): Promise<"joined" | "already_a_member"> {
+    const channel = await this.repo.getChannelById(channelId);
+    if (!channel) throw this.notFound();
+    if (channel.type === "private") throw this.notFound();
+
+    if (await this.repo.isMember(channelId, userId)) return "already_a_member";
+
+    const existing = await this.repo.countMembers(channelId);
+    if (existing + 1 > CHANNEL_MEMBER_LIMIT) {
+      throw protocolError(
+        "channel_member_limit_exceeded",
+        `this channel holds ${existing} of ${CHANNEL_MEMBER_LIMIT} members; ` +
+          `joining would exceed the limit`,
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+
+    const outcome = await this.repo.addMember(channelId, userId);
+    // `not_found` here means the channel went away between two statements of one
+    // call, which nothing in the api can do — it is the same unconstructable state
+    // `createChannel` and `createUser` throw for.
+    if (outcome === "not_found") throw this.notFound();
+    return outcome === "added" ? "joined" : "already_a_member";
+  }
+
+  /** The one refusal shape for "you cannot see this", used by every read here.
+   *
+   * A CONSTANT MESSAGE, for the reason `addMembers` gives below: a message carrying
+   * the id makes the foreign-id answer differ from the absent-id answer. */
+  private notFound(): Error {
+    return new NotFoundException("channel not found");
+  }
+
   /** Members by EXTERNAL id, and a user is created on first membership (FR-CHN-04).
    *
    * THE CHANNEL IS READ SCOPED FIRST, and that ordering is the isolation property

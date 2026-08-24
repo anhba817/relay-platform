@@ -106,6 +106,18 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // to it — never the derivation.
   { method: "POST", path: "/v1/channels", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/channels/:channelId/members", accepts: "application", shape: "write" },
+  // Chapter 3.15's two, and the derivation found them the same way it found the
+  // pair above: the lane went red naming both as unclassified on the build that
+  // added them, before this file mentioned either. Written with the ROUTER'S
+  // parameter names — `:channelId`, not the contracts' `:externalId` — because the
+  // derivation compares literal path strings and an entry copied from a contract
+  // matches no target.
+  //
+  // `accepts: "user"` on the join: it is the caller joining, not the tenant adding
+  // somebody, and the route carries a method-level `@Accepts("user")` that overrides
+  // the controller's class-level `"application"`.
+  { method: "GET", path: "/v1/channels/:channelId", accepts: "application", shape: "read" },
+  { method: "POST", path: "/v1/channels/:channelId/join", accepts: "user", shape: "write" },
   { method: "POST", path: "/v1/webhooks", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks/:id/rotate-secret", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks/:id/enable", accepts: "application", shape: "write" },

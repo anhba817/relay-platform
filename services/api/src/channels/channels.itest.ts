@@ -5,8 +5,10 @@ import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
+import { mintUserToken } from "../auth/user-token";
 import { createDb, createPool, type Db } from "../db/client";
 import { createApiKey, createEnvironment, Repository } from "../db/repository";
+import { environmentSigningSecret } from "../db/repository";
 import { withoutRequestId } from "../isolation/compare";
 import { CHANNEL_MEMBER_LIMIT } from "./channels.schema";
 
@@ -25,6 +27,9 @@ describe("the public channel surface", () => {
   let repo: Repository;
   let foreignChannelId: string;
   let foreignRepo: Repository;
+  let privateChannelId: string;
+  let publicChannelId: string;
+  let tokenFor: (user: string) => Promise<string>;
 
   beforeAll(async () => {
     db = createDb(createPool());
@@ -34,6 +39,23 @@ describe("the public channel surface", () => {
     const other = await createEnvironment(db, { name: "channels-itest-other" });
     foreignRepo = new Repository(db, other.id);
     foreignChannelId = (await foreignRepo.createChannel("theirs", "public")).id;
+    // Chapter 3.15: a private channel, a member, a non-member of the SAME tenant,
+    // and a way to mint their tokens. Created through the repository because
+    // `POST /v1/channels` accepts `private` only from this phase's last task.
+    privateChannelId = (await repo.createChannel("members-only", "private")).id;
+    const member = await repo.createUser("insider", "An Insider");
+    await repo.addMember(privateChannelId, member.id);
+    await repo.createUser("outsider", "An Outsider");
+    publicChannelId = (await repo.createChannel("town-square", "public")).id;
+    const signingSecret = (await environmentSigningSecret(db, env.id))!.signingSecret;
+    tokenFor = async (subject: string) =>
+      (
+        await mintUserToken(signingSecret, {
+          user: subject,
+          environmentId: env.id,
+          ttlSeconds: 3600,
+        })
+      ).token;
     app = (
       await Test.createTestingModule({ imports: [AppModule] }).compile()
     ).createNestApplication({ logger: false });
@@ -82,16 +104,22 @@ describe("the public channel surface", () => {
       expect(await second.json()).toEqual(await first.json());
     });
 
-    it("refuses type private, naming the field (FR-047)", async () => {
-      const res = await create({ external_id: "private-attempt", type: "private" });
+    // CHAPTER 3.12 ASSERTED THE OPPOSITE HERE, and it was right at the time.
+    //
+    // FR-047 pinned the enum to `public` alone because `channels.type` decided
+    // nothing: an endpoint accepting `private` would have sold a guarantee the
+    // platform did not keep. FR-009 supersedes it now that the send path, the by-id
+    // read, history and the session all honour the type — the guarantee exists, so
+    // the enum may offer it.
+    //
+    // The `field` half of that test survives intact and is worth keeping: EIR-API-04
+    // has carried `field` since chapter 1.3 and nothing set it until chapter 3.14.
+    // A third type still names the key it refused.
+    it("refuses a type outside the two, naming the field (FR-009)", async () => {
+      const res = await create({ external_id: "secret-attempt", type: "secret" });
       expect(res.status).toBe(400);
       const body = (await res.json()) as { code: string; message: string; field?: string };
       expect(body.code).toBe("invalid_request");
-      // THE FIELD IS NAMED, and until this chapter no validation error in the api
-      // named one — EIR-API-04 has carried `field` since chapter 1.3 and nothing
-      // ever set it. A developer who tries `private` is told which key was
-      // refused instead of reading `Invalid input: expected "public"` and
-      // guessing.
       expect(body.field).toBe("type");
     });
 
@@ -198,6 +226,25 @@ describe("the public channel surface", () => {
       }
     }, 180_000);
 
+    it("refuses a JOIN that would exceed it, with the same code (chapter 3.15)", async () => {
+      // T047. The ceiling is chapter 3.13's and it is READ here, not reimplemented:
+      // `join` counts members from storage and refuses with the same
+      // `channel_member_limit_exceeded` the member-add route uses. A second limit
+      // with its own number would be a second answer to one question.
+      expect(await repo.countMembers(fullChannelId)).toBe(CHANNEL_MEMBER_LIMIT);
+      const token = await tokenFor("outsider");
+      const res = await fetch(`${url}/v1/channels/${fullChannelId}/join`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as { code: string; message: string };
+      expect(body.code).toBe("channel_member_limit_exceeded");
+      // And nobody joined: a refusal that added the member anyway would pass a
+      // status assertion and fail the requirement.
+      expect(await repo.countMembers(fullChannelId)).toBe(CHANNEL_MEMBER_LIMIT);
+    });
+
     it("refuses the one that would exceed it with 422 and the code", async () => {
       expect(await repo.countMembers(fullChannelId)).toBe(CHANNEL_MEMBER_LIMIT);
       const res = await addMembers(fullChannelId, { user_ids: ["one-too-many"] });
@@ -208,6 +255,138 @@ describe("the public channel surface", () => {
       // AND THE CHANNEL IS UNCHANGED. A refusal that added the member anyway
       // would pass a status assertion and fail the requirement.
       expect(await repo.countMembers(fullChannelId)).toBe(CHANNEL_MEMBER_LIMIT);
+    });
+  });
+
+  // ── THE PRIVATE TYPE, MADE TO MEAN SOMETHING (chapter 3.15) ────────────────
+  //
+  // `channels.type` has been a column with a CHECK since chapter 2.1 and until this
+  // chapter no conditional anywhere branched on it. It was selected and returned by
+  // the create route — read, and decided upon by nothing.
+  describe("GET /v1/channels/:channelId (FR-003a)", () => {
+    const readAs = (channel: string, token: string) =>
+      fetch(`${url}/v1/channels/${channel}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+    const readAsTenant = (channel: string) =>
+      fetch(`${url}/v1/channels/${channel}`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+
+    it("reads back the four fields a create wrote (FR-CHN-01)", async () => {
+      const made = await create({
+        external_id: "readable",
+        name: "Readable",
+        type: "public",
+        metadata: { team: "platform" },
+      });
+      const { id } = (await made.json()) as { id: string };
+      const res = await readAsTenant(id);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        id,
+        external_id: "readable",
+        type: "public",
+        name: "Readable",
+        metadata: { team: "platform" },
+        archived_at: null,
+        // `null` and not `false`: an application credential is not a member of
+        // anything, and `false` would imply it could become one.
+        is_member: null,
+      });
+    });
+
+    it("lets a member read a private channel", async () => {
+      const res = await readAs(privateChannelId, await tokenFor("insider"));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ type: "private", is_member: true });
+    });
+
+    it("lets a non-member read a PUBLIC channel (FR-004)", async () => {
+      // The subscription set is not the read set. A public channel is readable on
+      // demand by anyone in the tenant; membership decides what the socket carries.
+      const res = await readAs(publicChannelId, await tokenFor("outsider"));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ type: "public", is_member: false });
+    });
+
+    it("answers a non-member's read of a private channel as if it were absent", async () => {
+      const token = await tokenFor("outsider");
+      const refused = await readAs(privateChannelId, token);
+      const absent = await readAs("00000000-0000-4000-8000-000000000000", token);
+      expect(refused.status).toBe(absent.status);
+      expect(withoutRequestId(await refused.json())).toEqual(
+        withoutRequestId(await absent.json()),
+      );
+    });
+
+    it("answers the same for another tenant's channel", async () => {
+      // The cross-tenant half, unchanged by this chapter and worth keeping beside
+      // the same-tenant one: three ids, one answer.
+      const token = await tokenFor("outsider");
+      const foreign = await readAs(foreignChannelId, token);
+      const absent = await readAs("00000000-0000-4000-8000-000000000000", token);
+      expect(withoutRequestId(await foreign.json())).toEqual(
+        withoutRequestId(await absent.json()),
+      );
+    });
+  });
+
+  describe("POST /v1/channels/:channelId/join (FR-CHN-03)", () => {
+    const join = (channel: string, token: string) =>
+      fetch(`${url}/v1/channels/${channel}/join`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+    it("joins a public channel, and says so again on the repeat", async () => {
+      const token = await tokenFor("outsider");
+      const first = await join(publicChannelId, token);
+      expect(first.status).toBe(200);
+      expect(await first.json()).toEqual({ result: "joined" });
+      const second = await join(publicChannelId, token);
+      expect(second.status).toBe(200);
+      expect(await second.json()).toEqual({ result: "already_a_member" });
+    });
+
+    it("answers a private channel as if it were absent", async () => {
+      const token = await tokenFor("outsider");
+      const refused = await join(privateChannelId, token);
+      const absent = await join("00000000-0000-4000-8000-000000000000", token);
+      expect(refused.status).toBe(absent.status);
+      expect(withoutRequestId(await refused.json())).toEqual(
+        withoutRequestId(await absent.json()),
+      );
+    });
+
+    it("refuses an application credential, which has no user to join", async () => {
+      // The method-level `@Accepts("user")` overriding the class's "application".
+      // Without it this would be a 403 for every USER instead — chapter 3.12's
+      // FR-044 hole in the other direction.
+      const res = await join(publicChannelId, credential);
+      expect(res.status).toBe(403);
+    });
+  });
+
+  describe("the enum widens last (FR-009, FR-010)", () => {
+    it("accepts `private` and reads the row back as private (SC-006)", async () => {
+      const made = await create({ external_id: "now-private", type: "private" });
+      expect(made.status).toBe(201);
+      const { id } = (await made.json()) as { id: string };
+      const back = await fetch(`${url}/v1/channels/${id}`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+      expect(await back.json()).toMatchObject({ type: "private" });
+    });
+
+    it("a repeat naming a different type returns the existing channel unchanged", async () => {
+      // FR-010. Idempotency means the second call returns the FIRST call's channel,
+      // and a type change is not a creation — so this is a read, not an update.
+      const first = await create({ external_id: "type-stays", type: "private" });
+      expect(first.status).toBe(201);
+      const second = await create({ external_id: "type-stays", type: "public" });
+      expect(second.status).toBe(200);
+      expect(await second.json()).toMatchObject({ type: "private" });
     });
   });
 });

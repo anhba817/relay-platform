@@ -196,4 +196,40 @@ describe("the internal surface", () => {
     );
     expect(accepted.status).toBe(201);
   });
+
+  // ── THE SESSION CARRIES MEMBERSHIPS, WHICH IS WHY IT NEEDED NO CHANGE ───────
+  //
+  // T042. `session.controller` builds its channel list from
+  // `repository.channelsForUser`, which selects from `members` joined to `users`
+  // and filters on both the user and the environment. So a private channel a user
+  // is not a member of cannot enter a session — and neither can a PUBLIC one,
+  // which is FR-004's other half: the subscription set is not the read set.
+  //
+  // A CONFIRMATION RATHER THAN A CHECK, and the test says so. R2 measured this by
+  // reading the query; this asserts it against a running one, which is the
+  // difference between believing a comment and knowing.
+  it("names neither a private nor a public channel the user is not a member of", async () => {
+    const res = await fetch(`${url}/internal/session`, {
+      method: "POST",
+      headers: await headers("stranger"),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { channel_ids: string[] };
+    expect(body.channel_ids).not.toContain(privateChannelId);
+    // `channelId` is the PUBLIC channel this suite's other user belongs to. The
+    // stranger can read it by id and send to it, and it is still not in their
+    // session: membership decides subscription, visibility decides reads.
+    expect(body.channel_ids).not.toContain(channelId);
+  });
+
+  it("names a channel the user IS a member of", async () => {
+    // The control. An empty list would satisfy the assertions above while proving
+    // that the session is broken rather than that it is scoped.
+    const res = await fetch(`${url}/internal/session`, {
+      method: "POST",
+      headers: await headers("tuan"),
+    });
+    const body = (await res.json()) as { channel_ids: string[] };
+    expect(body.channel_ids).toContain(privateChannelId);
+  });
 });

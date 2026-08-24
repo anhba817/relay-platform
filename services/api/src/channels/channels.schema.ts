@@ -20,20 +20,30 @@ const metadataSchema = z
 
 export const createChannelBodySchema = z.strictObject({
   external_id: z.string().min(1).max(255),
-  // `public` AND NOTHING ELSE, and this is the chapter's sharpest edit (FR-047).
+  // BOTH, AND ONLY NOW (chapter 3.15, FR-009).
   //
-  // `channels.type` has been a `"public" | "private"` column with a CHECK
-  // constraint since chapter 2.1, and NOTHING IN THE PLATFORM READS IT. History
-  // and send scope by `environment_id` alone; there is no membership check on any
-  // read path. So FR-CHN-05 — a P1 clause promising that a private channel is
-  // visible only to its members — is unimplemented.
+  // Chapter 3.12 pinned this enum to `public` alone with the sharpest edit in that
+  // chapter, and the reason it gave was true then: `channels.type` had been a
+  // `"public" | "private"` column with a CHECK since chapter 2.1 and NOTHING
+  // DECIDED ON IT. An endpoint accepting `private` would have sold a guarantee the
+  // platform did not keep.
   //
-  // An endpoint accepting `private` would sell a guarantee the platform does not
-  // keep, and it would do it in the chapter whose exit criterion is that an
-  // outsider can integrate on the documentation alone. The enum is `public`
-  // today; FR-CHN-03's private half goes to chapter 3.15 with FR-CHN-05, where
-  // the read paths are made to honour it.
-  type: z.enum(["public"]),
+  // ONE SENTENCE IN THAT COMMENT WAS WRONG, and it shipped for three chapters:
+  // "there is no membership check on any read path". `repository.backfill` joins
+  // `members` on the caller's user id, and `session.controller` builds its channel
+  // list from `channelsForUser` — both are read paths and both check membership.
+  // What was true is narrower: the PUBLIC history and send routes checked nothing,
+  // and `POST /internal/messages` resolved a user and checked nothing. Corrected
+  // here under FR-037, in the same edit that widens the enum, because a false
+  // sentence inside a titled fence cannot wait for a later phase.
+  //
+  // WIDENED LAST, DELIBERATELY. FR-009 gates this on FR-001 to FR-003 holding
+  // first: the send path refuses a non-member, the by-id read and history answer
+  // as if the channel were absent, and the socket's session never carries it. All
+  // four are in place before this line changed. Reversed, the platform would sell
+  // the guarantee before keeping it — which is the mistake chapter 3.12's fifth
+  // analysis pass caught one phase before it shipped.
+  type: z.enum(["public", "private"]),
   name: z.string().min(1).max(255).optional(),
   metadata: metadataSchema.optional(),
 });

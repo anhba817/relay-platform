@@ -1,6 +1,20 @@
-import { Body, Controller, HttpCode, Param, Post, Res, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from "@nestjs/common";
 
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
+import type { RequestWithPrincipal } from "../auth/principal";
+import { Repository } from "../db/repository";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 import { ChannelsService } from "./channels.service";
 import { addMembersBodySchema, createChannelBodySchema } from "./channels.schema";
@@ -27,7 +41,12 @@ interface HttpResponse {
 @UseGuards(CredentialGuard)
 @Accepts("application")
 export class ChannelsController {
-  constructor(private readonly channels: ChannelsService) {}
+  constructor(
+    private readonly channels: ChannelsService,
+    // For resolving a user token's subject to a row id. The service takes an id
+    // because the repository's membership lookup is keyed on it.
+    private readonly repo: Repository,
+  ) {}
 
   /** 201 on creation, 200 on the idempotent repeat (FR-017, FR-CHN-02).
    *
@@ -50,6 +69,79 @@ export class ChannelsController {
       name: channel.name,
       metadata: channel.metadata,
     };
+  }
+
+  /** One channel by id (chapter 3.15, FR-003a).
+   *
+   * THIS ROUTE DID NOT EXIST, and three artifacts assumed it did: SC-001 named
+   * "read by id" as one of four verbs a non-member must not reach, FR-003 said
+   * "every read", and `contracts/membership.md` had a row for it. A customer could
+   * create a channel and never read its four fields back.
+   *
+   * `@Accepts("application", "user")` AT THE METHOD, overriding the class's
+   * `"application"`. `credential.guard.ts` resolves
+   * `getAllAndOverride([handler, class])`, so a method-level decorator wins — the
+   * pattern `dev-token.controller.ts` already uses. Both classes belong here: the
+   * tenant reads any of its channels (FR-005), and a user reads the ones they may
+   * see, which is what makes `channels.type` decide something.
+   */
+  @Get(":channelId")
+  @Accepts("application", "user")
+  async read(
+    @Param("channelId") channelId: string,
+    @Req() req: RequestWithPrincipal,
+  ) {
+    const actingExternalId =
+      req.principal?.kind === "user" ? req.principal.userExternalId : undefined;
+    let userId: string | undefined;
+    if (actingExternalId !== undefined) {
+      const user = await this.repo.getUserByExternalId(actingExternalId);
+      // A user token for an identifier with no row is a member of nothing. Refusing
+      // rather than reading as the tenant is the same choice the send path makes,
+      // and FR-039a removes the case by creating the row when the token is minted.
+      if (!user) throw new BadRequestException("unknown user");
+      userId = user.id;
+    }
+    const { channel, isMember } = await this.channels.read(channelId, userId);
+    return {
+      id: channel.id,
+      external_id: channel.external_id,
+      type: channel.type,
+      name: channel.name,
+      metadata: channel.metadata,
+      archived_at: channel.archived_at?.toISOString() ?? null,
+      // `null` when the tenant is asking: an application credential is not a member
+      // of anything, and reporting `false` would imply it could become one.
+      is_member: isMember,
+    };
+  }
+
+  /** The user-initiated half of FR-CHN-03 (chapter 3.15).
+   *
+   * `@Accepts("user")` AT THE METHOD, overriding the class's `"application"`. This
+   * is the caller joining, not the tenant adding someone, so an application key has
+   * no business here — it carries no user to join. `credential.guard.ts` resolves
+   * `getAllAndOverride([handler, class])`, so the method wins.
+   *
+   * Without this decorator every user's join would be a 403, which is chapter
+   * 3.12's FR-044 hole exactly: a credential mismatch that passed for a whole
+   * chapter and then turned nine of fifteen tests red.
+   */
+  @Post(":channelId/join")
+  @HttpCode(HttpStatus.OK)
+  @Accepts("user")
+  async join(
+    @Param("channelId") channelId: string,
+    @Req() req: RequestWithPrincipal,
+  ) {
+    // The guard has already refused anything that is not a user principal, so this
+    // is narrowing for the type system rather than for trust.
+    if (req.principal?.kind !== "user") {
+      throw new BadRequestException("joining is an end user's action");
+    }
+    const user = await this.repo.getUserByExternalId(req.principal.userExternalId);
+    if (!user) throw new BadRequestException("unknown user");
+    return { result: await this.channels.join(channelId, user.id) };
   }
 
   /** Members by external id, users created on first membership (FR-CHN-04).

@@ -2196,11 +2196,12 @@ export interface ChannelRow {
   id: string;
   external_id: string;
   /** The column has been `"public" | "private"` with a CHECK constraint since
-   * chapter 2.1. NOTHING READS IT: history and send scope by `environment_id`
-   * alone and there is no membership check anywhere, so FR-CHN-05's private
-   * guarantee is unimplemented. The public create endpoint accepts `public` only
-   * (chapter 3.12, FR-047) — this type stays as the column is, because rows
-   * seeded before that endpoint existed can still say `private`. */
+   * chapter 2.1, and chapter 3.15 gave it its first DECISION. Before that it was
+   * selected and returned by the create route — read, but consulted by nothing:
+   * no conditional anywhere branched on it, so FR-CHN-05's private guarantee was
+   * unimplemented while the value round-tripped.
+   *
+   * Now `sendMessage`, the by-id read, history and join all branch on it. */
   type: "public" | "private";
   name: string | null;
   metadata: Record<string, unknown>;
@@ -3340,6 +3341,85 @@ export class Repository {
    * tenant-scoped query over a foreign channel simply returns no rows, and
    * the endpoint dressed that as an empty page. The milestone suite caught
    * the two doors disagreeing about the same resource. */
+  /** One channel by its id, scoped, with the two fields the by-id route reports
+   * beyond FR-CHN-01's four (chapter 3.15, FR-003a).
+   *
+   * SCOPED IN THE WHERE CLAUSE and not filtered afterwards, for the reason
+   * `addMembers` states: a foreign id and an absent one must both miss this read,
+   * so both answer alike and neither reveals the other tenant's row.
+   *
+   * THIS ROUTE DID NOT EXIST. `channels.controller.ts` carried a create and a
+   * member-add and no read, so a customer could create a channel and never read
+   * its four fields back — while SC-001 named "read by id" as one of four verbs,
+   * FR-003 said "every read", and `contracts/membership.md` had a row for it.
+   * Three artifacts resting on a handler nobody wrote (analysis pass three). */
+  async getChannelById(
+    channelId: string,
+  ): Promise<(ChannelRow & { archived_at: Date | null }) | null> {
+    const rows = await this.db
+      .select({
+        id: channels.id,
+        external_id: channels.externalId,
+        type: sql<ChannelRow["type"]>`${channels.type}`,
+        name: channels.name,
+        metadata: sql<Record<string, unknown>>`${channels.metadata}`,
+        archived_at: channels.archivedAt,
+      })
+      .from(channels)
+      .where(
+        and(
+          eq(channels.id, channelId),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      );
+    return rows[0] ?? null;
+  }
+
+  /** Whether this user is a member of this channel (chapter 3.15).
+   *
+   * No environment predicate, and that is safe rather than sloppy: `members` has
+   * no `environment_id` — it is reached through `channels` and `users`, which is
+   * why the catalogue calls it a `hop` — and every caller has already read the
+   * channel scoped. A membership row for a channel this environment cannot see is
+   * unreachable because the channel id came from a scoped read. */
+  async isMember(channelId: string, userId: string): Promise<boolean> {
+    const rows = await this.db
+      .select({ userId: members.userId })
+      .from(members)
+      .where(and(eq(members.channelId, channelId), eq(members.userId, userId)))
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  /** Whether this channel exists AND this caller may see it (chapter 3.15, FR-003).
+   *
+   * `channelExists` answers the first half and every read route used it. That was
+   * enough while `channels.type` decided nothing; it is not enough now, and the gap
+   * showed up as a leak rather than as a failure:
+   *
+   *     a channel that does not exist   → channelExists false → 404
+   *     a private channel, non-member   → channelExists TRUE  → 200, empty page
+   *
+   * Two different answers, so the empty page announced that the channel was there.
+   * FR-003 says every read answers identically to a channel that does not exist, and
+   * the only way to keep that is for one predicate to produce both refusals.
+   *
+   * `userId` absent means the tenant is reading, which sees everything it owns. */
+  async channelVisibleTo(channelId: string, userId?: string): Promise<boolean> {
+    const [channel] = await this.db
+      .select({ type: sql<ChannelRow["type"]>`${channels.type}` })
+      .from(channels)
+      .where(
+        and(
+          eq(channels.id, channelId),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      );
+    if (!channel) return false;
+    if (channel.type !== "private" || userId === undefined) return true;
+    return this.isMember(channelId, userId);
+  }
+
   async channelExists(channelId: string): Promise<boolean> {
     const rows = await this.db
       .select({ id: channels.id })
@@ -3368,8 +3448,50 @@ export class Repository {
       beforeSeq,
       afterSeq,
       limit,
-    }: { beforeSeq?: number; afterSeq?: number; limit: number },
+      /** Who is reading (chapter 3.15, FR-002, FR-003).
+       *
+       * THIS PARAMETER DID NOT EXIST, and its absence is why the history path had
+       * nothing to check. The task said "add the same check to the history path" and
+       * there was nowhere to put a caller: this function took a channel and a page,
+       * `messages.service.history` passed neither, and the controller resolved no
+       * principal. Three places, and a gap in any one makes a check unreachable.
+       *
+       * Absent means the TENANT is reading, the same convention `sendMessage` uses
+       * — an application credential sees private channels (FR-005). */
+      userId,
+    }: {
+      beforeSeq?: number;
+      afterSeq?: number;
+      limit: number;
+      userId?: string;
+    },
   ): Promise<MessageWithSender[]> {
+    // MEMBERSHIP FIRST, WHEN A USER IS READING (chapter 3.15, FR-002, FR-003).
+    //
+    // A scoped read below would already exclude another tenant's channel; this is
+    // the case inside one tenant, where the channel exists and the reader is not a
+    // member of it. An EMPTY PAGE is the answer, and it is the same answer a channel
+    // that does not exist gives — `listMessages` has always returned `[]` for an
+    // unknown id rather than raising, so indistinguishability here is a matter of
+    // not diverging from that.
+    //
+    // ORDERED BEFORE THE PAGE QUERY so a non-member's read costs one small lookup
+    // rather than a page of rows this function then discards.
+    if (userId !== undefined) {
+      const [channel] = await this.db
+        .select({ type: sql<ChannelRow["type"]>`${channels.type}` })
+        .from(channels)
+        .where(
+          and(
+            eq(channels.id, channelId),
+            eq(channels.environmentId, this.environmentId),
+          ),
+        );
+      if (channel?.type === "private" && !(await this.isMember(channelId, userId))) {
+        return [];
+      }
+    }
+
     const columns = {
       id: messages.id,
       channel_id: messages.channelId,

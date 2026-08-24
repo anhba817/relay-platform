@@ -111,7 +111,19 @@ export class MessagesController {
   async history(
     @Param("channelId") channelId: string,
     @Query(new ZodValidationPipe(historyQuerySchema)) query: HistoryQuery,
+    @Req() req: RequestWithPrincipal,
   ) {
-    return this.messages.history(channelId, query);
+    // The same resolution the send handler above does, on the other route of this
+    // controller (chapter 3.15, T041a). Both dropped the caller; the send path was
+    // found in one analysis pass and this one in the next, because finding the first
+    // did not prompt anyone to ask whether the sibling had the same shape.
+    const actingExternalId = actingUser(req);
+    let userId: string | undefined;
+    if (actingExternalId !== undefined) {
+      const user = await this.repo.getUserByExternalId(actingExternalId);
+      if (!user) throw new BadRequestException("unknown user");
+      userId = user.id;
+    }
+    return this.messages.history(channelId, query, userId);
   }
 }

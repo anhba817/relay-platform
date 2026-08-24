@@ -190,7 +190,62 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(accepted.status).toBe(201);
     });
 
-    it("refuses a token minted for an identifier with no user row", async () => {
+    it("answers a non-member's history read exactly as an absent channel does", async () => {
+    // T041b. The history route dropped its caller the same way the send route did,
+    // and `listMessages` had no `userId` parameter to drop it INTO — so the task
+    // that said "add the same check to the history path" was asking for a check
+    // with nothing to check against. Three places, and a gap in any one makes a
+    // check unreachable: the handler resolves, the service threads, the repository
+    // accepts.
+    //
+    // AND THE FIRST ATTEMPT AT THIS TEST WAS WRONG IN AN INSTRUCTIVE WAY. It
+    // expected an empty page, because `listMessages` answers an unknown channel id
+    // with `[]` at the repository level. The ROUTE answers 404 — `messages.service`
+    // checks `channelExists` first — so an empty page for a private channel would
+    // have differed from an absent one and announced that the channel was there.
+    // Only comparing the two answers caught it, which is the whole point of pairing
+    // them rather than asserting a status.
+    const outsider = await tokenFor("outsider");
+    const insider = await tokenFor("insider");
+    await sendAs(insider, privateChannelId, "members can read this");
+
+    const hidden = await fetch(
+      `${url}/v1/channels/${privateChannelId}/messages?limit=10`,
+      { headers: { authorization: `Bearer ${outsider}` } },
+    );
+    const absent = await fetch(
+      `${url}/v1/channels/00000000-0000-4000-8000-000000000000/messages?limit=10`,
+      { headers: { authorization: `Bearer ${outsider}` } },
+    );
+    expect(hidden.status).toBe(absent.status);
+    // The whole body, `request_id` excepted — a private channel the caller cannot
+    // see and a channel that does not exist give one answer.
+    expect(withoutRequestId(await hidden.json())).toEqual(
+      withoutRequestId(await absent.json()),
+    );
+  });
+
+  it("returns the page to a member of the same channel", async () => {
+    // The control: the page exists and the reader is the variable.
+    const insider = await tokenFor("insider");
+    const res = await fetch(
+      `${url}/v1/channels/${privateChannelId}/messages?limit=10`,
+      { headers: { authorization: `Bearer ${insider}` } },
+    );
+    const body = (await res.json()) as { messages: unknown[] };
+    expect(body.messages.length).toBeGreaterThan(0);
+  });
+
+  it("returns the page to an application credential (FR-005)", async () => {
+    const res = await fetch(
+      `${url}/v1/channels/${privateChannelId}/messages?limit=10`,
+      { headers: { authorization: `Bearer ${credential}` } },
+    );
+    const body = (await res.json()) as { messages: unknown[] };
+    expect(body.messages.length).toBeGreaterThan(0);
+  });
+
+  it("refuses a token minted for an identifier with no user row", async () => {
       // `POST /auth/dev-token` mints tokens for identifiers that need not exist, so
       // before chapter 3.15 this send SUCCEEDED, unattributed — and an unattributed
       // send is one the membership check waves through. A user with no row is a
