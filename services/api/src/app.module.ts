@@ -11,6 +11,11 @@ import { HealthController } from "./health.controller";
 import { InternalModule } from "./internal/internal.module";
 import { MessagesModule } from "./messages/messages.module";
 import { ChannelsModule } from "./channels/channels.module";
+// Registered here for the reason `ChannelsModule` is: without this
+// line the module is compiled, exported, imported by nothing, and none of the user
+// routes exist. The file appeared in no task until an enumeration asked which
+// chapter fences it.
+import { UsersModule } from "./users/users.module";
 import { ConsumerModule } from "./consumer/consumer.module";
 import { OutboxModule } from "./outbox/outbox.module";
 import { TenancyModule } from "./tenancy/tenancy.module";
@@ -27,6 +32,7 @@ import { RequestContextMiddleware } from "./request-context.middleware";
     AuthModule,
     MessagesModule,
     ChannelsModule,
+    UsersModule,
     InternalModule,
     TenancyModule,
     OutboxModule,

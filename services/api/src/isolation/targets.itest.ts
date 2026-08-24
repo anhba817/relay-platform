@@ -91,12 +91,28 @@ describe("the gauntlet's target list derives from the running application", () =
 
   it("accounts for every derived target as attacked or exempt", () => {
     const counts = shapeCounts(CLASSIFICATIONS);
-    const attacked = counts.read + counts.write + counts.credential;
+    // EVERYTHING THAT IS NOT EXEMPT, DERIVED — not `read + write + credential`.
+    //
+    // `shapeCounts` returns `Record<Shape, number>`, so adding a shape stopped that
+    // function compiling and named the line. This sum is arithmetic over three
+    // properties, which no type checks: `list` arrived, the record grew, and the
+    // total silently stopped including it. `expected 17 to be 18` — a route
+    // classified, attacked, and counted as neither.
+    //
+    // The exemption is named because it is the one class that is deliberately not
+    // attacked. Everything else is, whatever it is called.
+    const attacked = Object.entries(counts)
+      .filter(([shape]) => shape !== "exempt")
+      .reduce((n, [, count]) => n + count, 0);
+    const breakdown = Object.entries(counts)
+      .filter(([, count]) => count > 0)
+      .map(([shape, count]) => `${shape} ${count}`)
+      .join(", ");
     // A number nobody can see is a number nobody checks. Visible under
     // `--reporter=verbose`; the assertion below is what gates the build either way.
     console.log(
-      `gauntlet targets: ${derived.length} derived, ${attacked} attacked, ${counts.exempt} exempt ` +
-        `(read ${counts.read}, write ${counts.write}, credential ${counts.credential})`,
+      `gauntlet targets: ${derived.length} derived, ${attacked} attacked, ` +
+        `${counts.exempt} exempt (${breakdown})`,
     );
     expect(attacked + counts.exempt).toBe(derived.length);
   });
@@ -113,14 +129,21 @@ describe("the gauntlet's target list derives from the running application", () =
   // added and never classified fails the accounting test above; a route classified
   // and never built fails this one, because the derivation reads the running
   // router.
-  it("derives exactly the six routes this chapter adds, and nothing else new", () => {
+  it("derives every route the last two chapters added, and nothing else new", () => {
+    // THE LIST GROWS BY CHAPTER AND THE ASSERTION DOES NOT MOVE. Each chapter that
+    // adds a route adds its key here, so a route added and never classified fails the
+    // accounting test above and a route classified and never built fails this one —
+    // the derivation reads the running router either way.
     const ADDED = [
+      // The channel a customer controls.
       "GET /v1/channels/:channelId",
       "POST /v1/channels/:channelId/join",
       "POST /v1/channels/:channelId/members/remove",
       "PATCH /v1/channels/:channelId/members/:userExternalId",
       "POST /v1/channels/:channelId/archive",
       "DELETE /v1/channels/:channelId/archive",
+      // This chapter's, and the first `list` shape the classification has had.
+      "GET /v1/users/:externalId/channels",
     ];
     const keys = derived.map(targetKey);
     const missing = ADDED.filter((k) => !keys.includes(k));

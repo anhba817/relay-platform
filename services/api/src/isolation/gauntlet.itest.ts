@@ -8,7 +8,7 @@ import { AppModule } from "../app.module";
 import { mintUserToken } from "../auth/user-token";
 import { environmentSigningSecret } from "../db/repository";
 import { createDb, createPool } from "../db/client";
-import { credentialAttack, readAttack, writeAttack } from "./attack";
+import { credentialAttack, listAttack, readAttack, rowsOf, writeAttack } from "./attack";
 import { withoutRequestId } from "./compare";
 import {
   nowhereId,
@@ -473,6 +473,68 @@ describe("the isolation gauntlet", () => {
         expect(verdict.stateChanged, "the victim's channel or members moved").toBe(false);
       });
     }
+  });
+
+  // ── list: the shape whose refusal is an EMPTY page ──────────────────────────────
+  //
+  // The first `list` target, and the first attack here that does NOT assert a pair.
+  // Every other one compares the foreign identifier against an id that exists
+  // nowhere and requires them indistinguishable. A listing cannot work that way:
+  // the user is named in the path, so a foreign external id is a 404 — correctly —
+  // while a user who exists and owns nothing is a 200 with no rows. Comparing those
+  // two says nothing at all.
+  //
+  // So the property is narrower and it is the one that matters: **no identifier
+  // belonging to another environment appears in any answer.**
+  describe("list: GET /v1/users/:externalId/channels", () => {
+    const FOREIGN = () => [
+      t.victim.channelId,
+      t.victim.channelExternalId,
+      t.victim.userId,
+      t.victim.messageId,
+    ];
+
+    it("answers a foreign external id as absent, and echoes none of its ids", async () => {
+      attacked.add("GET /v1/users/:externalId/channels");
+      const verdict = await listAttack(
+        url,
+        t.attacker.credential,
+        { method: "GET", path: `/v1/users/${t.victim.userExternalId}/channels` },
+        FOREIGN(),
+      );
+      // A 404 IS THE RIGHT ANSWER AND NOT THE ASSERTION. The user is in the path, so
+      // not-found is what a caller gets for anybody outside their environment — and
+      // a 404 that named the victim's channel in its body would still be a breach.
+      expect(verdict.leaked, `leaked: ${verdict.leaked.join(", ")}`).toEqual([]);
+      expect(verdict.count, "a refused listing returned rows").toBe(0);
+    });
+
+    it("answers its OWN user with its own rows, and none of the other tenant's", async () => {
+      // THE CONTROL, and without it the case above passes against a route that
+      // answers 404 for everybody. This is also the only place the `list` shape's
+      // real property can be observed: a 200 that has rows in it.
+      const verdict = await listAttack(
+        url,
+        t.attacker.credential,
+        { method: "GET", path: `/v1/users/${t.attacker.userExternalId}/channels` },
+        FOREIGN(),
+      );
+      expect(verdict.status).toBe(200);
+      expect(verdict.count, "the attacker's own listing came back empty").toBeGreaterThan(0);
+      expect(verdict.leaked, `leaked: ${verdict.leaked.join(", ")}`).toEqual([]);
+    });
+
+    it("recognised the response shape it counted", () => {
+      // `rowsOf` RETURNS AN EMPTY ARRAY FOR A SHAPE IT DOES NOT KNOW, and a count of
+      // zero from an unrecognised shape reads exactly like a count of zero from a
+      // correctly-scoped list. That is the one answer this block must never confuse
+      // with success, so the recogniser is asserted against both shapes it claims to
+      // handle and against one it does not.
+      expect(rowsOf([1, 2])).toHaveLength(2);
+      expect(rowsOf({ data: [1] })).toHaveLength(1);
+      expect(rowsOf({ items: [1, 2, 3] })).toEqual([]);
+      expect(rowsOf(null)).toEqual([]);
+    });
   });
 
   // ── and the suite accounts for itself ───────────────────────────────────────────

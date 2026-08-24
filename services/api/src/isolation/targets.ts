@@ -18,7 +18,7 @@
  * one — and it is tenant-scoped all the same, because the key it accepts resolves to
  * exactly one environment. Filing it as `exempt` is how a route stops being attacked
  * while looking accounted for. */
-export type Shape = "read" | "write" | "credential" | "exempt";
+export type Shape = "read" | "write" | "credential" | "list" | "exempt";
 
 /** Which credential class the route accepts, and therefore which attack applies.
  *
@@ -96,6 +96,22 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     accepts: "either",
     shape: "write",
   },
+  // ── list ────────────────────────────────────────────────────────────────────
+  //
+  // THE FOURTH SHAPE, AND THE FIRST ROUTE THAT NEEDS IT. A `list` and not a `read`:
+  // the attack on a listing is that a
+  // foreign identifier returns somebody else's rows, and the refusal that matters is
+  // an EMPTY page rather than an error — a 404 for a foreign user id is right here
+  // because the user is named in the path, but the shape's own assertion is that no
+  // row from another environment ever appears in a 200.
+  {
+    method: "GET",
+    path: "/v1/users/:externalId/channels",
+    accepts: "application",
+    shape: "list",
+  },
+
+  // ── read ────────────────────────────────────────────────────────────────────
   {
     method: "GET",
     path: "/v1/channels/:channelId/messages",
@@ -157,11 +173,24 @@ export function targetKey(t: { method: string; path: string }): string {
 /** Counts, for the suite to print. Derived from the list rather than typed beside it,
  * because a hand-maintained tally is the thing that goes stale first. */
 export function shapeCounts(list: readonly Classification[]): Record<Shape, number> {
-  // NO `list` SHAPE YET, and that is deliberate rather than an omission. Nothing this
-  // api serves returns a collection, so a list attack would be a function with no
-  // target — and a shape with no member is a vocabulary entry that drifts. The chapter
-  // that adds the first list route adds the shape and the attack together.
-  const counts: Record<Shape, number> = { read: 0, write: 0, credential: 0, exempt: 0 };
+  // THE `list` SHAPE ARRIVED WITH ITS FIRST ROUTE, WHICH IS WHAT THIS SAID WOULD
+  // HAPPEN. The note here used to read "no `list` shape yet, and that is deliberate
+  // rather than an omission … the chapter that adds the first list route adds the
+  // shape and the attack together." `GET /v1/users/:externalId/channels` is that
+  // route, and `listAttack` is that attack.
+  //
+  // AND THE TYPE IS WHY IT COULD NOT ARRIVE HALFWAY. `Record<Shape, number>` stopped
+  // compiling the moment `Shape` gained a member, naming this line — so a shape
+  // cannot be added to the vocabulary while the tally, and therefore the suite's own
+  // report, still counts four kinds. A hand-maintained tally would have printed
+  // four and been believed.
+  const counts: Record<Shape, number> = {
+    read: 0,
+    write: 0,
+    credential: 0,
+    list: 0,
+    exempt: 0,
+  };
   for (const c of list) counts[c.shape]++;
   return counts;
 }

@@ -78,6 +78,65 @@ export function comparePair(foreign: Answer, absent: Answer): string[] {
 }
 
 /** A read of another tenant's resource must answer as a read of nothing. */
+/** A list's correct answer to "nothing of yours here" is an EMPTY RESULT, and that
+ * is why it needs a shape of its own.
+ *
+ * Every other attack here asserts a PAIR: the foreign identifier and one that exists
+ * nowhere must be indistinguishable. A listing breaks that, because the two are not
+ * supposed to be indistinguishable. `GET /v1/users/:externalId/channels` names the
+ * user in the path, so a foreign user id is a 404 — correctly — while a user who
+ * exists and owns nothing is a 200 with no rows. Comparing those two says nothing.
+ *
+ * What has to be true instead is narrower and harder: **no row belonging to another
+ * environment appears in any 200.** A status code cannot express that, so the verdict
+ * carries the rows and the identifiers that leaked into them.
+ */
+export interface ListVerdict {
+  status: number;
+  /** How many rows came back, however the endpoint chose to wrap them. */
+  count: number;
+  /** Any returned identifier that belongs to the other tenant. */
+  leaked: string[];
+  body: unknown;
+}
+
+/** THE ROWS IN A LIST RESPONSE, whatever shape it came in.
+ *
+ * Two shapes because the platform has one and a future route may have the other: a
+ * paginated route answers `{ data: [...] }` and a bare route answers an array.
+ * Exported and pure because only ONE arm can execute against the routes that exist
+ * today, and a count of zero from an unrecognised shape reads exactly like a count of
+ * zero from a correctly-scoped list — which is the one answer this suite must never
+ * confuse with success. `listAttack` therefore asserts the shape was recognised
+ * rather than trusting the count. */
+export function rowsOf(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
+  const data = (body as { data?: unknown } | null)?.data;
+  if (Array.isArray(data)) return data;
+  return [];
+}
+
+export async function listAttack(
+  baseUrl: string,
+  credential: string,
+  req: AttackRequest,
+  foreignIds: readonly string[],
+): Promise<ListVerdict> {
+  const answer = await send(baseUrl, credential, req);
+  const rows = rowsOf(answer.body);
+  // SEARCHED IN THE SERIALISED BODY, not in the parsed rows. A leaked identifier can
+  // arrive somewhere the row shape does not reach — a cursor, an embedded object, an
+  // error message that echoes what was asked for — and the property is that the id
+  // does not appear AT ALL.
+  const serialised = JSON.stringify(answer.body ?? "");
+  return {
+    status: answer.status,
+    count: rows.length,
+    leaked: foreignIds.filter((id) => serialised.includes(id)),
+    body: answer.body,
+  };
+}
+
 export async function readAttack(
   baseUrl: string,
   credential: string,
