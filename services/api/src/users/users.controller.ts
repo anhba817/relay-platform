@@ -1,9 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
+  Post,
   Put,
   Query,
   UseGuards,
@@ -14,9 +17,11 @@ import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 import {
   listingQuerySchema,
   readPositionBodySchema,
+  upsertUsersBodySchema,
   userProfileBodySchema,
   type ListingQuery,
   type ReadPositionBody,
+  type UpsertUsersBody,
   type UserProfileBody,
 } from "./users.schema";
 import { UsersService } from "./users.service";
@@ -91,5 +96,28 @@ export class UsersController {
     @Body(new ZodValidationPipe(userProfileBodySchema)) body: UserProfileBody,
   ) {
     return this.users.updateProfile(externalId, body);
+  }
+
+  /** Up to 100 users in one call (chapter 3.15, FR-025).
+   *
+   * DECLARED BEFORE THE `:externalId` ROUTES. Nest matches in declaration order and
+   * `POST /v1/users` and `PATCH /v1/users/:externalId` differ in both method and segment
+   * count, so nothing shadows anything here — but a bare-path route below a parameterised
+   * one is the shape that eventually does, and the habit costs nothing.
+   *
+   * 200 AND NOT 201, because the array reports created, updated and revived per entry.
+   * One status code for a mixed outcome would have to pick a lie. */
+  @Post()
+  @HttpCode(200)
+  async upsertUsers(
+    @Body(new ZodValidationPipe(upsertUsersBodySchema)) body: UpsertUsersBody,
+  ) {
+    return this.users.upsertUsers(body);
+  }
+
+  /** Delete a user, keeping their row and their messages (chapter 3.15, FR-027). */
+  @Delete(":externalId")
+  async deleteUser(@Param("externalId") externalId: string) {
+    return this.users.deleteUser(externalId);
   }
 }

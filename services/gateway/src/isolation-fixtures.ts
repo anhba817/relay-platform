@@ -60,6 +60,20 @@ export interface SocketTenant {
   rejoinSelf: () => Promise<void>;
   archiveOwnChannel: () => Promise<void>;
   unarchiveOwnChannel: () => Promise<void>;
+  /** A user and a channel nobody else in the suite touches, with one attributed message
+   * already in it (chapter 3.15, T144).
+   *
+   * ITS OWN FIXTURE BECAUSE THE TEST DESTROYS IT. T144 deletes the user, and the first
+   * version deleted the shared `victim` — which took the membership with it and made a
+   * later test's profile PATCH answer 404. Phase 7 hit the same class twice: a test that
+   * mutates a shared fixture breaks whichever test runs after it, and the fix is a
+   * fixture of its own rather than an ordering constraint nobody can see. */
+  seedDeletable: () => Promise<{
+    userExternalId: string;
+    channelId: string;
+    seq: number;
+    witnessToken: string;
+  }>;
   /** A token for `userExternalId`, minted through the api's own dev-token route so
    * the signing secret never leaves the api — research R1's rule, and the reason
    * the gateway asks rather than verifies. */
@@ -167,6 +181,25 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
           headers: { authorization: `Bearer ${key.credential}` },
         });
         if (!res.ok) throw new Error(`archive for ${label}: ${res.status}`);
+      },
+      seedDeletable: async () => {
+        const label2 = `${label}-del-${Math.random().toString(36).slice(2, 7)}`;
+        const doomed = await repo.createUser(`${label2}-doomed`, "Doomed");
+        const witness = await repo.createUser(`${label2}-witness`, "Witness");
+        const room = await repo.createChannel(`${label2}-room`, "public");
+        await repo.addMember(room.id, doomed.id);
+        await repo.addMember(room.id, witness.id);
+        const sent = await repo.sendMessage(room.id, {
+          text: "sent before the deletion",
+          userId: doomed.id,
+          userExternalId: `${label2}-doomed`,
+        });
+        return {
+          userExternalId: `${label2}-doomed`,
+          channelId: room.id,
+          seq: sent.seq,
+          witnessToken: await mintToken(apiUrl, key.credential, `${label2}-witness`),
+        };
       },
       unarchiveOwnChannel: async () => {
         const res = await fetch(`${apiUrl}/v1/channels/${channel.id}/archive`, {

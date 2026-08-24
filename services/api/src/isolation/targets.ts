@@ -113,6 +113,18 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     shape: "list",
   },
 
+  // Chapter 3.15. The bulk upsert and the deletion. Both `write`: the upsert's attack is
+  // an entry naming another tenant's user, which must create a NEW row in the caller's
+  // environment rather than touch theirs; the deletion's is a foreign external id, which
+  // must answer 404 and leave the other tenant's user alive.
+  { method: "POST", path: "/v1/users", accepts: "application", shape: "write" },
+  {
+    method: "DELETE",
+    path: "/v1/users/:externalId",
+    accepts: "application",
+    shape: "write",
+  },
+
   // Chapter 3.15. The profile pair. `read` for the GET; the PATCH is a `write` whose
   // attack is a foreign external id under an own credential — a tenant must not be able
   // to rename another tenant's user, and the refusal is the same 404 a user who does not

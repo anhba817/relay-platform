@@ -5,6 +5,7 @@ import { Repository, type UserRow } from "../db/repository";
 import {
   encodeCursor,
   type ListingQuery,
+  type UpsertUsersBody,
   type UserProfileBody,
 } from "./users.schema";
 
@@ -154,5 +155,56 @@ export class UsersService {
       );
     }
     return { sequence: written.sequence };
+  }
+
+  /** Up to 100 users in one call, reported per entry (chapter 3.15, FR-025, FR-026).
+   *
+   * SEQUENTIAL AND NOT A SINGLE MULTI-ROW STATEMENT. Each entry is its own upsert because
+   * each carries its own partial profile: a bulk `INSERT ... ON CONFLICT DO UPDATE` has one
+   * `SET` clause for every row, so "leave display_name alone for entry 3 and set it for
+   * entry 7" cannot be expressed. 100 round trips inside one request is the cost of
+   * FR-026's per-entry semantics, and the bound is what keeps it bounded.
+   *
+   * NO TRANSACTION AROUND THE BATCH, deliberately. The result array reports per entry, so a
+   * caller learns exactly which entries landed; wrapping the batch would turn one bad entry
+   * into a hundred silent non-writes and the array would be a lie. Validation already
+   * rejected the whole body before any write, so what remains here are failures the
+   * database raises, which per-entry reporting is the right shape for.
+   */
+  async upsertUsers(body: UpsertUsersBody): Promise<{
+    data: Array<{
+      external_id: string;
+      status: "created" | "updated" | "revived";
+      display_name: string | null;
+      avatar_url: string | null;
+      metadata: Record<string, unknown>;
+    }>;
+  }> {
+    const data = [];
+    for (const entry of body.users) {
+      const { external_id, ...profile } = entry;
+      const { user, status } = await this.repo.upsertUser(external_id, profile);
+      data.push({
+        external_id: user.external_id,
+        status,
+        display_name: user.display_name,
+        avatar_url: user.avatar_url,
+        metadata: user.metadata,
+      });
+    }
+    return { data };
+  }
+
+  /** Delete a user (chapter 3.15, FR-027 to FR-029).
+   *
+   * IDEMPOTENT AT 200 AND 404 FOR A USER WHO NEVER EXISTED. `requireUser` cannot be used
+   * here — it 404s a user who is already deleted, and deleting twice is the ordinary
+   * outcome of a customer's retry after a timeout. So the row is read without the
+   * liveness filter, and only "no row at all" is a 404. */
+  async deleteUser(externalId: string): Promise<{ external_id: string; deleted: true }> {
+    const user = await this.repo.getUserByExternalId(externalId);
+    if (!user) throw new NotFoundException("user not found");
+    await this.repo.deleteUser(user.id);
+    return { external_id: externalId, deleted: true };
   }
 }

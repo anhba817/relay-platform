@@ -420,6 +420,54 @@ describe("the socket gauntlet", () => {
     expect(client.frames().filter((f) => f.type === "message.created")).toEqual([]);
   });
 
+  // ── T144: A DELETED USER'S MESSAGE STILL REACHES A SOCKET (FR-028) ────────
+  //
+  // THIS IS THE ASSERTION THAT WOULD HAVE CAUGHT `ON DELETE SET NULL`, and the reason
+  // R7 chose to keep the row over satisfying the letter of the clause.
+  //
+  // `backfill.controller`'s `toFrame` turns a row into a frame **or into nothing**, and
+  // one of the two rows it drops is a senderless one — `messageSchema.user` is
+  // `z.string().min(1)`, so a null author cannot be a `message.created` payload at all.
+  // Nulling `messages.user_id` on deletion would therefore preserve every message in
+  // storage and remove it from every reconnecting client, silently, with a sequence gap
+  // as the only trace.
+  //
+  // THE RESUME PATH IS THE ONE THAT CARRIES IT. The backfill runs at connect, from the
+  // client's cursor, which is the only place in this suite where a stored message becomes
+  // a frame — the live fan-out does not reach this suite at all (see T134).
+  it("delivers a deleted user's message on resume, still attributed to them", async () => {
+    // ITS OWN FIXTURE. The first version deleted the shared `victim`, which took that
+    // tenant's membership with it and made the next test's profile PATCH answer 404 —
+    // the same shared-fixture mutation Phase 7 hit twice.
+    const { userExternalId, channelId, seq, witnessToken } =
+      await tenants.victim.seedDeletable();
+
+    const deleted = await fetch(`${api.url}/v1/users/${userExternalId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${tenants.victim.credential}` },
+    });
+    expect(deleted.status).toBe(200);
+
+    // A REMAINING MEMBER RESUMES. The deletion took the doomed user's own membership, so
+    // their session no longer carries the channel — and the case that matters is that the
+    // message survives for everybody else.
+    const client = connect(witnessToken, `&cursor=${channelId}:0`);
+    const ack = await client.waitFor<{ payload: { cursor: Record<string, number> } }>(
+      "connection.ack",
+    );
+    expect(Object.keys(ack.payload.cursor)).toContain(channelId);
+
+    const mine = await client.waitFor<{ payload: Record<string, unknown> }>(
+      "message.created",
+    );
+    // THE FRAME ARRIVED, and its `user` is the deleted user's external id. Both halves
+    // matter: absent means `toFrame` dropped the row, and a null `user` means
+    // `messageSchema` would have refused it.
+    expect(mine.payload["seq"]).toBe(seq);
+    expect(mine.payload["user"]).toBe(userExternalId);
+    expect(mine.payload["text"]).toBe("sent before the deletion");
+  });
+
   // ── T134: THE PROFILE IS STORED AND THE WIRE DID NOT MOVE ─────────────────
   //
   // Chapter 3.15 gives `users.display_name`, `users.avatar_url` and `users.metadata` a

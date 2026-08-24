@@ -3032,6 +3032,147 @@ export class Repository {
     return rows.map((r) => r.channel_id);
   }
 
+  /** Upsert a user by external id, updating the profile fields present (chapter 3.15,
+   * FR-025, FR-026).
+   *
+   * NOT `createUser`, AND THE DIFFERENCE IS THE POINT. `createUser` is deliberately not an
+   * update: its comment says so — "the display name of the existing row wins; quietly
+   * renaming a user because someone re-sent a member list would be a write nobody asked
+   * for". That is right for the member-add, which asks for membership and happens to need a
+   * user. FR-026 asks for the opposite here: an entry naming an existing user **updates**
+   * it, because this route's subject IS the user record.
+   *
+   * Two functions rather than a flag, so neither route can accidentally get the other's
+   * behaviour. The member-add's caller keeps `createUser`.
+   *
+   * IT ALSO REVIVES A DELETED USER, which is FR-030 and not an accident.
+   * `(environment_id, external_id)` is unique and the row is still there, so presenting
+   * the id again has no other honest answer than reusing it. `deleted_at` is cleared and
+   * the profile takes whatever this call carries — a revived row does not inherit the
+   * profile the deletion wiped.
+   *
+   * `status` REPORTS WHICH HAPPENED, per entry, in the shape chapter 3.13 chose for
+   * `addMember`: a partial outcome is reported per entry rather than collapsed into one
+   * status code. */
+  async upsertUser(
+    externalId: string,
+    profile: {
+      display_name?: string | null | undefined;
+      avatar_url?: string | null | undefined;
+      metadata?: Record<string, unknown> | undefined;
+    },
+  ): Promise<{ user: UserRow; status: "created" | "updated" | "revived" }> {
+    const id = randomUUID();
+    const inserted = await this.db
+      .insert(users)
+      .values({
+        id,
+        environmentId: this.environmentId,
+        externalId,
+        displayName: profile.display_name ?? null,
+        avatarUrl: profile.avatar_url ?? null,
+        ...(profile.metadata === undefined ? {} : { metadata: profile.metadata }),
+      })
+      .onConflictDoNothing({ target: [users.environmentId, users.externalId] })
+      .returning({ id: users.id });
+
+    if (inserted.length > 0) {
+      return {
+        user: {
+          id,
+          external_id: externalId,
+          display_name: profile.display_name ?? null,
+          avatar_url: profile.avatar_url ?? null,
+          metadata: profile.metadata ?? {},
+          deleted_at: null,
+        },
+        status: "created",
+      };
+    }
+
+    const existing = await this.db
+      .select({ id: users.id, deletedAt: users.deletedAt })
+      .from(users)
+      .where(
+        and(
+          eq(users.environmentId, this.environmentId),
+          eq(users.externalId, externalId),
+        ),
+      )
+      .limit(1);
+    const row = existing[0];
+    if (row === undefined) {
+      throw new Error(`user ${externalId} could not be created or read`);
+    }
+    const revived = row.deletedAt !== null;
+
+    await this.db
+      .update(users)
+      .set({
+        // Absent stays absent, exactly as the single PATCH treats it — except
+        // `deleted_at`, which a revival always clears.
+        ...(profile.display_name === undefined
+          ? {}
+          : { displayName: profile.display_name }),
+        ...(profile.avatar_url === undefined ? {} : { avatarUrl: profile.avatar_url }),
+        ...(profile.metadata === undefined ? {} : { metadata: profile.metadata }),
+        deletedAt: null,
+      })
+      .where(and(eq(users.id, row.id), eq(users.environmentId, this.environmentId)));
+
+    const after = await this.getUserByExternalId(externalId);
+    if (after === null) throw new Error(`user ${externalId} vanished mid-upsert`);
+    return { user: after, status: revived ? "revived" : "updated" };
+  }
+
+  /** Delete a user, keeping the row (chapter 3.15, FR-027, FR-028, FR-029).
+   *
+   * WHAT GOES: the profile fields, the memberships, the read positions.
+   * WHAT STAYS: the row, the messages, and every `usage_active_users` row.
+   *
+   * THE ROW IS THE WHOLE ARGUMENT. `ON DELETE SET NULL` on `messages.user_id` satisfies
+   * the letter of "messages are preserved" and breaks delivery:
+   * `backfill.controller`'s `toFrame` drops a senderless row, so every message the user
+   * ever sent would silently disappear from every reconnecting client. "Authored by a
+   * deleted user" and "authored by nobody" are different states and only one of them is
+   * FR-028.
+   *
+   * `usage_active_users` IS UNTOUCHED (FR-029). Billing history does not vanish with a
+   * profile — a customer who deleted a user in March still owes for March.
+   *
+   * MEMBERSHIPS AND READ POSITIONS GO TOGETHER, and the read position goes because the
+   * membership does: a position is per-member state keyed by channel and user, so keeping
+   * it would leave a row pointing at a membership that no longer exists. It is the same
+   * deletion the member-removal path already performs.
+   *
+   * IDEMPOTENT, and it reports which happened, so the route can answer 200 twice while a
+   * user who never existed still gets 404. */
+  async deleteUser(userId: string): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const [alive] = await tx
+        .select({ id: users.id, deletedAt: users.deletedAt })
+        .from(users)
+        .where(
+          and(eq(users.id, userId), eq(users.environmentId, this.environmentId)),
+        )
+        .limit(1);
+      if (alive === undefined) return false;
+
+      await tx.delete(readPositions).where(eq(readPositions.userId, userId));
+      await tx.delete(members).where(eq(members.userId, userId));
+      await tx
+        .update(users)
+        .set({
+          displayName: null,
+          avatarUrl: null,
+          metadata: {},
+          deletedAt: alive.deletedAt ?? new Date(),
+        })
+        .where(eq(users.id, userId));
+      return true;
+    });
+  }
+
   /** Write a user's profile (chapter 3.15, FR-023, FR-024).
    *
    * THE FIRST WRITER `users.avatar_url` AND `users.metadata` HAVE EVER HAD. Both columns

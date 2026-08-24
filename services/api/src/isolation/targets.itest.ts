@@ -119,7 +119,7 @@ describe("the gauntlet's target list derives from the running application", () =
     // The routes built so far. This assertion moves ONE line per phase, which is
     // the point: a phase that adds a route and forgets to classify it fails the
     // test above, and a phase that adds a route nobody planned fails this one.
-    const BUILT_SO_FAR = 10;
+    const BUILT_SO_FAR = 12;
     expect(derived.length).toBe(24 + BUILT_SO_FAR);
   });
 

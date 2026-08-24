@@ -57,6 +57,39 @@ export const userProfileBodySchema = z.strictObject({
 
 export type UserProfileBody = z.infer<typeof userProfileBodySchema>;
 
+/** An entry in the bulk upsert (chapter 3.15, FR-025, FR-026).
+ *
+ * THE PROFILE FIELDS, NOT JUST AN ID. FR-026 says an entry naming an existing user
+ * **updates** it, so the entry carries what there is to update. An entry that was only an
+ * external id could not distinguish "create this user" from "update nothing about them".
+ *
+ * `strictObject`, and the same 4 KB metadata bound and URL validation the single PATCH
+ * uses — one schema fragment, so the two routes cannot drift into accepting different
+ * things for the same column. */
+export const upsertUserEntrySchema = z.strictObject({
+  external_id: z.string().min(1).max(255),
+  display_name: z.string().min(1).max(255).nullable().optional(),
+  avatar_url: z.string().url().max(2048).nullable().optional(),
+  metadata: userMetadataSchema.optional(),
+});
+
+/** FR-025's bound: 100 in one request, and `field: "users"` on 101.
+ *
+ * THE SAME 100 AS THE MEMBER-ADD AND THE REMOVAL, for the same reason: all three are "how
+ * much a customer's server may hand over in one call", and three different ceilings would
+ * be three numbers to remember for one idea.
+ *
+ * THE FIELD IS `users` AND THE CHANNEL ROUTES' IS `user_ids`, which is a real
+ * inconsistency and the shipped name wins on the routes that shipped. This route is new,
+ * so it takes the name that describes what it carries — these are whole user records, not
+ * a list of ids. */
+export const upsertUsersBodySchema = z.strictObject({
+  users: z.array(upsertUserEntrySchema).min(1).max(100),
+});
+
+export type UpsertUsersBody = z.infer<typeof upsertUsersBodySchema>;
+export type UpsertUserEntry = z.infer<typeof upsertUserEntrySchema>;
+
 /** FR-013's page bound: the same 100 as the member-add and the upsert.
  *
  * ONE NUMBER FOR THE CONCEPT, not three that happen to agree. A page of channels, a
