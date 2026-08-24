@@ -219,3 +219,64 @@ describe("a private channel refuses a non-member's send (FR-001)", () => {
     expect(sent.seq).toBe(1);
   });
 });
+
+// ── THE ROLE CHECK IS IN THE DATABASE, NOT ONLY AT THE EDGE ───────────────────
+//
+// Chapter 3.15, T068. `channels.itest.ts` proves the zod enum refuses `admin` at
+// the boundary. That is the wrong layer to trust: R8's trap is a CONSTRAINT that
+// reused the organisation's vocabulary — `memberships.role` is
+// `('owner','admin','member')`, one word apart from FR-CHN-04's three — and such a
+// constraint would accept `admin`, refuse `moderator`, and read as correct in
+// review.
+//
+// So this drives the repository, past the schema, and asserts the database says no.
+describe("members_role_check names the channel's three (FR-011, R8)", () => {
+  it("refuses `admin` — the organisation's word — at the database", async () => {
+    const channel = await repoA.createChannel("role-check", "public");
+    const user = await repoA.createUser("role-check-user");
+    expect(await repoA.addMember(channel.id, user.id)).toBe("added");
+
+    // The constraint name is in the CAUSE, not the message: drizzle's top-level
+    // text is "Failed query: update …" and the driver's error underneath it carries
+    // `constraint`. Asserting on the wrapper's message would have passed for any
+    // failed update at all — including one that failed for the wrong reason.
+    const error = await repoA
+      .setMemberRole(channel.id, user.id, "admin")
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    const chain = JSON.stringify({
+      message: (error as Error).message,
+      cause: String((error as { cause?: unknown }).cause ?? ""),
+      constraint: ((error as { cause?: { constraint?: string } }).cause ?? {})
+        .constraint,
+    });
+    expect(chain).toContain("members_role_check");
+  });
+
+  it("accepts `moderator`, which the organisation's constraint would refuse", async () => {
+    // The other half of the same trap, and the one that makes the test above mean
+    // something: a constraint that refused BOTH words would pass the assertion
+    // above while being just as wrong.
+    const channel = await repoA.createChannel("role-check-ok", "public");
+    const user = await repoA.createUser("role-check-ok-user");
+    await repoA.addMember(channel.id, user.id);
+
+    expect(await repoA.setMemberRole(channel.id, user.id, "moderator")).toBe("set");
+    expect(await repoA.memberRole(channel.id, user.id)).toBe("moderator");
+  });
+
+  it("gives a member created without a role the column's default", async () => {
+    const channel = await repoA.createChannel("role-default", "public");
+    const user = await repoA.createUser("role-default-user");
+    await repoA.addMember(channel.id, user.id);
+    expect(await repoA.memberRole(channel.id, user.id)).toBe("member");
+  });
+
+  it("gives a member created WITH a role that role (FR-011b)", async () => {
+    const channel = await repoA.createChannel("role-at-insert", "public");
+    const user = await repoA.createUser("role-at-insert-user");
+    await repoA.addMember(channel.id, user.id, "owner");
+    expect(await repoA.memberRole(channel.id, user.id)).toBe("owner");
+  });
+});

@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Req,
   Res,
@@ -21,11 +22,13 @@ import {
   addMembersBodySchema,
   createChannelBodySchema,
   removeMembersBodySchema,
+  setMemberRoleBodySchema,
 } from "./channels.schema";
 import type {
   AddMembersBody,
   CreateChannelBody,
   RemoveMembersBody,
+  SetMemberRoleBody,
 } from "./channels.schema";
 
 // THE PUBLIC CHANNEL SURFACE (FR-016, FR-019, data-model.md §7).
@@ -122,6 +125,21 @@ export class ChannelsController {
       // of anything, and reporting `false` would imply it could become one.
       is_member: isMember,
     };
+  }
+
+  /** One member's role (chapter 3.15, FR-011, FR-011a).
+   *
+   * The tenant's route: an application credential decides who moderates. A member
+   * cannot promote themselves, which is why this is not `@Accepts("user")` like
+   * join.
+   */
+  @Patch(":channelId/members/:userExternalId")
+  async setMemberRole(
+    @Param("channelId") channelId: string,
+    @Param("userExternalId") userExternalId: string,
+    @Body(new ZodValidationPipe(setMemberRoleBodySchema)) body: SetMemberRoleBody,
+  ) {
+    return this.channels.setMemberRole(channelId, userExternalId, body.role);
   }
 
   /** Remove members, up to a hundred, reporting each (chapter 3.15, FR-006, FR-007).

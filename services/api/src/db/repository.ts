@@ -2708,10 +2708,25 @@ export class Repository {
    * `not_found` keeps the conflation the isolation property needs. The follow-up
    * read distinguishes it from `already_a_member` — and it is a read, not a
    * check-then-write: the insert already happened. */
-  async addMember(channelId: string, userId: string): Promise<AddMemberOutcome> {
+  async addMember(
+    channelId: string,
+    userId: string,
+    /** Chapter 3.15, FR-011b. Absent means the column's own default — `member` —
+     * which is what keeps every existing caller working unchanged. An entry that
+     * names a role is creating a member WITH one rather than changing them into one
+     * afterwards, which is what US6's first scenario asks for. */
+    role?: string,
+  ): Promise<AddMemberOutcome> {
     const inserted = await this.db.execute(
-      sql`INSERT INTO members (channel_id, user_id)
+      role === undefined
+        ? sql`INSERT INTO members (channel_id, user_id)
           SELECT c.id, u.id FROM channels c, users u
+          WHERE c.id = ${channelId} AND c.environment_id = ${this.environmentId}
+            AND u.id = ${userId} AND u.environment_id = ${this.environmentId}
+          ON CONFLICT (channel_id, user_id) DO NOTHING
+          RETURNING channel_id`
+        : sql`INSERT INTO members (channel_id, user_id, role)
+          SELECT c.id, u.id, ${role} FROM channels c, users u
           WHERE c.id = ${channelId} AND c.environment_id = ${this.environmentId}
             AND u.id = ${userId} AND u.environment_id = ${this.environmentId}
           ON CONFLICT (channel_id, user_id) DO NOTHING
@@ -2736,6 +2751,54 @@ export class Repository {
         ),
       );
     return existing.length > 0 ? "already_a_member" : "not_found";
+  }
+
+  /** Set a member's role (chapter 3.15, FR-011).
+   *
+   * SCOPED THROUGH THE CHANNEL, like every other write to `members`: that table
+   * carries no `environment_id`, so the `EXISTS` is what keeps another tenant's rows
+   * out of reach.
+   *
+   * The CHECK constraint is the second line of defence and the one that matters:
+   * `members_role_check` names FR-CHN-04's three, so a value that got past the
+   * schema at the edge still cannot land. R8's trap was a constraint that reused
+   * `memberships`' vocabulary — it would accept `admin`, refuse `moderator`, and
+   * read as correct in review. */
+  async setMemberRole(
+    channelId: string,
+    userId: string,
+    role: string,
+  ): Promise<"set" | "not_a_member"> {
+    const updated = await this.db
+      .update(members)
+      .set({ role })
+      .where(
+        and(
+          eq(members.channelId, channelId),
+          eq(members.userId, userId),
+          sql`EXISTS (SELECT 1 FROM channels c WHERE c.id = ${channelId}
+                       AND c.environment_id = ${this.environmentId})`,
+        ),
+      )
+      .returning({ userId: members.userId });
+    return updated.length > 0 ? "set" : "not_a_member";
+  }
+
+  /** One member's role, or null when there is no membership. Used by the tests that
+   * assert the default rather than reading it out of the DDL. */
+  async memberRole(channelId: string, userId: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ role: members.role })
+      .from(members)
+      .innerJoin(channels, eq(channels.id, members.channelId))
+      .where(
+        and(
+          eq(members.channelId, channelId),
+          eq(members.userId, userId),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      );
+    return rows[0]?.role ?? null;
   }
 
   /** Remove members by user id, up to a hundred in one call, reporting each

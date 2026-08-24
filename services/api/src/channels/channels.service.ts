@@ -5,7 +5,9 @@ import { protocolError } from "../protocol-error";
 import { Repository, type ChannelRow } from "../db/repository";
 import {
   CHANNEL_MEMBER_LIMIT,
+  normaliseEntry,
   type AddMembersBody,
+  type ChannelRole,
   type CreateChannelBody,
   type RemoveMembersBody,
 } from "./channels.schema";
@@ -41,6 +43,10 @@ export interface MemberResult {
   user_id: string;
   external_id: string;
   status: "added" | "already_a_member";
+  /** Chapter 3.15. What role the member holds AFTER the call — read back, not
+   * echoed, so an `already_a_member` reports the role they already had rather than
+   * the one the request asked for. Adding is not changing. */
+  role: string;
 }
 
 @Injectable()
@@ -137,6 +143,25 @@ export class ChannelsService {
     });
   }
 
+  /** Set one member's role by external id (chapter 3.15, FR-011).
+   *
+   * THE CHANNEL FIRST, then the user, then the membership — each refusing with the
+   * same not-found so the three cases are one answer from outside. A caller who can
+   * tell "no such channel" from "no such user" from "not a member" has a probe.
+   */
+  async setMemberRole(
+    channelId: string,
+    userExternalId: string,
+    role: ChannelRole,
+  ): Promise<{ external_id: string; role: ChannelRole }> {
+    if (!(await this.repo.channelExists(channelId))) throw this.notFound();
+    const user = await this.repo.getUserByExternalId(userExternalId);
+    if (!user) throw this.notFound();
+    const outcome = await this.repo.setMemberRole(channelId, user.id, role);
+    if (outcome === "not_a_member") throw this.notFound();
+    return { external_id: userExternalId, role };
+  }
+
   /** A user joining a channel themselves (chapter 3.15, FR-CHN-03).
    *
    * FR-CHN-03's exact words are that any authenticated user of the tenant "may read
@@ -214,16 +239,31 @@ export class ChannelsService {
     }
 
     const results: MemberResult[] = [];
-    for (const externalId of body.user_ids) {
+    for (const entry of body.user_ids) {
+      // An entry is a bare external id or an id with a role (FR-011b). Normalised
+      // once here so nothing below has to ask which form arrived.
+      const { user: externalId, role } = normaliseEntry(entry);
       const user = await this.repo.createUser(externalId);
-      const outcome = await this.repo.addMember(channelId, user.id);
+      const outcome = await this.repo.addMember(
+        channelId,
+        user.id,
+        ...(role === undefined ? [] : ([role] as const)),
+      );
       if (outcome === "not_found") {
         // The channel was read above and both ids are this environment's, so this
         // is not reachable by a foreign request — it means the channel was deleted
         // between the read and here. Answer as the read would have.
         throw new NotFoundException("channel not found");
       }
-      results.push({ user_id: user.id, external_id: externalId, status: outcome });
+      results.push({
+        user_id: user.id,
+        external_id: externalId,
+        status: outcome,
+        // The role the member ends up with, read back rather than echoed: on an
+        // `already_a_member` the request's role is NOT applied, because adding is
+        // not changing. `PATCH` is the route that changes one.
+        role: (await this.repo.memberRole(channelId, user.id)) ?? "member",
+      });
     }
     return results;
   }

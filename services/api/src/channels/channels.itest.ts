@@ -515,4 +515,106 @@ describe("the public channel surface", () => {
       expect(sent.status).toBe(201);
     });
   });
+
+  // ── MEMBER ROLES (chapter 3.15, FR-CHN-04, FR-011) ─────────────────────────
+  //
+  // The clause has asked for these since the SRS was written, and `members` was
+  // `(channel_id, user_id, joined_at)` the whole time. Chapter 3.12's traceability
+  // map recorded it as delivered and described it with a paraphrase belonging to
+  // FR-CHN-06; that was corrected while this chapter was specified.
+  describe("roles on members", () => {
+    let roleChannel: string;
+
+    const patchRole = (channel: string, user: string, role: unknown) =>
+      fetch(`${url}/v1/channels/${channel}/members/${user}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", authorization: `Bearer ${credential}` },
+        body: JSON.stringify({ role }),
+      });
+
+    beforeAll(async () => {
+      roleChannel = (await repo.createChannel("roles", "public")).id;
+    });
+
+    it("defaults a new member to `member`, read through the API", async () => {
+      // T067. The default is declared in the migration; this exercises it rather
+      // than reading it out of the DDL — a comment about a default is not a default.
+      const res = await addMembers(roleChannel, { user_ids: ["plain"] });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { members: { external_id: string; role: string }[] };
+      expect(body.members[0]).toMatchObject({ external_id: "plain", role: "member" });
+    });
+
+    it("accepts a role on the add body, per entry (FR-011b)", async () => {
+      // US6's first scenario: a member ADDED WITH a role. The plan had add assign the
+      // default and `PATCH` change it — two calls for one intention, and a window
+      // where the member holds a role nobody chose. Analysis pass eleven found that
+      // by comparing the scenario to the routes.
+      //
+      // Mixed forms in one request, because the entry is a union: chapter 3.13
+      // shipped `{"user_ids": ["a", "b"]}` and a customer's server sends that today.
+      const res = await addMembers(roleChannel, {
+        user_ids: ["bare-string", { user: "with-role", role: "owner" }],
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { members: { external_id: string; role: string }[] };
+      expect(body.members).toEqual([
+        expect.objectContaining({ external_id: "bare-string", role: "member" }),
+        expect.objectContaining({ external_id: "with-role", role: "owner" }),
+      ]);
+    });
+
+    it("round-trips all three roles through PATCH (FR-011)", async () => {
+      await addMembers(roleChannel, { user_ids: ["promotable"] });
+      for (const role of ["owner", "moderator", "member"]) {
+        const res = await patchRole(roleChannel, "promotable", role);
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ external_id: "promotable", role });
+      }
+    });
+
+    it("refuses a fourth role, naming the field (FR-011a, SC-009)", async () => {
+      await addMembers(roleChannel, { user_ids: ["hopeful"] });
+      const res = await patchRole(roleChannel, "hopeful", "superuser");
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code: string; field?: string };
+      expect(body.code).toBe("invalid_request");
+      // The field name is in the envelope only because chapter 3.14 stopped
+      // `ZodValidationPipe` discarding `issues[0].path`.
+      expect(body.field).toBe("role");
+    });
+
+    it("refuses `admin` — the organisation's word, not a channel's", async () => {
+      // R8's trap from the edge: `memberships.role` is
+      // `('owner','admin','member')`, one word apart from these three. A migration
+      // that reused that constraint would take `admin` and refuse `moderator`.
+      await addMembers(roleChannel, { user_ids: ["would-be-admin"] });
+      const res = await patchRole(roleChannel, "would-be-admin", "admin");
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { field?: string }).field).toBe("role");
+    });
+
+    it("answers a non-member, an unknown user and an absent channel alike", async () => {
+      // Three cases, one answer. A caller who can tell them apart has a probe for
+      // which users this tenant knows and which channels exist.
+      const notAMember = await patchRole(roleChannel, "outsider", "owner");
+      const noSuchUser = await patchRole(roleChannel, "never-heard-of", "owner");
+      const noSuchChannel = await patchRole(
+        "00000000-0000-4000-8000-000000000000",
+        "plain",
+        "owner",
+      );
+      expect(notAMember.status).toBe(404);
+      expect(noSuchUser.status).toBe(404);
+      expect(noSuchChannel.status).toBe(404);
+      // Each body read ONCE and held: a `Response` is a stream, and reading it
+      // twice throws "Body has already been read" — which is what the first draft
+      // of this test did.
+      const a = withoutRequestId(await notAMember.json());
+      const b = withoutRequestId(await noSuchUser.json());
+      const c = withoutRequestId(await noSuchChannel.json());
+      expect(a).toEqual(b);
+      expect(a).toEqual(c);
+    });
+  });
 });
