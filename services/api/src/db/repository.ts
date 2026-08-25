@@ -1391,6 +1391,24 @@ export class Repository {
 
       await tx.delete(readPositions).where(eq(readPositions.userId, userId));
       await tx.delete(members).where(eq(members.userId, userId));
+      // `description` IS NOT IN THIS `set`, AND ITS ABSENCE IS THE REQUIREMENT
+      // (FR-004a, T043b).
+      //
+      // FR-027 clears profile data on deletion, and a bot's description is not profile
+      // data — it says what the software is, which is what makes the messages it already
+      // sent answerable after it is gone. Clearing it would violate
+      // `users_bot_description_check` and make a bot **the one kind of user that cannot
+      // be deleted**: the constraint would reject the deletion itself.
+      //
+      // The rejected alternative was clearing `kind` back to `'person'` first. That
+      // makes the deletion two writes and leaves a person nobody created, holding
+      // messages a bot sent.
+      //
+      // THE OTHER DELETION METHOD IS `markUserDeleted`, and it clears nothing — it only
+      // stamps the marker. It has **no production caller**: the user-surface chapter added it so the
+      // listing's 404 branch was reachable before the deletion route existed. This rule
+      // is `deleteUser`'s, and a reader looking for it in the other one will find a
+      // method nothing calls.
       await tx
         .update(users)
         .set({

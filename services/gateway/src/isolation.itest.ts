@@ -169,6 +169,68 @@ describe("the socket refuses another tenant's identifiers", () => {
     expect(types).toContain("message.send");
   });
 
+  // ── T040b: a promoted bot's live token cannot open a socket (FR-005b) ──────
+  //
+  // REFUSING AT THE MINT IS NOT ENOUGH, and this is the test that says so. A token lives
+  // up to 24 hours (FR-AUT-07), so a user promoted to a bot at 09:00 holds a valid token
+  // until 09:00 tomorrow. The session route reads `banned_at` and, until this chapter,
+  // not `kind` — so closing the mint alone would leave a bot able to connect for a day
+  // after it became one.
+  //
+  // THE SOCKET SEES A CLOSE, NOT A 404. The refusal is the api's, at
+  // `POST /internal/session`, and the gateway has nothing to tell a client whose session
+  // was refused — which is why this test lives here and not in the api's suite.
+  describe("a bot cannot open a socket, even holding a token minted before it was one", () => {
+    it("closes the connection instead of acknowledging it", async () => {
+      // A DISPOSABLE USER, not the tenant's own. Promoting the attacker's user makes it
+      // unable to connect for the rest of the file, and the first version of this test
+      // took the control down with it — the fifth shared-fixture casualty in two
+      // features.
+      const doomed = await t.attacker.disposable();
+      // The token is minted while the identifier is still a person, which is the whole
+      // scenario: the promotion happens afterwards and the token stays valid.
+      await connect(url, doomed.token).waitFor("connection.ack");
+
+      await doomed.promoteToBot();
+
+      await expect(
+        connect(url, doomed.token).waitFor("connection.ack"),
+      ).rejects.toThrow();
+    });
+  });
+
+  // ── THE CONTROL, for the reason the HTTP gauntlet needed one ────────────────
+  //
+  // Three of the four attacks below assert that NOTHING happened. A socket that
+  // is broken, a token that is expired, a gateway that delivers to nobody — all
+  // of those also make nothing happen, and would pass this file while attacking
+  // nothing. So the attacker's socket is shown to work first.
+  describe("the control: the attacker's own socket works", () => {
+    it("connects and is acknowledged", async () => {
+      const ack = await connect(url, t.attacker.token).waitFor<{ payload: { user: string } }>(
+        "connection.ack",
+      );
+      expect(ack.payload.user).toBe(t.attacker.userExternalId);
+    });
+
+    it("sends into its own channel and is acked", async () => {
+      const client = connect(url, t.attacker.token);
+      await client.waitFor("connection.ack");
+      client.socket.send(
+        JSON.stringify({
+          type: "message.send",
+          payload: {
+            idem_key: randomUUID(),
+            channel: t.attacker.channelId,
+            text: "the control writes",
+          },
+        }),
+      );
+      const ack = await client.waitFor<{ payload: { seq: number } }>("message.ack");
+      expect(ack.payload.seq).toBeGreaterThan(0);
+    });
+  });
+
   it("a connection ack names nothing belonging to the other tenant", async () => {
     const socket = connect(url, t.attacker.token);
     const ack = await socket.waitFor("connection.ack");
