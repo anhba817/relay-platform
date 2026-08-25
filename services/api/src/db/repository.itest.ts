@@ -555,9 +555,17 @@ describe("the repository's own refusals (chapter 3.15)", () => {
     // is inserted directly, the way chapter 3.12's read-position clamp is planted a few
     // hundred lines above — the only way a branch that no writer can reach is covered.
     //
-    // The arm is NOT dead. `messages.user_id` stays nullable because rows like this one
-    // exist in customers' databases, and FR-012 asks that all four read paths keep
-    // working for them. What changed is that no new one can be created.
+    // THE ARM IS NOT DEAD, AND ITS SUBJECT HAS CHANGED (chapter 3.17, T055, FR-014).
+    //
+    // Chapter 3.16 wrote this arm for a state the public route produced on every
+    // key-authenticated send. It now covers LEGACY ROWS ONLY: 121,250 of the 394,808
+    // messages in this lane have no sender (T050), and any deployment older than this
+    // chapter has them, but nothing can make another. R8 said re-examine rather than
+    // delete, and re-examining is what changes here — the assertion is the same and the
+    // reason for it is not.
+    //
+    // A test whose subject changed and whose comment did not is how a reader concludes
+    // the behaviour is still reachable from the outside.
     await db.execute(
       sql`INSERT INTO messages (id, channel_id, sequence, text, created_at)
           VALUES (gen_random_uuid(), ${channel.id}, 1, 'from the tenant, not a user', now())`,

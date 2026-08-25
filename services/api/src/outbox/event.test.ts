@@ -91,3 +91,32 @@ describe("messageCreatedEvent", () => {
     ).toThrow(/environment/i);
   });
 });
+
+describe("a legacy senderless message in the webhook payload (chapter 3.17, T054a)", () => {
+  // THE ONE PATH THAT LEAVES THE PLATFORM. FR-WHK-02 delivers `message.created` to a
+  // customer's own HTTPS endpoint and FR-WHK-03 retries a failed delivery for up to two
+  // hours — so an event for a legacy senderless row can be delivered, and REdelivered,
+  // after this chapter ships. A subscriber's parser meets it whatever the api now
+  // refuses to create.
+  //
+  // `MessageCreatedData.user` STAYS `string | null` (T054b, FR-012a). Nothing can create
+  // a new null: FR-MSG-15 requires a sender and the compiler enforces it. The type is
+  // not describing what the platform emits — it describes what a subscriber may still
+  // receive from a queue that was already full when the rule changed. Narrowing it to
+  // `string` would be a type that says "this cannot happen" about something in flight.
+  it("carries user: null rather than dropping the event", () => {
+    const event = messageCreatedEvent({
+      eventId: "9a0b1c2d-3e4f-4a5b-8c9d-0e1f2a3b4c5d",
+      environmentId: ENV,
+      message: { ...MESSAGE, user: null },
+    });
+    // `messageCreatedEvent` returns a `PendingEvent` — a subject and the envelope —
+    // so the payload a subscriber parses is two levels in.
+    const payload = event.payload.data;
+    // NOT DROPPED, unlike the resume. The webhook's contract permits a null where
+    // `messageSchema.user` (`z.string().min(1)`) does not, so the two paths differ in
+    // what they can express and agree on the decision: never invent a sender.
+    expect(payload.user).toBeNull();
+    expect(JSON.stringify(payload)).not.toContain("user_id");
+  });
+});

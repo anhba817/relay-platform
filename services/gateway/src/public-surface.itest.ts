@@ -238,9 +238,35 @@ describe("a channel, a member and a message, all over the public API", () => {
   // send to an end-user token would change what `user` means on the wire for every
   // existing caller (FR-MSG-13's territory), and a live fan-out from the api is a
   // new coupling between the api and Redis. Both are named in the chapter.
+  //
+  // CHAPTER 3.17 DID HALF OF THAT, and this comment is left standing rather than
+  // rewritten because the half it did is not the half that fixes this. FR-MSG-13 was
+  // amended — "on behalf of any user" became "on behalf of a bot user of that tenant" —
+  // so a REST send now names a sender, and the send below names one. What did NOT change
+  // is the fan-out: the api still publishes nothing, so the message still reaches no
+  // socket, live or on resume. Chapter 3.18 is the fan-out.
+  //
+  // THE SENDER IS A BOT, because the caller is a key. A key may not name "tuan" — that
+  // is a person and `sender_not_permitted` is the refusal — so the send that this test
+  // needs to succeed must name software.
   it("does NOT deliver a REST-sent message, live or on resume", async () => {
     const channelId = await seedOverTheWire("rest", ["tuan"]);
     const token = await mint("tuan");
+    // Created over the public route, because this suite has no database handle by
+    // design — it is the one that tests what a customer can reach.
+    await post(
+      "/v1/users",
+      {
+        users: [
+          {
+            external_id: "rest-courier",
+            kind: "bot",
+            description: "sends over REST so this test can watch nothing arrive",
+          },
+        ],
+      },
+      api.credential,
+    );
 
     const live = reader(`${wsUrl}/v1/ws?token=${token}`);
     await live.opened;
@@ -248,7 +274,11 @@ describe("a channel, a member and a message, all over the public API", () => {
     const first = `first over rest ${randomUUID().slice(0, 8)}`;
     const second = `second over rest ${randomUUID().slice(0, 8)}`;
     for (const text of [first, second]) {
-      const sent = await post(`/v1/channels/${channelId}/messages`, { text }, api.credential);
+      const sent = await post(
+        `/v1/channels/${channelId}/messages`,
+        { text, user: "rest-courier" },
+        api.credential,
+      );
       expect(sent.status).toBe(201);
     }
 
@@ -260,17 +290,33 @@ describe("a channel, a member and a message, all over the public API", () => {
       })
     ).json()) as { messages: { seq: number; user: string | null; text: string }[] };
     expect(history.messages.map((m) => m.text)).toEqual([second, first]);
-    expect(history.messages.every((m) => m.user === null)).toBe(true);
+    // WAS `every((m) => m.user === null)`, AND THAT IS THE CHAPTER (chapter 3.17,
+    // T055's class). This assertion existed to prove the rows were senderless, which was
+    // why `toFrame` dropped them. Every REST send now names a sender, so the premise it
+    // rested on is gone.
+    expect(history.messages.every((m) => m.user === "rest-courier")).toBe(true);
 
     // No live delivery.
     await new Promise((resolve) => setTimeout(resolve, 1_500));
     expect(live.frames.filter((f) => f.type === "message.created")).toEqual([]);
     live.socket.close();
 
-    // And none on resume either. The cursor IS accepted — `resume_ok` is true and
-    // the channel is in the echoed cursor — so this is not a rejected resume
-    // dressed as an empty one. The page came back and every row in it was
-    // dropped for having no sender.
+    // AND ON RESUME IT NOW ARRIVES — WHICH IS HALF OF THE GAP CLOSING (chapter 3.17).
+    //
+    // This block asserted `[]`, and the comment said why: "the page came back and every
+    // row in it was dropped for having no sender." That was true, and it is the reason
+    // chapter 3.12's `gaps.md` G1 listed TWO independent mechanisms for "a REST-sent
+    // message reaches no socket" — nothing publishes, and the public send passes no user.
+    //
+    // FR-MSG-15 removes the second. Every REST send now names a sender, `toFrame` has no
+    // reason to drop the row, and the backfill delivers it. So the resume half of G1 is
+    // closed by this chapter and the LIVE half is not: `live.frames` above is still
+    // empty, because only the gateway publishes to the fan-out (`session.ts`) and the api
+    // still publishes nothing. Chapter 3.18 is that half.
+    //
+    // The test's name is now half wrong and is left alone deliberately: T096a amends the
+    // gap record, and renaming a test is not how a reader learns that a two-mechanism
+    // gap became a one-mechanism gap.
     const resumed = reader(`${wsUrl}/v1/ws?token=${token}&cursor=${channelId}:1`);
     await resumed.opened;
     await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -279,7 +325,17 @@ describe("a channel, a member and a message, all over the public API", () => {
       | undefined;
     expect(ack?.payload.resume_ok).toBe(true);
     expect(Object.keys(ack?.payload.cursor ?? {})).toContain(channelId);
-    expect(resumed.frames.filter((f) => f.type === "message.created")).toEqual([]);
+    // ONE FRAME, NOT TWO, AND THE CURSOR IS WHY. `cursor=${channelId}:1` says "I have
+    // seen through sequence 1", so the backfill replays what came after it — the second
+    // message only. Asserting two was an assumption about the fixture rather than a
+    // reading of the cursor.
+    const onResume = resumed.frames.filter((f) => f.type === "message.created");
+    expect(onResume).toHaveLength(1);
+    const frame = onResume[0] as unknown as {
+      payload: { user: string; text: string };
+    };
+    expect(frame.payload.text).toBe(second);
+    expect(frame.payload.user).toBe("rest-courier");
     resumed.socket.close();
   }, 60_000);
 });
