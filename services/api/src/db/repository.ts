@@ -1635,12 +1635,25 @@ export class Repository {
       metadata,
       idempotencyKey,
     }: {
-      userId?: string;
+      /** REQUIRED SINCE THIS CHAPTER (FR-MSG-15, FR-006), and required is the whole
+       * mechanism. SC-003 asks that no write path be able to produce a senderless
+       * message; a runtime check would be a test somebody has to remember, and this
+       * is a compile error. `exactOptionalPropertyTypes` means a caller cannot pass
+       * `undefined` here either — passing a `string | undefined` is named by the
+       * compiler, not silently accepted.
+       *
+       * There is no red test for this. Reverting the `?` is what makes the guarantee
+       * visible, and the transcript of that revert is SC-003a's evidence (T013a). */
+      userId: string;
       /** The sender as a CONSUMER will see them. Threaded from the
        * caller rather than looked up here — the internal route already holds it
        * (it is the token's subject), and an extra SELECT inside the write
-       * transaction is a cost every message would pay forever. Absent on the
-       * public REST route, where a key-authenticated send is unattributed. */
+       * transaction is a cost every message would pay forever.
+       *
+       * STILL OPTIONAL, and that is not an oversight. `userId` is what the platform
+       * stores and `userExternalId` is what a consumer sees; the public route now
+       * resolves a bot and holds both, but the internal route has always supplied
+       * both and nothing requires a caller to know the external id to write a row. */
       userExternalId?: string;
       text: string;
       metadata?: unknown;
@@ -1658,19 +1671,33 @@ export class Repository {
       // channel that exists differs from the refusal for one that does not, and a
       // banned user can enumerate channel ids.
       //
-      // ONLY FOR AN ATTRIBUTED SEND. A key-authenticated REST send carries no user, so
-      // there is nobody to be banned; the tenant acting for itself is not a banned
-      // user's send by proxy, because the tenant is who bans.
-      if (userId !== undefined) {
-        const [sender] = await tx
-          .select({ bannedAt: users.bannedAt })
-          .from(users)
-          .where(
-            and(eq(users.id, userId), eq(users.environmentId, this.environmentId)),
-          )
-          .limit(1);
-        if (sender?.bannedAt != null) throw new UserBannedError(userId);
-      }
+      // EVERY SEND IS ATTRIBUTED NOW (FR-MSG-15). The gate that used to
+      // stand here — `if (userId !== undefined)` — guarded against a key-authenticated
+      // send that carried no user, and `userId` is required as of this chapter, so the
+      // condition could no longer be false. **Fourth time this project has met a guard
+      // that stopped meaning anything**: `addMember`'s `rowCount ?? 0`, and
+      // `upsertUser`'s second throw and `(row.metadata ?? {})`. Tightening a
+      // type makes its runtime guards dead; three of the seven `userId` comparisons in
+      // this file were dead the moment T012 landed, and two others are in methods where
+      // the parameter is optional by design and must not be touched.
+      //
+      // A BOT CAN BE BANNED, AND THAT IS THE POINT (FR-005c). `banned_at` has been on
+      // every `users` row since the channel-control chapter and this check has never run for a bot
+      // because no send named one. A ban is how an operator stops a runaway integration
+      // without deleting the identity its messages are attributed to.
+      //
+      // ONE LOOKUP, TWO ANSWERS. `kind` is read here and used again at the private
+      // channel check below (FR-019a). The alternative is a second SELECT on the write
+      // path for every message forever, to learn something this query already touched.
+      const [sender] = await tx
+        .select({ bannedAt: users.bannedAt, kind: users.kind })
+        .from(users)
+        .where(
+          and(eq(users.id, userId), eq(users.environmentId, this.environmentId)),
+        )
+        .limit(1);
+      if (sender?.bannedAt != null) throw new UserBannedError(userId);
+      const senderIsPerson = sender?.kind !== "bot";
 
       const [channel] = await tx
         .select({
@@ -1729,7 +1756,26 @@ export class Repository {
       // non-member of a private archived channel never learns it exists from
       // `channel_archived`. Both arrive with their own columns' chapters; this is
       // the middle of the three.
-      if (channel.type === "private" && userId !== undefined) {
+      // THE SENDER ATTRIBUTES; IT DOES NOT AUTHORISE (FR-019).
+      //
+      // This gate used to read `channel.type === "private" && userId !== undefined`,
+      // and the second half was doing real work: a key-authenticated send carried no
+      // user, so it skipped the membership check entirely. That is the channel-control chapter's
+      // FR-005 — an application credential "acts for the customer, carries no user,
+      // and sees private channels" — and `messages.itest.ts` asserts it by name.
+      //
+      // Requiring `userId` would have made the condition always true, fired the check,
+      // and refused a bot that is not a member with `ChannelNotFoundError`: a 404 that
+      // by design cannot say why. A capability the channel-control chapter delivered would have
+      // vanished, and the analysis passes that read FR-005 never noticed because the
+      // word "private" appeared nowhere in this chapter's plan.
+      //
+      // So the gate turns on WHAT THE SENDER IS, not on whether there is one. A key
+      // naming a bot has exactly the authority the key has today; the bot's name is
+      // what appears on the message and nothing more. A person's token still both
+      // authorises and attributes, which is why `senderIsPerson` is the condition and
+      // a person who is not a member is still refused, indistinguishably (FR-019b).
+      if (channel.type === "private" && senderIsPerson) {
         const [membership] = await tx
           .select({ userId: members.userId })
           .from(members)

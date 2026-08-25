@@ -41,6 +41,18 @@ export default tseslint.config(
       "packages/test-harness/src/global-setup.ts",
       "packages/test-harness/src/setup.ts",
       "packages/test-harness/src/guard.itest.ts",
+      // AND ONE SUITE THAT WRITES A ROW THE TYPE SYSTEM FORBIDS.
+      //
+      //   backfill.itest.ts  asserts what `toFrame` does with a SENDERLESS message.
+      //                      Those rows exist — every one written through the socket
+      //                      before the sender was threaded looks like this — and the
+      //                      repository can no longer produce one, because `userId` is
+      //                      required. The fixture has to be raw SQL or the behaviour
+      //                      has no test at all.
+      //
+      // This is the exemption's honest case: not "the repository is inconvenient" but
+      // "the state under test is one the repository is now unable to reach".
+      "services/api/src/internal/backfill.itest.ts",
     ],
     rules: {
       "no-restricted-imports": [
