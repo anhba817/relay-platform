@@ -53,6 +53,25 @@ export const userProfileBodySchema = z.strictObject({
   display_name: z.string().min(1).max(255).nullable().optional(),
   avatar_url: z.string().url().max(2048).nullable().optional(),
   metadata: userMetadataSchema.optional(),
+  /** A bot's description, editable here (chapter 3.17, FR-004).
+   *
+   * **NOT `.nullable()`, AND THIS COMMENT IS WHY IT STAYS THAT WAY.** Every field above
+   * is nullable on purpose and the paragraph above says what that means: `null` clears.
+   * Extending the idiom one more line would have been the natural thing to write, and
+   * `PATCH {"description": null}` would then set null on a bot,
+   * `users_bot_description_check` would raise, and the customer would get a **500** for
+   * a request the boundary should have refused (FR-004b).
+   *
+   * Nullability buys nothing for either kind. A bot must never clear its description —
+   * the constraint forbids it, and a bot whose description is gone is the anonymous
+   * sender this chapter exists to remove. A person may never be given one
+   * (`upsertUserEntrySchema` refuses that). So the field is settable and not clearable,
+   * and the next person to reach for symmetry has to read this first.
+   *
+   * `kind` IS ABSENT FROM THIS SCHEMA, and `strictObject` is what refuses it: a
+   * promotion is a decision about a stored row, so it goes through the upsert where the
+   * per-entry status can report a conflict. A PATCH has one row and one status code. */
+  description: z.string().min(1).max(2000).optional(),
 });
 
 export type UserProfileBody = z.infer<typeof userProfileBodySchema>;
@@ -66,12 +85,72 @@ export type UserProfileBody = z.infer<typeof userProfileBodySchema>;
  * `strictObject`, and the same 4 KB metadata bound and URL validation the single PATCH
  * uses — one schema fragment, so the two routes cannot drift into accepting different
  * things for the same column. */
-export const upsertUserEntrySchema = z.strictObject({
-  external_id: z.string().min(1).max(255),
-  display_name: z.string().min(1).max(255).nullable().optional(),
-  avatar_url: z.string().url().max(2048).nullable().optional(),
-  metadata: userMetadataSchema.optional(),
-});
+export const upsertUserEntrySchema = z
+  .strictObject({
+    external_id: z.string().min(1).max(255),
+    display_name: z.string().min(1).max(255).nullable().optional(),
+    avatar_url: z.string().url().max(2048).nullable().optional(),
+    metadata: userMetadataSchema.optional(),
+    /** What kind of thing this user is (chapter 3.17, FR-USR-07).
+     *
+     * NO `.default("person")`, AND THAT IS THE REQUIREMENT (FR-002b). A schema default
+     * would make "absent" indistinguishable from "person" before anything can compare
+     * the entry to the stored row — and an entry that omits `kind` for an existing bot
+     * is asking for no change, not asking to demote it. The default belongs at
+     * creation, in the column (`schema.ts`), where only a new row gets it. */
+    kind: z.enum(["person", "bot"]).optional(),
+    /** What the software is, and why it posts.
+     *
+     * NOT `.nullable()`, unlike every sibling above, and `userProfileBodySchema`'s
+     * comment explains the idiom this deliberately breaks: there, `null` clears. Here
+     * a null description on a bot violates `users_bot_description_check` and would
+     * reach the customer as a 500 (FR-004b). The field is settable and not clearable. */
+    description: z.string().min(1).max(2000).optional(),
+  })
+  /** THE TWO RULES ZOD CAN CHECK WITHOUT THE STORED ROW (FR-002, FR-004b).
+   *
+   * A bot needs a description and a person may not have one — both decidable from the
+   * request alone, which is why they live here and not in the service. What zod
+   * CANNOT decide is whether a change of `kind` is permitted, because that depends on
+   * the row already in the database and on whether it has ever sent a message; that is
+   * `kind_conflict`, a per-entry status in a 200 (FR-002a).
+   *
+   * The line between the two: a refusal a customer can fix by re-reading their own
+   * request belongs at the boundary and fails the whole batch, the way a bad
+   * `avatar_url` or an unknown key already does. A refusal that depends on state they
+   * cannot see is reported per entry, so one bad row out of a hundred does not fail
+   * the other ninety-nine. */
+  .superRefine((entry, ctx) => {
+    if (entry.kind === "bot" && entry.description === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["description"],
+        message: "a bot requires a description",
+      });
+    }
+    // A DESCRIPTION REQUIRES `kind: "bot"` IN THE SAME ENTRY, and the condition is
+    // `!== "bot"` rather than `=== "person"` for a reason found by a test.
+    //
+    // The first version read `entry.kind === "person"`, which let
+    // `{external_id, description}` through — `kind` absent is the common shape, not
+    // `kind: "person"`, so the rule never fired on the case it was written for and a
+    // person could be given a description.
+    //
+    // So the two rules together make description and `kind: "bot"` imply each other
+    // WITHIN AN ENTRY. Editing a bot's description through this route means restating
+    // `kind: "bot"`, which is not a change and raises no conflict; the single PATCH is
+    // where a description is edited on its own (FR-004). The alternative — inferring
+    // permission from the stored row — is exactly the decision zod cannot make, and
+    // moving it here would put a state-dependent refusal at the boundary where it
+    // fails a whole batch of a hundred.
+    if (entry.description !== undefined && entry.kind !== "bot") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["description"],
+        message: "a description belongs to a bot; name `kind: \"bot\"` with it",
+      });
+    }
+  });
 
 /** FR-025's bound: 100 in one request, and `field: "users"` on 101.
  *

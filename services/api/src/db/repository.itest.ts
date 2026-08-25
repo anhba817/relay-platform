@@ -95,6 +95,42 @@ describe("tenant isolation is structural (FR-TEN-05)", () => {
   });
 });
 
+describe("the database refuses a bot with no description (chapter 3.17, FR-003)", () => {
+  // TWO GUARANTEES, NOT ONE, AND THIS IS THE SECOND (T023). Zod refuses a bot with no
+  // description at the boundary and that covers every request; this covers every
+  // WRITER — a migration, a backfill, a psql session, a future route nobody has
+  // written. Research R5 puts the two checks in two layers deliberately, and a test
+  // that only exercised the boundary would leave the constraint unproven.
+  it("refuses the insert directly, not only through the route", async () => {
+    const user = await repoA.createUser("db-refuses-me", "Person For Now");
+    // THE CONSTRAINT NAME IS ON THE CAUSE, NOT THE MESSAGE. Drizzle wraps the driver
+    // error as "Failed query: ...", so asserting on `toThrow(/users_bot.../)` passes
+    // for any failure of that statement — including a typo in the SQL. The name is
+    // what makes this test about the constraint rather than about the query.
+    await expect(
+      db.execute(sql`UPDATE users SET kind = 'bot' WHERE id = ${user.id}`),
+    ).rejects.toMatchObject({
+      cause: { constraint: "users_bot_description_check" },
+    });
+  });
+
+  it("accepts the same promotion when a description comes with it", async () => {
+    const user = await repoA.createUser("db-allows-me", "Person For Now");
+    await db.execute(
+      sql`UPDATE users SET kind = 'bot', description = 'it says what it does'
+          WHERE id = ${user.id}`,
+    );
+    expect((await repoA.getUserByExternalId("db-allows-me"))!.kind).toBe("bot");
+  });
+
+  it("refuses a kind outside the two the vocabulary allows", async () => {
+    const user = await repoA.createUser("db-refuses-kind", "Person");
+    await expect(
+      db.execute(sql`UPDATE users SET kind = 'daemon' WHERE id = ${user.id}`),
+    ).rejects.toMatchObject({ cause: { constraint: "users_kind_check" } });
+  });
+});
+
 describe("sequence assignment is serialised per channel (ADR-03)", () => {
   it("two concurrent sends never interleave", async () => {
     const channel = await repoA.createChannel("ordering", "public");
@@ -523,10 +559,8 @@ describe("the repository's own refusals (chapter 3.15)", () => {
     // exist in customers' databases, and FR-012 asks that all four read paths keep
     // working for them. What changed is that no new one can be created.
     await db.execute(
-      sql`INSERT INTO messages (id, environment_id, channel_id, sequence, text, created_at)
-          SELECT gen_random_uuid(), environment_id, ${channel.id}, 1,
-                 'from the tenant, not a user', now()
-          FROM channels WHERE id = ${channel.id}`,
+      sql`INSERT INTO messages (id, channel_id, sequence, text, created_at)
+          VALUES (gen_random_uuid(), ${channel.id}, 1, 'from the tenant, not a user', now())`,
     );
     await db.execute(
       sql`UPDATE channels SET last_sequence = 1, last_activity_at = now()

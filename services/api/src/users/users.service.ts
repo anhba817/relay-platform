@@ -45,12 +45,21 @@ export class UsersService {
     display_name: string | null;
     avatar_url: string | null;
     metadata: Record<string, unknown>;
+    kind: "person" | "bot";
+    description: string | null;
   } {
     return {
       external_id: user.external_id,
       display_name: user.display_name,
       avatar_url: user.avatar_url,
       metadata: user.metadata,
+      // `kind` ON EVERY USER, AND THAT IS FR-003 BEING SATISFIED RATHER THAN
+      // DOCUMENTED (chapter 3.17). A client that had to infer personhood from a null
+      // description would be inferring it from an absence, and the clause asks for a
+      // stored property. `description` is null for a person because the schema refuses
+      // to give one, not because nobody has set it yet.
+      kind: user.kind,
+      description: user.description,
     };
   }
 
@@ -174,10 +183,22 @@ export class UsersService {
   async upsertUsers(body: UpsertUsersBody): Promise<{
     data: Array<{
       external_id: string;
-      status: "created" | "updated" | "revived";
+      /** A FOURTH STATUS, IN A 200 (chapter 3.17, FR-002a). `kind_conflict` says the
+       * entry asked to change what kind of thing a user is and the change was refused
+       * — a promotion whose row has already sent a message, or any demotion.
+       *
+       * NOT A 400, and the reason is the shape of this route rather than politeness.
+       * Zod cannot see the stored row, so this refusal is only knowable mid-batch; a
+       * status code would fail all hundred entries because of entry 7, which is what
+       * this per-entry array exists to prevent. The boundary keeps the refusals a
+       * customer can fix by re-reading their own request — a bot with no description,
+       * a person with one — and those still fail the whole body. */
+      status: "created" | "updated" | "revived" | "kind_conflict";
       display_name: string | null;
       avatar_url: string | null;
       metadata: Record<string, unknown>;
+      kind: "person" | "bot";
+      description: string | null;
     }>;
   }> {
     const data = [];
@@ -190,6 +211,8 @@ export class UsersService {
         display_name: user.display_name,
         avatar_url: user.avatar_url,
         metadata: user.metadata,
+        kind: user.kind,
+        description: user.description,
       });
     }
     return { data };

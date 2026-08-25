@@ -2213,6 +2213,15 @@ export interface UserRow {
    * apart: a repository that hid deleted rows would make the marker unobservable and
    * the deletion untestable. */
   deleted_at: string | null;
+  /** Chapter 3.17, FR-USR-07. What kind of thing this user is — `'person'` or `'bot'`.
+   *
+   * ON EVERY USER, not only bots. A reader that had to infer personhood from a null
+   * description would be inferring it from the absence of something, and FR-003 asks
+   * for a stored property rather than an inference. */
+  kind: "person" | "bot";
+  /** What the software is, and why it posts. Null for a person, and
+   * `users_bot_description_check` makes it non-null for a bot at the database. */
+  description: string | null;
 }
 
 export interface ChannelRow {
@@ -2638,6 +2647,13 @@ export class Repository {
         metadata: {},
         banned_at: null,
         deleted_at: null,
+        // `createUser` CANNOT MAKE A BOT, and that is deliberate (chapter 3.17). Its
+        // callers are the member-add and the token mint, where an unknown identifier
+        // arrives with nothing but a name; a bot needs a description, so it is created
+        // through the upsert where one can be supplied. This is also why `person -> bot`
+        // has an escape at all — see `upsertUser`.
+        kind: "person",
+        description: null,
       };
     }
     const existing = await this.getUserByExternalId(externalId);
@@ -2658,6 +2674,8 @@ export class Repository {
         metadata: users.metadata,
         bannedAt: users.bannedAt,
         deletedAt: users.deletedAt,
+        kind: users.kind,
+        description: users.description,
       })
       .from(users)
       .where(
@@ -2681,6 +2699,11 @@ export class Repository {
           metadata: row.metadata as Record<string, unknown>,
           banned_at: row.bannedAt === null ? null : toIso(row.bannedAt),
           deleted_at: row.deletedAt === null ? null : toIso(row.deletedAt),
+          // `as` for the same reason as `metadata` above: the column is
+          // `notNull().default('person')` and `users_kind_check` bounds it to two
+          // values, so a `?? "person"` here would be an arm the database cannot produce.
+          kind: row.kind as "person" | "bot",
+          description: row.description,
         };
   }
 
@@ -3085,8 +3108,19 @@ export class Repository {
       display_name?: string | null | undefined;
       avatar_url?: string | null | undefined;
       metadata?: Record<string, unknown> | undefined;
+      /** Chapter 3.17 (FR-002b). ABSENT MEANS "NO CHANGE", NOT "PERSON" — the column
+       * default handles a new row and this method must not apply it to an existing
+       * one, or an entry updating a bot's description would silently demote it. */
+      kind?: "person" | "bot" | undefined;
+      description?: string | undefined;
     },
-  ): Promise<{ user: UserRow; status: "created" | "updated" | "revived" }> {
+  ): Promise<{
+    user: UserRow;
+    /** `kind_conflict` REPORTS A CHANGE RATHER THAN PERFORMING ONE (FR-002a). Zod
+     * cannot reach this decision: it depends on the stored row's kind and, for a
+     * promotion, on whether that row has ever sent a message. */
+    status: "created" | "updated" | "revived" | "kind_conflict";
+  }> {
     const id = randomUUID();
     const inserted = await this.db
       .insert(users)
@@ -3097,6 +3131,13 @@ export class Repository {
         displayName: profile.display_name ?? null,
         avatarUrl: profile.avatar_url ?? null,
         ...(profile.metadata === undefined ? {} : { metadata: profile.metadata }),
+        // THE DEFAULT APPLIES HERE AND NOWHERE ELSE (chapter 3.17, FR-002b, T019a).
+        // A new row with no `kind` is a person; an existing row with no `kind` is
+        // asking for no change, which the update block below is careful about.
+        ...(profile.kind === undefined ? {} : { kind: profile.kind }),
+        ...(profile.description === undefined
+          ? {}
+          : { description: profile.description }),
       })
       .onConflictDoNothing({ target: [users.environmentId, users.externalId] })
       .returning({ id: users.id });
@@ -3111,6 +3152,8 @@ export class Repository {
           metadata: profile.metadata ?? {},
           banned_at: null,
           deleted_at: null,
+          kind: profile.kind ?? "person",
+          description: profile.description ?? null,
         },
         status: "created",
       };
@@ -3130,7 +3173,7 @@ export class Repository {
     // `revived`. `UPDATE ... RETURNING` gives post-update values, so there is no way to
     // learn it from the write itself.
     const [before] = await this.db
-      .select({ id: users.id, deletedAt: users.deletedAt })
+      .select({ id: users.id, deletedAt: users.deletedAt, kind: users.kind })
       .from(users)
       .where(
         and(
@@ -3139,6 +3182,43 @@ export class Repository {
         ),
       )
       .limit(1);
+
+    // A KIND CHANGE IS REPORTED, NOT PERFORMED (chapter 3.17, FR-002a, FR-002d).
+    //
+    // `person -> bot` is allowed when the row has NEVER SENT A MESSAGE. Without that
+    // escape the natural ordering traps a customer: `POST /v1/channels/:id/members`
+    // creates any unknown identifier as a person, because `createUser` cannot set
+    // `kind` — so "add support-bot to #support" followed by "register support-bot as a
+    // bot" would make that bot permanently impossible. The escape closes at the first
+    // message, because a message already attributed to a person must not turn into one
+    // attributed to software.
+    //
+    // `bot -> person` is refused unconditionally. A bot's messages are attributed to it
+    // and demoting it would rewrite what those messages mean, retroactively.
+    //
+    // THE COST IS A FILTERED SCAN. `messages.user_id` carries no index and this asks
+    // whether one row exists, so `LIMIT 1` is doing the work: the planner stops at the
+    // first hit rather than counting. Measured in `baseline.txt` (T018b) rather than
+    // assumed, and no index was added for a question asked once per promotion.
+    if (before !== undefined && profile.kind !== undefined && profile.kind !== before.kind) {
+      const promotable =
+        before.kind === "person" &&
+        profile.kind === "bot" &&
+        (
+          await this.db
+            .select({ id: messages.id })
+            .from(messages)
+            .where(eq(messages.userId, before.id))
+            .limit(1)
+        ).length === 0;
+      if (!promotable) {
+        const current = await this.getUserByExternalId(externalId);
+        if (current === null) {
+          throw new Error(`user ${externalId} could not be created or read`);
+        }
+        return { user: current, status: "kind_conflict" };
+      }
+    }
 
     if (before !== undefined) {
       await this.db
@@ -3151,6 +3231,12 @@ export class Repository {
             : { displayName: profile.display_name }),
           ...(profile.avatar_url === undefined ? {} : { avatarUrl: profile.avatar_url }),
           ...(profile.metadata === undefined ? {} : { metadata: profile.metadata }),
+          // ABSENT STAYS ABSENT FOR `kind` TOO (T019a). An entry that omits it is not
+          // asking for `'person'`; the column default is for new rows only.
+          ...(profile.kind === undefined ? {} : { kind: profile.kind }),
+          ...(profile.description === undefined
+            ? {}
+            : { description: profile.description }),
           deletedAt: null,
         })
         .where(and(eq(users.id, before.id), eq(users.environmentId, this.environmentId)));
@@ -3273,12 +3359,18 @@ export class Repository {
       display_name?: string | null | undefined;
       avatar_url?: string | null | undefined;
       metadata?: Record<string, unknown> | undefined;
+      /** Chapter 3.17, FR-004. `string | undefined` and NOT `| null`, unlike its three
+       * neighbours: the boundary refuses a null (FR-004b) because
+       * `users_bot_description_check` would raise on a bot, so a null can never arrive
+       * here and widening the type would invite one. */
+      description?: string | undefined;
     },
   ): Promise<UserRow | null> {
     const set: Record<string, unknown> = {};
     if (patch.display_name !== undefined) set["displayName"] = patch.display_name;
     if (patch.avatar_url !== undefined) set["avatarUrl"] = patch.avatar_url;
     if (patch.metadata !== undefined) set["metadata"] = patch.metadata;
+    if (patch.description !== undefined) set["description"] = patch.description;
 
     if (Object.keys(set).length > 0) {
       const updated = await this.db

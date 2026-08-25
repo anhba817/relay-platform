@@ -3,6 +3,7 @@ import "reflect-metadata";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import { AppModule } from "../app.module";
 import { createDb, createPool, type Db } from "../db/client";
@@ -500,7 +501,14 @@ describe("a user's channel listing", () => {
       avatar_url: string | null;
       metadata: Record<string, unknown>;
     };
+    // THE PROFILE GREW TWO FIELDS AND THIS ASSERTION BROKE, WHICH IS WHY IT IS EXACT
+    // (chapter 3.17, T021a). `toEqual` on a whole body is the only assertion that
+    // notices a field arriving — a `toMatchObject` would have said nothing, and a
+    // reader would have learned about `kind` from the code rather than from a test.
+    // Chapter 3.16 made the same trade for `last_message`.
     expect(body).toEqual({
+      kind: "person",
+      description: null,
       external_id: "profiled",
       display_name: "After",
       avatar_url: "https://cdn.example.com/a/b.png",
@@ -592,6 +600,201 @@ describe("a user's channel listing", () => {
       method: "DELETE",
       headers: { authorization: `Bearer ${key}` },
     });
+
+  // ══ THE BOT USER (chapter 3.17, FR-USR-07) ══════════════════════════════════
+
+  // ── T022: the round trip ────────────────────────────────────────────────────
+  it("creates a bot with a description, reads it back, and edits the description", async () => {
+    const created = await upsert([
+      {
+        external_id: "deploy-bot",
+        display_name: "Deploy Bot",
+        kind: "bot",
+        description: "posts a line when a deploy finishes",
+      },
+    ]);
+    expect(created.status).toBe(200);
+    expect((await created.json()).data[0]).toMatchObject({
+      external_id: "deploy-bot",
+      status: "created",
+      kind: "bot",
+      description: "posts a line when a deploy finishes",
+    });
+
+    const read = await (await profile("deploy-bot")).json();
+    expect(read.kind).toBe("bot");
+    expect(read.description).toBe("posts a line when a deploy finishes");
+
+    const edited = await patchProfile("deploy-bot", {
+      description: "posts a line when a deploy finishes, and when one fails",
+    });
+    expect(edited.status).toBe(200);
+    expect((await (await profile("deploy-bot")).json()).description).toBe(
+      "posts a line when a deploy finishes, and when one fails",
+    );
+  });
+
+  // ── T023: refused at the boundary, and by the database ──────────────────────
+  it("refuses a bot with no description, naming the field", async () => {
+    const res = await upsert([{ external_id: "no-why", kind: "bot" }]);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.field).toContain("description");
+  });
+
+  it("refuses a description on a person", async () => {
+    const res = await upsert([
+      { external_id: "a-person", description: "people do not have these" },
+    ]);
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toContain("description");
+  });
+
+  // ── T025: `description: null` is refused on BOTH kinds (SC-014) ─────────────
+  //
+  // THE ASSERTION IS THE STATUS, NOT THE DATABASE. A test that checked the row was
+  // unchanged would pass when the request 500s and the transaction rolls back, which is
+  // the failure this test exists to tell apart from success.
+  it("refuses `description: null` on a bot — the CHECK must never be reached", async () => {
+    await upsert([
+      { external_id: "null-bot", kind: "bot", description: "here for now" },
+    ]);
+    const res = await patchProfile("null-bot", { description: null });
+    expect(res.status).toBe(400);
+    expect((await (await profile("null-bot")).json()).description).toBe("here for now");
+  });
+
+  it("refuses `description: null` on a person too, where it would mean nothing", async () => {
+    await upsert([{ external_id: "null-person" }]);
+    expect((await patchProfile("null-person", { description: null })).status).toBe(400);
+  });
+
+  // ── T018c: the promotion, in all three states ──────────────────────────────
+  it("promotes a person to a bot when the row has never sent a message", async () => {
+    await upsert([{ external_id: "grew-up" }]);
+    const res = await upsert([
+      { external_id: "grew-up", kind: "bot", description: "it was a person first" },
+    ]);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data[0]).toMatchObject({
+      status: "updated",
+      kind: "bot",
+      description: "it was a person first",
+    });
+  });
+
+  it("refuses the promotion once the row has sent a message", async () => {
+    await upsert([{ external_id: "has-spoken" }]);
+    const speaker = (await (await profile("has-spoken")).json()) as {
+      external_id: string;
+    };
+    const channel = await repo.createChannel(`spoken-${randomUUID().slice(0, 8)}`, "public");
+    const row = await repo.getUserByExternalId(speaker.external_id);
+    await repo.sendMessage(channel.id, { text: "I said something", userId: row!.id });
+
+    const res = await upsert([
+      { external_id: "has-spoken", kind: "bot", description: "too late" },
+    ]);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data[0]).toMatchObject({
+      status: "kind_conflict",
+      kind: "person",
+    });
+  });
+
+  it("refuses bot -> person unconditionally, even with no messages", async () => {
+    await upsert([
+      { external_id: "stays-a-bot", kind: "bot", description: "cannot be demoted" },
+    ]);
+    const res = await upsert([{ external_id: "stays-a-bot", kind: "person" }]);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data[0]).toMatchObject({
+      status: "kind_conflict",
+      kind: "bot",
+    });
+  });
+
+  // ── T018d: the trap, in the order a customer hits it ───────────────────────
+  //
+  // This is the assertion the escape exists for. `POST /v1/channels/:id/members` creates
+  // an unknown identifier as a PERSON, because `createUser` cannot set `kind`. A customer
+  // who adds their bot to a channel before registering it would, without FR-002d, have
+  // made that bot permanently impossible.
+  it("survives adding the bot to a channel BEFORE registering it as a bot", async () => {
+    const channel = await repo.createChannel(`trap-${randomUUID().slice(0, 8)}`, "public");
+    const stranger = await repo.createUser("support-bot", "support-bot");
+    await repo.addMember(channel.id, stranger.id);
+    expect((await repo.getUserByExternalId("support-bot"))!.kind).toBe("person");
+
+    const res = await upsert([
+      { external_id: "support-bot", kind: "bot", description: "answers tickets" },
+    ]);
+    expect((await res.json()).data[0]).toMatchObject({
+      status: "updated",
+      kind: "bot",
+    });
+  });
+
+  // ── T024a: omitting `kind` while editing a bot must not demote it ──────────
+  //
+  // The case FR-002b exists for, and the one a `.default("person")` in the request
+  // schema silently breaks: absent would become 'person', the entry would read as a
+  // demotion, and editing a bot's description through the upsert would be impossible.
+  it("leaves a bot a bot when the entry omits `kind`", async () => {
+    await upsert([
+      { external_id: "quiet-bot", kind: "bot", description: "first description" },
+    ]);
+    const res = await upsert([
+      { external_id: "quiet-bot", display_name: "Quiet Bot" },
+    ]);
+    expect((await res.json()).data[0]).toMatchObject({
+      status: "updated",
+      kind: "bot",
+      description: "first description",
+    });
+  });
+
+  // ── T024: a conflict in one entry does not fail the other ninety-nine ──────
+  it("reports kind_conflict per entry, in a 200, with the other entries written", async () => {
+    await upsert([
+      { external_id: "conflict-bot", kind: "bot", description: "a bot already" },
+    ]);
+    const res = await upsert([
+      { external_id: "batch-a" },
+      { external_id: "conflict-bot", kind: "person" },
+      { external_id: "batch-b" },
+    ]);
+    expect(res.status).toBe(200);
+    const data = (await res.json()).data as Array<{ status: string }>;
+    expect(data.map((d) => d.status)).toEqual([
+      "created",
+      "kind_conflict",
+      "created",
+    ]);
+    expect((await profile("batch-a")).status).toBe(200);
+    expect((await profile("batch-b")).status).toBe(200);
+  });
+
+  // ── T023a: the status set, pinned ──────────────────────────────────────────
+  //
+  // `codes.ts` pins error codes and close codes the same way, and close code 4003 is the
+  // precedent for why: an exact set makes a fifth value a decision rather than an
+  // accident. This assertion is what will fail on the build that adds one.
+  it("the upsert's status set is exactly these four", async () => {
+    await upsert([
+      { external_id: "pinned-bot", kind: "bot", description: "for the pin" },
+    ]);
+    const res = await upsert([
+      { external_id: "pinned-new" },
+      { external_id: "pinned-bot", kind: "person" },
+    ]);
+    const seen = new Set(
+      ((await res.json()).data as Array<{ status: string }>).map((d) => d.status),
+    );
+    for (const status of seen) {
+      expect(["created", "updated", "revived", "kind_conflict"]).toContain(status);
+    }
+  });
 
   // ── T138: 100 accepted, 101 refused (SC-012) ────────────────────────────────
   it("upserts 100 users in one request", async () => {
@@ -757,7 +960,11 @@ describe("a user's channel listing", () => {
     // THE SAME ROW, EMPTY. `(environment_id, external_id)` is unique and the row never
     // left, so there is no other honest answer than reusing it — and a revived row does
     // not inherit the profile the deletion wiped.
+    // The revival's shape, exact for T021a's reason above. A revived user is a person
+    // with no description unless something said otherwise.
     expect(back).toEqual({
+      kind: "person",
+      description: null,
       external_id: "revivable",
       display_name: null,
       avatar_url: null,
