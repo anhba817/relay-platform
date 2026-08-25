@@ -103,6 +103,15 @@ describe("the three refusals this chapter's channel adds", () => {
     expect(ERROR_CODES.channel_archived).toMatch(/history is still readable/);
   });
 
+  it("registers the refusal a bot-only credential gives a person", () => {
+    // THIS CHAPTER'S ONE CODE. `sender_not_permitted` is the fifth check on the send
+    // path and the only one whose subject is a fact about the SENDER rather than the
+    // channel — so it needs a code of its own, for the reason the credentials chapter
+    // gave when it added `wrong_credential_type` instead of a generic 403.
+    expect(ERROR_CODES).toHaveProperty("sender_not_permitted");
+    expect(ERROR_CODES.sender_not_permitted).not.toBe("");
+  });
+
   it("never lets not_a_member announce that the channel exists", () => {
     // THE LEAK FR-003 FORBIDS, in the one place it can be written by accident. A
     // private channel the caller cannot see must answer the not-found envelope, so a

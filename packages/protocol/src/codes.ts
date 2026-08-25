@@ -40,6 +40,24 @@ export const ERROR_CODES = {
   // is invalid" is how a live secret reaches a support ticket (NFR-SEC-06).
   wrong_credential_type:
     "the credential class presented cannot use this route; the message names presented and expected",
+  // THE THIRD IN THE SAME FAMILY, one dimension further over. Its two
+  // siblings are directly above: `wrong_credential_type` is the wrong CLASS,
+  // `wrong_credential_service` the wrong SERVICE, and this one is the right class
+  // holding the right service naming the wrong KIND OF USER — an application key
+  // asking to post as a person.
+  //
+  // NOT `forbidden`, for the reason this file has now given twice. `ProtocolErrorFilter`
+  // maps a bare 403 to `forbidden`, so this is the one code in the chapter that collides
+  // with the filter's ladder, and the ladder is what has to lose: "you lack a
+  // permission" is a different fact from "a key may speak as software and not as any
+  // person", and only the second tells an integrator what to change.
+  //
+  // The MESSAGE names neither the person asked for nor the bots available. Which
+  // identifiers exist in a tenant is exactly what the isolation oracle exists to keep
+  // out of a refusal (FR-009, SC-005), and a message listing the acceptable senders
+  // would be an enumeration endpoint with a 403 in front of it.
+  sender_not_permitted:
+    "an application credential may send only as a bot user; name one in `user`",
 
   // ── THIS CHAPTER'S THREE (FR-021, FR-031, research R11) ──────────────────────
   //
