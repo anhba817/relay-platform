@@ -184,10 +184,8 @@ describe("POST /internal/backfill", () => {
     const anonymousSeq = 1;
     const raw = createDb(createPool());
     await raw.execute(
-      sql`INSERT INTO messages (id, environment_id, channel_id, sequence, text, created_at)
-          SELECT gen_random_uuid(), environment_id, ${orphans}, ${anonymousSeq},
-                 'who said it?', now()
-          FROM channels WHERE id = ${orphans}`,
+      sql`INSERT INTO messages (id, channel_id, sequence, text, created_at)
+          VALUES (gen_random_uuid(), ${orphans}, ${anonymousSeq}, 'who said it?', now())`,
     );
     await raw.execute(
       sql`UPDATE channels SET last_sequence = ${anonymousSeq}, last_activity_at = now()
