@@ -14,6 +14,7 @@ import {
   Repository,
   type MessageRow,
   type MessageWithSender,
+  SenderNotPermittedError,
 } from "../db/repository";
 import { QuotaExceededError } from "../quotas/quota.error";
 import { decodeCursor, encodeCursor } from "./cursor";
@@ -50,24 +51,19 @@ export class MessagesService {
      * one — it is the token's subject — so threading it costs nothing where a
      * lookup inside the write transaction would cost a query per message. */
     userExternalId?: string,
+    /** Whether the caller is an application credential (chapter 3.17, FR-007, T030).
+     *
+     * A BOOLEAN, NOT THE PRINCIPAL. The service needs one fact to apply the bot rule and
+     * has no business holding the request; the controller is what knows about credential
+     * classes. Passed through to the repository as `senderMustBeBot`, which knows even
+     * less — only that this send's sender has to be software (R5). */
+    senderMustBeBot = false,
   ): Promise<MessageRow> {
     try {
-      // THE SENDER IS REQUIRED, AND THIS IS WHERE THE ROUTE LEARNS IT (chapter 3.17,
-      // FR-006, FR-008). `repository.sendMessage` requires `userId` as of T012, so
-      // this narrowing is not a defensive check — it is the only way a caller holding
-      // `string | undefined` can reach a function that takes `string`.
-      //
-      // WHY THE SERVICE AND NOT THE REPOSITORY: research R5 puts the two checks in
-      // two layers on purpose. The repository's guarantee is structural, enforced by
-      // the compiler for every caller including a test. This one is about a REQUEST,
-      // and a request that names nobody is a refusal a customer has to be able to
-      // read — which is why it belongs where the error mapping is.
-      //
-      // PHASE 4 REPLACES THE SHAPE, NOT THE RULE. T028 adds `user` to the request
-      // schema and T029 resolves it per credential class, so this throw becomes the
-      // `400` with `field: "user"` that FR-008 specifies. Until then it is a plain
-      // Error, and the integration lane's key-authenticated sends fail here — which
-      // is the phase boundary showing through rather than a regression.
+      // THE SENDER IS RESOLVED BEFORE HERE (chapter 3.17, FR-008). The controller does
+      // it per credential class and refuses an absent or unresolvable one with a 400
+      // naming `user`, so by this line there is a sender and it exists in this tenant.
+      // What remains is the narrowing the compiler needs.
       if (userId === undefined) {
         throw new Error("a message must name its sender (FR-MSG-15, FR-008)");
       }
@@ -75,6 +71,7 @@ export class MessagesService {
         text: body.text,
         metadata: body.metadata,
         userId,
+        senderMustBeBot,
         ...(userExternalId !== undefined && { userExternalId }),
         ...(body.idempotency_key != null && {
           idempotencyKey: body.idempotency_key,
@@ -91,6 +88,25 @@ export class MessagesService {
       // about the CALLER, not about the channel, so saying so reveals nothing about what
       // channels exist — and a client that cannot tell "you are banned" from "no such
       // channel" retries for ever against a wall.
+      // 403 `sender_not_permitted`, AND NOT `forbidden` (chapter 3.17, FR-007a, T032a).
+      //
+      // `ProtocolErrorFilter` maps a bare 403 to `forbidden`, and this is the only code
+      // in the chapter that collides with the ladder — so it is named here, the way
+      // chapter 3.12 named `wrong_credential_service` for the same reason. The filter
+      // prefers an explicit code when one is given; leaving it to the ladder would put
+      // "you lack a permission" on the wire in place of the one fact an integrator can
+      // act on.
+      //
+      // THE MESSAGE NAMES NOBODY. Not the person asked for, not the bots that would
+      // have worked. Which identifiers exist in a tenant is what the oracle exists to
+      // keep out of a refusal (SC-005).
+      if (error instanceof SenderNotPermittedError) {
+        throw protocolError(
+          "sender_not_permitted",
+          "an application credential may send only as a bot user; name one in `user`",
+          HttpStatus.FORBIDDEN,
+        );
+      }
       if (error instanceof UserBannedError) {
         throw protocolError(
           "user_banned",

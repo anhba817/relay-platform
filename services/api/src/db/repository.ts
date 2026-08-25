@@ -2298,6 +2298,19 @@ export class ChannelArchivedError extends Error {
  * so a banned user gets one answer for every channel id, whether it exists, belongs to
  * somebody else, or was invented. Any other position leaks: check the channel first and
  * a banned user learns which channel ids are real. */
+/** An application credential named a person (chapter 3.17, FR-007, FR-007a).
+ *
+ * ITS OWN CLASS, NOT A `ChannelNotFoundError`, because the two say different things and
+ * the service maps them to different codes. Carries the sender's INTERNAL id and never
+ * the customer's identifier: the message on the wire names neither the person asked for
+ * nor the bots that would have been accepted (SC-005). */
+export class SenderNotPermittedError extends Error {
+  constructor(readonly userId: string) {
+    super("an application credential may send only as a bot user");
+    this.name = "SenderNotPermittedError";
+  }
+}
+
 export class UserBannedError extends Error {
   constructor(public readonly userId: string) {
     super(`user banned: ${userId}`);
@@ -3668,7 +3681,23 @@ export class Repository {
       text,
       metadata,
       idempotencyKey,
+      senderMustBeBot = false,
     }: {
+      /** THE SENDER MUST BE A BOT (chapter 3.17, FR-007, T030, T032).
+       *
+       * A CONSTRAINT, NOT A CREDENTIAL CLASS. Research R5 says the repository must not
+       * learn what a credential is, and it does not: it is told that this send's sender
+       * has to be software, and the controller is the only thing that knows an
+       * application key is why.
+       *
+       * IT LIVES HERE BECAUSE OF THE ORDER, and the order was the finding. The
+       * documented sequence (`contracts/sending.md`) puts "may this credential send as
+       * that sender?" last, after the channel checks, so that a refusal naming a fact
+       * about a user cannot be provoked for a channel the caller could not otherwise
+       * reach. Enforcing it in the service would put it FIRST — before the ban, the
+       * visibility and the archive — and leak exactly what the ordering protects.
+       * There is no way to be both last and outside this transaction. */
+      senderMustBeBot?: boolean;
       /** REQUIRED SINCE CHAPTER 3.17 (FR-MSG-15, FR-006), and required is the whole
        * mechanism. SC-003 asks that no write path be able to produce a senderless
        * message; a runtime check would be a test somebody has to remember, and this
@@ -3823,6 +3852,19 @@ export class Repository {
           .where(and(eq(members.channelId, channelId), eq(members.userId, userId)))
           .limit(1);
         if (!membership) throw new ChannelNotFoundError(channelId);
+      }
+
+      // THE SENDER'S KIND, LAST OF THE FIVE (chapter 3.17, FR-007, T032).
+      //
+      // After the ban, the visibility and the archive, because this refusal names a
+      // fact about a USER — "that identifier is a person" — and a caller who could not
+      // otherwise reach this channel must not be able to ask it. Same reasoning as
+      // archive-after-visibility three checks below, one subject over.
+      //
+      // `senderIsPerson` was computed at the ban check from the same row, so this costs
+      // nothing beyond the comparison.
+      if (senderMustBeBot && senderIsPerson) {
+        throw new SenderNotPermittedError(userId);
       }
 
       // ARCHIVE, AFTER VISIBILITY AND NOT BEFORE (chapter 3.15, FR-020, FR-021,

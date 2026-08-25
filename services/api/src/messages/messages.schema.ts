@@ -11,6 +11,18 @@ export const sendMessageBodySchema = z.strictObject({
   // time (FR-SDK-06), optional because server-originated messages may not
   // carry one. The partial unique index (DR-03) ignores NULLs.
   idempotency_key: z.string().uuid().optional(),
+  /** WHO IS SENDING (chapter 3.17, FR-MSG-15, FR-008).
+   *
+   * OPTIONAL HERE AND REQUIRED FOR ONE CREDENTIAL CLASS, which zod cannot express
+   * because it cannot see who is calling. A user token's send is attributed to the
+   * token's subject and naming a `user` in the body is refused; an application
+   * credential must name one, because it carries no user of its own. The controller
+   * resolves that per class (T029) and the service refuses what cannot be resolved.
+   *
+   * A CUSTOMER-SUPPLIED IDENTIFIER, not a platform id. Every other user-facing field in
+   * this API names a user the way FR-USR-01 says the customer does, and a route that
+   * took an internal uuid here would be the only one that did not. */
+  user: z.string().min(1).max(255).optional(),
 });
 
 export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;

@@ -59,14 +59,19 @@ describe("error codes stay unique and described", () => {
 // that is not in this object cannot be constructed anywhere in the platform without
 // failing the build. This suite checks the shape of the object those types rest on.
 describe("the registry is the whole vocabulary (FR-024)", () => {
-  it("holds sixteen codes", () => {
+  it("holds seventeen codes", () => {
     // A number, so adding one is a visible edit rather than a silent widening. The
     // count is here and not in a comment because a comment does not fail.
     //
     // Thirteen until chapters 3.15 and 3.16 added `not_a_member`,
     // `channel_archived` and `user_banned` — three refusals a client acts on
     // differently, which is the test this registry sets.
-    expect(Object.keys(ERROR_CODES)).toHaveLength(16);
+    //
+    // Sixteen until chapter 3.17 added `sender_not_permitted`, and **this assertion
+    // failed on the build that added it** — "expected 16 but got 17", which is the
+    // third time this line has turned a new code into a decision instead of an
+    // accident. Chapter 3.11's close-code set did the same for 4003.
+    expect(Object.keys(ERROR_CODES)).toHaveLength(17);
   });
 
   it("contains the five the status ladder emits", () => {

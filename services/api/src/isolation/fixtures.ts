@@ -120,6 +120,9 @@ export interface SameTenant {
   publicChannelId: string;
   /** A message the member wrote, so a read attack has something to fail to find. */
   messageId: string;
+  /** A bot of this tenant (chapter 3.17). The control's sender: an application
+   * credential may name this one and no other tenant's. */
+  bot: { id: string; externalId: string };
   repo: Repository;
 }
 
@@ -139,6 +142,15 @@ export async function seedSameTenant(db: Db, mintToken: MintToken): Promise<Same
     userId: member.id,
     userExternalId: member.external_id,
   });
+  // A BOT, VIA THE UPSERT, because `createUser` cannot set `kind` — a bot needs a
+  // description and the member-add path has nowhere to put one (chapter 3.17).
+  const bot = (
+    await repo.upsertUser(`same-${stamp}-bot`, {
+      display_name: "A Bot",
+      kind: "bot",
+      description: "the tenant's own software, for the sender attacks",
+    })
+  ).user;
 
   return {
     environmentId: environment.id,
@@ -156,6 +168,7 @@ export async function seedSameTenant(db: Db, mintToken: MintToken): Promise<Same
     privateChannelId: privateChannel.id,
     publicChannelId: publicChannel.id,
     messageId: message.id,
+    bot: { id: bot.id, externalId: bot.external_id },
     repo,
   };
 }

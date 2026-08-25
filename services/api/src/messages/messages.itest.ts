@@ -3,6 +3,7 @@ import "reflect-metadata";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import { AppModule } from "../app.module";
 import { mintUserToken } from "../auth/user-token";
@@ -60,6 +61,15 @@ describe("POST /v1/channels/:channelId/messages", () => {
     const member = await repo.createUser("insider", "An Insider");
     await repo.addMember(privateChannelId, member.id);
     await repo.createUser("outsider", "An Outsider");
+    // A BOT OF THIS TENANT, and a person, for chapter 3.17's four outcomes. Added
+    // beside the existing fixtures and NOT added to `privateChannelId` — that
+    // membership is load-bearing for the tests above, and a bot needs none of it
+    // (FR-019a) which is the point T012c makes.
+    await repo.upsertUser("courier", {
+      display_name: "Courier",
+      kind: "bot",
+      description: "delivers build results into the channel",
+    });
     const signingSecret = (await environmentSigningSecret(db, env.id))!
       .signingSecret;
     tokenFor = async (subject: string) =>
@@ -151,7 +161,118 @@ describe("POST /v1/channels/:channelId/messages", () => {
   // So the repository test passed while the route it protects was open. A repository
   // test proves a check exists; only a route test proves it fires.
   describe("a private channel over the public route (FR-001, SC-002)", () => {
-    const sendAs = async (token: string, channel: string, text = "hello") =>
+  
+  // ══ THE SENDER (chapter 3.17, US2) ══════════════════════════════════════════
+
+  // ── T033: the four outcomes for an application credential ──────────────────
+  it("accepts a key's send naming a bot, and echoes the sender it used", async () => {
+    const res = await send({ text: "build 412 is green", user: "courier" });
+    expect(res.status).toBe(201);
+    // FR-009a: a caller now required to name a sender is told which was recorded.
+    expect((await res.json()).user).toBe("courier");
+  });
+
+  it("refuses a key's send naming a person with 403 sender_not_permitted", async () => {
+    const res = await send({ text: "posting as a human", user: "outsider" });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { code: string; message: string };
+    // T032a: `ProtocolErrorFilter` maps a bare 403 to `forbidden`, and this is the one
+    // code in the chapter that collides with that ladder. The wire must carry the
+    // specific fact, not the generic one.
+    expect(body.code).toBe("sender_not_permitted");
+    expect(body.code).not.toBe("forbidden");
+    // And it names neither the person asked for nor the bots that would have worked.
+    expect(body.message).not.toContain("outsider");
+    expect(body.message).not.toContain("courier");
+  });
+
+  it("refuses a key's send naming nobody with 400 and the field", async () => {
+    const res = await send({ text: "who is this from?" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toBe("user");
+  });
+
+  it("refuses a foreign sender and a nonexistent one identically", async () => {
+    const foreign = await createEnvironment(createDb(createPool()), {
+      name: `messages-itest-foreign-${randomUUID().slice(0, 8)}`,
+    });
+    await new Repository(createDb(createPool()), foreign.id).upsertUser("theirs", {
+      kind: "bot",
+      description: "a bot of another tenant",
+    });
+
+    const a = await send({ text: "x", user: "theirs" });
+    const b = await send({ text: "x", user: "no-such-identifier-anywhere" });
+    expect(a.status).toBe(400);
+    expect(b.status).toBe(400);
+    // SC-005: the two answers must be indistinguishable, or naming an identifier is a
+    // way to ask whether another tenant has one.
+    expect(withoutRequestId(await a.json())).toEqual(
+      withoutRequestId(await b.json()),
+    );
+  });
+
+  // ── T034: a user token attributes to its subject and may name nobody ───────
+  it("attributes a user token's send to its subject", async () => {
+    const token = await tokenFor("insider");
+    const res = await fetch(`${url}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text: "from a person" }),
+    });
+    expect(res.status).toBe(201);
+    expect((await res.json()).user).toBe("insider");
+  });
+
+  it("refuses a body `user` beside a user token", async () => {
+    const token = await tokenFor("insider");
+    const res = await fetch(`${url}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text: "posting as someone else", user: "courier" }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toBe("user");
+  });
+
+  // ── T012c: the private channel, BOTH halves (SC-012) ───────────────────────
+  //
+  // A test that checked only the bot would pass if the membership gate had been deleted
+  // outright — which is the change that breaks chapter 3.15's refusal. The pair is the
+  // oracle.
+  it("lets a key's bot send to a private channel it is not a member of", async () => {
+    const res = await send(
+      { text: "from the tenant's software", user: "courier" },
+      privateChannelId,
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it("still refuses a person who is not a member of that private channel", async () => {
+    const token = await tokenFor("outsider");
+    const res = await sendAs(token, privateChannelId);
+    // 404, not 403: a private channel a caller cannot see answers as if absent
+    // (chapter 3.15, FR-019b).
+    expect(res.status).toBe(404);
+  });
+
+  // ── T012d: a bot may be banned (FR-005c, SC-013) ───────────────────────────
+  it("refuses a banned bot's send, indistinguishably from a foreign sender", async () => {
+    await repo.upsertUser("runaway", {
+      kind: "bot",
+      description: "posts far too often",
+    });
+    const banned = await repo.getUserByExternalId("runaway");
+    await repo.banUser(banned!.id);
+
+    const res = await send({ text: "still going", user: "runaway" });
+    // A ban stops a runaway integration without deleting the identity its messages are
+    // attributed to. The refusal is the ban's, which arrives before the channel is read.
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("user_banned");
+  });
+
+  const sendAs = async (token: string, channel: string, text = "hello") =>
       fetch(`${url}/v1/channels/${channel}/messages`, {
         method: "POST",
         headers: {

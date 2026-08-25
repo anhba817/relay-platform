@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 
-import { CredentialGuard } from "../auth/credential.guard";
+import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import { Repository } from "../db/repository";
 import { MessagesService } from "./messages.service";
 import { historyQuerySchema, sendMessageBodySchema } from "./messages.schema";
@@ -42,7 +42,13 @@ function actingUser(req: RequestWithPrincipal): string | undefined {
 // principal the middleware already resolved is allowed here. Both classes are
 // (FR-MSG-13 lets a server send on a user's behalf, and FR-AUT-10 does not
 // reserve these routes), so this one declares nothing narrower.
+// DECLARED, NOT INHERITED FROM A FALLBACK (chapter 3.17, T027a). Until now this class
+// declared no `@Accepts` and `credential.guard.ts` fell back to `EITHER` — the fallback
+// its own comment names as the thing that let the gateway's credential reach
+// `POST /internal/dispatch/replay` in chapter 3.12. Both classes are genuinely accepted
+// here, so the declaration says the same thing the fallback did and says it on purpose.
 @Controller("v1/channels/:channelId/messages")
+@Accepts("application", "user")
 @UseGuards(CredentialGuard)
 export class MessagesController {
   constructor(
@@ -78,18 +84,64 @@ export class MessagesController {
     // refusing is the honest answer, and it is the same one the internal route has
     // given since chapter 2.6. FR-039a removes the case entirely by creating the
     // row when the token is minted.
-    const actingExternalId = actingUser(req);
-    let userId: string | undefined;
-    if (actingExternalId !== undefined) {
-      const user = await this.repo.getUserByExternalId(actingExternalId);
-      if (!user) throw new BadRequestException("unknown user");
-      userId = user.id;
+    // THE SENDER, RESOLVED PER CREDENTIAL CLASS (chapter 3.17, FR-010, FR-008).
+    //
+    // A user token attributes to its subject and MAY NOT name anybody else: a token is
+    // both an authorisation and an attribution, so a body `user` beside one is either a
+    // mistake or an attempt to post as someone else, and both deserve the same refusal.
+    //
+    // An application credential carries no user of its own, so the body's `user` is the
+    // only thing that can name one — and naming nothing is refused, because FR-MSG-15
+    // says every message has a sender.
+    //
+    // THE SENDER ATTRIBUTES; IT DOES NOT AUTHORISE (FR-019). What a key may reach is
+    // decided by the key. Naming a bot does not widen that, and the repository's
+    // private-channel check turns on the sender's `kind` for exactly this reason.
+    const tokenSubject = actingUser(req);
+    if (tokenSubject !== undefined && body.user !== undefined) {
+      throw new BadRequestException({
+        code: "invalid_request",
+        message:
+          "a user token is already attributed to its subject; remove `user` from the body",
+        field: "user",
+      });
+    }
+    const actingExternalId = tokenSubject ?? body.user;
+    if (actingExternalId === undefined) {
+      throw new BadRequestException({
+        code: "invalid_request",
+        message: "name the sender in `user` — an application credential has no user of its own",
+        field: "user",
+      });
+    }
+    // ONE THROW FOR BOTH FAILURES, WHICH IS THE INDISTINGUISHABILITY (T031, SC-005).
+    //
+    // An identifier belonging to another tenant and an identifier belonging to nobody
+    // are the same answer here, because there is only one place that answers. Resolving
+    // the id per tenant is what `getUserByExternalId` already does — a foreign bot is
+    // simply absent from this environment — so the two cannot diverge by construction
+    // rather than by two branches that happen to agree today.
+    //
+    // The message names no identifier. A bot's external id is often its purpose spelled
+    // out, so echoing it back would say "this exists somewhere" about the one string the
+    // caller most wants confirmed.
+    const user = await this.repo.getUserByExternalId(actingExternalId);
+    if (!user) {
+      throw new BadRequestException({
+        code: "invalid_request",
+        message: "the sender named in `user` is not a user of this environment",
+        field: "user",
+      });
     }
     const message = await this.messages.send(
       channelId,
       body,
-      userId,
+      user.id,
       actingExternalId,
+      // The class the credential presented, so the service can apply the bot rule
+      // without learning what a credential is (R5). A boolean rather than the
+      // principal: the service needs one fact, not the request.
+      tokenSubject === undefined,
     );
     // FR-MSG-04's "201-equivalent semantics" lives HERE, on the public
     // wire: the client sees the same body whether this was the original
@@ -104,6 +156,11 @@ export class MessagesController {
       seq: message.seq,
       text: message.text,
       created_at: message.created_at,
+      // THE SENDER IT USED (chapter 3.17, FR-009a). A caller now required to name one
+      // gets told which was recorded — and for a user token, which it inferred. The
+      // internal send has carried this since chapter 2.6; the public one answered five
+      // fields and left the caller to assume.
+      user: actingExternalId,
     };
   }
 

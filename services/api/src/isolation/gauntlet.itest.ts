@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../app.module";
 import { createDb, createPool } from "../db/client";
 import { mintUserToken } from "../auth/user-token";
-import { environmentSigningSecret } from "../db/repository";
+import { environmentSigningSecret, Repository } from "../db/repository";
 import { credentialAttack, listAttack, readAttack, writeAttack } from "./attack";
 import { withoutRequestId } from "./compare";
 import {
@@ -471,6 +471,71 @@ describe("the isolation gauntlet", () => {
             headers: { authorization: `Bearer ${same.credential}` },
           });
         }
+      });
+    });
+
+    // ══ THE SENDER (chapter 3.17, T035, T036, SC-005) ════════════════════════
+    //
+    // HAND-WRITTEN, AND `attack.ts` NEEDS NO FIFTH SHAPE. The sender is a new DIMENSION
+    // on a route already classified `write` and already attacked with a foreign channel
+    // id — not a new kind of target. A generated shape would have to know that this
+    // body field names a user in the caller's own tenant, which is one route's
+    // knowledge and not the gauntlet's.
+    describe("a foreign bot and a bot that exists nowhere (chapter 3.17)", () => {
+      // ── T036: THE CONTROL FIRST ───────────────────────────────────────────
+      //
+      // Chapter 3.12's fourteen green tests compared two refusals and meant nothing,
+      // because the thing they attacked was refused for an unrelated reason. If this
+      // control does not pass, the pair below proves only that both sends failed.
+      it("the control: the same credential, the same channel, its OWN bot — 201", async () => {
+        const res = await fetch(
+          `${url}/v1/channels/${same.publicChannelId}/messages`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${same.credential}`,
+            },
+            body: JSON.stringify({ text: "the control", user: same.bot.externalId }),
+          },
+        );
+        expect(res.status).toBe(201);
+      });
+
+      it("refuses a foreign bot and an invented identifier identically", async () => {
+        const post = (user: string) =>
+          fetch(`${url}/v1/channels/${same.publicChannelId}/messages`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${same.credential}`,
+            },
+            body: JSON.stringify({ text: "not mine to send as", user }),
+          });
+
+        // A BOT IN ANOTHER TENANT, planted here rather than in the fixture: the point
+        // is a real, resolvable identifier that belongs to somebody else, and only this
+        // test needs one. `tenants.victim` is the tenant whose identifiers every attack
+        // in this file borrows.
+        const theirs = (
+          await new Repository(db, tenants.victim.environmentId).upsertUser(
+            "victim-bot",
+            { kind: "bot", description: "the victim tenant's own software" },
+          )
+        ).user;
+
+        const foreign = await post(theirs.external_id);
+        const invented = await post("a-bot-that-exists-in-no-tenant");
+
+        expect(foreign.status).toBe(400);
+        expect(invented.status).toBe(400);
+        const a = withoutRequestId(await foreign.json());
+        const b = withoutRequestId(await invented.json());
+        // If these differ by one byte, naming an identifier is a way to ask whether
+        // another tenant has one — and a bot's identifier is often its purpose spelled
+        // out, so the answer would leak what the neighbour's software does.
+        expect(a).toEqual(b);
+        expect((a as { field: string }).field).toBe("user");
       });
     });
 
