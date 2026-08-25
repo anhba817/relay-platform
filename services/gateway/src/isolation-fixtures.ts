@@ -40,6 +40,13 @@ interface Seeder {
       channelId: string,
       input: { text: string; userId?: string; userExternalId?: string },
     ) => Promise<{ id: string; seq: number }>;
+    /** Chapter 3.17. The gateway declares its own narrow view of the repository —
+     * it has no database and must not gain one (research R12) — so a new fixture
+     * capability means one more line here. */
+    upsertUser: (
+      externalId: string,
+      profile: { kind?: "person" | "bot"; description?: string },
+    ) => Promise<{ status: string }>;
   };
 }
 
@@ -55,6 +62,14 @@ export interface SocketTenant {
    * private channels (FR-005) — so a refused send can be checked against the
    * rows rather than against its own error frame. */
   privateHistory: () => Promise<string>;
+  /** A DISPOSABLE user of this tenant, with its own token, that a test may destroy
+   * (chapter 3.17, T040b).
+   *
+   * NOT the tenant's own user. Promoting that one to a bot makes it unable to connect
+   * for the rest of the file, and every test after it — including the control — fails.
+   * That is the fifth time in two features a shared fixture has been the hazard, and
+   * the fix is a fixture nobody else depends on rather than a rule nobody remembers. */
+  disposable: () => Promise<{ token: string; promoteToBot: () => Promise<unknown> }>;
   /** Removes this tenant's user from its own channel via the public route. */
   removeSelf: () => Promise<void>;
   rejoinSelf: () => Promise<void>;
@@ -140,6 +155,22 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
       token,
       say: (text: string) =>
         repo.sendMessage(channel.id, { text, userId: user.id, userExternalId }),
+      /** Turn this tenant's own user into a bot (chapter 3.17, T040b). Exposed rather
+       * than done in the test, because the fixture owns the repository handle and the
+       * test has no database of its own. */
+      disposable: async () => {
+        const who = `${label}-disposable-${Math.random().toString(36).slice(2, 8)}`;
+        const row = await repo.createUser(who, "Disposable");
+        await repo.addMember(channel.id, row.id);
+        return {
+          token: await mintToken(apiUrl, key.credential, who),
+          promoteToBot: () =>
+            repo.upsertUser(who, {
+              kind: "bot",
+              description: "promoted while holding a live token",
+            }),
+        };
+      },
       /** Remove this tenant's own user from its own public channel, through the
        * public route — so the test asserts the consequence of the API rather than of
        * a direct write. */

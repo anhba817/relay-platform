@@ -586,6 +586,112 @@ describe("a user's channel listing", () => {
     expect((await profile("nobody-at-all")).status).toBe(404);
   });
 
+  // ══ A BOT IS A USER (chapter 3.17, US3, FR-004) ═════════════════════════════
+
+  // ── T043: a bot inherits everything keyed on a user ───────────────────────
+  it("a bot can be a channel member with a role, and appears in the member list", async () => {
+    const channel = await repo.createChannel(`botmember-${randomUUID().slice(0, 8)}`, "public");
+    const bot = (
+      await repo.upsertUser("member-bot", {
+        kind: "bot",
+        description: "sits in the channel and posts",
+      })
+    ).user;
+    await repo.addMember(channel.id, bot.id);
+
+    // `listMembers` returns user ids; the ROLE is on the add's own response, which is
+    // where chapter 3.15 put it (read back rather than echoed).
+    expect(await repo.listMembers(channel.id)).toContain(bot.id);
+    // A ROLE LIKE ANYBODY ELSE. FR-004 asks that a bot support the operations a person
+    // supports, and membership with a role is one of them — nothing about `kind` reaches
+    // the members table, so re-adding reports the role it already holds.
+    // `addMember` reports an OUTCOME, not a role — the role lives on the HTTP response
+    // (chapter 3.15). What matters here is that a second add of a bot behaves exactly
+    // as a second add of a person: nothing about `kind` reaches the members table.
+    expect(await repo.addMember(channel.id, bot.id)).toBe("already_a_member");
+  });
+
+  // ── T043a: a bot's own channel listing, and its unread count ──────────────
+  it("answers a bot's channel listing, with the whole history unread", async () => {
+    const channel = await repo.createChannel(`botlist-${randomUUID().slice(0, 8)}`, "public");
+    const bot = (
+      await repo.upsertUser("listing-bot", {
+        kind: "bot",
+        description: "has a listing like any user",
+      })
+    ).user;
+    await repo.addMember(channel.id, bot.id);
+    const person = await repo.createUser(`p-${randomUUID().slice(0, 8)}`);
+    await repo.addMember(channel.id, person.id);
+    await repo.sendMessage(channel.id, { text: "one", userId: person.id });
+    await repo.sendMessage(channel.id, { text: "two", userId: person.id });
+
+    const listed = await repo.listChannelsForUser(bot.id, { limit: 10 });
+    const row = listed.rows.find((r) => r.id === channel.id);
+    expect(row).toBeDefined();
+    // THE WHOLE HISTORY IS UNREAD, AND IT ALWAYS WILL BE. Nothing acknowledges on a
+    // bot's behalf — there is no client holding its token, because it has none. Worth
+    // asserting rather than assuming: a reader who saw `unread: 2` might go looking for
+    // the acknowledgement path a bot does not have.
+    expect(row!.unread).toBe(2);
+  });
+
+  // ── T044: banned, then deleted, with the messages surviving ───────────────
+  it("bans a bot, refuses its sends, then deletes it with its messages intact", async () => {
+    const channel = await repo.createChannel(`botlife-${randomUUID().slice(0, 8)}`, "public");
+    const bot = (
+      await repo.upsertUser("mortal-bot", {
+        kind: "bot",
+        description: "will be banned and then deleted",
+      })
+    ).user;
+    await repo.addMember(channel.id, bot.id);
+    const sent = await repo.sendMessage(channel.id, {
+      text: "I was here",
+      userId: bot.id,
+    });
+
+    await repo.banUser(bot.id);
+    await expect(
+      repo.sendMessage(channel.id, { text: "after the ban", userId: bot.id }),
+    ).rejects.toThrow();
+
+    expect((await removeUser("mortal-bot")).status).toBe(200);
+    // SC-007: the messages survive and still name it. A bot's history is the record of
+    // what the customer's software did, and deleting the identity must not rewrite it.
+    const history = await repo.listMessages(channel.id, { limit: 10 });
+    const still = history.find((m) => m.id === sent.id);
+    expect(still).toBeDefined();
+    expect(still!.user).toBe("mortal-bot");
+  });
+
+  // ── T044a: the description survives deletion, and the revival ─────────────
+  //
+  // THIS IS THE ASSERTION THAT WOULD HAVE CAUGHT THE COLLISION. `deleteUser` clears
+  // `display_name`, `avatar_url` and `metadata`; adding `description` to that list by
+  // symmetry would violate `users_bot_description_check` and make a bot the one kind of
+  // user that cannot be deleted at all.
+  it("keeps a deleted bot's description, and revives it with the description intact", async () => {
+    await upsert([
+      { external_id: "revivable-bot", kind: "bot", description: "says what it does" },
+    ]);
+    expect((await removeUser("revivable-bot")).status).toBe(200);
+
+    const deleted = await repo.getUserByExternalId("revivable-bot");
+    expect(deleted?.deleted_at).not.toBeNull();
+    expect(deleted?.description).toBe("says what it does");
+    expect(deleted?.display_name).toBeNull();
+
+    const revived = await upsert([
+      { external_id: "revivable-bot", kind: "bot", description: "says what it does" },
+    ]);
+    expect((await revived.json()).data[0]).toMatchObject({
+      status: "revived",
+      kind: "bot",
+      description: "says what it does",
+    });
+  });
+
   // ══ THE BULK UPSERT AND THE DELETION (FR-025 to FR-030, SC-012) ═════════════
 
   const upsert = (users: unknown, key = credential) =>

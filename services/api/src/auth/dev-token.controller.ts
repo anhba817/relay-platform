@@ -100,7 +100,31 @@ export class DevTokenController {
     // an existing row — its own comment is about refusing to rename anybody — so
     // `banned_at` and `deleted_at` survive a mint. `upsertUser` is the route that
     // clears state, and it clears only `deleted_at`, because FR-030 asks it to.
-    await new Repository(this.db, principal.environmentId).createUser(body.user);
+    // A BOT CANNOT OBTAIN A TOKEN (chapter 3.17, FR-005, T040, T041).
+    //
+    // `createUser` still creates a PERSON for an unknown identifier — FR-005a, and the
+    // paragraph above is why that matters — so this refusal is only ever about a row
+    // that already exists and is already software. A bot is an identity messages are
+    // sent AS, not an account that logs in, and a token is the one thing that would make
+    // it the second.
+    //
+    // 404 `not_found`, AND THERE IS NO INDISTINGUISHABLE ANSWER AVAILABLE. Everywhere
+    // else in this chapter a refusal is made byte-identical to the refusal for an
+    // identifier that exists nowhere — but on this route an unknown identifier answers
+    // **200 with a token**, because chapter 3.16 made the mint create the row. So there
+    // is nothing for a refusal to be identical to: any refusal at all says "this
+    // identifier exists and is not a person". That is a leak this route cannot close,
+    // and 404 is chosen because it is the answer this route already gives for an
+    // environment it cannot resolve — one shape rather than a new one (FR-005).
+    const repo = new Repository(this.db, principal.environmentId);
+    const existing = await repo.getUserByExternalId(body.user);
+    if (existing?.kind === "bot") {
+      throw new NotFoundException({
+        code: "not_found",
+        message: "no such user",
+      });
+    }
+    await repo.createUser(body.user);
 
     const { token, expiresAt } = await mintUserToken(environment.signingSecret, {
       user: body.user,

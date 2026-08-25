@@ -92,18 +92,137 @@ describe("the month's usage", () => {
     expect((await usageFor(db, b.environmentId, PERIOD)).messagesSent).toBe(0);
   }, 30_000);
 
-  it("counts an unattributed send toward messages and toward no user", async () => {
-    // A key-authenticated REST send carries no user — unattributed by design
-    // since chapter 3.3. It is still a message the tenant sent.
+  it("counts a bot's send toward messages AND toward active users", async () => {
+    // THIS TEST'S SUBJECT NO LONGER EXISTS (chapter 3.17). It read "counts an
+    // unattributed send toward messages and toward no user" and asserted
+    // `activeUsers === 0`, because a key-authenticated send carried no user —
+    // unattributed by design since chapter 3.3, which FR-MSG-15 reverses. There is no
+    // senderless send left to count, so the assertion had no subject rather than a
+    // wrong value.
+    //
+    // What replaces it is the BILLING half of the split (FR-018, FR-ANL-05, *"shall
+    // meter ... unique active users"*). A bot is metered like any user: the row in
+    // `usage_active_users` IS the bill. What a bot is exempt from is the enforced
+    // ceiling, which is FR-RTL-05 and the test below.
     const { environmentId, repo, channelId } = await seed();
-    await repo.sendMessage(channelId, {
-      text: "hi",
-      userId: (await repo.createUser(`u-${randomUUID().slice(0, 8)}`)).id,
-    });
+    const bot = (
+      await repo.upsertUser(`bot-${randomUUID().slice(0, 8)}`, {
+        kind: "bot",
+        description: "meters like anybody else",
+      })
+    ).user;
+    await repo.sendMessage(channelId, { text: "hi", userId: bot.id });
 
     const usage = await usageFor(db, environmentId, PERIOD);
     expect(usage.messagesSent).toBe(1);
+    expect(usage.activeUsers).toBe(1);
+  }, 30_000);
+
+
+  it("reports zeros for an environment that has sent nothing", async () => {
+    const { environmentId } = await seed();
+    const usage = await usageFor(db, environmentId, PERIOD);
+    expect(usage.messagesSent).toBe(0);
     expect(usage.activeUsers).toBe(0);
+    expect(usage.messageQuota).toBeNull();
+    expect(usage.activeUserQuota).toBeNull();
+  }, 30_000);
+
+  it("counts per environment, so a sibling of the same application reports zero", async () => {
+    const a = await seed();
+    const b = await seed();
+    await a.repo.sendMessage(a.channelId, {
+      text: "hi",
+      userId: await newUser(a.repo),
+    });
+
+    expect((await usageFor(db, a.environmentId, PERIOD)).messagesSent).toBe(1);
+    expect((await usageFor(db, b.environmentId, PERIOD)).messagesSent).toBe(0);
+  }, 30_000);
+
+  it("counts a bot's send toward messages AND toward active users", async () => {
+    // THIS TEST'S SUBJECT NO LONGER EXISTS (chapter 3.17). It read "counts an
+    // unattributed send toward messages and toward no user" and asserted
+    // `activeUsers === 0`, because a key-authenticated send carried no user —
+    // unattributed by design since chapter 3.3, which FR-MSG-15 reverses. There is no
+    // senderless send left to count, so the assertion had no subject rather than a
+    // wrong value.
+    //
+    // What replaces it is the BILLING half of the split (FR-018, FR-ANL-05, *"shall
+    // meter ... unique active users"*). A bot is metered like any user: the row in
+    // `usage_active_users` IS the bill. What a bot is exempt from is the enforced
+    // ceiling, which is FR-RTL-05 and the test below.
+    const { environmentId, repo, channelId } = await seed();
+    const bot = (
+      await repo.upsertUser(`bot-${randomUUID().slice(0, 8)}`, {
+        kind: "bot",
+        description: "meters like anybody else",
+      })
+    ).user;
+    await repo.sendMessage(channelId, { text: "hi", userId: bot.id });
+
+    const usage = await usageFor(db, environmentId, PERIOD);
+    expect(usage.messagesSent).toBe(1);
+    expect(usage.activeUsers).toBe(1);
+  }, 30_000);
+
+  // ── T047c: the assertion is the PERSON's send, not the bot's (SC-011) ──────
+  it("a bot cannot exhaust a person's active-user allowance", async () => {
+    const { environmentId, repo, channelId } = await seed();
+    // THE CEILING IS 2, AND THE FIRST VERSION OF THIS TEST SET IT TO 1.
+    //
+    // With a ceiling of 1 and one person already active, the second person is over the
+    // limit whether or not a bot ever sent — so the test passed with only half of T047b
+    // applied, which is precisely the failure mode analysis pass 8 wrote T047b's comment
+    // to warn about. Proven by removing the `kind` filter and watching all 26 tests stay
+    // green.
+    //
+    // At 2, the arithmetic separates the two versions: persons alone = 1 (under),
+    // persons + the bot = 2 (at the limit). If the bot's row is counted, the second
+    // person is refused; if it is not, they get through. Sixth entry in this project's
+    // family of tests that were green while proving nothing.
+    const person = (await repo.createUser(`p-${randomUUID().slice(0, 8)}`)).id;
+    await repo.sendMessage(channelId, { text: "the first person", userId: person });
+    // The cap written inline rather than through this file's `setCaps` helper, which
+    // lives in a sibling describe and is not in scope here.
+    await db
+      .update(environments)
+      .set({ quotaConfig: { active_users: { hard: 2 } } })
+      .where(eq(environments.id, environmentId));
+
+    const bot = (
+      await repo.upsertUser(`bot-${randomUUID().slice(0, 8)}`, {
+        kind: "bot",
+        description: "must not consume a slot",
+      })
+    ).user;
+    // The bot's own send passes. THIS ASSERTION ALONE PROVES NOTHING — it passes with
+    // only half of T047b applied, and the half it does not cover is the one that
+    // matters.
+    await expect(
+      repo.sendMessage(channelId, { text: "from the software", userId: bot.id }),
+    ).resolves.toBeDefined();
+
+    // THIS is the assertion. A person who has not sent this period sends AFTER the bot
+    // and must get THROUGH: one person is active, the ceiling is 2, so there is room —
+    // unless the bot's row is counted, in which case this is the request that gets
+    // refused, and the person refused is not whoever caused it.
+    const second = (await repo.createUser(`p-${randomUUID().slice(0, 8)}`)).id;
+    await expect(
+      repo.sendMessage(channelId, { text: "the second person", userId: second }),
+    ).resolves.toBeDefined();
+
+    // And a THIRD person is refused, which is the ceiling still working. Without this
+    // the test could pass against a ceiling that had stopped enforcing anything.
+    const third = (await repo.createUser(`p-${randomUUID().slice(0, 8)}`)).id;
+    await expect(
+      repo.sendMessage(channelId, { text: "the third person", userId: third }),
+    ).rejects.toThrow(QuotaExceededError);
+
+    // The BILLED figure counts all three senders including the bot; the ENFORCED one
+    // counted two. That divergence is FR-018a's decision, not a discrepancy.
+    const usage = await usageFor(db, environmentId, PERIOD);
+    expect(usage.activeUsers).toBe(3);
   }, 30_000);
 
   it("does not count a recognised idempotent retry twice", async () => {
@@ -229,6 +348,7 @@ describe("running out", () => {
       .set({ quotaConfig: config as Record<string, unknown> })
       .where(eq(environments.id, environmentId));
   };
+
 
   it("refuses the send and serves the history read, in the same second", async () => {
     // the refuse-and-still-serve criterion. One refused request and one successful request against the same

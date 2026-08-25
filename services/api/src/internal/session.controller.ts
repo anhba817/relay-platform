@@ -60,6 +60,21 @@ export class SessionController {
     }
 
     const user = await this.repo.getUserByExternalId(principal.userExternalId);
+    // A BOT MAY NOT OPEN A SOCKET EITHER (chapter 3.17, FR-005b, T040a).
+    //
+    // REFUSING AT THE MINT IS NOT ENOUGH, and the window is the reason. A token lives
+    // up to 24 hours (FR-AUT-07), so a user promoted to a bot at 09:00 holds a valid
+    // token until 09:00 tomorrow — and this route reads `banned_at` and, until now, not
+    // `kind`. Closing the mint alone would leave a bot able to connect for a day after
+    // it became one, which is the same shape as a ban that only takes effect on the
+    // next connect.
+    //
+    // The socket sees a closed connection rather than a 404: the gateway calls this
+    // route and has nothing to say to a client whose session was refused, which is why
+    // the test for this lives in the gateway's suite and not here.
+    if (user?.kind === "bot") {
+      throw new UnauthorizedException("a bot user cannot open a session");
+    }
     // A verified token for a user this environment has never seen is not an
     // error: it is a user with no channels. The gateway's job is delivery, not
     // identity forensics — 2.5's rule, and the reason a first connect from a

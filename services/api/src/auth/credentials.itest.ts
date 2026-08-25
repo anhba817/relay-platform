@@ -4,6 +4,7 @@ import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import { SignJWT } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import { AppModule } from "../app.module";
 import { createDb, createPool, type Db } from "../db/client";
@@ -294,6 +295,42 @@ describe("credentials", () => {
         )
       ).status,
     ).toBe(401);
+  });
+
+  // ── T042: the mint's three cases (chapter 3.17, FR-005, FR-005a, SC-006) ──
+  //
+  // DO NOT ASSERT BYTE-IDENTITY WITH THE UNKNOWN CASE. Everywhere else in this chapter a
+  // refusal is made indistinguishable from the refusal for an identifier that exists
+  // nowhere — here the unknown case SUCCEEDS, because chapter 3.16 made the mint create
+  // the row. There is nothing to be identical to, and any refusal at all says "this
+  // identifier exists and is not a person". That is a leak this route cannot close, and
+  // saying so is better than an assertion that pretends otherwise.
+  it("mints for an unknown identifier and creates it as a PERSON", async () => {
+    const fresh = `never-seen-${randomUUID().slice(0, 8)}`;
+    const res = await devToken(key.credential, { user: fresh });
+    expect(res.status).toBe(200);
+    // FR-005a: implicit creation must not produce a bot, or a customer could make one
+    // by accident and then find it cannot authenticate.
+    const created = await new Repository(db, env.id).getUserByExternalId(fresh);
+    expect(created?.kind).toBe("person");
+  });
+
+  it("mints for a person who already exists", async () => {
+    const repo = new Repository(db, env.id);
+    const who = `person-${randomUUID().slice(0, 8)}`;
+    await repo.createUser(who, "A Person");
+    expect((await devToken(key.credential, { user: who })).status).toBe(200);
+  });
+
+  it("refuses a bot with 404 — a bot is not an account", async () => {
+    const repo = new Repository(db, env.id);
+    const who = `bot-${randomUUID().slice(0, 8)}`;
+    await repo.upsertUser(who, { kind: "bot", description: "cannot log in" });
+    const res = await devToken(key.credential, { user: who });
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("not_found");
+    // FR-005a's other half: the refusal must not have converted anything.
+    expect((await repo.getUserByExternalId(who))?.kind).toBe("bot");
   });
 
   it("invariant 9: the dev-token endpoint mints in development and does not exist in production", async () => {

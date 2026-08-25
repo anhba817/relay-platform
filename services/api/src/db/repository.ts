@@ -3333,6 +3333,24 @@ export class Repository {
 
       await tx.delete(readPositions).where(eq(readPositions.userId, userId));
       await tx.delete(members).where(eq(members.userId, userId));
+      // `description` IS NOT IN THIS `set`, AND ITS ABSENCE IS THE REQUIREMENT
+      // (chapter 3.17, FR-004a, T043b).
+      //
+      // FR-027 clears profile data on deletion, and a bot's description is not profile
+      // data — it says what the software is, which is what makes the messages it already
+      // sent answerable after it is gone. Clearing it would violate
+      // `users_bot_description_check` and make a bot **the one kind of user that cannot
+      // be deleted**: the constraint would reject the deletion itself.
+      //
+      // The rejected alternative was clearing `kind` back to `'person'` first. That
+      // makes the deletion two writes and leaves a person nobody created, holding
+      // messages a bot sent.
+      //
+      // THE OTHER DELETION METHOD IS `markUserDeleted`, and it clears nothing — it only
+      // stamps the marker. It has **no production caller**: chapter 3.16 added it so the
+      // listing's 404 branch was reachable before the deletion route existed. This rule
+      // is `deleteUser`'s, and a reader looking for it in the other one will find a
+      // method nothing calls.
       await tx
         .update(users)
         .set({
@@ -3915,7 +3933,7 @@ export class Repository {
       // The joined read is about 1.2ms of that and US1 needs it whether or not a
       // cap exists. An earlier uncontrolled benchmark reported 273% and sent three
       // separate hypotheses chasing what turned out to be warm-up (T033).
-      const quota = await this.assertWithinQuota(tx, period, userId);
+      const quota = await this.assertWithinQuota(tx, period, userId, senderIsPerson);
 
       const seq = channel.lastSequence + 1;
       const id = randomUUID();
@@ -4160,6 +4178,11 @@ export class Repository {
      * caller is the send, and the `userId === undefined` disjunct in the ceiling check
      * below became unreachable when that parameter did. */
     userId: string,
+    /** Whether the sender is a person (chapter 3.17, FR-018a, T047b). Threaded from the
+     * ban check's row rather than read again: this method is inside the write
+     * transaction, and a second SELECT on `users` here is a query every send would pay
+     * to learn something the caller already knows. */
+    senderIsPerson: boolean,
   ): Promise<{
     caps: { messages: Caps; active_users: Caps };
     sent: number;
@@ -4238,6 +4261,18 @@ export class Repository {
     // FR-018b requires the count to exclude bots as well — Phase 5's T047b, because
     // doing only the first leaves a bot's row displacing a person and the bot's own
     // send passing makes it look fixed.
+    // A BOT IS EXEMPT FROM THE CEILING, AND THAT IS HALF OF IT (chapter 3.17, FR-018a,
+    // FR-RTL-05 as amended). The clause now caps "unique active PERSONS"; FR-ANL-05
+    // still meters "unique active users" and the insert above still counts a bot, which
+    // is what makes a bot billed and exempt at the same time.
+    //
+    // The ceiling bounds a customer's human population. A customer's own software should
+    // not be able to lock their people out of sending — and it would: the block below
+    // refuses the FIRST send of a period by anyone once the count is reached, so the
+    // person refused is not whoever caused it.
+    if (!senderIsPerson) {
+      return { caps: { messages: messages_, active_users: users_ }, sent };
+    }
     if (users_.hard === null) {
       return { caps: { messages: messages_, active_users: users_ }, sent };
     }
@@ -4256,13 +4291,27 @@ export class Repository {
       return { caps: { messages: messages_, active_users: users_ }, sent };
     }
 
+    // THE COUNT EXCLUDES BOTS, AND THIS IS THE HALF THAT DECIDES WHETHER THE EXEMPTION
+    // WORKS (FR-018b). Returning early above stops a bot being refused; it does nothing
+    // about a bot's row sitting in this count and displacing a person. A test that
+    // watches the bot's send succeed passes with only the first half applied.
+    //
+    // **THE JOIN FILTERS `kind` AND NOT `deleted_at`.** Three `users` joins in this file
+    // pair with `isNull(users.deletedAt)` and it is the house idiom, so the wrong version
+    // is the one a careful reader writes. `deleteUser` is a SOFT delete and leaves
+    // `usage_active_users` alone, so adding that filter would make a deleted person's row
+    // stop counting — and deleting users would become a way to free ceiling slots, which
+    // it is not today. `users.itest.ts` pins the BILLED figure across a deletion and
+    // nothing pins the enforced one, so no ratchet would have caught it.
     const [count] = await tx
       .select({ n: sql<number>`count(*)::int` })
       .from(usageActiveUsers)
+      .innerJoin(users, eq(users.id, usageActiveUsers.userId))
       .where(
         and(
           eq(usageActiveUsers.environmentId, this.environmentId),
           eq(usageActiveUsers.period, period),
+          eq(users.kind, "person"),
         ),
       );
     const active = count?.n ?? 0;
