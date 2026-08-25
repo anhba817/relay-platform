@@ -3,6 +3,7 @@ import "reflect-metadata";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import { AppModule } from "../app.module";
 import { mintUserToken } from "../auth/user-token";
@@ -645,7 +646,11 @@ describe("the public channel surface", () => {
 
     beforeAll(async () => {
       archived = (await repo.createChannel("archivable", "public")).id;
-      await repo.sendMessage(archived, { text: "written before archiving" });
+      const scribe = (await repo.createUser(`ch-${randomUUID().slice(0, 8)}`)).id;
+      await repo.sendMessage(archived, {
+        text: "written before archiving",
+        userId: scribe,
+      });
     });
 
     it("refuses a send with its own code, distinct from not-found and banned", async () => {
@@ -704,7 +709,13 @@ describe("the public channel surface", () => {
       // 12's route — this is the invariant that makes the count safe, tested where it
       // can be tested.
       const target = (await repo.createChannel("archive-unread", "public")).id;
-      const before = (await repo.sendMessage(target, { text: "unread by somebody" })).seq;
+      const teller = (await repo.createUser(`ch-${randomUUID().slice(0, 8)}`)).id;
+      const before = (
+        await repo.sendMessage(target, {
+          text: "unread by somebody",
+          userId: teller,
+        })
+      ).seq;
       await archive(target);
       const after = await repo.listMessages(target, { limit: 10 });
       expect(after.map((m) => m.seq)).toContain(before);

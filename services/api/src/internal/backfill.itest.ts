@@ -11,6 +11,8 @@ import {
 } from "@relay/protocol";
 
 import { AppModule } from "../app.module";
+import { sql } from "drizzle-orm";
+
 import { createDb, createPool } from "../db/client";
 import {
   createEnvironment,
@@ -169,9 +171,29 @@ describe("POST /internal/backfill", () => {
   it("skips a message no frame can be built from, rather than inventing one", async () => {
     const orphans = (await repo.createChannel("orphans", "public")).id;
     await repo.addMember(orphans, tuan.id);
-    // No userId: the shape of every row written through the socket before
-    // 2.6's fix. There is no truthful sender to put on the wire.
-    const anonymous = await repo.sendMessage(orphans, { text: "who said it?" });
+    // PLANTED, BECAUSE NOTHING CAN WRITE ONE ANY MORE (chapter 3.17, T014a, FR-014).
+    //
+    // This is the SECOND test whose subject is a senderless row, and T014a named only
+    // the first — `repository.itest.ts`'s `last_message.user` arm. Both had to stop
+    // using `sendMessage` for the same reason: FR-MSG-15 makes the sender required, so
+    // the repository can no longer produce the fixture that proves what happens without
+    // one. Found by the compiler rather than by reading, which is what Phase 2 is for.
+    //
+    // The shape is still real: every row written through the socket before 2.6's fix
+    // looks like this, and `toFrame` skipping them is the behaviour under test.
+    const anonymousSeq = 1;
+    const raw = createDb(createPool());
+    await raw.execute(
+      sql`INSERT INTO messages (id, environment_id, channel_id, sequence, text, created_at)
+          SELECT gen_random_uuid(), environment_id, ${orphans}, ${anonymousSeq},
+                 'who said it?', now()
+          FROM channels WHERE id = ${orphans}`,
+    );
+    await raw.execute(
+      sql`UPDATE channels SET last_sequence = ${anonymousSeq}, last_activity_at = now()
+          WHERE id = ${orphans}`,
+    );
+    const anonymous = { seq: anonymousSeq };
     const withAuthor = await say(orphans, "this one is attributable");
     const page = (await parsed(await ask({ [orphans]: 0 }))).channels[orphans]!;
     expect(page.messages.map((m) => m.seq)).toEqual([withAuthor.seq]);

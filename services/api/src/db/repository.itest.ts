@@ -98,9 +98,10 @@ describe("tenant isolation is structural (FR-TEN-05)", () => {
 describe("sequence assignment is serialised per channel (ADR-03)", () => {
   it("two concurrent sends never interleave", async () => {
     const channel = await repoA.createChannel("ordering", "public");
+    const writer = (await repoA.createUser("ordering-writer", "Writer")).id;
     const [a, b] = await Promise.all([
-      repoA.sendMessage(channel.id, { text: "first writer" }),
-      repoA.sendMessage(channel.id, { text: "second writer" }),
+      repoA.sendMessage(channel.id, { text: "first writer", userId: writer }),
+      repoA.sendMessage(channel.id, { text: "second writer", userId: writer }),
     ]);
     // Two sends, two DISTINCT consecutive sequence numbers — always.
     expect(new Set([a.seq, b.seq]).size).toBe(2);
@@ -111,7 +112,8 @@ describe("sequence assignment is serialised per channel (ADR-03)", () => {
 describe("idempotency must not disarm DR-01 (chapter 2.3)", () => {
   it("a keyless send still fails loudly on a sequence collision", async () => {
     const channel = await repoA.createChannel("dr01-guard", "public");
-    await repoA.sendMessage(channel.id, { text: "first" });
+    const guard = (await repoA.createUser("dr01-guard-sender", "Sender")).id;
+    await repoA.sendMessage(channel.id, { text: "first", userId: guard });
     // Rewind the counter so the next keyless send reuses seq 1. The
     // conflict clause must NOT swallow this: DR-01's unique constraint is
     // 2.2's safety net, and idempotency has no business disarming it.
@@ -119,7 +121,7 @@ describe("idempotency must not disarm DR-01 (chapter 2.3)", () => {
       sql`UPDATE channels SET last_sequence = 0 WHERE id = ${channel.id}`,
     );
     await expect(
-      repoA.sendMessage(channel.id, { text: "collides" }),
+      repoA.sendMessage(channel.id, { text: "collides", userId: guard }),
     ).rejects.toThrow();
     // And nothing landed: the failed insert wrote no row.
     const rows = await repoA.listMessagesRaw(channel.id);
@@ -201,7 +203,25 @@ describe("a private channel refuses a non-member's send (FR-001)", () => {
     // be stated rather than assumed, and the assumption is that a private channel
     // is not private FROM ITS OWNER.
     const channel = await repoA.createChannel("private-app", "private");
-    const sent = await repoA.sendMessage(channel.id, { text: "from the tenant" });
+    // A BOT, AND THAT IS THE WHOLE POINT NOW (chapter 3.17, FR-019a). This test is the
+    // repository-level twin of `messages.itest.ts`'s "accepts an application key's send
+    // to the same private channel". Before this chapter the send carried no user at all
+    // and skipped the membership check for that reason; now the check is gated on the
+    // sender being a PERSON, so a bot still gets through and a non-member person still
+    // does not. Give it a person here and the test inverts into its own opposite.
+    //
+    // `createUser` cannot set `kind` — that is `upsertUser`'s job from Phase 3 — so the
+    // promotion is a raw UPDATE, which is also the only writer that can satisfy
+    // `users_bot_description_check` in one statement.
+    const bot = (await repoA.createUser("private-app-bot", "Tenant Bot")).id;
+    await db.execute(
+      sql`UPDATE users SET kind = 'bot', description = 'posts on the tenant''s behalf'
+          WHERE id = ${bot}`,
+    );
+    const sent = await repoA.sendMessage(channel.id, {
+      text: "from the tenant",
+      userId: bot,
+    });
     expect(sent.seq).toBe(1);
   });
 
@@ -491,7 +511,27 @@ describe("the repository's own refusals (chapter 3.15)", () => {
     const reader = await repoA.createUser("arm-no-author", "Reader");
     const channel = await repoA.createChannel("arm-unattributed", "public");
     await repoA.addMember(channel.id, reader.id);
-    await repoA.sendMessage(channel.id, { text: "from the tenant, not a user" });
+    // PLANTED, BECAUSE NOTHING CAN WRITE ONE ANY MORE (chapter 3.17, T014a, FR-014).
+    //
+    // The subject of this test IS a senderless row, so the repository can no longer
+    // produce its own fixture: `sendMessage` requires a sender as of FR-MSG-15, which
+    // is exactly the guarantee this arm exists to describe the other side of. The row
+    // is inserted directly, the way chapter 3.12's read-position clamp is planted a few
+    // hundred lines above — the only way a branch that no writer can reach is covered.
+    //
+    // The arm is NOT dead. `messages.user_id` stays nullable because rows like this one
+    // exist in customers' databases, and FR-012 asks that all four read paths keep
+    // working for them. What changed is that no new one can be created.
+    await db.execute(
+      sql`INSERT INTO messages (id, environment_id, channel_id, sequence, text, created_at)
+          SELECT gen_random_uuid(), environment_id, ${channel.id}, 1,
+                 'from the tenant, not a user', now()
+          FROM channels WHERE id = ${channel.id}`,
+    );
+    await db.execute(
+      sql`UPDATE channels SET last_sequence = 1, last_activity_at = now()
+          WHERE id = ${channel.id}`,
+    );
 
     const { rows } = await repoA.listChannelsForUser(reader.id, { limit: 10 });
     const row = rows.find((r) => r.external_id === "arm-unattributed")!;

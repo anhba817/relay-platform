@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import { desc, eq, sql } from "drizzle-orm";
 
 import { createDb, createPool, DEFAULT_DATABASE_URL, type Db } from "./client";
@@ -52,14 +53,15 @@ beforeAll(async () => {
 
 describe("offset pagination drifts under live inserts (chapter 2.4)", () => {
   it("serves rows the reader has already seen", async () => {
+    const sender = (await repo.createUser(`drift-${randomUUID().slice(0, 8)}`)).id;
     const channel = await repo.createChannel("drift-repeat", "public");
     for (let i = 1; i <= 60; i += 1) {
-      await repo.sendMessage(channel.id, { text: `m-${i}` });
+      await repo.sendMessage(channel.id, { text: `m-${i}`, userId: sender });
     }
     const page1 = await readByOffset(channel.id, { offset: 0, limit: 50 });
     // The feed moves mid-scroll: three drivers type while page two loads.
     for (let i = 1; i <= 3; i += 1) {
-      await repo.sendMessage(channel.id, { text: `live-${i}` });
+      await repo.sendMessage(channel.id, { text: `live-${i}`, userId: sender });
     }
     const page2 = await readByOffset(channel.id, { offset: 50, limit: 50 });
 
@@ -70,9 +72,10 @@ describe("offset pagination drifts under live inserts (chapter 2.4)", () => {
   });
 
   it("hides rows the reader will never see, when the feed shrinks", async () => {
+    const sender = (await repo.createUser(`drift-${randomUUID().slice(0, 8)}`)).id;
     const channel = await repo.createChannel("drift-gap", "public");
     for (let i = 1; i <= 60; i += 1) {
-      await repo.sendMessage(channel.id, { text: `m-${i}` });
+      await repo.sendMessage(channel.id, { text: `m-${i}`, userId: sender });
     }
     const page1 = await readByOffset(channel.id, { offset: 0, limit: 50 });
     // A moderator deletes a message the reader has ALREADY passed — one

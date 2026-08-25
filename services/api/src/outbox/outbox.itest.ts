@@ -156,7 +156,7 @@ describe("the outbox", () => {
     });
     // The key-authenticated public send is unattributed (3.2's recorded bound),
     // which is a CONTENT difference, not a shape one.
-    await repo.sendMessage(channelId, { text: "through REST" });
+    await repo.sendMessage(channelId, { text: "through REST", userId: tuan.id });
     const rows = (await unpublishedFor(db, env.id)).slice(before.length);
     expect(rows.length).toBe(2);
     const shapes = rows.map((r) => Object.keys(r.payload).sort().join(","));

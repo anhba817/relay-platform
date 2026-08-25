@@ -31,11 +31,19 @@ const pool = createPool();
 const db: Db = createDb(pool);
 let env: Environment;
 let repo: Repository;
+// A REAL SENDER, BECAUSE `sendMessage` REQUIRES ONE (chapter 3.17, FR-MSG-15).
+//
+// One row for the whole suite, created here rather than a `userId: "x"` at each call
+// site. A fixture that invents an id to satisfy a compiler is a test that stopped
+// meaning what it meant: this suite is about idempotency, and every message in it is
+// now sent by somebody who exists.
+let sender: string;
 
 beforeAll(async () => {
   await migrate(pool);
   env = await createEnvironment(db, { name: "idempotency-itest" });
   repo = new Repository(db, env.id);
+  sender = (await repo.createUser("idempotency-sender", "Idempotency Sender")).id;
 });
 
 afterAll(async () => {
@@ -45,9 +53,9 @@ afterAll(async () => {
 describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
   it("a retry WITHOUT a key duplicates the message — journey 4's failure, staged", async () => {
     const channel = await repo.createChannel("idem-no-key", "public");
-    await repo.sendMessage(channel.id, { text: "B2, north ramp" });
+    await repo.sendMessage(channel.id, { userId: sender, text: "B2, north ramp" });
     // The ack was lost; the client cannot know. It retries:
-    await repo.sendMessage(channel.id, { text: "B2, north ramp" });
+    await repo.sendMessage(channel.id, { userId: sender, text: "B2, north ramp" });
     const rows = await repo.listMessagesRaw(channel.id);
     // Two rows, seq 1 and 2, identical text. The dispatcher reads it twice.
     expect(rows.filter((m) => m.text === "B2, north ramp")).toHaveLength(2);
@@ -56,12 +64,12 @@ describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
   it("a retry WITH a key returns the ORIGINAL message — the fix", async () => {
     const channel = await repo.createChannel("idem-with-key", "public");
     const key = randomUUID();
-    const first = await repo.sendMessage(channel.id, {
+    const first = await repo.sendMessage(channel.id, { userId: sender,
       text: "B2, north ramp",
       idempotencyKey: key,
     });
     // The ack was lost; the client retries with the same key:
-    const retry = await repo.sendMessage(channel.id, {
+    const retry = await repo.sendMessage(channel.id, { userId: sender,
       text: "B2, north ramp",
       idempotencyKey: key,
     });
@@ -79,7 +87,7 @@ describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
     const key = randomUUID();
     const results = await Promise.all(
       Array.from({ length: 5 }, () =>
-        repo.sendMessage(channel.id, {
+        repo.sendMessage(channel.id, { userId: sender,
           text: "concurrent send",
           idempotencyKey: key,
         }),
@@ -98,13 +106,13 @@ describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
   it("a recognised duplicate consumes no sequence number", async () => {
     const channel = await repo.createChannel("idem-no-burn", "public");
     const key = randomUUID();
-    await repo.sendMessage(channel.id, { text: "once", idempotencyKey: key });
-    await repo.sendMessage(channel.id, { text: "once", idempotencyKey: key });
-    await repo.sendMessage(channel.id, { text: "once", idempotencyKey: key });
+    await repo.sendMessage(channel.id, { userId: sender, text: "once", idempotencyKey: key });
+    await repo.sendMessage(channel.id, { userId: sender, text: "once", idempotencyKey: key });
+    await repo.sendMessage(channel.id, { userId: sender, text: "once", idempotencyKey: key });
     // Three sends, one row — and the NEXT message gets seq 2, not seq 4:
     // a retry that wrote nothing spends nothing (FR-MSG-02 tolerates gaps,
     // but there is no reason to manufacture them).
-    const next = await repo.sendMessage(channel.id, { text: "after" });
+    const next = await repo.sendMessage(channel.id, { userId: sender, text: "after" });
     expect(next.seq).toBe(2);
   });
 
@@ -112,11 +120,11 @@ describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
     const channelA = await repo.createChannel("idem-ns-a", "public");
     const channelB = await repo.createChannel("idem-ns-b", "public");
     const key = randomUUID();
-    const a = await repo.sendMessage(channelA.id, {
+    const a = await repo.sendMessage(channelA.id, { userId: sender,
       text: "same key, different channel",
       idempotencyKey: key,
     });
-    const b = await repo.sendMessage(channelB.id, {
+    const b = await repo.sendMessage(channelB.id, { userId: sender,
       text: "same key, different channel",
       idempotencyKey: key,
     });

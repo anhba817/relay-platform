@@ -52,10 +52,29 @@ export class MessagesService {
     userExternalId?: string,
   ): Promise<MessageRow> {
     try {
+      // THE SENDER IS REQUIRED, AND THIS IS WHERE THE ROUTE LEARNS IT (chapter 3.17,
+      // FR-006, FR-008). `repository.sendMessage` requires `userId` as of T012, so
+      // this narrowing is not a defensive check — it is the only way a caller holding
+      // `string | undefined` can reach a function that takes `string`.
+      //
+      // WHY THE SERVICE AND NOT THE REPOSITORY: research R5 puts the two checks in
+      // two layers on purpose. The repository's guarantee is structural, enforced by
+      // the compiler for every caller including a test. This one is about a REQUEST,
+      // and a request that names nobody is a refusal a customer has to be able to
+      // read — which is why it belongs where the error mapping is.
+      //
+      // PHASE 4 REPLACES THE SHAPE, NOT THE RULE. T028 adds `user` to the request
+      // schema and T029 resolves it per credential class, so this throw becomes the
+      // `400` with `field: "user"` that FR-008 specifies. Until then it is a plain
+      // Error, and the integration lane's key-authenticated sends fail here — which
+      // is the phase boundary showing through rather than a regression.
+      if (userId === undefined) {
+        throw new Error("a message must name its sender (FR-MSG-15, FR-008)");
+      }
       return await this.repo.sendMessage(channelId, {
         text: body.text,
         metadata: body.metadata,
-        ...(userId !== undefined && { userId }),
+        userId,
         ...(userExternalId !== undefined && { userExternalId }),
         ...(body.idempotency_key != null && {
           idempotencyKey: body.idempotency_key,

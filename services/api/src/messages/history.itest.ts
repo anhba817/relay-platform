@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import {
   createDb,
@@ -25,15 +26,20 @@ const pool = createPool();
 const db: Db = createDb(pool);
 let repo: Repository;
 
+// A REAL SENDER FOR THE WHOLE SUITE (chapter 3.17, FR-MSG-15). History is about
+// paging and ordering, not about who wrote what, so one row serves every page.
+let sender: string;
+
 beforeAll(async () => {
   await migrate(pool);
   const env = await createEnvironment(db, { name: "history-itest" });
   repo = new Repository(db, env.id);
+  sender = (await repo.createUser("history-sender", "History Sender")).id;
 });
 
 async function seed(channelId: string, count: number, prefix: string) {
   for (let i = 1; i <= count; i += 1) {
-    await repo.sendMessage(channelId, { text: `${prefix}-${i}` });
+    await repo.sendMessage(channelId, { text: `${prefix}-${i}`, userId: sender });
   }
 }
 
@@ -82,7 +88,11 @@ describe("history pagination (FR-MSG-09)", () => {
       "hist-theirs",
       "public",
     );
+    const theirSender = (
+      await new Repository(db, other.id).createUser(`h-${randomUUID().slice(0, 8)}`)
+    ).id;
     await new Repository(db, other.id).sendMessage(theirs.id, {
+      userId: theirSender,
       text: "theirs",
     });
     expect(await repo.listMessages(theirs.id, { limit: 50 })).toEqual([]);

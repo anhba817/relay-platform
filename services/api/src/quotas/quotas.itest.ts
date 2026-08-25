@@ -96,7 +96,10 @@ describe("the month's usage", () => {
     // A key-authenticated REST send carries no user — unattributed by design
     // since chapter 3.3. It is still a message the tenant sent.
     const { environmentId, repo, channelId } = await seed();
-    await repo.sendMessage(channelId, { text: "hi" });
+    await repo.sendMessage(channelId, {
+      text: "hi",
+      userId: (await repo.createUser(`u-${randomUUID().slice(0, 8)}`)).id,
+    });
 
     const usage = await usageFor(db, environmentId, PERIOD);
     expect(usage.messagesSent).toBe(1);

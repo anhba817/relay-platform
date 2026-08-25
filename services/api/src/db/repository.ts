@@ -3577,12 +3577,25 @@ export class Repository {
       metadata,
       idempotencyKey,
     }: {
-      userId?: string;
+      /** REQUIRED SINCE CHAPTER 3.17 (FR-MSG-15, FR-006), and required is the whole
+       * mechanism. SC-003 asks that no write path be able to produce a senderless
+       * message; a runtime check would be a test somebody has to remember, and this
+       * is a compile error. `exactOptionalPropertyTypes` means a caller cannot pass
+       * `undefined` here either — passing a `string | undefined` is named by the
+       * compiler, not silently accepted.
+       *
+       * There is no red test for this. Reverting the `?` is what makes the guarantee
+       * visible, and the transcript of that revert is SC-003a's evidence (T013a). */
+      userId: string;
       /** Chapter 3.3: the sender as a CONSUMER will see them. Threaded from the
        * caller rather than looked up here — the internal route already holds it
        * (it is the token's subject), and an extra SELECT inside the write
-       * transaction is a cost every message would pay forever. Absent on the
-       * public REST route, where a key-authenticated send is unattributed. */
+       * transaction is a cost every message would pay forever.
+       *
+       * STILL OPTIONAL, and that is not an oversight. `userId` is what the platform
+       * stores and `userExternalId` is what a consumer sees; the public route now
+       * resolves a bot and holds both, but the internal route has always supplied
+       * both and nothing requires a caller to know the external id to write a row. */
       userExternalId?: string;
       text: string;
       metadata?: unknown;
@@ -3607,19 +3620,33 @@ export class Repository {
       // channel that exists differs from the refusal for one that does not, and a
       // banned user can enumerate channel ids.
       //
-      // ONLY FOR AN ATTRIBUTED SEND. A key-authenticated REST send carries no user, so
-      // there is nobody to be banned; the tenant acting for itself is not a banned
-      // user's send by proxy, because the tenant is who bans.
-      if (userId !== undefined) {
-        const [sender] = await tx
-          .select({ bannedAt: users.bannedAt })
-          .from(users)
-          .where(
-            and(eq(users.id, userId), eq(users.environmentId, this.environmentId)),
-          )
-          .limit(1);
-        if (sender?.bannedAt != null) throw new UserBannedError(userId);
-      }
+      // EVERY SEND IS ATTRIBUTED NOW (chapter 3.17, FR-MSG-15). The gate that used to
+      // stand here — `if (userId !== undefined)` — guarded against a key-authenticated
+      // send that carried no user, and `userId` is required as of this chapter, so the
+      // condition could no longer be false. **Fourth time this project has met a guard
+      // that stopped meaning anything**: `addMember`'s `rowCount ?? 0` (3.12), and
+      // `upsertUser`'s second throw and `(row.metadata ?? {})` (3.16). Tightening a
+      // type makes its runtime guards dead; three of the seven `userId` comparisons in
+      // this file were dead the moment T012 landed, and two others are in methods where
+      // the parameter is optional by design and must not be touched.
+      //
+      // A BOT CAN BE BANNED, AND THAT IS THE POINT (FR-005c). `banned_at` has been on
+      // every `users` row since chapter 3.15 and this check has never run for a bot
+      // because no send named one. A ban is how an operator stops a runaway integration
+      // without deleting the identity its messages are attributed to.
+      //
+      // ONE LOOKUP, TWO ANSWERS. `kind` is read here and used again at the private
+      // channel check below (FR-019a). The alternative is a second SELECT on the write
+      // path for every message forever, to learn something this query already touched.
+      const [sender] = await tx
+        .select({ bannedAt: users.bannedAt, kind: users.kind })
+        .from(users)
+        .where(
+          and(eq(users.id, userId), eq(users.environmentId, this.environmentId)),
+        )
+        .limit(1);
+      if (sender?.bannedAt != null) throw new UserBannedError(userId);
+      const senderIsPerson = sender?.kind !== "bot";
 
       const [channel] = await tx
         .select({
@@ -3678,7 +3705,26 @@ export class Repository {
       // non-member of a private archived channel never learns it exists from
       // `channel_archived`. Both arrive with their own columns' chapters; this is
       // the middle of the three.
-      if (channel.type === "private" && userId !== undefined) {
+      // THE SENDER ATTRIBUTES; IT DOES NOT AUTHORISE (chapter 3.17, FR-019).
+      //
+      // This gate used to read `channel.type === "private" && userId !== undefined`,
+      // and the second half was doing real work: a key-authenticated send carried no
+      // user, so it skipped the membership check entirely. That is chapter 3.15's
+      // FR-005 — an application credential "acts for the customer, carries no user,
+      // and sees private channels" — and `messages.itest.ts` asserts it by name.
+      //
+      // Requiring `userId` would have made the condition always true, fired the check,
+      // and refused a bot that is not a member with `ChannelNotFoundError`: a 404 that
+      // by design cannot say why. A capability chapter 3.15 delivered would have
+      // vanished, and the analysis passes that read FR-005 never noticed because the
+      // word "private" appeared nowhere in this chapter's plan.
+      //
+      // So the gate turns on WHAT THE SENDER IS, not on whether there is one. A key
+      // naming a bot has exactly the authority the key has today; the bot's name is
+      // what appears on the message and nothing more. A person's token still both
+      // authorises and attributes, which is why `senderIsPerson` is the condition and
+      // a person who is not a member is still refused, indistinguishably (FR-019b).
+      if (channel.type === "private" && senderIsPerson) {
         const [membership] = await tx
           .select({ userId: members.userId })
           .from(members)
@@ -3866,15 +3912,20 @@ export class Repository {
       // sent this period, which is a read. The row IS the answer, and
       // `ON CONFLICT DO NOTHING` makes the second send of the month free.
       //
-      // ONLY WHEN THE SEND IS ATTRIBUTED. A key-authenticated REST send carries
-      // no `userId` — unattributed by design since chapter 3.3 — and counts
-      // toward the message quota and toward no user.
-      if (userId !== undefined) {
-        await tx
-          .insert(usageActiveUsers)
-          .values({ environmentId: this.environmentId, period, userId })
-          .onConflictDoNothing();
-      }
+      // EVERY SEND IS ATTRIBUTED, SO EVERY SEND COUNTS (chapter 3.17). The gate here
+      // was the twin of the ban check's: it existed because a key-authenticated send
+      // carried no `userId`, which chapter 3.3 decided and FR-MSG-15 reverses.
+      //
+      // A BOT IS BILLED (FR-018, FR-ANL-05, *"shall meter, per tenant per day:
+      // messages sent, unique active users, ..."*). The row is the bill, and a bot's
+      // send writes one like anyone's. What a bot is exempt from is the ENFORCED
+      // ceiling in `assertWithinQuota` — FR-RTL-05, narrowed to "unique active
+      // persons" by this chapter's amendment. Metering and enforcement were already
+      // two clauses in two families; this insert is the first one.
+      await tx
+        .insert(usageActiveUsers)
+        .values({ environmentId: this.environmentId, period, userId })
+        .onConflictDoNothing();
 
       // What this send crossed, if anything. Almost always nothing, which is why
       // the caps are read first and the whole block skipped when none is set.
@@ -3899,7 +3950,10 @@ export class Repository {
         // send could have added someone.
         const userRef =
           quota.caps.active_users.hard ?? quota.caps.active_users.soft;
-        const mayHaveAddedUser = userId !== undefined && userRef !== null;
+        // ONLY THE `userId` HALF WAS DEAD. `userRef !== null` still decides whether a
+        // user cap exists at all, and asking the database for a count when no cap is
+        // configured is a query nobody reads.
+        const mayHaveAddedUser = userRef !== null;
 
         if (crossedMessages.length > 0 || mayHaveAddedUser) {
           const organisationId = await this.organisationOf(tx);
@@ -3968,7 +4022,10 @@ export class Repository {
   private async assertWithinQuota(
     tx: Db,
     period: string,
-    userId: string | undefined,
+    /** REQUIRED, following `sendMessage`'s parameter (chapter 3.17, T012). Its only
+     * caller is the send, and the `userId === undefined` disjunct in the ceiling check
+     * below became unreachable when that parameter did. */
+    userId: string,
   ): Promise<{
     caps: { messages: Caps; active_users: Caps };
     sent: number;
@@ -4039,7 +4096,15 @@ export class Repository {
       });
     }
 
-    if (users_.hard === null || userId === undefined) {
+    // THE `userId === undefined` DISJUNCT IS GONE, and only that half. `hard === null`
+    // still means no ceiling is configured, which is the common case and the reason the
+    // count below is not taken on every send.
+    //
+    // THE BOT EXEMPTION IS NOT HERE YET. FR-018a exempts a bot from this ceiling and
+    // FR-018b requires the count to exclude bots as well — Phase 5's T047b, because
+    // doing only the first leaves a bot's row displacing a person and the bot's own
+    // send passing makes it look fixed.
+    if (users_.hard === null) {
       return { caps: { messages: messages_, active_users: users_ }, sent };
     }
 

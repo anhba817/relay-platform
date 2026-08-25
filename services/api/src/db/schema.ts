@@ -258,13 +258,56 @@ export const users = pgTable(
     // presenting the same external id again reuses this row and clears the marker
     // (FR-030) rather than creating a second identity.
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    // WHAT KIND OF THING THIS USER IS (chapter 3.17, FR-USR-07).
+    //
+    // A stored property on the row a customer already knows about, not a second table.
+    // Every reader built since chapter 3.15 reads `users`; a `bots` table would have
+    // needed each of them taught a second place to look, and a message's `user_id`
+    // would have had to reference one of two tables.
+    //
+    // `NOT NULL DEFAULT 'person'` is metadata-only on Postgres 11+, so the existing
+    // rows are not rewritten — chapter 3.16 measured that for `last_activity_at`.
+    // The default belongs HERE, at creation, and NOT in the request schema: a schema
+    // default would make "absent" indistinguishable from "person" before anything can
+    // compare it to the stored row, and telling those two apart is what makes a
+    // promotion reportable (FR-002b).
+    kind: text("kind").notNull().default("person"),
+    // WHAT THE SOFTWARE IS, AND WHY IT POSTS (chapter 3.17, FR-USR-07).
+    //
+    // NOT PROFILE DATA, and `deleteUser` must not clear it (FR-004a). FR-027 clears
+    // `display_name`, `avatar_url` and `metadata` on deletion; clearing this one would
+    // violate `users_bot_description_check` below and make a bot the one kind of user
+    // that cannot be deleted.
+    description: text("description"),
   },
   (t) => [
     unique("users_environment_id_external_id_unique").on(
       t.environmentId,
       t.externalId,
+    ), // DR-02
+    // THE CONSTRAINED TEXT COLUMNS IN THIS SCHEMA NAME EACH OTHER (chapter 3.15's
+    // practice, applied here): `channels_type_check` on `channels.type`,
+    // `members_role_check` on `members.role`, `memberships_role_check` on an
+    // organisation membership's role, and this pair. One word apart is how `admin`
+    // nearly reached a channel member, so each of these says where its siblings are.
+    //
+    // AND `environments.kind` IS THE ONE THAT IS NOT CONSTRAINED. It has held
+    // `development` or `production` since chapter 2.1 (FR-TEN-04) with no CHECK, so
+    // this schema now has two columns called `kind` and only one of them cannot hold
+    // a typo. Named here rather than fixed: adding a constraint to a column
+    // seventeen chapters old is not this chapter's change, and leaving the asymmetry
+    // unmentioned is how the next reader assumes both are guarded.
+    check("users_kind_check", sql`${t.kind} IN ('person','bot')`),
+    // THE SECOND CHECK IS THE REQUIREMENT, not a nicety. It makes a bot without a
+    // description **unrepresentable** rather than merely refused: zod refuses one at
+    // the boundary (FR-002, FR-004b) and this refuses one from any writer, including
+    // a migration, a backfill, or a psql session. A description is what turns an
+    // opaque sender into an answerable one, so a bot without one is not a bot.
+    check(
+      "users_bot_description_check",
+      sql`${t.kind} <> 'bot' OR ${t.description} IS NOT NULL`,
     ),
-  ], // DR-02
+  ],
 );
 
 export const channels = pgTable(
