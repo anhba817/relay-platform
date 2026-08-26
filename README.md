@@ -88,6 +88,55 @@ the sentence to be literally true would need compose to run migrations and the
 seed as one-shot services, which would put schema management inside a file whose
 job is to start containers.
 
+### Sending a message: name who is sending
+
+Every message carries a sender (`FR-MSG-15`). A user token is attributed to its own
+subject, so it names nobody; an **application key carries no user of its own**, so it must
+name one — and the only sender it may name is a **bot user**: an identity that stands for
+your software rather than for a person.
+
+A bot is a user with `kind: "bot"` and a description saying what it is. The description is
+required, because a message whose sender cannot be explained is the anonymous send this
+requirement exists to remove.
+
+```bash
+CHANNEL=$(curl -s -X POST localhost:4000/v1/channels \
+  -H "authorization: Bearer $RELAY_DEMO_CREDENTIAL" \
+  -H 'content-type: application/json' \
+  -d '{"external_id":"deploys","name":"Deploys"}' | jq -r .id)
+
+# Create the bot. `kind` and `description` travel together: a bot without a
+# description is refused at the boundary, and the database refuses it too.
+curl -s -X POST localhost:4000/v1/users \
+  -H "authorization: Bearer $RELAY_DEMO_CREDENTIAL" \
+  -H 'content-type: application/json' \
+  -d '{"users":[{"external_id":"deploy-bot","display_name":"Deploy Bot",
+                 "kind":"bot","description":"posts when a deploy finishes"}]}'
+
+# Send as it. The response echoes the sender it recorded.
+curl -s -X POST "localhost:4000/v1/channels/$CHANNEL/messages" \
+  -H "authorization: Bearer $RELAY_DEMO_CREDENTIAL" \
+  -H 'content-type: application/json' \
+  -d '{"text":"build 412 is green","user":"deploy-bot"}'
+```
+
+Three refusals worth knowing before you meet them:
+
+| you did this | you get |
+|---|---|
+| named nobody in `user` | `400`, `field: "user"` |
+| named a **person** | `403 sender_not_permitted` |
+| named an identifier of another tenant, or none | `400`, and the two are byte-identical |
+
+The last one is deliberate: a refusal that distinguished "exists elsewhere" from "exists
+nowhere" would let anyone ask whether a neighbour has a given identifier.
+
+**This section is the quickstart of record.** The constitution asks that the quickstart run
+unmodified, verified by automated execution in CI against the published documentation, and
+the suite below is that execution — it is sealed from workspace code and follows this file.
+There is no second quickstart document; one nobody executes is the debt the requirement
+exists to prevent.
+
 Then the sealed integration, which starts nothing and talks only HTTP and
 WebSocket:
 

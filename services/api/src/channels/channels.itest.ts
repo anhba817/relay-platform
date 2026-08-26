@@ -511,6 +511,8 @@ describe("the public channel surface", () => {
       const sent = await fetch(`${url}/v1/channels/${publicChannelId}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        // NO `user` — this is a USER TOKEN, and naming one beside a token is refused
+        // (FR-010). Adding it here was a reflex during T061 and the test caught it.
         body: JSON.stringify({ text: "still open to me" }),
       });
       expect(sent.status).toBe(201);
@@ -641,11 +643,20 @@ describe("the public channel surface", () => {
       fetch(`${url}/v1/channels/${channel}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${credential}` },
-        body: JSON.stringify({ text: "attempted after archiving" }),
+        body: JSON.stringify({
+          text: "attempted after archiving",
+          user: "archive-bot",
+        }),
       });
 
     beforeAll(async () => {
       archived = (await repo.createChannel("archivable", "public")).id;
+      // A key send names a bot (chapter 3.17). The refusal under test is the ARCHIVE's,
+      // so the sender must resolve or the test would be measuring a 400 about `user`.
+      await repo.upsertUser("archive-bot", {
+        kind: "bot",
+        description: "sends at an archived channel so the refusal can be checked",
+      });
       const scribe = (await repo.createUser(`ch-${randomUUID().slice(0, 8)}`)).id;
       await repo.sendMessage(archived, {
         text: "written before archiving",

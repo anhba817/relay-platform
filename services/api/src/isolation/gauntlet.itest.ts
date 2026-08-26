@@ -130,7 +130,12 @@ describe("the isolation gauntlet", () => {
           authorization: `Bearer ${tenants.attacker.credential}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ text: "the control writes" }),
+        body: JSON.stringify({
+          text: "the control writes",
+          // The attacking credential is a KEY, so it names a bot of its own tenant
+          // (chapter 3.17). The control must keep proving the credential works.
+          user: tenants.attacker.botExternalId,
+        }),
       });
       expect(res.status).toBe(201);
     });

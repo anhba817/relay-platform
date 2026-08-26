@@ -23,6 +23,8 @@ import type { Db } from "../db/client";
  * webhook routes. */
 export interface Tenant {
   environmentId: string;
+  /** This tenant's own bot (chapter 3.17). A key send must name one. */
+  botExternalId: string;
   /** An `rk_dev_…` credential for this environment, minted the way signup does. */
   credential: string;
   userId: string;
@@ -50,6 +52,15 @@ async function seedTenant(db: Db, label: string): Promise<Tenant> {
 
   const userExternalId = `${label}-user`;
   const user = await repo.createUser(userExternalId, `${label} user`);
+  // A BOT PER TENANT (chapter 3.17). Every attack in the gauntlet presents a KEY, and a
+  // key send names a bot — so each tenant needs one of its own, or an attack would be
+  // refused for naming an unresolvable sender rather than for the thing it attacks.
+  const bot = (
+    await repo.upsertUser(`${label}-bot`, {
+      kind: "bot",
+      description: `${label}'s own software`,
+    })
+  ).user;
   const channel = await repo.createChannel(`${label}-channel`, "public", `${label}`);
   await repo.addMember(channel.id, user.id);
   const message = await repo.sendMessage(channel.id, {
@@ -66,6 +77,7 @@ async function seedTenant(db: Db, label: string): Promise<Tenant> {
   return {
     environmentId: environment.id,
     credential: key.credential,
+    botExternalId: bot.external_id,
     userId: user.id,
     userExternalId,
     channelId: channel.id,

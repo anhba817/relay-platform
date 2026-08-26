@@ -49,7 +49,20 @@ describe("the limiter", () => {
         })
         .where(eq(environments.id, env.id));
     }
-    const channel = await new Repository(db, env.id).createChannel("c", "public");
+    const repo = new Repository(db, env.id);
+    const channel = await repo.createChannel("c", "public");
+    // THE BOT IS SEEDED HERE AND NOT IN `send` (chapter 3.17, T060).
+    //
+    // A key send must name a bot as of FR-MSG-15, and the obvious fix — upserting one
+    // inside the send helper — would add an HTTP request per send. **This suite counts
+    // requests.** Every rate-limit assertion below is about how many calls fit under a
+    // limit, so an extra call per send would move every number in the file and the
+    // assertions would still pass, for the wrong reason. Seeded once, over the
+    // repository, so the request count is exactly what it was.
+    await repo.upsertUser("limits-bot", {
+      kind: "bot",
+      description: "sends so the limiter has something to count",
+    });
     const { credential } = await createApiKey(db, { environmentId: env.id });
     return { env, channelId: channel.id, credential };
   };
@@ -65,7 +78,7 @@ describe("the limiter", () => {
         "content-type": "application/json",
         authorization: `Bearer ${credential}`,
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, user: "limits-bot" }),
     });
 
   beforeAll(async () => {
@@ -483,7 +496,14 @@ describe("when the counter store is gone", () => {
     await migrate(pool);
     db = createDb(pool);
     const env = await createEnvironment(db, { name: "limits-degraded" });
-    channelId = (await new Repository(db, env.id).createChannel("c", "public")).id;
+    const repo = new Repository(db, env.id);
+    channelId = (await repo.createChannel("c", "public")).id;
+    // This block seeds its own environment rather than calling `seed()`, so it needs its
+    // own bot (chapter 3.17). Same name, so the send below reads the same as the others.
+    await repo.upsertUser("limits-bot", {
+      kind: "bot",
+      description: "sends while the counter store is gone",
+    });
     credential = (await createApiKey(db, { environmentId: env.id })).credential;
 
     // Port 1 is reserved and nothing listens on it.
@@ -513,7 +533,7 @@ describe("when the counter store is gone", () => {
         "content-type": "application/json",
         authorization: `Bearer ${credential}`,
       },
-      body: JSON.stringify({ text: "served anyway" }),
+      body: JSON.stringify({ text: "served anyway", user: "limits-bot" }),
     });
 
     expect(res.status).toBe(201);
@@ -532,7 +552,7 @@ describe("when the counter store is gone", () => {
         "content-type": "application/json",
         authorization: `Bearer ${credential}`,
       },
-      body: JSON.stringify({ text: "no counts" }),
+      body: JSON.stringify({ text: "no counts", user: "limits-bot" }),
     });
 
     expect(res.headers.get(HEADERS.limit)).toBe("600");

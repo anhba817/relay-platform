@@ -113,20 +113,25 @@ describe("integrating with Relay from the outside", () => {
     expect(again.body["id"]).toBe(channelId);
   });
 
-  it("refuses a private channel, naming the field", async () => {
-    // Documented behaviour, not a guess: the reference says `type` accepts
-    // `public` and the error names the offending key. An integration that reads
-    // the reference should be able to rely on both.
+  it("creates a PRIVATE channel, which the route began accepting in chapter 3.15", async () => {
+    // THIS TEST WAS RED FOR TWO CHAPTERS AND NOBODY SAW IT (chapter 3.17, T065).
+    //
+    // It asserted `400` with `field: "type"`, which was true when it was written: the
+    // create route took `public` only. Chapter 3.15 (`43899e3`, "the private type decides
+    // something, on every read") widened the enum to `["public","private"]` and this
+    // suite was not run at that chapter's close — `pnpm test:outsider` is its own lane,
+    // outside `pnpm test:integration`, so nothing in the twenty-run battery touches it.
+    //
+    // The one suite that stands for an external developer was wrong about the API for two
+    // chapters. That is chapter 3.14's unmet half showing itself: a sealed suite proves
+    // nothing about the documentation if nobody runs it.
     const res = await post(
       "/v1/channels",
       { external_id: `outsider-private-${Date.now()}`, type: "private" },
       credential,
     );
-    expect(res.status).toBe(400);
-    expect(res.body["code"]).toBe("invalid_request");
-    expect(res.body["field"]).toBe("type");
-    // And the docs_url is a URL, with the code as its fragment.
-    expect(String(res.body["docs_url"])).toContain("#invalid_request");
+    expect(res.status).toBe(201);
+    expect(res.body["type"]).toBe("private");
   });
 
   it("adds two members, creating the users on first membership", async () => {
@@ -148,10 +153,74 @@ describe("integrating with Relay from the outside", () => {
     expect(typeof token).toBe("string");
   });
 
+  it("creates a bot, because a key send must name one", async () => {
+    // FOLLOWED FROM THE README, which says an application key carries no user of its own
+    // and may name only a bot — and that `kind` and `description` travel together. This
+    // suite is sealed from workspace code, so what it knows is what the documentation
+    // says.
+    const res = await post(
+      "/v1/users",
+      {
+        users: [
+          {
+            external_id: "outside-bot",
+            display_name: "Outside Bot",
+            kind: "bot",
+            description: "the outsider's own software, posting from a script",
+          },
+        ],
+      },
+      credential,
+    );
+    expect(res.status).toBe(200);
+    const data = res.body["data"] as {
+      external_id: string;
+      kind: string;
+      description: string;
+    }[];
+    expect(data[0]).toMatchObject({
+      external_id: "outside-bot",
+      kind: "bot",
+      description: "the outsider's own software, posting from a script",
+    });
+  });
+
+  it("refuses a send that names nobody, and says which field", async () => {
+    // The refusal an integrator meets first if they skip the step above. Worth asserting
+    // from out here: a 400 that did not name the field would leave a developer guessing,
+    // and the README promises this one.
+    const res = await post(
+      `/v1/channels/${channelId}/messages`,
+      { text: "who is this from?" },
+      credential,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body["field"]).toBe("user");
+  });
+
+  it("refuses a send that names a person, with its own code", async () => {
+    // "ana" was created by the member-add above, so she is a PERSON. A key may not post
+    // as her — and the code is specific rather than a generic 403, which is what tells an
+    // integrator to create a bot instead of to go looking for a permission.
+    const res = await post(
+      `/v1/channels/${channelId}/messages`,
+      { text: "posting as a human", user: "ana" },
+      credential,
+    );
+    expect(res.status).toBe(403);
+    expect(res.body["code"]).toBe("sender_not_permitted");
+  });
+
   it("sends a message over REST and reads it back from history", async () => {
     const text = `from the outside ${Date.now()}`;
-    const sent = await post(`/v1/channels/${channelId}/messages`, { text }, credential);
+    const sent = await post(
+      `/v1/channels/${channelId}/messages`,
+      { text, user: "outside-bot" },
+      credential,
+    );
     expect(sent.status).toBe(201);
+    // The response echoes the sender it recorded, which the README promises.
+    expect(sent.body["user"]).toBe("outside-bot");
 
     const history = await fetch(`${api}/v1/channels/${channelId}/messages?limit=10`, {
       headers: { authorization: `Bearer ${credential}` },
@@ -162,11 +231,11 @@ describe("integrating with Relay from the outside", () => {
   });
 
   it("receives a message on a socket — SENT over the socket", async () => {
-    // THE SEND HAS TO BE ON THE SOCKET, and finding that out is one of the gaps
-    // this exercise recorded. A message sent over `POST /v1/channels/:id/messages`
-    // reaches no socket at all: the api publishes to no fan-out, and the public
-    // send attributes no user, so the row is dropped from resume for having no
-    // sender. Nothing in the published documentation said so.
+    // THE SEND HAS TO BE ON THE SOCKET, and finding that out is one of the gaps this
+    // exercise recorded. It had TWO causes and chapter 3.17 removed one: the api still
+    // publishes to no fan-out, so nothing arrives LIVE — but the public send now
+    // attributes a sender, so the row is no longer dropped from a resume. Half the gap,
+    // and the half that remains is the fan-out.
     const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
     const frames: { type: string; payload?: { text?: string; seq?: number } }[] = [];
     // Listeners attached BEFORE the open await. `connection.ack` arrives the

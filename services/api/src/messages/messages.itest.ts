@@ -91,6 +91,9 @@ describe("POST /v1/channels/:channelId/messages", () => {
     await app.close();
   });
 
+  // KEY SENDS NAME `courier`, THE TENANT'S BOT (chapter 3.17, T059). Each caller passes
+  // its own body, so the sender is added per call rather than defaulted here — a default
+  // would hide which tests are about the sender and which merely need one.
   const send = (body: unknown, channel = channelId, key = credential) =>
     fetch(`${url}/v1/channels/${channel}/messages`, {
       method: "POST",
@@ -102,15 +105,15 @@ describe("POST /v1/channels/:channelId/messages", () => {
     });
 
   it("returns 201 with an ascending sequence", async () => {
-    const first = await send({ text: "hello" });
+    const first = await send({ text: "hello", user: "courier" });
     expect(first.status).toBe(201);
     const a = (await first.json()) as { seq: number };
-    const b = (await (await send({ text: "again" })).json()) as { seq: number };
+    const b = (await (await send({ text: "again", user: "courier" })).json()) as { seq: number };
     expect(b.seq).toBe(a.seq + 1);
   });
 
   it("rejects a malformed body through the protocol envelope", async () => {
-    const res = await send({ text: "" });
+    const res = await send({ text: "", user: "courier" });
     expect(res.status).toBe(400);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({ code: "invalid_request" });
@@ -139,8 +142,8 @@ describe("POST /v1/channels/:channelId/messages", () => {
   });
 
   it("answers a FOREIGN channel id with the same 404 as a missing one", async () => {
-    const foreign = await send({ text: "not for you" }, foreignChannelId);
-    const missing = await send({ text: "nobody home" }, crypto.randomUUID());
+    const foreign = await send({ text: "not for you", user: "courier" }, foreignChannelId);
+    const missing = await send({ text: "nobody home", user: "courier" }, crypto.randomUUID());
     expect(foreign.status).toBe(404);
     expect(missing.status).toBe(404);
     // Indistinguishable — no data, and no reveal that the id exists.
@@ -313,7 +316,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
     });
 
     it("accepts an application key's send to the same private channel (FR-005)", async () => {
-      const accepted = await send({ text: "from the tenant" }, privateChannelId);
+      const accepted = await send({ text: "from the tenant", user: "courier" }, privateChannelId);
       expect(accepted.status).toBe(201);
     });
 

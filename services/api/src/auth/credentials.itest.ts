@@ -138,7 +138,19 @@ describe("credentials", () => {
     channelId = (await repo.createChannel("general", "public")).id;
     await repo.createUser("tuan", "Tuan");
 
+    // A BOT IN EACH ENVIRONMENT (chapter 3.17). A key send names one, and the FOREIGN
+    // key must name a bot of ITS OWN tenant — otherwise the attack below would be
+    // refused for naming an unresolvable sender (400) rather than for reaching a channel
+    // it cannot see (404), and the test would stop attacking what it attacked.
+    await repo.upsertUser("cred-bot", {
+      kind: "bot",
+      description: "sends so a credential test has something to send",
+    });
     foreign = await createEnvironment(db, { name: "credentials-itest-other" });
+    await new Repository(db, foreign.id).upsertUser("cred-bot", {
+      kind: "bot",
+      description: "the other tenant's own software",
+    });
     foreignKey = await createApiKey(db, { environmentId: foreign.id });
     foreignChannelId = (
       await new Repository(db, foreign.id).createChannel("theirs", "public")
@@ -199,7 +211,7 @@ describe("credentials", () => {
     expect(stored).not.toContain(minted.credential);
 
     // And it still works — unrecoverable is not the same as unusable.
-    expect((await post({ text: "with the new key" }, minted.credential)).status).toBe(
+    expect((await post({ text: "with the new key", user: "cred-bot" }, minted.credential)).status).toBe(
       201,
     );
   });
@@ -229,9 +241,14 @@ describe("credentials", () => {
   });
 
   it("invariant 4: a foreign key sees nothing, and it looks exactly like absent", async () => {
-    const foreignAnswer = await post({ text: "trespass" }, foreignKey.credential);
+    // The foreign key names a bot of ITS OWN tenant, so the only thing wrong with this
+    // request is the channel — which is what the test is about.
+    const foreignAnswer = await post(
+      { text: "trespass", user: "cred-bot" },
+      foreignKey.credential,
+    );
     const absentAnswer = await post(
-      { text: "nowhere" },
+      { text: "nowhere", user: "cred-bot" },
       key.credential,
       "00000000-0000-0000-0000-000000000000",
     );
@@ -243,7 +260,7 @@ describe("credentials", () => {
 
     // And the reverse direction, so the test cannot pass by both being broken.
     expect(
-      (await post({ text: "mine" }, foreignKey.credential, foreignChannelId))
+      (await post({ text: "mine", user: "cred-bot" }, foreignKey.credential, foreignChannelId))
         .status,
     ).toBe(201);
   });
@@ -253,10 +270,10 @@ describe("credentials", () => {
       environmentId: env.id,
       name: "doomed",
     });
-    expect((await post({ text: "before" }, doomed.credential)).status).toBe(201);
+    expect((await post({ text: "before", user: "cred-bot" }, doomed.credential)).status).toBe(201);
     await revokeApiKey(db, doomed.id);
     // No wait, no cache to expire: verification is a live query (research R7).
-    expect((await post({ text: "after" }, doomed.credential)).status).toBe(401);
+    expect((await post({ text: "after", user: "cred-bot" }, doomed.credential)).status).toBe(401);
   });
 
   it("invariant 6: several active keys work at once, which is what rotation needs", async () => {
@@ -264,8 +281,8 @@ describe("credentials", () => {
       environmentId: env.id,
       name: "rotation",
     });
-    expect((await post({ text: "old key" }, key.credential)).status).toBe(201);
-    expect((await post({ text: "new key" }, second.credential)).status).toBe(201);
+    expect((await post({ text: "old key", user: "cred-bot" }, key.credential)).status).toBe(201);
+    expect((await post({ text: "new key", user: "cred-bot" }, second.credential)).status).toBe(201);
   });
 
   it("invariant 7: a token is refused when expired, malformed, mis-signed, foreign, or over-long", async () => {
@@ -445,8 +462,14 @@ describe("credentials", () => {
     // And the key it did hand over works on the environment it belongs to.
     const repo = new Repository(db, first.environment.id);
     const channel = await repo.createChannel("signup-key", "public");
+    // A THIRD ENVIRONMENT, seeded by signup rather than by this file's `beforeAll` — so
+    // it needs its own bot (chapter 3.17).
+    await repo.upsertUser("cred-bot", {
+      kind: "bot",
+      description: "the freshly signed-up tenant's own software",
+    });
     expect(
-      (await post({ text: "bootstrapped" }, first.apiKey!.secret, channel.id))
+      (await post({ text: "bootstrapped", user: "cred-bot" }, first.apiKey!.secret, channel.id))
         .status,
     ).toBe(201);
   });

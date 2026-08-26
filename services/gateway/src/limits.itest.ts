@@ -118,6 +118,13 @@ async function startApi(): Promise<ApiUnderTest> {
         type: string,
       ) => Promise<{ id: string }>;
       addMember: (channelId: string, userId: string) => Promise<boolean>;
+      /** Chapter 3.17. A key send names a bot, so this file needs one. The gateway
+       * declares its own narrow view of the repository (research R12), which is why a
+       * new capability costs a line here. */
+      upsertUser: (
+        externalId: string,
+        profile: { kind?: string; description?: string },
+      ) => Promise<unknown>;
     };
   };
   const pool = client.createPool();
@@ -130,6 +137,13 @@ async function startApi(): Promise<ApiUnderTest> {
   const user = await repo.createUser("tuan", "Tuan");
   const channel = await repo.createChannel("fleet", "public");
   await repo.addMember(channel.id, user.id);
+  // The REST half of this file's "one counter, two transports" pair sends with a KEY, so
+  // it names a bot (chapter 3.17). Seeded here rather than per send: this suite counts
+  // requests against a limit, and an extra call per send would move every number in it.
+  await repo.upsertUser("limits-courier", {
+    kind: "bot",
+    description: "spends REST budget so the shared counter can be watched",
+  });
   const key = await seeder.createApiKey(db, { environmentId: environment.id });
 
   // A RANDOM HIGH PORT, and this file is the last one in the lane to get one
@@ -252,7 +266,7 @@ describe("one counter, two services (chapter 3.8)", () => {
         authorization: `Bearer ${api.credential}`,
         "idempotency-key": randomUUID(),
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, user: "limits-courier" }),
     });
 
   beforeAll(async () => {
