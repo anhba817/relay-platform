@@ -41,7 +41,7 @@ export default tseslint.config(
       "packages/test-harness/src/global-setup.ts",
       "packages/test-harness/src/setup.ts",
       "packages/test-harness/src/guard.itest.ts",
-      // AND ONE SUITE THAT WRITES A ROW THE TYPE SYSTEM FORBIDS.
+      // AND TWO SUITES THAT WRITE A ROW THE TYPE SYSTEM FORBIDS.
       //
       //   backfill.itest.ts  asserts what `toFrame` does with a SENDERLESS message.
       //                      Those rows exist — every one written through the socket
@@ -49,10 +49,18 @@ export default tseslint.config(
       //                      repository can no longer produce one, because `userId` is
       //                      required. The fixture has to be raw SQL or the behaviour
       //                      has no test at all.
+      //   history.itest.ts   reads the same row from the other end: a page whose
+      //                      `user` comes back null. `sendMessage` now requires a
+      //                      sender (FR-MSG-15), so this suite joins the list for the
+      //                      chapter that made it unable to build its own fixture.
       //
       // This is the exemption's honest case: not "the repository is inconvenient" but
-      // "the state under test is one the repository is now unable to reach".
+      // "the state under test is one the repository is now unable to reach". Both are
+      // listed by path rather than reached through a shared helper, because a helper in
+      // another file names none of these specifiers and this rule sees only imports —
+      // an invisible exemption is worse than a listed one.
       "services/api/src/internal/backfill.itest.ts",
+      "services/api/src/messages/history.itest.ts",
     ],
     rules: {
       "no-restricted-imports": [
