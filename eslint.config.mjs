@@ -73,7 +73,7 @@ const DRIVER_EXEMPT_TESTS = [
   // Chapter 3.17. THE SUBJECT IS A ROW NO REPOSITORY METHOD CAN WRITE ANY MORE, which
   // is the same reason the three quota suites are here. `sendMessage` requires a sender
   // as of FR-MSG-15, so a senderless message — 121,250 of them exist in the lane, and
-  // any deployment older than this chapter has them — can only be planted by hand. The
+  // any deployment older than chapter 3.17 has them — can only be planted by hand. The
   // arms that read one (history's `user: null`, the resume's drop) have no other fixture.
   //
   // Exempted explicitly rather than reached through a helper in another file: the note

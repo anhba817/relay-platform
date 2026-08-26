@@ -25,10 +25,16 @@ import { ZodValidationPipe } from "./zod-validation.pipe";
 /** The end user this request acts for, or `undefined` when the tenant is acting.
  *
  * SOFT, unlike `internal.controller.ts`'s `principalUser`, which throws. These two
- * routes accept BOTH credential classes — the class-level guard declares no
- * `@Accepts`, so `credential.guard.ts` falls back to `EITHER` — and an application
- * key legitimately carries no user. A tenant's own server sending on a customer's
- * behalf is FR-MSG-13, not a mistake. */
+ * routes accept both credential classes — declared as `@Accepts("application", "user")`
+ * since chapter 3.17, rather than inherited from `credential.guard.ts`'s `EITHER`
+ * fallback — and an application key carries no user OF ITS OWN.
+ *
+ * THIS COMMENT SAID SOMETHING ELSE UNTIL CHAPTER 3.17, and what it said was the reading
+ * that made the gap invisible: *"A tenant's own server sending on a customer's behalf is
+ * FR-MSG-13, not a mistake."* FR-MSG-13 said the system shall support sending **on behalf
+ * of a user**, and this route named nobody — so the clause was cited for eleven chapters
+ * by the code that did the opposite of it. The clause is now narrowed to a bot user of
+ * that tenant, and the sender comes from the body (`user`), resolved below. */
 function actingUser(req: RequestWithPrincipal): string | undefined {
   return req.principal?.kind === "user" ? req.principal.userExternalId : undefined;
 }
@@ -40,8 +46,10 @@ function actingUser(req: RequestWithPrincipal): string | undefined {
 // Chapter 3.2 swapped the guard. `EnvironmentContextGuard` resolved a tenant
 // from a header the caller asserted; `CredentialGuard` only asks whether the
 // principal the middleware already resolved is allowed here. Both classes are
-// (FR-MSG-13 lets a server send on a user's behalf, and FR-AUT-10 does not
-// reserve these routes), so this one declares nothing narrower.
+// accepted (FR-MSG-13 lets a server send on behalf of a bot user of its tenant, and
+// FR-AUT-10 does not reserve these routes) — and chapter 3.17 made that a DECLARATION
+// rather than a fallback, because a fallback is what let the gateway's credential reach
+// `POST /internal/dispatch/replay` in chapter 3.12.
 // DECLARED, NOT INHERITED FROM A FALLBACK (chapter 3.17, T027a). Until now this class
 // declared no `@Accepts` and `credential.guard.ts` fell back to `EITHER` — the fallback
 // its own comment names as the thing that let the gateway's credential reach

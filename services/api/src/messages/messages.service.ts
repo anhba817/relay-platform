@@ -37,7 +37,10 @@ export class MessagesService {
     channelId: string,
     body: SendMessageBody,
     /** Chapter 2.6: who wrote it. Optional because an APPLICATION-key send is
-     * unattributed — it acts for the tenant and there is no user to name.
+     * unattributed — it acted for the tenant and there was no user to name. **That is no
+     * longer true**: chapter 3.17 made every message carry a sender (FR-MSG-15), and a key
+     * names a bot user of its tenant. The parameter below is required at the repository and
+     * resolved by the controller before this method is called.
      *
      * IT IS NO LONGER OPTIONAL FOR A USER TOKEN. Chapter 3.15 made the public
      * route resolve its principal (T031a): the membership check in `sendMessage`
