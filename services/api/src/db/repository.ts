@@ -3213,6 +3213,17 @@ export class Repository {
     // whether one row exists, so `LIMIT 1` is doing the work: the planner stops at the
     // first hit rather than counting. Measured in `baseline.txt` (T018b) rather than
     // assumed, and no index was added for a question asked once per promotion.
+    // A THIRD THROW OF THE SAME CLASS IS WHAT THE RATCHET CAUGHT, AND DELETING IT IS THE
+    // FIX (chapter 3.17). The first version of this branch read the row back and threw if
+    // it was absent, then returned `kind_conflict` — which is the second statement for one
+    // impossible state that the comment forty lines below already argues against. Lines
+    // fell to **98.95%** against a pin of 99 and the gate went red, exactly as that
+    // comment predicts. Third time this project has answered the ratchet by removing code
+    // rather than covering it (3.12's `addMember`, 3.16's `upsertUser`).
+    //
+    // The flag defers to the read the method already does at the end, so the conflict
+    // costs no extra query and no extra throw.
+    let kindConflict = false;
     if (before !== undefined && profile.kind !== undefined && profile.kind !== before.kind) {
       const promotable =
         before.kind === "person" &&
@@ -3224,16 +3235,10 @@ export class Repository {
             .where(eq(messages.userId, before.id))
             .limit(1)
         ).length === 0;
-      if (!promotable) {
-        const current = await this.getUserByExternalId(externalId);
-        if (current === null) {
-          throw new Error(`user ${externalId} could not be created or read`);
-        }
-        return { user: current, status: "kind_conflict" };
-      }
+      kindConflict = !promotable;
     }
 
-    if (before !== undefined) {
+    if (before !== undefined && !kindConflict) {
       await this.db
         .update(users)
         .set({
@@ -3257,7 +3262,14 @@ export class Repository {
 
     const after = await this.getUserByExternalId(externalId);
     if (after === null) throw new Error(`user ${externalId} could not be created or read`);
-    return { user: after, status: before?.deletedAt != null ? "revived" : "updated" };
+    return {
+      user: after,
+      status: kindConflict
+        ? "kind_conflict"
+        : before?.deletedAt != null
+          ? "revived"
+          : "updated",
+    };
   }
 
   /** Ban and unban a user, tenant-wide (chapter 3.15, FR-031, FR-032).

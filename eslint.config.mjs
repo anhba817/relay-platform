@@ -70,6 +70,17 @@ const DRIVER_EXEMPT_TESTS = [
   "services/api/src/quotas/quotas.itest.ts",
   "services/api/src/quotas/period.itest.ts",
   "services/api/src/quotas/connections.itest.ts",
+  // Chapter 3.17. THE SUBJECT IS A ROW NO REPOSITORY METHOD CAN WRITE ANY MORE, which
+  // is the same reason the three quota suites are here. `sendMessage` requires a sender
+  // as of FR-MSG-15, so a senderless message — 121,250 of them exist in the lane, and
+  // any deployment older than this chapter has them — can only be planted by hand. The
+  // arms that read one (history's `user: null`, the resume's drop) have no other fixture.
+  //
+  // Exempted explicitly rather than reached through a helper in another file: the note
+  // at the top of this rule says a helper would make the SQL invisible to it, and an
+  // invisible exemption is worse than a listed one.
+  "services/api/src/internal/backfill.itest.ts",
+  "services/api/src/messages/history.itest.ts",
 ];
 
 

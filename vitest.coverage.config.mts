@@ -191,7 +191,11 @@ export default defineConfig({
         // the gate went red against its pin of 99; the instrument was right, because the
         // second throw said nothing the first had not. One throw, and lines read 99.13%.
         "services/api/src/db/repository.ts": {
-          branches: 91,
+          // 91 -> 92 (chapter 3.17). Measured 92.59 after this feature, which is 0.59 of
+          // headroom — the same margin chapter 3.16 left when it raised 90 -> 91 at 92.11.
+          // The arms that moved it: the sender's `kind` read feeding two checks, the
+          // promotion's has-ever-sent scan, and the ceiling's person-only count.
+          branches: 92,
           functions: 100,
           lines: 99,
           statements: 97,
