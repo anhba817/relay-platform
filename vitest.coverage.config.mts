@@ -381,6 +381,22 @@ export default defineConfig({
         // 3.11's T033c) and this feature changed the file. A ratchet at 61 does not bless
         // 61; it forbids 60. Raising it is the next chapter's work, and the arms are named
         // here so that chapter knows what it is buying.
+        // CHOSEN BEFORE THE FIRST COVERAGE REPORT, not read off it (chapter 3.18,
+        // T011). The requirement is that the failure path be covered: this file's
+        // whole job is to swallow a publish error, log it, and open a window, and
+        // a test that only checks `publish` resolved cannot tell that apart from a
+        // publisher with no body. So every branch, and every function — the last
+        // of which forced `close()` and the ioredis `error` listener to be tested
+        // rather than assumed, which is R10 and the OnModuleDestroy convention.
+        //
+        // Without a pin this file falls to the global floor of 70, which a
+        // ten-line publisher clears with its `catch` untested.
+        "services/api/src/fanout/publisher.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
         "services/api/src/messages/messages.service.ts": {
           branches: 61,
           functions: 100,
