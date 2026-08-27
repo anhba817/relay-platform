@@ -285,6 +285,95 @@ describe("the api's fan-out publish", () => {
     expect(viaRest!.seq).not.toBe(viaSocket.seq);
   });
 
+  it("publishes nothing for any refused send (SC-004)", async () => {
+    // FOUR REFUSALS, and each one states what would have to be false for it to
+    // fail: that the publish sits on the success path. It does — `send()` throws
+    // out of `MessagesService` and the line is never reached — so a `finally`
+    // is the only way to get this wrong, which is why FR-008 forbids one.
+    await watch(channelId);
+
+    // 1. A key naming a PERSON. An application credential may speak only as a
+    //    bot of its tenant (chapter 3.17): 403 `sender_not_permitted`.
+    const asPerson = await fetch(`${url}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({ text: "as a person", user: "tuan", idempotency_key: randomUUID() }),
+    });
+    expect(asPerson.status).toBe(403);
+
+    // 2. A sender that does not exist at all: 400 naming `user`.
+    const asNobody = await fetch(`${url}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({ text: "as nobody", user: "not-a-user", idempotency_key: randomUUID() }),
+    });
+    expect(asNobody.status).toBe(400);
+
+    // 3. No sender named: 400, same field.
+    const unattributed = await fetch(`${url}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({ text: "unattributed", idempotency_key: randomUUID() }),
+    });
+    expect(unattributed.status).toBe(400);
+
+    // 4. An ARCHIVED channel: the send is refused after the sender resolves,
+    //    which is the case a publish placed too early would get wrong.
+    const doomed = (await lonelyChannel()).id;
+    // `POST`, not `DELETE`. `DELETE :channelId/archive` is `unarchive` — it
+    // removes the archive rather than applying it — and the first version of
+    // this test used it, unarchived an open channel, got a 200, and then watched
+    // the send succeed. The path reads like the verb and is not.
+    const archived = await fetch(`${url}/v1/channels/${doomed}/archive`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}` },
+    });
+    expect(archived.status).toBeLessThan(300);
+    await watch(doomed);
+    const toArchived = await fetch(`${url}/v1/channels/${doomed}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({ text: "into the archive", user: "publish-bot", idempotency_key: randomUUID() }),
+    });
+    expect(toArchived.status).toBeGreaterThanOrEqual(400);
+
+    await quietFor(400);
+    expect(seen.get(channelId)).toHaveLength(0);
+    expect(seen.get(doomed)).toHaveLength(0);
+  });
+
+  it("publishes nothing for a FOREIGN tenant's channel (FR-008a)", async () => {
+    // THE ONLY REFUSAL CONSTITUTION I CALLS NON-NEGOTIABLE, and the one no
+    // existing suite can see. `POST /v1/channels/:channelId/messages` is
+    // isolation target `isolation/targets.ts:185` and the gauntlet attacks it
+    // with foreign ids on every build — but its oracle compares RESPONSE
+    // BODIES, and its own comment says so: "nothing of the victim's came back,
+    // not that a status was 4xx". A publish is a second output channel.
+    //
+    // So this subscribes to the VICTIM's subject and attacks with the victim's
+    // channel id. A frame there would be cross-tenant exposure that every
+    // response-shaped test in the repository would call green.
+    const db = createDb(createPool());
+    const victimEnv = await createEnvironment(db, { name: "fanout-victim" });
+    const victimRepo = new Repository(db, victimEnv.id);
+    const victim = await victimRepo.createUser("victim", "Victim");
+    const victimChannel = (await victimRepo.createChannel("theirs", "public")).id;
+    await victimRepo.addMember(victimChannel, victim.id);
+
+    await watch(victimChannel);
+    const res = await fetch(`${url}/v1/channels/${victimChannel}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({ text: "not yours", user: "publish-bot", idempotency_key: randomUUID() }),
+    });
+    // 404, not 403: a channel of another tenant is indistinguishable from one
+    // that does not exist (constitution I, and chapter 2.2's envelope).
+    expect(res.status).toBe(404);
+
+    await quietFor(400);
+    expect(seen.get(victimChannel)).toHaveLength(0);
+  });
+
   it("publishes for a channel with no connected member, and still answers 201", async () => {
     // A frame nobody is subscribed to is GONE, and that is correct rather than a
     // loss: at-most-once is ADR-07's decision and resume is the recovery.

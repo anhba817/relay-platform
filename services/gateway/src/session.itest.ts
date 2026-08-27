@@ -673,4 +673,126 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     // The sequence the api committed, not one the gateway invented.
     expect(delivered.payload.seq).toBeGreaterThan(0);
   });
+
+  it("keeps delivering to a member who was REMOVED while connected (FR-RTM-10)", async () => {
+    // T032/T033. THIS TEST ASSERTS THE VIOLATION, and that is deliberate.
+    //
+    // FR-RTM-10 is P1: events "shall not be delivered to a client whose
+    // membership no longer grants access, effective within 5 seconds of the
+    // membership change". Measured here: they are, indefinitely.
+    //
+    // The mechanism, read in `session.ts` before this was written rather than
+    // after it failed: `connection.channelIds` is a Set built once at connect
+    // from `POST /internal/session`, `fanout.subscribe` runs once over it at
+    // :356, `fanout.unsubscribe` runs once at :398 when the socket CLOSES, and
+    // `registry.subscribersOf` at :175 reads that same set on every delivery.
+    // Nothing in between re-reads membership. There is no code path that could.
+    //
+    // SO THIS IS NOT THIS CHAPTER'S REGRESSION. The gap has existed since 2.6
+    // for socket-originated messages; chapter 3.18 only gives it a second
+    // entrance. Pinning it here — rather than narrowing FR-013 until it passes —
+    // is what `gaps.md` item 4 is for. Invert this test the day it is fixed.
+    const channel = api.channelId;
+    const frames = record(connect(await mintToken()));
+    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+
+    const removed = await fetch(
+      `${api.url}/v1/channels/${channel}/members/remove`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${api.credential}`,
+        },
+        body: JSON.stringify({ user_ids: ["tuan"] }),
+      },
+    );
+    expect(removed.status, await removed.clone().text()).toBe(200);
+
+    // The clause's own window, plus a margin. If a re-read existed anywhere —
+    // a poll, an invalidation, a message on another subject — five seconds is
+    // the budget it was given.
+    await new Promise((r) => setTimeout(r, 5_500));
+
+    const text = `after removal ${randomUUID()}`;
+    const posted = await fetch(`${api.url}/v1/channels/${channel}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({
+        text,
+        user: "delivery-bot",
+        idempotency_key: randomUUID(),
+      }),
+    });
+    expect(posted.status).toBe(201);
+
+    const delivered = (await waitFor(
+      frames,
+      (f) =>
+        f.type === "message.created" &&
+        (f as { payload: { text: string } }).payload.text === text,
+      "the frame FR-RTM-10 says must not arrive",
+    )) as { payload: { text: string } };
+
+    // Reads as a pass and documents a failure. The assertion is the violation:
+    // change this to `.rejects` on the day a re-read exists.
+    expect(delivered.payload.text).toBe(text);
+  }, 20_000);
+
+  it("delivers nothing from a PRIVATE channel to a non-member's socket (FR-014, SC-007)", async () => {
+    // FR-CHN-05's fourth door. The read paths got three in chapter 3.15 — list,
+    // history, and the channel itself — and delivery is the one this chapter
+    // opens. Tested as its own case rather than inferred from the others,
+    // because the mechanism is different: the read paths ask the repository,
+    // and delivery asks whether a subject was ever subscribed to.
+    //
+    // A non-member's connection subscribes to nothing, so it cannot hear the
+    // subject at all. That is a stronger property than a refusal — there is no
+    // decision to get wrong — and it is worth pinning for exactly that reason:
+    // a future re-read that "fixed" subscriptions could break it.
+    const stranger = `stranger-${randomUUID().slice(0, 8)}`;
+    const created = await fetch(`${api.url}/v1/users`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ users: [{ external_id: stranger }] }),
+    });
+    expect(created.status, await created.clone().text()).toBeLessThan(300);
+
+    const privately = await fetch(`${api.url}/v1/channels`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({
+        external_id: `private-${randomUUID().slice(0, 8)}`,
+        type: "private",
+      }),
+    });
+    expect(privately.status).toBe(201);
+    const privateId = ((await privately.json()) as { id: string }).id;
+
+    const frames = record(connect(await mintToken(stranger)));
+    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+
+    // Published directly: what is under test is whether a non-member's socket
+    // can hear the subject, not whether the api will publish to it.
+    await publisher.publish({
+      id: randomUUID(),
+      channel: privateId,
+      seq: 9_100,
+      user: "tuan",
+      text: "not for a stranger",
+      created_at: new Date(0).toISOString(),
+    });
+    await new Promise((r) => setTimeout(r, 800));
+
+    expect(frames.filter((f) => f.type === "message.created")).toEqual([]);
+  });
 });
