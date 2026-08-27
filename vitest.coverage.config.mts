@@ -185,6 +185,21 @@ export default defineConfig({
           lines: 100,
           statements: 96,
         },
+        // CHOSEN BEFORE THE FIRST COVERAGE REPORT, not read off it (T011). The
+        // requirement is that the failure path be covered: this file's whole job is to
+        // swallow a publish error, log it, and open a window, and a test that only
+        // checks `publish` resolved cannot tell that apart from a publisher with no
+        // body. So every branch, and every function — the last of which forces
+        // `close()` and the ioredis `error` listener to be tested rather than assumed.
+        //
+        // Without a pin this file falls to the global floor of 70, which a ten-line
+        // publisher clears with its `catch` untested.
+        "services/api/src/fanout/publisher.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
       },
     },
   },

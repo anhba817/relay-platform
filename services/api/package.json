@@ -19,6 +19,7 @@
     "@relay/protocol": "workspace:*",
     "@relay/service-kit": "workspace:*",
     "drizzle-orm": "^0.45.2",
+    "ioredis": "^6.0.0",
     "jose": "^6.2.7",
     "nats": "^2.29.3",
     "pg": "^8.22.0",
