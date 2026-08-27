@@ -140,6 +140,25 @@ describe("the api's fan-out publisher", () => {
     expect(lines).toHaveLength(0);
   });
 
+  it("falls back to the documented default when RELAY_REDIS_URL is unset", async () => {
+    // The coverage pin found this one. Every other test either passes `url` or
+    // runs with the lane's env set, so the `??` fallback was never taken — 100%
+    // of statements, functions and lines, and 5 of 6 branches. The number that
+    // caught it is the one chosen from the requirement rather than from a report.
+    const saved = process.env["RELAY_REDIS_URL"];
+    delete process.env["RELAY_REDIS_URL"];
+    try {
+      const { logger } = sink();
+      await createMessagePublisher({ logger }).publish(message, context);
+      // It published, which means it resolved a URL — and the only URL left is
+      // `DEFAULT_FANOUT_REDIS_URL`. The mocked client accepts any.
+      expect(publishes).toHaveLength(1);
+    } finally {
+      if (saved === undefined) delete process.env["RELAY_REDIS_URL"];
+      else process.env["RELAY_REDIS_URL"] = saved;
+    }
+  });
+
   it("disconnects on close", async () => {
     // Not a formality. `limits/limits.module.ts:10` states the api's convention —
     // "resource in this api closes through `OnModuleDestroy`" — and a `close()`

@@ -349,6 +349,42 @@ describe("the api's fan-out publish", () => {
     expect(seen.get(doomed)).toHaveLength(0);
   });
 
+  it("publishes nothing for a recognised idempotent RETRY (FR-007)", async () => {
+    // FR-007: "a recognised idempotent retry MUST publish nothing. It wrote no
+    // row." The four refusals above are 4xx. This one answers **201**, which is
+    // the case a publish sitting on the success path gets wrong — `duplicate` is
+    // the only thing separating them, and `messages.controller.ts:198` reads it.
+    //
+    // FOUND BY THE TRACEABILITY MAP, NOT BY READING THE CODE. requirement -> test
+    // credited this clause to "publishes nothing for any refused send" on the
+    // strength of that test's name. Running the map the other way showed all seven
+    // `idempotency_key` values in this file were a fresh `randomUUID()`: nothing
+    // here had ever sent the same key twice, and a MUST had no test at all. The
+    // only other retry assertion in the repository is
+    // `idempotency.itest.ts`'s, against the REPOSITORY — which proves the check
+    // exists, never that this route's publish respects it.
+    const idem = randomUUID();
+    const text = `FR-007 ${randomUUID()}`;
+    const retry = () =>
+      fetch(`${url}/v1/channels/${channelId}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+        body: JSON.stringify({ text, user: "publish-bot", idempotency_key: idem }),
+      });
+    await watch(channelId);
+
+    expect((await retry()).status).toBe(201);
+    expect(await until(channelId, 1)).toHaveLength(1);
+
+    // The same key again. 201 again — the route is idempotent, not conflicting —
+    // and the count must STILL be one. Asserting straight after the second send
+    // would pass on a publish that had merely not arrived yet, so the budget is
+    // spent first, the same way the refusals above prove an absence.
+    expect((await retry()).status).toBe(201);
+    await quietFor(400);
+    expect(seen.get(channelId)).toHaveLength(1);
+  });
+
   it("publishes nothing for a FOREIGN tenant's channel (FR-008a)", async () => {
     // THE ONLY REFUSAL CONSTITUTION I CALLS NON-NEGOTIABLE, and the one no
     // existing suite can see. `POST /v1/channels/:channelId/messages` is

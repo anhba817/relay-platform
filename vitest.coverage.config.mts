@@ -371,16 +371,6 @@ export default defineConfig({
           statements: 97,
         },
 
-        // A FLOOR, NOT AN ACHIEVEMENT. `messages.service.ts` measures 70.83 / 61.76 /
-        // 100 / 70.83, and the six uncovered statements are all PRE-EXISTING: the quota
-        // refusal and its rethrow (chapter 3.10) and the history cursor's decode (chapter
-        // 2.4). This feature's additions to the file — the ban mapping, the archive
-        // mapping, the visibility predicate on the history path — are covered.
-        //
-        // Pinned anyway, because an unpinned file is a figure that can slide (chapter
-        // 3.11's T033c) and this feature changed the file. A ratchet at 61 does not bless
-        // 61; it forbids 60. Raising it is the next chapter's work, and the arms are named
-        // here so that chapter knows what it is buying.
         // CHOSEN BEFORE THE FIRST COVERAGE REPORT, not read off it (chapter 3.18,
         // T011). The requirement is that the failure path be covered: this file's
         // whole job is to swallow a publish error, log it, and open a window, and
@@ -397,11 +387,46 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
+
+        // A FLOOR, NOT AN ACHIEVEMENT. `messages.service.ts` measures 70.83 / 61.76 /
+        // 100 / 70.83, and the six uncovered statements are all PRE-EXISTING: the quota
+        // refusal and its rethrow (chapter 3.10) and the history cursor's decode (chapter
+        // 2.4). This feature's additions to the file — the ban mapping, the archive
+        // mapping, the visibility predicate on the history path — are covered.
+        //
+        // Pinned anyway, because an unpinned file is a figure that can slide (chapter
+        // 3.11's T033c) and this feature changed the file. A ratchet at 61 does not bless
+        // 61; it forbids 60. Raising it is the next chapter's work, and the arms are named
+        // here so that chapter knows what it is buying.
         "services/api/src/messages/messages.service.ts": {
           branches: 61,
           functions: 100,
           lines: 70,
           statements: 70,
+        },
+
+        // 87, AGAINST A MEASURED 87.5 (21/24) — T011 asked for this pin or a recorded
+        // reason, and got neither for eight phases. The publish guard's two branches,
+        // `!message.duplicate && message.text !== null`, are FR-007's entire mechanism
+        // and were sitting under the global floor of 70.
+        //
+        // The FR-007 test moved this file 83.33 -> 87.5 by covering the `duplicate`
+        // side; T058a's traceability map is what noticed the clause had no test at all.
+        //
+        // THE REMAINING UNCOVERED BRANCH IS UNREACHABLE ON THIS ROUTE, and is left
+        // rather than deleted. `message.text !== null` is only ever evaluated for a
+        // NON-duplicate — the `&&` short-circuits otherwise — and a non-duplicate row
+        // was just written from a request whose schema requires `text`. So the false
+        // side cannot be reached from here. The ratchet has removed unreachable code
+        // three times in this repository; this one stays, because `messageSchema` types
+        // `text` as non-nullable and a null would publish a frame the delivery side
+        // drops silently. A guard against a state the type system forbids is cheap; the
+        // alternative is a silent drop.
+        "services/api/src/messages/messages.controller.ts": {
+          branches: 87,
+          functions: 100,
+          lines: 100,
+          statements: 96,
         },
 
         "services/api/src/webhooks/disable.ts": {
