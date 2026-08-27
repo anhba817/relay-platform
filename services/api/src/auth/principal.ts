@@ -75,6 +75,10 @@ export const OVER_AUTH_THRESHOLD = Symbol.for("relay:over-auth-threshold");
 export interface RequestWithPrincipal {
   headers: Record<string, string | string[] | undefined>;
   principal?: Principal;
+  /** Chapter 3.18: the id `RequestContextMiddleware` generated for this request.
+   * A handler that logs on its own — the fan-out publish does — needs it, and
+   * NFR-OBS-01 requires it in every structured line. */
+  requestId?: string;
   /** Chapter 3.8: set when this source address has spent its
    * failed-authentication allowance. See `OVER_AUTH_THRESHOLD` above. */
   [OVER_AUTH_THRESHOLD]?: boolean;

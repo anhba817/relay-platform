@@ -72,6 +72,19 @@ interface Seeder {
       name?: string,
     ) => Promise<{ id: string }>;
     addMember: (channelId: string, userId: string) => Promise<boolean>;
+    /** Chapter 3.18. An application credential may send only as a bot user
+     * (chapter 3.17), so a REST send needs one to exist — and `createUser`
+     * makes a person. Widening this type rather than reaching around it: the
+     * shape here is a hand-written mirror of the real repository, and a member
+     * it does not name is a member this suite cannot call. */
+    upsertUser: (
+      externalId: string,
+      profile: {
+        display_name?: string;
+        kind?: "person" | "bot";
+        description?: string;
+      },
+    ) => Promise<unknown>;
   };
 }
 
@@ -129,6 +142,14 @@ async function startApi(
   });
   const repo = new seeder.Repository(db, environment.id);
   const user = await repo.createUser("tuan", "Tuan");
+  // Chapter 3.18: the sender a REST send names. ADDITIVE to this fixture — the
+  // tests above assert on "tuan" and a second user changes nothing for them,
+  // which is the difference between adding a capability and repurposing one.
+  await repo.upsertUser("delivery-bot", {
+    display_name: "Delivery Bot",
+    kind: "bot",
+    description: "sends over REST so a socket can receive it",
+  });
   const channel = await repo.createChannel("fleet", "public");
   await repo.addMember(channel.id, user.id);
   const key = await seeder.createApiKey(db, {
@@ -578,5 +599,78 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     )) as { payload: { text: string; seq: number } };
     expect(delivered.payload.text).toBe("published by somebody else");
     expect(delivered.payload.seq).toBe(9_001);
+  });
+
+  it("delivers to EVERY connection the same person holds (T021)", async () => {
+    // Spec edge case 5. What is under test is the registry's fan-out to local
+    // sockets, so who published is irrelevant — this publishes directly. Two
+    // sockets for one user is the case a naive registry keyed by user id gets
+    // wrong, and it is worth its own test because the failure is invisible: one
+    // of the two tabs just stops updating.
+    const token = await mintToken();
+    const a = record(connect(token));
+    const b = record(connect(token));
+    await waitFor(a, (f) => f.type === "connection.ack", "ack on a");
+    await waitFor(b, (f) => f.type === "connection.ack", "ack on b");
+
+    const text = `to both tabs ${randomUUID()}`;
+    await publisher.publish({
+      id: randomUUID(),
+      channel: api.channelId,
+      seq: 9_002,
+      user: "tuan",
+      text,
+      created_at: new Date(0).toISOString(),
+    });
+
+    for (const [frames, which] of [[a, "a"], [b, "b"]] as const) {
+      const got = (await waitFor(
+        frames,
+        (f) => f.type === "message.created",
+        `message.created on ${which}`,
+      )) as { payload: { text: string } };
+      expect(got.payload.text).toBe(text);
+    }
+  });
+
+  it("delivers a message SENT OVER REST to an open socket (SC-001, FR-004)", async () => {
+    // THE CHAPTER, END TO END, in the integration lane. A real api spawned from
+    // dist/main.js, a real gateway, a real socket opened before the send, and a
+    // POST to the route a customer's backend calls. Nothing here publishes by
+    // hand.
+    //
+    // `user` is required and must name a bot: an application credential may
+    // speak only as software (chapter 3.17). `idempotency_key` must be a UUID on
+    // this route, where the socket frame takes any string.
+    const frames = record(connect(await mintToken()));
+    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+
+    const text = `over REST to a socket ${randomUUID()}`;
+    const posted = await fetch(
+      `${api.url}/v1/channels/${api.channelId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${api.credential}`,
+        },
+        body: JSON.stringify({
+          text,
+          user: "delivery-bot",
+          idempotency_key: randomUUID(),
+        }),
+      },
+    );
+    expect(posted.status, await posted.clone().text()).toBe(201);
+
+    const delivered = (await waitFor(
+      frames,
+      (f) => f.type === "message.created",
+      "message.created for a REST send",
+    )) as { payload: { text: string; user: string; seq: number } };
+    expect(delivered.payload.text).toBe(text);
+    expect(delivered.payload.user).toBe("delivery-bot");
+    // The sequence the api committed, not one the gateway invented.
+    expect(delivered.payload.seq).toBeGreaterThan(0);
   });
 });

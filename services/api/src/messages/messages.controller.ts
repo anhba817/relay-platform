@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Inject,
   Param,
   Post,
   Query,
@@ -13,6 +14,10 @@ import {
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import { Repository } from "../db/repository";
 import { MessagesService } from "./messages.service";
+import {
+  MESSAGE_PUBLISHER,
+  type MessagePublisher,
+} from "../fanout/publisher";
 import { historyQuerySchema, sendMessageBodySchema } from "./messages.schema";
 // `import type` is required, not stylistic: with isolatedModules and
 // emitDecoratorMetadata on (ADR-15's trade-off, chapter 1.4), a type used
@@ -62,6 +67,12 @@ export class MessagesController {
   constructor(
     private readonly messages: MessagesService,
     private readonly repo: Repository,
+    // Chapter 3.18. INJECTED HERE AND NOT INTO THE SERVICE, because two callers
+    // reach `MessagesService.send` — this route and `internal.controller.ts`,
+    // which is the gateway's — and the gateway publishes for its own path
+    // already. A publish in the service would put every socket-sent message on
+    // every member's screen twice (FR-006).
+    @Inject(MESSAGE_PUBLISHER) private readonly fanout: MessagePublisher,
   ) {}
 
   @Post()
@@ -158,6 +169,52 @@ export class MessagesController {
     // The field list is spelled out rather than spread-minus-`duplicate`,
     // so a new column joins the public response only when someone decides
     // it should.
+    // ── the live fan-out (chapter 3.18, FR-004) ────────────────────────────
+    //
+    // AFTER THE COMMIT, BEFORE THE RESPONSE. `docs/05-sad.md` says the fan-out
+    // happens "after the ack", and a socket can do that literally — it writes an
+    // ack frame and then publishes, because it has two channels. A request
+    // handler has one: the response IS the ack, so anything awaited here
+    // precedes it. FR-005 was amended to split by transport rather than pretend
+    // otherwise. What the sentence protects survives either way: the row is
+    // durable before anyone hears about it.
+    //
+    // Not in a `finally`, and not in the service's `try`. A refused send throws
+    // out of `this.messages.send` above and never reaches this line, which is
+    // FR-008 by construction rather than by a flag.
+    //
+    // TWO GUARDS, both mirrored from `session.ts:651`, both load-bearing:
+    //
+    //   !duplicate    A RECOGNISED RETRY WROTE NO ROW. 2.3 made the retry safe
+    //                 for storage; that did not make it safe for delivery, and a
+    //                 client retrying on a flaky link would otherwise put the
+    //                 same message on every member's screen twice.
+    //   text !== null A tombstone recovered by an old idempotency key is not a
+    //                 creation. It has a second, independent reason here:
+    //                 `messageSchema.text` is `z.string()`, not nullable, so a
+    //                 tombstone could not be published anyway — the far end
+    //                 would drop it as an invalid payload while this route
+    //                 answered 201.
+    if (!message.duplicate && message.text !== null) {
+      await this.fanout.publish(
+        {
+          id: message.id,
+          // `channel`, not `channel_id`. The frame's field is `channel`, and
+          // `messageSchema` is a `z.strictObject` — publishing `channel_id`
+          // would deliver NOTHING while this route still answered 201.
+          channel: message.channel_id,
+          seq: message.seq,
+          user: actingExternalId,
+          text: message.text,
+          created_at: message.created_at,
+        },
+        {
+          requestId: req.requestId ?? "unknown",
+          environmentId: req.principal?.environmentId ?? "unknown",
+        },
+      );
+    }
+
     return {
       id: message.id,
       channel_id: message.channel_id,

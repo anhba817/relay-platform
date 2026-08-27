@@ -17,6 +17,13 @@ export class RequestContextMiddleware implements NestMiddleware {
   use(req: IncomingMessage, res: ServerResponse, next: () => void): void {
     const requestId = newRequestId();
     res.setHeader("X-Request-Id", requestId);
+    // ...and on the request, so a handler can put it in a line of its own.
+    // Chapter 3.18 needed this: the fan-out publish logs its failure from inside
+    // the send handler, and NFR-OBS-01 wants a request id in every structured
+    // line while NFR-OBS-06 wants five-minute traceability from one. Until now
+    // the id existed only here and on the response header, which a handler
+    // cannot read without taking over the response.
+    (req as { requestId?: string }).requestId = requestId;
     // `originalUrl` first, and this line was WRONG from chapter 2.2 until 3.8.
     // Express rewrites `req.url` relative to the mount point, and this middleware
     // is applied through `forRoutes("{*path}")`, so `req.url` is `/` — every

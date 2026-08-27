@@ -239,17 +239,17 @@ describe("a channel, a member and a message, all over the public API", () => {
   // existing caller (FR-MSG-13's territory), and a live fan-out from the api is a
   // new coupling between the api and Redis. Both are named in the chapter.
   //
-  // CHAPTER 3.17 DID HALF OF THAT, and this comment is left standing rather than
-  // rewritten because the half it did is not the half that fixes this. FR-MSG-13 was
-  // amended — "on behalf of any user" became "on behalf of a bot user of that tenant" —
-  // so a REST send now names a sender, and the send below names one. What did NOT change
-  // is the fan-out: the api still publishes nothing, so the message still reaches no
-  // socket, live or on resume. Chapter 3.18 is the fan-out.
+  // BOTH HALVES ARE CLOSED NOW, and the two chapters that closed them are worth naming
+  // separately because the gap needed both. Chapter 3.17 amended FR-MSG-13 — "on behalf
+  // of any user" became "on behalf of a bot user of that tenant" — so a REST send names a
+  // sender and `toFrame` stopped dropping the row from a resume. Chapter 3.18 gave the api
+  // a publisher, so the same row now reaches a LIVE socket too. Chapter 3.12's `gaps.md`
+  // G1 listed exactly those two mechanisms; neither remains.
   //
   // THE SENDER IS A BOT, because the caller is a key. A key may not name "tuan" — that
   // is a person and `sender_not_permitted` is the refusal — so the send that this test
   // needs to succeed must name software.
-  it("does NOT deliver a REST-sent message, live or on resume", async () => {
+  it("delivers a REST-sent message, live and on resume", async () => {
     const channelId = await seedOverTheWire("rest", ["tuan"]);
     const token = await mint("tuan");
     // Created over the public route, because this suite has no database handle by
@@ -261,7 +261,7 @@ describe("a channel, a member and a message, all over the public API", () => {
           {
             external_id: "rest-courier",
             kind: "bot",
-            description: "sends over REST so this test can watch nothing arrive",
+            description: "sends over REST so this test can watch it arrive",
           },
         ],
       },
@@ -296,9 +296,32 @@ describe("a channel, a member and a message, all over the public API", () => {
     // rested on is gone.
     expect(history.messages.every((m) => m.user === "rest-courier")).toBe(true);
 
-    // No live delivery.
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
-    expect(live.frames.filter((f) => f.type === "message.created")).toEqual([]);
+    // LIVE DELIVERY, WHICH THIS BLOCK ASSERTED WAS ABSENT UNTIL CHAPTER 3.18.
+    //
+    // It read `toEqual([])`, and the reason was true when it was written: the only
+    // publisher to the fan-out was the gateway's own send handler, so a message a
+    // customer's backend posted committed, returned 201, and reached nobody. The api
+    // publishes now — `messages.controller.ts`, guarded the way `session.ts:651` is —
+    // and the two sends above arrive here in order.
+    //
+    // Waiting for BOTH rather than for the first: one frame arriving would be satisfied
+    // by a publisher that fired once and by one that fired correctly twice.
+    const deadline = Date.now() + 4_000;
+    for (;;) {
+      const created = live.frames.filter((f) => f.type === "message.created");
+      if (created.length >= 2) break;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `expected 2 live frames, saw ${created.length}: ` +
+            live.frames.map((f) => f.type).join(", "),
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const liveTexts = live.frames
+      .filter((f) => f.type === "message.created")
+      .map((f) => (f as { payload: { text: string } }).payload.text);
+    expect(liveTexts).toEqual([first, second]);
     live.socket.close();
 
     // AND ON RESUME IT NOW ARRIVES — WHICH IS HALF OF THE GAP CLOSING (chapter 3.17).
@@ -308,15 +331,15 @@ describe("a channel, a member and a message, all over the public API", () => {
     // chapter 3.12's `gaps.md` G1 listed TWO independent mechanisms for "a REST-sent
     // message reaches no socket" — nothing publishes, and the public send passes no user.
     //
-    // FR-MSG-15 removes the second. Every REST send now names a sender, `toFrame` has no
-    // reason to drop the row, and the backfill delivers it. So the resume half of G1 is
-    // closed by this chapter and the LIVE half is not: `live.frames` above is still
-    // empty, because only the gateway publishes to the fan-out (`session.ts`) and the api
-    // still publishes nothing. Chapter 3.18 is that half.
+    // FR-MSG-15 removed the second and chapter 3.18's publisher removed the first, so
+    // both legs of this test now assert arrival: live above, and on resume below. The
+    // resume leg is the one that proves the two paths do not double up — a client that
+    // was connected and then reconnects with a cursor gets the backfill, not a replay of
+    // what the fan-out already delivered, because the cursor is what decides.
     //
-    // The test's name is now half wrong and is left alone deliberately: T096a amends the
-    // gap record, and renaming a test is not how a reader learns that a two-mechanism
-    // gap became a one-mechanism gap.
+    // THE TEST'S NAME CHANGED WITH IT. It said "does NOT deliver" and was left half wrong
+    // on purpose while only half the gap was closed; leaving it now would make it wholly
+    // wrong, which is a different thing.
     const resumed = reader(`${wsUrl}/v1/ws?token=${token}&cursor=${channelId}:1`);
     await resumed.opened;
     await new Promise((resolve) => setTimeout(resolve, 1_500));

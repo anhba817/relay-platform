@@ -231,13 +231,13 @@ describe("integrating with Relay from the outside", () => {
     expect(page.messages.map((m) => m.text)).toContain(text);
   });
 
-  // `it.fails` UNTIL T024 BUILDS THE PUBLISH, then T023 turns it back into `it`.
+  // WAS `it.fails` FOR THE LENGTH OF THIS CHAPTER'S PHASE 1 AND 2.
   //
-  // A red lane is not the same as a recorded failure. This asserts what is true
-  // today — a REST send commits, answers 201, and reaches no live socket — so the
-  // suite stays green while the gap stays visible. Measured when it was written:
-  // 10,114 ms to the deadline, having seen only `connection.ack`.
-  it.fails("receives a message on a socket — sent over REST", async () => {
+  // A red lane is not the same as a recorded failure, so the gap was asserted
+  // rather than left broken: 10,114 ms to the deadline having seen only
+  // `connection.ack`, with a 201 in hand. The publish landed in Phase 3 and this
+  // became a plain `it` — the body now succeeds in about 150 ms.
+  it("receives a message on a socket — sent over REST", async () => {
     // THE SEND NO LONGER HAS TO BE ON THE SOCKET, and that is this chapter.
     //
     // The gap this exercise recorded had TWO causes. Chapter 3.17 removed the first:

@@ -3,7 +3,11 @@ import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Redis } from "ioredis";
-import { subjectForChannel, type Message } from "@relay/protocol";
+import {
+  messageSchema,
+  subjectForChannel,
+  type Message,
+} from "@relay/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
@@ -26,15 +30,94 @@ describe("the api's fan-out publish", () => {
   let channelId: string;
   let userToken: string;
   let key: string;
+  let environmentId: string;
   let sub: Redis;
 
-  /** Frames seen on a subject, in arrival order. A subscriber rather than a spy:
-   * what matters is what reaches the fabric, not what a mock was asked to do. */
-  const seen = new Map<string, Message[]>();
+  /** Frames seen on a subject, in arrival order, raw and parsed. A subscriber
+   * rather than a spy: what matters is what reaches the fabric, not what a mock
+   * was asked to do. Raw is kept because T018 asserts on the exact key set. */
+  const seen = new Map<string, string[]>();
 
   const watch = async (channel: string) => {
     seen.set(channel, []);
     await sub.subscribe(subjectForChannel(channel));
+  };
+
+  /** Wait for at least `n` frames, or fail saying how many arrived. A count,
+   * not a first-arrival: "one frame arrived" is satisfied by the correct
+   * behaviour and by a doubled publish alike. */
+  const untilRaw = async (channel: string, n: number, ms = 3_000) => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const got = seen.get(channel) ?? [];
+      if (got.length >= n) return got;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `expected ${n} frame(s) on ${subjectForChannel(channel)}, saw ${got.length}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
+
+  const until = async (channel: string, n: number, ms = 3_000) =>
+    (await untilRaw(channel, n, ms)).map((r) => JSON.parse(r) as Message);
+
+  /** The public route, as a customer's backend calls it. `user` is required for
+   * an application credential (chapter 3.17) and `idempotency_key` must be a
+   * UUID on this route, where the socket frame takes any string. */
+  const restSend = async (body: { text: string }, channel = channelId) =>
+    fetch(`${url}/v1/channels/${channel}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        ...body,
+        user: "publish-bot",
+        idempotency_key: randomUUID(),
+      }),
+    });
+
+  /** The frame the GATEWAY would publish for a socket send, built from the
+   * internal route's response the way `session.ts:651` builds it. The gateway is
+   * not running here, so this is the socket path's payload without the socket. */
+  let internalResponseAsFrame: Message;
+
+  const internalSend = async (text: string) => {
+    const res = await fetch(`${url}/internal/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${userToken}`,
+      },
+      body: JSON.stringify({ channel_id: channelId, text }),
+    });
+    const committed = (await res.json()) as {
+      id: string;
+      channel_id: string;
+      seq: number;
+      user: string;
+      text: string;
+      created_at: string;
+    };
+    internalResponseAsFrame = {
+      id: committed.id,
+      channel: committed.channel_id,
+      seq: committed.seq,
+      user: committed.user,
+      text: committed.text,
+      created_at: committed.created_at,
+    };
+    return res;
+  };
+
+  /** A channel nobody is a member of and no socket is watching. */
+  const lonelyChannel = async () => {
+    const db = createDb(createPool());
+    const repo = new Repository(db, environmentId);
+    return repo.createChannel(`lonely-${randomUUID().slice(0, 8)}`, "public");
   };
 
   /** Wait for silence, not for a frame. A publish that has not happened yet and
@@ -47,6 +130,7 @@ describe("the api's fan-out publish", () => {
   beforeAll(async () => {
     const db = createDb(createPool());
     const env = await createEnvironment(db, { name: "fanout-itest" });
+    environmentId = env.id;
     const repo = new Repository(db, env.id);
     const user = await repo.createUser("tuan", "Tuan");
     // Two positional arguments, not one object — and `kind: "bot"` requires a
@@ -75,9 +159,7 @@ describe("the api's fan-out publish", () => {
     sub.on("error", () => {});
     sub.on("message", (subject: string, raw: string) => {
       for (const [channel, frames] of seen) {
-        if (subject === subjectForChannel(channel)) {
-          frames.push(JSON.parse(raw) as Message);
-        }
+        if (subject === subjectForChannel(channel)) frames.push(raw);
       }
     });
 
@@ -124,18 +206,92 @@ describe("the api's fan-out publish", () => {
   it("the public route's send commits, whatever it publishes", async () => {
     // A control. If this ever fails, the suite's own plumbing is broken and no
     // conclusion below it means anything.
-    const res = await fetch(`${url}/v1/channels/${channelId}/messages`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        text: "over REST",
-        user: "publish-bot",
-        idempotency_key: randomUUID(),
-      }),
-    });
+    expect((await restSend({ text: "over REST" })).status).toBe(201);
+  });
+
+  it("publishes a REST send to the channel's subject (FR-004)", async () => {
+    // The clause this whole chapter exists for. `docs/05-sad.md:138` has drawn
+    // this edge since before the api existed; nothing built it.
+    await watch(channelId);
+    const text = `FR-004 ${randomUUID()}`;
+    expect((await restSend({ text })).status).toBe(201);
+
+    const frames = await until(channelId, 1);
+    expect(frames.map((f) => f.text)).toContain(text);
+  });
+
+  it("publishes a payload the delivery side will accept (T018)", async () => {
+    // Against `messageSchema` ITSELF, not against a list of mistakes. One
+    // `safeParse` covers a seventh key, `channel_id` in place of `channel`, a
+    // missing `user`, a non-positive `seq` and a `created_at` that is not RFC
+    // 3339 — and the far end DROPS what does not match, so any of those would
+    // deliver nothing while the send still answered 201.
+    await watch(channelId);
+    const text = `T018 ${randomUUID()}`;
+    await restSend({ text });
+    const [raw] = await untilRaw(channelId, 1);
+
+    const parsed = messageSchema.safeParse(JSON.parse(raw!));
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+    expect(Object.keys(JSON.parse(raw!)).sort()).toEqual([
+      "channel",
+      "created_at",
+      "id",
+      "seq",
+      "text",
+      "user",
+    ]);
+  });
+
+  it("publishes what a socket send publishes, field for field (FR-009, SC-008)", async () => {
+    // A CLIENT CANNOT TELL WHICH ENTRANCE A MESSAGE USED. Compared field by
+    // field with `id`, `seq` and `created_at` controlled — those three differ by
+    // construction. Not compared byte for byte: `session.ts:45` re-serialises
+    // every frame before it reaches a socket, so the api's bytes never leave the
+    // gateway and FR-009 was narrowed to say so.
+    //
+    // The two payloads come from INDEPENDENT sends. A shared helper would move
+    // both halves of the pair and the comparison would see nothing (3.17's T044).
+    // THE SAME TEXT DOWN BOTH DOORS, so the only differences left are the ones
+    // a send always has: a new id, a new sequence, a new timestamp — and the
+    // sender, which CANNOT match by construction. An application credential may
+    // speak only as a bot user (chapter 3.17) and the internal route speaks as
+    // the token's person, so demanding one `user` is demanding something the
+    // platform forbids. The first version of this test did exactly that and
+    // failed on it.
+    const text = `both doors ${randomUUID()}`;
+    await watch(channelId);
+    await restSend({ text });
+    await internalSend(text);
+    const [viaRest] = await until(channelId, 1);
+
+    // The socket path's payload, built from the internal route's response the
+    // way `session.ts:651` builds it — the gateway is not running here.
+    const viaSocket = internalResponseAsFrame;
+
+    // What a client can see: the same six keys, in a shape `messageSchema`
+    // accepts, carrying the same channel and the same text.
+    expect(Object.keys(viaRest!).sort()).toEqual(Object.keys(viaSocket).sort());
+    expect(messageSchema.safeParse(viaRest).success).toBe(true);
+    expect(messageSchema.safeParse(viaSocket).success).toBe(true);
+    expect(viaRest!.channel).toBe(viaSocket.channel);
+    expect(viaRest!.text).toBe(viaSocket.text);
+
+    // And what differs, named rather than stripped: each door records its own
+    // sender, and neither could record the other's.
+    expect(viaRest!.user).toBe("publish-bot");
+    expect(viaSocket.user).toBe("tuan");
+    expect(viaRest!.id).not.toBe(viaSocket.id);
+    expect(viaRest!.seq).not.toBe(viaSocket.seq);
+  });
+
+  it("publishes for a channel with no connected member, and still answers 201", async () => {
+    // A frame nobody is subscribed to is GONE, and that is correct rather than a
+    // loss: at-most-once is ADR-07's decision and resume is the recovery.
+    const lonely = (await lonelyChannel()).id;
+    const res = await restSend({ text: "nobody is listening" }, lonely);
     expect(res.status).toBe(201);
+    // Nothing asserted about arrival: there is no subscriber, so there is
+    // nothing to arrive. What is asserted is that the send did not fail for it.
   });
 });
