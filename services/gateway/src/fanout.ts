@@ -1,4 +1,8 @@
-import { messageCreatedSchema, type Message } from "@relay/protocol";
+import {
+  messageCreatedSchema,
+  subjectForChannel,
+  type Message,
+} from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
 // A NAMED import, not a default: ioredis is CommonJS, the gateway is ESM,
 // and without esModuleInterop a default import of a CJS module hands you
@@ -8,9 +12,16 @@ import type { Logger } from "@relay/service-kit";
 import { Redis } from "ioredis";
 
 // The fan-out fabric (chapter 2.6, ADR-07): Redis pub/sub, one subject per
-// channel — `chan:{channel_id}`. The instance that handled a send publishes
-// the committed message AFTER the api's response; every instance hosting a
-// member of that channel is subscribed and delivers to its local sockets.
+// channel — `chan:{channel_id}`. Every instance hosting a member of that
+// channel is subscribed and delivers to its local sockets.
+//
+// WHO PUBLISHES CHANGED IN CHAPTER 3.18. This comment used to say "the
+// instance that handled a send publishes the committed message AFTER the api's
+// response", which was true while a socket was the only way in. There are two
+// publishers now: this one, for a socket send, and the api, for a REST send.
+// The ordering also splits by transport — a socket can ack and then publish
+// because it has two channels, and a request handler cannot, because its
+// response IS the ack.
 //
 // This fabric is AT-MOST-ONCE by design. No acks, no replay, no consumer
 // groups. A frame that misses a subscriber is simply gone — and that is
@@ -25,13 +36,6 @@ import { Redis } from "ioredis";
 // lifecycles match the session registry's.
 
 export const DEFAULT_REDIS_URL = "redis://localhost:6379";
-
-/** One subject per channel: an instance receives only frames it can
- * actually deliver, and a pathological channel saturates its own subject
- * rather than every gateway's inbox. */
-export function subjectFor(channelId: string): string {
-  return `chan:${channelId}`;
-}
 
 export interface Fanout {
   /** Register the delivery callback. Set by the session layer at wiring
@@ -88,7 +92,7 @@ export function createFanout({
     async publish(message) {
       try {
         await publisher.publish(
-          subjectFor(message.channel),
+          subjectForChannel(message.channel),
           JSON.stringify(message),
         );
       } catch (error) {
@@ -103,13 +107,13 @@ export function createFanout({
     async subscribe(channelId) {
       const next = (counts.get(channelId) ?? 0) + 1;
       counts.set(channelId, next);
-      if (next === 1) await subscriber.subscribe(subjectFor(channelId));
+      if (next === 1) await subscriber.subscribe(subjectForChannel(channelId));
     },
     async unsubscribe(channelId) {
       const next = (counts.get(channelId) ?? 1) - 1;
       if (next <= 0) {
         counts.delete(channelId);
-        await subscriber.unsubscribe(subjectFor(channelId));
+        await subscriber.unsubscribe(subjectForChannel(channelId));
       } else {
         counts.set(channelId, next);
       }

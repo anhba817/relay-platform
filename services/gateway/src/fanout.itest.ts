@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createLogger } from "@relay/service-kit";
 import type { Message } from "@relay/protocol";
 
-import { createFanout, subjectFor, type Fanout } from "./fanout.js";
+import { createFanout, type Fanout } from "./fanout.js";
 
 // Chapter 2.6's real test: the one behaviour a single-process test CANNOT
 // show. Two fabric clients stand in for two gateway instances — same code,
@@ -146,7 +146,9 @@ describe("fan-out across instances", () => {
     await raw.fanout.close();
   });
 
-  it("names subjects per channel, so an instance hears only what it can deliver", () => {
-    expect(subjectFor(CHANNEL)).toBe(`chan:${CHANNEL}`);
-  });
+  // THE SUBJECT GRAMMAR'S TEST MOVED IN CHAPTER 3.18, to
+  // `packages/protocol/src/fanout.test.ts`, along with `subjectFor` itself. It
+  // was a pure string assertion sitting in a suite that needs a running Redis;
+  // it needed neither. What stays here is everything that genuinely needs the
+  // fabric — two clients, a real subject, and a delivery.
 });
