@@ -369,6 +369,12 @@ describe("the socket refuses another tenant's identifiers", () => {
   //      `fanout?.publish` is a no-op and nothing is ever delivered here. The control
   //      hung for five seconds and timed out.
   //
+  //      STILL TRUE OF THIS SUITE after this chapter. It gave the api a
+  //      publisher and added a THIRD describe to `session.itest.ts` with a fan-out
+  //      attached — deliberately a new block rather than a fourth argument to the
+  //      existing ones, so blocks like this that want no broker keep none. If a
+  //      delivery assertion belongs anywhere, it belongs there.
+  //
   // The ack's `cursor` is what the server ACCEPTED, so it is the one place the
   // session's membership decision is visible from outside. The control below shows a
   // member's cursor being accepted, which is what makes the removal assertion mean
@@ -620,10 +626,18 @@ describe("the socket refuses another tenant's identifiers", () => {
   //
   // THE MESSAGE HALF IS CHECKED AGAINST THE SCHEMA AND NOT AGAINST A LIVE FRAME, because
   // no `message.created` ever arrives in this suite: `say()` writes through the
-  // repository, the api publishes to no fan-out, and nothing here drains the outbox.
-  // The isolation harness recorded that as its own finding — a REST-sent message reaches no socket,
-  // ever — and `public-surface.itest.ts` is what pins it. Waiting for a frame here is a
-  // 5-second timeout, which is how this test was written the first time.
+  // repository, THIS SUITE attaches no fan-out, and nothing here drains the outbox.
+  //
+  // THE REASON CHANGED IN THIS CHAPTER AND THE FACT DID NOT. This comment used to say
+  // "the api publishes to no fan-out", which was the platform-wide truth the isolation
+  // harness recorded as a finding — a REST-sent message reached no socket, by two
+  // independent mechanisms. The sender chapter removed one and this chapter the other,
+  // so the api does publish now; nothing arrives HERE because this suite subscribes to
+  // nothing, which is a property of the fixture rather than of the platform.
+  // `public-surface.itest.ts` used to pin the absence and now pins the arrival.
+  //
+  // Waiting for a frame here is still a 5-second timeout, which is how this test was
+  // written the first time.
   it("keeps the socket's identity a bare external id, whatever the profile holds", async () => {
     // A full profile written through the public route.
     const patched = await fetch(`${t.apiUrl}/v1/users/${t.victim.userExternalId}`, {
