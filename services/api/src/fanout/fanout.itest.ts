@@ -8,9 +8,16 @@ import {
   subjectForChannel,
   type Message,
 } from "@relay/protocol";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createLogger } from "@relay/service-kit";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
+import { LOGGER } from "../logger";
+import {
+  createMessagePublisher,
+  MESSAGE_PUBLISHER,
+  type MessagePublisher,
+} from "./publisher";
 import { createDb, createPool } from "../db/client";
 import {
   createApiKey,
@@ -382,5 +389,134 @@ describe("the api's fan-out publish", () => {
     expect(res.status).toBe(201);
     // Nothing asserted about arrival: there is no subscriber, so there is
     // nothing to arrive. What is asserted is that the send did not fail for it.
+  });
+});
+
+// ── chapter 3.18: the failure path (Phase 6) ────────────────────────────────
+//
+// Constitution IV: "Any new delivery mechanism MUST preserve this recovery
+// property." A publish that fails must cost delivery and nothing else — the row
+// is durable, the sender is acknowledged, and 2.7's resume finds it.
+//
+// TWO APPS, AND THE SECOND ONE IS THE POINT. One has a publisher pointed at a
+// dead port, which fails and logs. The other has a publisher that does NOTHING
+// AT ALL. If a test cannot tell those apart, it is not testing FR-010; it is
+// testing that the send path still works, which was never in doubt.
+describe("the fan-out publish when it fails", () => {
+  const lines: Record<string, unknown>[] = [];
+  // Its own environment, channel, bot and key. A sibling describe cannot see the
+  // first one's fixture, and sharing one would couple two suites that are about
+  // different things.
+  let channelId: string;
+  let key: string;
+
+  beforeAll(async () => {
+    const db = createDb(createPool());
+    const env = await createEnvironment(db, { name: "fanout-failure-itest" });
+    const repo = new Repository(db, env.id);
+    const user = await repo.createUser("tuan", "Tuan");
+    await repo.upsertUser("publish-bot", {
+      display_name: "Publish Bot",
+      kind: "bot",
+      description: "sends while the fan-out is dead",
+    });
+    channelId = (await repo.createChannel("fleet", "public")).id;
+    await repo.addMember(channelId, user.id);
+    key = (await createApiKey(db, { environmentId: env.id })).credential;
+  });
+
+  /** Boots the api with a substitute publisher and a logger whose sink we read.
+   * `createLogger`'s injectable sink is the reason this is possible at all — the
+   * bargain ADR-15 buys, spent here. */
+  const bootWith = async (publisher: MessagePublisher) => {
+    const app = (
+      await Test.createTestingModule({ imports: [AppModule] })
+        .overrideProvider(MESSAGE_PUBLISHER)
+        .useValue(publisher)
+        .overrideProvider(LOGGER)
+        .useValue(
+          createLogger("api", (line) =>
+            lines.push(JSON.parse(line) as Record<string, unknown>),
+          ),
+        )
+        .compile()
+    ).createNestApplication({ logger: false });
+    await app.listen(0);
+    return { app, url: await app.getUrl() };
+  };
+
+  const send = async (base: string, text: string) =>
+    fetch(`${base}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({ text, user: "publish-bot", idempotency_key: randomUUID() }),
+    });
+
+  const history = async (base: string) => {
+    const res = await fetch(`${base}/v1/channels/${channelId}/messages?limit=20`, {
+      headers: { authorization: `Bearer ${key}` },
+    });
+    return ((await res.json()) as { messages: { text: string }[] }).messages.map(
+      (m) => m.text,
+    );
+  };
+
+  beforeEach(() => {
+    lines.length = 0;
+  });
+
+  it("returns 201 and stays recoverable when the fan-out is dead (FR-010, SC-005)", async () => {
+    // A DEAD PORT, not a stopped container — `limits.itest.ts:510`'s pattern.
+    // In-process, deterministic, and it does not disturb any other suite.
+    const dead = createMessagePublisher({
+      url: "redis://127.0.0.1:1",
+      logger: createLogger("dead", (line) =>
+        lines.push(JSON.parse(line) as Record<string, unknown>),
+      ),
+    });
+    const { app, url: base } = await bootWith(dead);
+    try {
+      const text = `survives a dead fan-out ${randomUUID()}`;
+      expect((await send(base, text)).status).toBe(201);
+      // The constitution's gate: the message is reachable without the fabric.
+      expect(await history(base)).toContain(text);
+
+      // AND THE FAILURE IS OBSERVABLE (FR-011). This is the assertion that
+      // carries the requirement; the two above are true of a publisher that
+      // does nothing, as the next test proves.
+      const failure = lines.find((l) => l["msg"] === "fanout.publish_failed");
+      expect(failure, JSON.stringify(lines)).toBeDefined();
+      expect(failure!["level"]).toBe("error");
+      expect(failure!["channel"]).toBe(channelId);
+      expect(typeof failure!["request_id"]).toBe("string");
+      expect(typeof failure!["environment_id"]).toBe("string");
+    } finally {
+      await app.close();
+      await dead.close();
+    }
+  });
+
+  it("T038: a publisher that does NOTHING passes the weak assertions and fails the log one", async () => {
+    // The proof that the test above distinguishes anything. A no-op publisher is
+    // what "the publish was never written" looks like from outside, and
+    // `publish` never rejects either way — so 201 and recoverability cannot tell
+    // them apart. Only the log line can.
+    const noop: MessagePublisher = {
+      publish: async () => {},
+      close: async () => {},
+    };
+    const { app, url: base } = await bootWith(noop);
+    try {
+      const text = `a no-op publisher ${randomUUID()}`;
+
+      // The weak assertions — both PASS, which is the finding.
+      expect((await send(base, text)).status).toBe(201);
+      expect(await history(base)).toContain(text);
+
+      // The one that carries FR-010 and FR-011 — absent, correctly.
+      expect(lines.find((l) => l["msg"] === "fanout.publish_failed")).toBeUndefined();
+    } finally {
+      await app.close();
+    }
   });
 });

@@ -84,6 +84,20 @@ export function createMessagePublisher({
     lazyConnect: true,
     maxRetriesPerRequest: 0,
     connectTimeout: 1_000,
+    // A CONNECTED SERVER THAT NEVER ANSWERS IS A DIFFERENT FAILURE, and the two
+    // options above do nothing for it. Measured against a TCP listener that
+    // accepts and never speaks:
+    //
+    //     without commandTimeout   publish HUNG past a 3,000 ms bound, twice
+    //     with commandTimeout 100  rejected at the timeout, then at 3 ms
+    //                              (the second is the down-window, already open)
+    //
+    // `plan.md`'s post-design re-check named this as the residual risk of
+    // awaiting the publish and the contract did not close it. 100 ms is ~440x the
+    // measured p95 of 0.226 ms and ~100x the worst sample of 0.965 ms, and it
+    // sits inside NFR-PRF-02's 150 ms budget for the whole write — a timeout
+    // above that budget could not protect it.
+    commandTimeout: 100,
   });
   // A dead fan-out is an expected state, not an exception. Without a listener
   // ioredis emits `error` on an EventEmitter with none attached and Node turns
