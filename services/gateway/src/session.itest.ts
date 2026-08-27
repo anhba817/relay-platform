@@ -12,6 +12,7 @@ import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createApiClient } from "./api-client.js";
+import { createFanout, type Fanout } from "./fanout.js";
 import { attachSessions } from "./session.js";
 import { docsUrl } from "@relay/protocol";
 
@@ -314,5 +315,327 @@ describe("the socket's credentials", () => {
   afterAll(async () => {
     api?.stop();
     server?.close();
+  });
+});
+
+describe("the socket's delivery, with a fan-out attached", () => {
+  let api: ApiUnderTest;
+  let server: Server;
+  let url: string;
+  let fanout: Fanout;
+  /** A SECOND client on the same subject, standing in for whoever published —
+   * the api, in this chapter, and any other gateway instance before it. The
+   * subscriber under test must not be the publisher, or the test proves only
+   * that an object can call itself. */
+  let publisher: Fanout;
+  const sockets: WebSocket[] = [];
+
+  const mintToken = async (user = "tuan") => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+
+  const connect = (token: string) => {
+    const socket = new WebSocket(`${url}/v1/ws?token=${token}`);
+    sockets.push(socket);
+    return socket;
+  };
+
+  /** Every frame a socket sees, in order. Attached before `open` resolves,
+   * because `connection.ack` arrives the instant the upgrade completes and a
+   * listener added after a yield to the event loop misses it. */
+  const record = (socket: WebSocket): { type: string; payload?: unknown }[] => {
+    const frames: { type: string; payload?: unknown }[] = [];
+    socket.on("message", (raw) => {
+      frames.push(JSON.parse(String(raw)) as { type: string });
+    });
+    return frames;
+  };
+
+  const waitFor = async (
+    frames: { type: string; payload?: unknown }[],
+    predicate: (f: { type: string; payload?: unknown }) => boolean,
+    what: string,
+    ms = 4_000,
+  ) => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const found = frames.find(predicate);
+      if (found) return found;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
+
+  beforeAll(async () => {
+    api = await startApi();
+    fanout = createFanout({ logger: silent });
+    publisher = createFanout({ logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
+    attachSessions({
+      server,
+      api: createApiClient(api.url),
+      logger: silent,
+      fanout,
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  }, 60_000);
+
+  afterEach(() => {
+    for (const socket of sockets.splice(0)) socket.close();
+  });
+
+  afterAll(async () => {
+    await fanout.close();
+    await publisher.close();
+    server.close();
+    api?.stop();
+  });
+
+  it("delivers a frame published by somebody else to a member's socket", async () => {
+    // T014's own proof that the harness works. Nothing here is about the api
+    // publishing — that is Phase 3 — only that a frame placed on the subject by
+    // a different client reaches a socket this gateway holds. Without it, every
+    // delivery test below would fail for the same uninformative reason.
+    const socket = connect(await mintToken());
+    const frames = record(socket);
+    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+
+    // `api.channelId`, not the ack. `connectionAckSchema.payload` is
+    // `{ user, cursor, resume_ok, truncated }` — there is no `channels` field on
+    // it, and the first version of this test read one. The gateway knows the
+    // channel list internally, from `POST /internal/session`; it does not tell
+    // the client, which is why this reads the seeded id from the harness.
+    const channel = api.channelId;
+
+    await publisher.publish({
+      id: randomUUID(),
+      channel,
+      seq: 9_001,
+      user: "tuan",
+      text: "published by somebody else",
+      created_at: new Date(0).toISOString(),
+    });
+
+    const delivered = (await waitFor(
+      frames,
+      (f) => f.type === "message.created",
+      "message.created",
+    )) as { payload: { text: string; seq: number } };
+    expect(delivered.payload.text).toBe("published by somebody else");
+    expect(delivered.payload.seq).toBe(9_001);
+  });
+
+  it("delivers to EVERY connection the same person holds (T021)", async () => {
+    // Spec edge case 5. What is under test is the registry's fan-out to local
+    // sockets, so who published is irrelevant — this publishes directly. Two
+    // sockets for one user is the case a naive registry keyed by user id gets
+    // wrong, and it is worth its own test because the failure is invisible: one
+    // of the two tabs just stops updating.
+    const token = await mintToken();
+    const a = record(connect(token));
+    const b = record(connect(token));
+    await waitFor(a, (f) => f.type === "connection.ack", "ack on a");
+    await waitFor(b, (f) => f.type === "connection.ack", "ack on b");
+
+    const text = `to both tabs ${randomUUID()}`;
+    await publisher.publish({
+      id: randomUUID(),
+      channel: api.channelId,
+      seq: 9_002,
+      user: "tuan",
+      text,
+      created_at: new Date(0).toISOString(),
+    });
+
+    for (const [frames, which] of [[a, "a"], [b, "b"]] as const) {
+      const got = (await waitFor(
+        frames,
+        (f) => f.type === "message.created",
+        `message.created on ${which}`,
+      )) as { payload: { text: string } };
+      expect(got.payload.text).toBe(text);
+    }
+  });
+
+  it("delivers a message SENT OVER REST to an open socket (SC-001, FR-004)", async () => {
+    // THE CHAPTER, END TO END, in the integration lane. A real api spawned from
+    // dist/main.js, a real gateway, a real socket opened before the send, and a
+    // POST to the route a customer's backend calls. Nothing here publishes by
+    // hand.
+    //
+    // `user` is required and must name a bot: an application credential may
+    // speak only as software. `idempotency_key` must be a UUID on
+    // this route, where the socket frame takes any string.
+    const frames = record(connect(await mintToken()));
+    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+
+    const text = `over REST to a socket ${randomUUID()}`;
+    const posted = await fetch(
+      `${api.url}/v1/channels/${api.channelId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${api.credential}`,
+        },
+        body: JSON.stringify({
+          text,
+          user: "delivery-bot",
+          idempotency_key: randomUUID(),
+        }),
+      },
+    );
+    expect(posted.status, await posted.clone().text()).toBe(201);
+
+    const delivered = (await waitFor(
+      frames,
+      (f) => f.type === "message.created",
+      "message.created for a REST send",
+    )) as { payload: { text: string; user: string; seq: number } };
+    expect(delivered.payload.text).toBe(text);
+    expect(delivered.payload.user).toBe("delivery-bot");
+    // The sequence the api committed, not one the gateway invented.
+    expect(delivered.payload.seq).toBeGreaterThan(0);
+  });
+
+  it("keeps delivering to a member who was REMOVED while connected (FR-RTM-10)", async () => {
+    // T032/T033. THIS TEST ASSERTS THE VIOLATION, and that is deliberate.
+    //
+    // FR-RTM-10 is P1: events "shall not be delivered to a client whose
+    // membership no longer grants access, effective within 5 seconds of the
+    // membership change". Measured here: they are, indefinitely.
+    //
+    // The mechanism, read in `session.ts` before this was written rather than
+    // after it failed: `connection.channelIds` is a Set built once at connect
+    // from `POST /internal/session`, `fanout.subscribe` runs once over it at
+    // :356, `fanout.unsubscribe` runs once at :398 when the socket CLOSES, and
+    // `registry.subscribersOf` at :175 reads that same set on every delivery.
+    // Nothing in between re-reads membership. There is no code path that could.
+    //
+    // SO THIS IS NOT THIS CHAPTER'S REGRESSION. The gap has existed since 2.6
+    // for socket-originated messages; the fan-out chapter only gives it a second
+    // entrance. Pinning it here — rather than narrowing FR-013 until it passes —
+    // is what `gaps.md` item 4 is for. Invert this test the day it is fixed.
+    const channel = api.channelId;
+    const frames = record(connect(await mintToken()));
+    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+
+    const removed = await fetch(
+      `${api.url}/v1/channels/${channel}/members/remove`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${api.credential}`,
+        },
+        body: JSON.stringify({ user_ids: ["tuan"] }),
+      },
+    );
+    expect(removed.status, await removed.clone().text()).toBe(200);
+
+    // The clause's own window, plus a margin. If a re-read existed anywhere —
+    // a poll, an invalidation, a message on another subject — five seconds is
+    // the budget it was given.
+    await new Promise((r) => setTimeout(r, 5_500));
+
+    const text = `after removal ${randomUUID()}`;
+    const posted = await fetch(`${api.url}/v1/channels/${channel}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({
+        text,
+        user: "delivery-bot",
+        idempotency_key: randomUUID(),
+      }),
+    });
+    expect(posted.status).toBe(201);
+
+    const delivered = (await waitFor(
+      frames,
+      (f) =>
+        f.type === "message.created" &&
+        (f as { payload: { text: string } }).payload.text === text,
+      "the frame FR-RTM-10 says must not arrive",
+    )) as { payload: { text: string } };
+
+    // Reads as a pass and documents a failure. The assertion is the violation:
+    // change this to `.rejects` on the day a re-read exists.
+    expect(delivered.payload.text).toBe(text);
+  }, 20_000);
+
+  it("delivers nothing from a PRIVATE channel to a non-member's socket (FR-014, SC-007)", async () => {
+    // FR-CHN-05's fourth door. The read paths got three in the channel-control chapter — list,
+    // history, and the channel itself — and delivery is the one this chapter
+    // opens. Tested as its own case rather than inferred from the others,
+    // because the mechanism is different: the read paths ask the repository,
+    // and delivery asks whether a subject was ever subscribed to.
+    //
+    // A non-member's connection subscribes to nothing, so it cannot hear the
+    // subject at all. That is a stronger property than a refusal — there is no
+    // decision to get wrong — and it is worth pinning for exactly that reason:
+    // a future re-read that "fixed" subscriptions could break it.
+    const stranger = `stranger-${randomUUID().slice(0, 8)}`;
+    const created = await fetch(`${api.url}/v1/users`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ users: [{ external_id: stranger }] }),
+    });
+    expect(created.status, await created.clone().text()).toBeLessThan(300);
+
+    const privately = await fetch(`${api.url}/v1/channels`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({
+        external_id: `private-${randomUUID().slice(0, 8)}`,
+        type: "private",
+      }),
+    });
+    expect(privately.status).toBe(201);
+    const privateId = ((await privately.json()) as { id: string }).id;
+
+    const frames = record(connect(await mintToken(stranger)));
+    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+
+    // Published directly: what is under test is whether a non-member's socket
+    // can hear the subject, not whether the api will publish to it.
+    await publisher.publish({
+      id: randomUUID(),
+      channel: privateId,
+      seq: 9_100,
+      user: "tuan",
+      text: "not for a stranger",
+      created_at: new Date(0).toISOString(),
+    });
+    await new Promise((r) => setTimeout(r, 800));
+
+    expect(frames.filter((f) => f.type === "message.created")).toEqual([]);
   });
 });
