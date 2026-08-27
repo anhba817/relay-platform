@@ -13,6 +13,7 @@ import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createApiClient } from "./api-client.js";
+import { createFanout, type Fanout } from "./fanout.js";
 import { attachSessions } from "./session.js";
 
 // The socket's credential cases (chapter 3.2), against a REAL api.
@@ -438,5 +439,144 @@ describe("the cap at the door (chapter 3.11, US3)", () => {
 
     // The early socket is untouched by its neighbour's refusal.
     expect(early.readyState).toBe(WebSocket.OPEN);
+  });
+});
+
+// ── chapter 3.18: the same harness, WITH a fan-out ──────────────────────────
+//
+// A THIRD DESCRIBE RATHER THAN A FOURTH ARGUMENT TO THE OTHER TWO. Both blocks
+// above call `attachSessions({ server, api, logger })` with no `fanout`, so
+// `fanout?.publish` is a no-op there and nothing in them subscribes to
+// anything. That is correct for what they test — credentials and refusals — and
+// changing them to carry a broker would move twelve socket opens and four api
+// boots to prove nothing new. Chapter 3.17's T040b took five tests down doing
+// exactly that, the fifth such incident in two features.
+//
+// So this adds a capability instead: a real spawned api, a real gateway, real
+// sockets, and a fan-out wired in. Delivery lives here from now on.
+describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => {
+  let api: ApiUnderTest;
+  let server: Server;
+  let url: string;
+  let fanout: Fanout;
+  /** A SECOND client on the same subject, standing in for whoever published —
+   * the api, in this chapter, and any other gateway instance before it. The
+   * subscriber under test must not be the publisher, or the test proves only
+   * that an object can call itself. */
+  let publisher: Fanout;
+  const sockets: WebSocket[] = [];
+
+  const mintToken = async (user = "tuan") => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+
+  const connect = (token: string) => {
+    const socket = new WebSocket(`${url}/v1/ws?token=${token}`);
+    sockets.push(socket);
+    return socket;
+  };
+
+  /** Every frame a socket sees, in order. Attached before `open` resolves,
+   * because `connection.ack` arrives the instant the upgrade completes and a
+   * listener added after a yield to the event loop misses it. */
+  const record = (socket: WebSocket): { type: string; payload?: unknown }[] => {
+    const frames: { type: string; payload?: unknown }[] = [];
+    socket.on("message", (raw) => {
+      frames.push(JSON.parse(String(raw)) as { type: string });
+    });
+    return frames;
+  };
+
+  const waitFor = async (
+    frames: { type: string; payload?: unknown }[],
+    predicate: (f: { type: string; payload?: unknown }) => boolean,
+    what: string,
+    ms = 4_000,
+  ) => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const found = frames.find(predicate);
+      if (found) return found;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
+
+  beforeAll(async () => {
+    api = await startApi();
+    fanout = createFanout({ logger: silent });
+    publisher = createFanout({ logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
+    attachSessions({
+      server,
+      api: createApiClient(api.url),
+      logger: silent,
+      fanout,
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  }, 60_000);
+
+  afterEach(() => {
+    for (const socket of sockets.splice(0)) socket.close();
+  });
+
+  afterAll(async () => {
+    await fanout.close();
+    await publisher.close();
+    server.close();
+    api?.stop();
+  });
+
+  it("delivers a frame published by somebody else to a member's socket", async () => {
+    // T014's own proof that the harness works. Nothing here is about the api
+    // publishing — that is Phase 3 — only that a frame placed on the subject by
+    // a different client reaches a socket this gateway holds. Without it, every
+    // delivery test below would fail for the same uninformative reason.
+    const socket = connect(await mintToken());
+    const frames = record(socket);
+    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+
+    // `api.channelId`, not the ack. `connectionAckSchema.payload` is
+    // `{ user, cursor, resume_ok, truncated }` — there is no `channels` field on
+    // it, and the first version of this test read one. The gateway knows the
+    // channel list internally, from `POST /internal/session`; it does not tell
+    // the client, which is why this reads the seeded id from the harness.
+    const channel = api.channelId;
+
+    await publisher.publish({
+      id: randomUUID(),
+      channel,
+      seq: 9_001,
+      user: "tuan",
+      text: "published by somebody else",
+      created_at: new Date(0).toISOString(),
+    });
+
+    const delivered = (await waitFor(
+      frames,
+      (f) => f.type === "message.created",
+      "message.created",
+    )) as { payload: { text: string; seq: number } };
+    expect(delivered.payload.text).toBe("published by somebody else");
+    expect(delivered.payload.seq).toBe(9_001);
   });
 });

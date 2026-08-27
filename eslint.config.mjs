@@ -80,6 +80,13 @@ const DRIVER_EXEMPT_TESTS = [
   // at the top of this rule says a helper would make the SQL invisible to it, and an
   // invisible exemption is worse than a listed one.
   "services/api/src/internal/backfill.itest.ts",
+  // Chapter 3.18. THE SAME ARGUMENT AS THE TWO LIMITS SUITES: its subject is what
+  // reaches the fabric, and the only way to check that is to subscribe with
+  // neither the api's publisher nor the gateway's `createFanout`. A spy on either
+  // would prove that an object was asked to publish, not that a frame arrived —
+  // and the isolation gauntlet cannot cover this path at all, because its oracle
+  // compares response bodies and a publish is a second output channel.
+  "services/api/src/fanout/fanout.itest.ts",
   "services/api/src/messages/history.itest.ts",
 ];
 
@@ -189,6 +196,16 @@ export default tseslint.config(
       "services/gateway/src/limits.ts",
       "services/gateway/src/limits.itest.ts",
       "services/gateway/src/fanout.ts",
+      // Chapter 3.18. THE RULE'S REASON DOES NOT APPLY HERE, and that is the
+      // whole justification rather than a convenience. The restriction exists
+      // because rate-limit counters are keyed `rl:{environment_id}:…`, so an
+      // unrestricted client can read another tenant's counter. This client
+      // touches no keys: it calls PUBLISH and nothing else, onto
+      // `chan:{channel_id}` — a channel UUID, not an environment-scoped key —
+      // and a subject is not readable at all, only listened to by whoever is
+      // already subscribed. The gateway's `fanout.ts` is on this list one line
+      // up for the same reason; the api needs it too now that it publishes.
+      "services/api/src/fanout/**",
       // The test harness IS data access — its whole job is to plant rows the
       // repository layer must never plant and to hold a connection carrying an
       // exemption no product code may carry (feature 030). Restricting it from
