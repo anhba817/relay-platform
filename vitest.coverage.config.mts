@@ -200,6 +200,29 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
+        // T011 asked for this pin or a recorded reason, and got neither for eight
+        // phases. The publish guard's two branches, `!message.duplicate &&
+        // message.text !== null`, are FR-007's entire mechanism and were sitting under
+        // the global floor of 70.
+        //
+        // The FR-007 test moved this file by covering the `duplicate` side; T058a's
+        // traceability map is what noticed the clause had no test at all.
+        //
+        // THE REMAINING UNCOVERED BRANCH IS UNREACHABLE ON THIS ROUTE, and is left
+        // rather than deleted. `message.text !== null` is only ever evaluated for a
+        // NON-duplicate — the `&&` short-circuits otherwise — and a non-duplicate row
+        // was just written from a request whose schema requires `text`. So the false
+        // side cannot be reached from here. The ratchet has removed unreachable code
+        // three times in this repository; this one stays, because `messageSchema` types
+        // `text` as non-nullable and a null would publish a frame the delivery side
+        // drops silently. A guard against a state the type system forbids is cheap; the
+        // alternative is a silent drop.
+        "services/api/src/messages/messages.controller.ts": {
+          branches: 87,
+          functions: 100,
+          lines: 100,
+          statements: 96,
+        },
       },
     },
   },
