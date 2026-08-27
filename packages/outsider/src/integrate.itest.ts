@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 
 // AN INTEGRATION BUILT FROM PUBLISHED DOCUMENTATION ALONE (FR-031, SC-009,
@@ -230,12 +231,23 @@ describe("integrating with Relay from the outside", () => {
     expect(page.messages.map((m) => m.text)).toContain(text);
   });
 
-  it("receives a message on a socket — SENT over the socket", async () => {
-    // THE SEND HAS TO BE ON THE SOCKET, and finding that out is one of the gaps this
-    // exercise recorded. It had TWO causes and chapter 3.17 removed one: the api still
-    // publishes to no fan-out, so nothing arrives LIVE — but the public send now
-    // attributes a sender, so the row is no longer dropped from a resume. Half the gap,
-    // and the half that remains is the fan-out.
+  // `it.fails` UNTIL T024 BUILDS THE PUBLISH, then T023 turns it back into `it`.
+  //
+  // A red lane is not the same as a recorded failure. This asserts what is true
+  // today — a REST send commits, answers 201, and reaches no live socket — so the
+  // suite stays green while the gap stays visible. Measured when it was written:
+  // 10,114 ms to the deadline, having seen only `connection.ack`.
+  it.fails("receives a message on a socket — sent over REST", async () => {
+    // THE SEND NO LONGER HAS TO BE ON THE SOCKET, and that is this chapter.
+    //
+    // The gap this exercise recorded had TWO causes. Chapter 3.17 removed the first:
+    // a public send attributes a sender, so the row is no longer dropped from a
+    // resume. Chapter 3.18 removes the second, which was the whole of what remained
+    // — the api published to no fan-out, so a REST-sent message reached no live
+    // socket. The title of this test used to say "SENT over the socket" in capitals,
+    // because a REST send could not work; it now sends over REST on purpose.
+    //
+    // The send is the one an integrating developer's backend actually makes.
     const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
     const frames: { type: string; payload?: { text?: string; seq?: number } }[] = [];
     // Listeners attached BEFORE the open await. `connection.ack` arrives the
@@ -268,17 +280,27 @@ describe("integrating with Relay from the outside", () => {
 
     await waitFor((f) => f.type === "connection.ack", "connection.ack");
 
-    const text = `over the socket ${Date.now()}`;
-    socket.send(
-      JSON.stringify({
-        type: "message.send",
-        payload: { idem_key: `outsider-${Date.now()}`, channel: channelId, text },
-      }),
+    const text = `over REST ${Date.now()}`;
+    // NOT `socket.send`. A POST, with the credential a customer's server holds, to
+    // the route their backend calls — and then the socket is watched for the frame.
+    // `user: "outside-bot"` is not optional and not decoration. Chapter 3.17 made an
+    // application credential speak only as a bot user of its tenant, so a POST without
+    // it is a 400 naming `user` — which is how the first run of this inverted test
+    // failed, for a reason that had nothing to do with delivery.
+    const posted = await post(
+      `/v1/channels/${channelId}/messages`,
+      // A UUID, because the REST body demands one: `idempotency_key: z.string().uuid()`
+      // on this route, where the socket frame's `idem_key` is any string up to 255.
+      // Two entrances, two idempotency contracts — the second run of this inverted
+      // test failed on it, with `invalid_request` naming the field.
+      { text, user: "outside-bot", idempotency_key: randomUUID() },
+      credential,
     );
+    expect(posted.status).toBe(201);
 
-    // The sender's own acknowledgement, then the event. Both are documented and
-    // both matter: the ack says it was committed, the event says it was delivered.
-    await waitFor((f) => f.type === "message.ack", "message.ack");
+    // The REST response is the acknowledgement — there is no `message.ack` frame on
+    // this path, because the sender is not holding a socket. What has to arrive is
+    // the delivery, on a socket that was already open before the send.
     await waitFor(
       (f) => f.type === "message.created" && (f as { payload?: { text?: string } }).payload?.text === text,
       "message.created for the text just sent",
