@@ -356,3 +356,107 @@ describe("resume across a real fabric", () => {
     socket.close();
   });
 });
+
+// ── chapter 3.18: two instances, one fabric (US2) ───────────────────────────
+//
+// `boot()` IS UNTOUCHED. It is called six times above and each call builds its
+// own `createFanout` and its own server, so two calls already give two gateway
+// instances sharing one Redis — which is precisely what SC-002 needs. Changing
+// the fixture to "support" that would have changed six passing tests to prove
+// nothing new (3.17's T040b, the fifth such incident in two features).
+//
+// WHAT THIS PROVES AND WHAT IT DOES NOT. The api here is a stub, as everywhere
+// in this file: the gateway has no database (ADR-05) and these suites are about
+// the fabric. So this is the DELIVERY half of SC-002 — a frame published by
+// somebody else reaches the instance holding a member and only that one. The
+// half where a REAL api publishes lives in `session.itest.ts`, which spawns one.
+// Neither fixture does both, and `chapter-notes.md` says so rather than letting
+// the pair imply it.
+describe("two instances on one fabric (chapter 3.18)", () => {
+  const OTHER_CHANNEL = randomUUID();
+  let member: Harness | undefined;
+  let bystander: Harness | undefined;
+  /** Closed BEFORE the harnesses. `Harness.close()` calls `server.close()`,
+   * which waits for open connections to drain — so a test that leaves a socket
+   * open hangs the teardown, and vitest reports it as "Hook timed out in
+   * 10000ms" pointing at `afterEach`. The first version of these tests looked
+   * like a delivery failure and was a housekeeping one. */
+  const sockets: WebSocket[] = [];
+  const open = async (harness: Harness) => {
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    sockets.push(socket);
+    return record(socket);
+  };
+
+  const stub = (channels: string[]) => ({
+    session: async () => ({
+      environment_id: "env-1",
+      user: "tuan",
+      banned: false,
+      channel_ids: channels,
+      limits: { connect: 3_000, send: 600 },
+    }),
+    backfill: async () => ({}),
+    sendMessage: async () => {
+      throw new Error("not used");
+    },
+  });
+
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    await member?.close();
+    await bystander?.close();
+    member = undefined;
+    bystander = undefined;
+  });
+
+  it("delivers to the instance holding a member (SC-002)", async () => {
+    member = await boot(stub([CHANNEL]));
+    const frames = await open(member);
+    await settle(200);
+
+    // Published by a THIRD client — neither instance's own — which is what the
+    // api is once it publishes. The instance under test is a subscriber only.
+    await publishFromElsewhere(frame(3_001));
+    await settle(400);
+
+    expect(created(frames)).toEqual([3_001]);
+  });
+
+  it("delivers to NEITHER instance for a channel neither holds (SC-002's negative)", async () => {
+    // The subject is the filter and it is the only one. An instance subscribes
+    // to `chan:{id}` because a session named that channel at connect; a frame on
+    // any other subject is not something it declines to deliver, it is something
+    // it never hears.
+    member = await boot(stub([CHANNEL]));
+    bystander = await boot(stub([OTHER_CHANNEL]));
+    const a = await open(member);
+    const b = await open(bystander);
+    await settle(200);
+
+    // A third channel, which neither session named.
+    await publishFromElsewhere({ ...frame(3_002), channel: randomUUID() });
+    await settle(400);
+
+    expect(created(a)).toEqual([]);
+    expect(created(b)).toEqual([]);
+  });
+
+  it("delivers to the member's instance and not to the bystander's", async () => {
+    // The pair that matters for SC-002: two live instances, one frame, and the
+    // silence on the second is as much of the assertion as the arrival on the
+    // first. Asserted by COUNT on both sides — "the member got it" alone would
+    // be satisfied by a fabric that broadcast to everybody.
+    member = await boot(stub([CHANNEL]));
+    bystander = await boot(stub([OTHER_CHANNEL]));
+    const a = await open(member);
+    const b = await open(bystander);
+    await settle(200);
+
+    await publishFromElsewhere(frame(3_003));
+    await settle(400);
+
+    expect(created(a)).toEqual([3_003]);
+    expect(created(b)).toEqual([]);
+  });
+});
