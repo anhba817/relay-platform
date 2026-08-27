@@ -11,6 +11,7 @@ import type { Logger } from "@relay/service-kit";
 import { AuthModule } from "../auth/auth.module";
 import {
   createMessagePublisher,
+  MESSAGE_PUBLISHER,
   type MessagePublisher,
 } from "../fanout/publisher";
 import { apiLogger, LOGGER } from "../logger";
@@ -31,8 +32,10 @@ import { MessagesService } from "./messages.service";
  * message on every member's screen twice (FR-006).
  *
  * Withholding it makes that structural rather than a matter of where a call
- * sits. This module already does the same with `"DB"`. */
-export const MESSAGE_PUBLISHER = "MESSAGE_PUBLISHER";
+ * sits. This module already does the same with `"DB"`.
+ *
+ * The TOKEN lives in `../fanout/publisher` — this module imports the controller,
+ * so a controller importing the token from here would be a cycle. */
 
 /** `limits/limits.module.ts:10` states the convention: "resource in this api
  * closes through `OnModuleDestroy`". Six modules implement it; this is

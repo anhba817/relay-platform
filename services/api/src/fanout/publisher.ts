@@ -30,6 +30,16 @@ import { Redis } from "ioredis";
  * The stronger reason is the one this chapter is about: a switch would let the
  * lane run green with the publish disabled, which is the false-green shape the
  * whole feature exists to remove. */
+/** The DI token, declared HERE rather than in `messages.module.ts`.
+ *
+ * A CIRCULAR IMPORT OTHERWISE, and Nest reports it as a missing dependency
+ * rather than as a cycle: "Nest can't resolve dependencies of the
+ * MessagesController (MessagesService, Repository, ?)". The module imports the
+ * controller, so a controller importing the token from the module closes the
+ * loop and the token is `undefined` when the decorator metadata is read. Beside
+ * the interface it names, nobody imports anybody twice. */
+export const MESSAGE_PUBLISHER = "MESSAGE_PUBLISHER";
+
 export interface MessagePublisher {
   /** Publish a committed message to its channel's subject. NEVER REJECTS —
    * delivery is allowed to fail, because the row is already durable and 2.7's

@@ -72,6 +72,19 @@ interface Seeder {
       name?: string,
     ) => Promise<{ id: string }>;
     addMember: (channelId: string, userId: string) => Promise<boolean>;
+    /** An application credential may send only as a bot user
+     * So a REST send needs one to exist — and `createUser`
+     * makes a person. Widening this type rather than reaching around it: the
+     * shape here is a hand-written mirror of the real repository, and a member
+     * it does not name is a member this suite cannot call. */
+    upsertUser: (
+      externalId: string,
+      profile: {
+        display_name?: string;
+        kind?: "person" | "bot";
+        description?: string;
+      },
+    ) => Promise<unknown>;
   };
 }
 
@@ -108,6 +121,14 @@ async function startApi(): Promise<ApiUnderTest> {
   });
   const repo = new seeder.Repository(db, environment.id);
   const user = await repo.createUser("tuan", "Tuan");
+  // The sender a REST send names. ADDITIVE to this fixture — the
+  // tests above assert on "tuan" and a second user changes nothing for them,
+  // which is the difference between adding a capability and repurposing one.
+  await repo.upsertUser("delivery-bot", {
+    display_name: "Delivery Bot",
+    kind: "bot",
+    description: "sends over REST so a socket can receive it",
+  });
   const channel = await repo.createChannel("fleet", "public");
   await repo.addMember(channel.id, user.id);
   const key = await seeder.createApiKey(db, {
