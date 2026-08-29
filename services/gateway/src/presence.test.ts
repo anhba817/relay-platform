@@ -5,6 +5,7 @@ import {
   DEFAULT_MARGIN_MS,
   DEFAULT_REFRESH_MS,
   DEFAULT_TTL_MS,
+  graceCheckDelay,
   wonTransition,
 } from "./presence.js";
 
@@ -39,8 +40,30 @@ describe("the timings", () => {
     expect(DEFAULT_MARGIN_MS).toBeGreaterThan(0);
   });
 
+  it("defaults the margin to a second", () => {
+    expect(DEFAULT_MARGIN_MS).toBe(1_000);
+  });
+
+  it("defaults the TTL to the SAD's thirty seconds", () => {
+    expect(DEFAULT_TTL_MS).toBe(30_000);
+  });
+
   // NOT ASSERTED: `ttlMs >= graceMs`. The close re-pins the key, which is what
   // makes the grace correct — the numeric relation is the sane default, not the
   // mechanism, and a test may set the TTL below the grace deliberately to open the
   // gap the reconnect-late case needs.
+});
+
+describe("graceCheckDelay", () => {
+  it("is the grace plus the margin, never the grace alone", () => {
+    expect(graceCheckDelay(30_000, 1_000)).toBe(31_000);
+    expect(graceCheckDelay(300, 50)).toBe(350);
+  });
+
+  // The whole point of the margin: the check must never land on the instant the
+  // re-pinned key expires, because Redis holds a key until `now` is strictly past
+  // its expiry and a tie leaves the user online with no timer left to try again.
+  it("never returns the grace unchanged", () => {
+    expect(graceCheckDelay(30_000, DEFAULT_MARGIN_MS)).toBeGreaterThan(30_000);
+  });
 });

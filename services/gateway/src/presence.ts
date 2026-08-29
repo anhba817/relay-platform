@@ -57,6 +57,20 @@ export function wonTransition(reply: string | null): boolean {
   return reply === "OK";
 }
 
+/** When the grace check runs, relative to the close.
+ *
+ * NOT `graceMs`. The close re-pins the key to expire at `graceMs`, so pinning and
+ * checking at the same instant puts two deadlines on one moment reached by two
+ * clocks — the key expires at `close + δ + graceMs` where δ is a round trip, the
+ * timer fires at `close + graceMs + ε`. With `ε < δ` the check finds the key alive,
+ * logs `presence.suppressed`, and its ONE-SHOT timer is gone: the user is stranded
+ * online, which is worse than the duplicate `online` the re-pin was added to
+ * prevent. Redis also holds a key until `now` is strictly past its expiry, so a tie
+ * falls the wrong way too (research R2b). */
+export function graceCheckDelay(graceMs: number, marginMs: number): number {
+  return graceMs + marginMs;
+}
+
 export interface Presence {
   /** Register the delivery callback. Set by the session layer at wiring time, as
    * the fan-out's is: the fabric knows how to receive, the sessions know who to
@@ -130,10 +144,6 @@ export function createPresence({
     });
   }
 
-  void graceMs;
-  void refreshMs;
-  void marginMs;
-
   let deliver: (channelId: string, payload: PresenceFabric) => void = () => {};
 
   // Reference-counted, because two members of one channel on one instance must not
@@ -153,6 +163,49 @@ export function createPresence({
 
   const key = (environmentId: string, user: string): string =>
     `presence:${environmentId}:${user}`;
+  const marker = (environmentId: string, user: string): string =>
+    `presence:offline:${environmentId}:${user}`;
+
+  /** Users this instance currently holds a connection for, and the environment each
+   * belongs to. The refresh loop walks this; `disconnected` removes from it. */
+  const held = new Map<string, string>();
+
+  /** One pending grace check per user, REPLACED rather than added to. Close, reopen
+   * at a third of the window, close again must leave one decision answered by the
+   * state at the end of the second window — two timers would publish twice. */
+  const pending = new Map<string, NodeJS.Timeout>();
+
+  const refreshTimer = setInterval(() => {
+    void (async () => {
+      for (const [user, environmentId] of held) {
+        const reply = await failable("refresh", () =>
+          commands.set(key(environmentId, user), "1", "PX", ttlMs, "XX"),
+        );
+        // `XX` answers null when the key is gone — a Redis restart or an eviction
+        // under a live connection. Treat it as a new transition: a duplicate
+        // `online` for a user who never left, which ADR-10 permits and FR-031
+        // authorises, and which beats a user who is online and unpublishable.
+        if (reply === null) {
+          logger.log("info", "presence.suppressed", {
+            user,
+            state: "online",
+            reason: "key vanished under a live connection; re-electing",
+          });
+          await failable("refresh:reelect", async () => {
+            const won = await commands.set(
+              key(environmentId, user),
+              "1",
+              "PX",
+              ttlMs,
+              "NX",
+            );
+            if (wonTransition(won)) await commands.del(marker(environmentId, user));
+          });
+        }
+      }
+    })();
+  }, refreshMs);
+  refreshTimer.unref();
 
   async function failable<T>(op: string, work: () => Promise<T>): Promise<T | null> {
     try {
@@ -223,6 +276,7 @@ export function createPresence({
       // `SET … NX` IS THE ELECTION. Exactly one caller across every instance gets
       // `OK` for a user who was absent; everyone else gets null and stays quiet.
       // Measured against Redis 8.10.0 rather than reasoned about (research R2).
+      held.set(user, environmentId);
       const reply = await failable("connected:set", () =>
         commands.set(key(environmentId, user), "1", "PX", ttlMs, "NX"),
       );
@@ -242,8 +296,68 @@ export function createPresence({
       await publish(environmentId, user, "online", channelIds);
     },
 
-    async disconnected() {
-      // Phase 4, T049: re-pin the key, await it, then arm the grace check.
+    async disconnected(environmentId, user, channelIds) {
+      // The caller has already removed the connection AND established that no other
+      // local one remains — `session.ts` asks `registry.connectionsFor` for that.
+      // So dropping the refresh here is correct: this instance holds nothing for
+      // this user any more.
+      held.delete(user);
+      // The channel set is captured HERE, at the close, and held by the closure the
+      // check runs in. By the time it fires the connection is out of the registry.
+      // It is only ever used when nobody returned, in which case it is still right.
+      const channels = [...channelIds];
+
+      // RE-PIN, AND AWAIT IT BEFORE ARMING THE TIMER. Without the re-pin the key
+      // dies at `last_refresh + ttlMs`, which is up to `refreshMs` BEFORE the grace
+      // ends — and a reconnection in that gap wins `SET … NX` and publishes a second
+      // `online` for a user who never left (FR-007, research R2a). `XX` so it never
+      // resurrects a key that is already gone.
+      //
+      // The await is the other half: it puts the round trip inside the wait instead
+      // of racing the timer (research R2b).
+      await failable("disconnected:repin", () =>
+        commands.set(key(environmentId, user), "1", "PX", graceMs, "XX"),
+      );
+
+      const existing = pending.get(user);
+      if (existing) clearTimeout(existing);
+      const timer = setTimeout(() => {
+        pending.delete(user);
+        void (async () => {
+          // The key is absent only if no instance refreshed it for a whole window —
+          // which is the same question as "does anybody still hold a connection?",
+          // asked without a membership set. `docs/05-sad.md`'s `conn:{env}:{user}`
+          // is not needed for this (research R6).
+          const alive = await failable("grace:exists", () =>
+            commands.exists(key(environmentId, user)),
+          );
+          if (alive !== 0) {
+            logger.log("info", "presence.suppressed", {
+              user,
+              state: "offline",
+              reason: "a connection is still open somewhere",
+            });
+            return;
+          }
+          // Two instances whose last connections close in the same tick both find
+          // the key absent. `SET … NX` on a separate marker gives exactly one of
+          // them the right to speak.
+          const won = await failable("grace:elect", () =>
+            commands.set(marker(environmentId, user), "1", "PX", ttlMs, "NX"),
+          );
+          if (!wonTransition(won)) {
+            logger.log("info", "presence.suppressed", {
+              user,
+              state: "offline",
+              reason: "another instance published it",
+            });
+            return;
+          }
+          await publish(environmentId, user, "offline", channels);
+        })();
+      }, graceCheckDelay(graceMs, marginMs));
+      timer.unref();
+      pending.set(user, timer);
     },
 
     async subscribe(channelId) {
@@ -283,6 +397,16 @@ export function createPresence({
     },
 
     async close() {
+      // Cleared, or a suite standing up two instances leaks a timer into the next
+      // file. A draining instance also abandons its pending offlines — stated in
+      // the chapter rather than discovered: nothing publishes them, the key expires
+      // silently, and watchers hold a stale green circle until the subject next
+      // transitions. ADR-10 permits that; a reader should still be told.
+      clearInterval(refreshTimer);
+      for (const timer of pending.values()) clearTimeout(timer);
+      pending.clear();
+      held.clear();
+      seen.clear();
       subscriber.disconnect();
       commands.disconnect();
     },
