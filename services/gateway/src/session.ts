@@ -9,6 +9,7 @@ import {
   type Frame,
   type Message,
   isErrorCode,
+  type PresenceFabric,
 } from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -88,6 +89,8 @@ export interface SessionServerOptions {
 // more things to keep in step with `PresenceOptions`.
 //
 // eslint found this: they were declared, destructured, and used by nothing.
+// `presence` itself is declared on the interface above and destructured below, where
+// the delivery path and the two hook points consume it.
 
 export function attachSessions({
   server,
@@ -96,6 +99,7 @@ export function attachSessions({
   fanout,
   pingIntervalMs = PING_INTERVAL_MS,
   resumeDeadlineMs = SUBSCRIBE_DEADLINE_MS,
+  presence,
 }: SessionServerOptions): { registry: Registry; close: () => void } {
   const registry = new Registry();
 
@@ -126,6 +130,30 @@ export function attachSessions({
     }
   }
   fanout?.onDelivery(deliver);
+
+  /** A presence transition arriving from its own fabric.
+   *
+   * NOT `deliver`'s path, and the differences are the point. Presence carries no
+   * sequence, so it can neither duplicate a backfilled row nor leave a gap — which
+   * is why it consults neither `connection.phase` nor `connection.marks`. Buffering
+   * it during a resume would delay a frame for no benefit, and `suppressed()` takes
+   * a `Message`. A transition mid-resume is sent immediately.
+   *
+   * THE WIRE FRAME IS BUILT FROM TWO FIELDS. `transition` is the fabric's business
+   * and never leaves this function: what a client receives is what chapter 1.3
+   * published and `frames.test.ts` asserts. */
+  function deliverPresence(channelId: string, payload: PresenceFabric): void {
+    for (const connection of registry.subscribersOf(channelId)) {
+      // One frame per transition per connection, however many channels this
+      // connection shares with the subject (FR-012).
+      if (!presence?.claim(payload.transition, connection.id)) continue;
+      send(connection.socket, {
+        type: "presence.changed",
+        payload: { user: payload.user, state: payload.state },
+      });
+    }
+  }
+  presence?.onTransition(deliverPresence);
   // noServer: the upgrade is handled by hand so the token can be checked
   // BEFORE the handshake completes. Letting ws own the upgrade would mean
   // rejecting a socket that already exists (EIR-WS-05 wants the close code
@@ -219,9 +247,21 @@ export function attachSessions({
     // makes this instance a subscriber, and the last one to leave releases
     // it (reference-counted in the fabric).
     const subscribing = Promise.all(
-      [...connection.channelIds].map((channelId) =>
+      [...connection.channelIds].flatMap((channelId) => [
         fanout?.subscribe(channelId),
-      ),
+        // Presence has its own subject per channel, so a channel now
+        // carries two subscriptions. `ioredis` takes a variadic `subscribe`, so the
+        // count doubles and the round trips do not.
+        presence?.subscribe(channelId),
+      ]),
+    );
+    // AFTER `registry.add`, so "is this the user's first connection here?" is asked
+    // of a registry that already contains it. The close handler needs the opposite
+    // and gets it three lines apart — see the note there.
+    void presence?.connected(
+      identity.environmentId,
+      identity.userExternalId,
+      connection.channelIds,
     );
     logger.log("info", "connection.opened", {
       connection_id: connection.id,

@@ -34,8 +34,10 @@ describe("presenceFabricSchema", () => {
   });
 
   it("rejects a payload with no transition", () => {
-    const { transition: _omitted, ...withoutTransition } = valid;
-    expect(presenceFabricSchema.safeParse(withoutTransition).success).toBe(false);
+    expect(
+      presenceFabricSchema.safeParse({ user: valid.user, state: valid.state })
+        .success,
+    ).toBe(false);
   });
 
   // `strictObject` rather than `object`. A field added on one side of a rolling
