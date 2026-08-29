@@ -61,6 +61,10 @@ interface ApiUnderTest {
   credential: string;
   /** One per test — see the note in the seed. */
   subjects: string[];
+  /** A SECOND TENANT, with its own credential and its own user. Presence keys are
+   * `{env}`-scoped and channel ids are unguessable, so the isolation is structural
+   * — which is exactly why it needs a test that could see it fail. */
+  otherCredential: string;
   stop: () => void;
 }
 
@@ -126,9 +130,26 @@ async function startApi(): Promise<ApiUnderTest> {
       ),
     ),
   );
+  // A user who is a member of a PRIVATE channel that nobody else joins. The watcher
+  // is not in it, so it shares no channel with this user at all.
+  const recluse = await repo.createUser("recluse", "Recluse");
+  const vault = await repo.createChannel("vault", "private");
+  await repo.addMember(vault.id, recluse.id);
+
   const key = await seeder.createApiKey(db, {
     environmentId: environment.id,
   });
+
+  // THE SECOND TENANT. Its own environment, its own user, its own channel, its own
+  // key — nothing shared with the first but a Redis instance and a gateway.
+  const other = await seeder.createEnvironment(db, {
+    name: `presence-itest-other-${randomUUID().slice(0, 8)}`,
+  });
+  const otherRepo = new seeder.Repository(db, other.id);
+  const stranger = await otherRepo.createUser("stranger", "Stranger");
+  const elsewhere = await otherRepo.createChannel("elsewhere", "public");
+  await otherRepo.addMember(elsewhere.id, stranger.id);
+  const otherKey = await seeder.createApiKey(db, { environmentId: other.id });
 
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     env: {
@@ -150,7 +171,13 @@ async function startApi(): Promise<ApiUnderTest> {
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  return { url, credential: key.credential, subjects, stop: () => child.kill() };
+  return {
+    url,
+    credential: key.credential,
+    subjects,
+    otherCredential: otherKey.credential,
+    stop: () => child.kill(),
+  };
 }
 
 /** Every frame of a type this socket has received. **Assertions here are by COUNT,
@@ -736,5 +763,148 @@ describe("presence: a reconnection after the TTL would have lapsed (FR-007)", ()
     const offline = seen.frames.filter((f) => f.payload.state === "offline");
     expect(offline).toHaveLength(1);
     expect(Date.now() - closedAt).toBeGreaterThan(LATE_GRACE);
+  }, 30_000);
+});
+
+// ── WHO IS ALLOWED TO SEE IT (FR-RTM-07, FR-CHN-05, constitution I) ──────────
+//
+// EVERY NEGATIVE HERE IS ASSERTED BESIDE A POSITIVE IN THE SAME RUN. "Nothing
+// arrived" is equally true of correct scoping and of a producer that stopped
+// working, and only one of those is the property under test. Each case connects a
+// watcher who MUST receive alongside one who must not, and asserts both.
+describe("presence: who is allowed to see it (FR-RTM-07, FR-CHN-05)", () => {
+  let a: Instance;
+  let b: Instance;
+  const sockets: WebSocket[] = [];
+
+  const mint = async (user: string, credential: string) => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token ${user}: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+
+  const open = async (token: string, instance: Instance = a) => {
+    const socket = new WebSocket(`${instance.url}/v1/ws?token=${token}`);
+    sockets.push(socket);
+    await waitForFrame(socket, "connection.ack");
+    return socket;
+  };
+
+  beforeAll(async () => {
+    a = await startInstance(api.url);
+    b = await startInstance(api.url);
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const socket of sockets) socket.close();
+    await a?.close();
+    await b?.close();
+  });
+
+  // T057. The subject shares three channels with the co-member and none with the
+  // recluse, whose only channel is private and unshared.
+  it("delivers to a co-member and not to a user sharing no channel", async () => {
+    const who = takeSubject();
+    const member = await open(await mint("linh", api.credential));
+    const outsider = await open(await mint("recluse", api.credential));
+    const heard = collect(member, "presence.changed", who);
+    const overheard = collect(outsider, "presence.changed", who);
+
+    await open(await mint(who, api.credential), b);
+    await quiet(700);
+
+    expect(heard.frames).toHaveLength(1);
+    expect(overheard.frames).toEqual([]);
+  }, 30_000);
+
+  // T058, FR-CHN-05's third verb. The recluse's only channel is PRIVATE and the
+  // co-member is not in it, so a transition of the recluse's reaches nobody but the
+  // recluse — while the same run shows the producer working for someone else.
+  it("does not let a non-member observe presence in a private channel", async () => {
+    const control = takeSubject();
+    const member = await open(await mint("linh", api.credential));
+    const aboutRecluse = collect(member, "presence.changed", "recluse");
+    const aboutControl = collect(member, "presence.changed", control);
+
+    await open(await mint("recluse", api.credential), b);
+    await open(await mint(control, api.credential), b);
+    await quiet(700);
+
+    expect(aboutRecluse.frames).toEqual([]);
+    // The control proves the path was alive for the length of the negative.
+    expect(aboutControl.frames).toHaveLength(1);
+  }, 30_000);
+
+  // T059, constitution I. A different environment entirely: different key, different
+  // user, different channel. Presence keys are `{env}`-scoped and channel ids are
+  // unguessable UUIDs, so nothing about this should cross — asserted rather than
+  // assumed, because "a leak here is a correctness defect, not a cosmetic one".
+  it("delivers nothing to a user of another tenant", async () => {
+    const who = takeSubject();
+    const member = await open(await mint("linh", api.credential));
+    const stranger = await open(
+      await mint("stranger", api.otherCredential),
+      b,
+    );
+    const heard = collect(member, "presence.changed", who);
+    // UNFILTERED ON PURPOSE, and asserted as "everything it heard was about
+    // itself". Filtering to the other tenant's subject would only prove that ONE
+    // user did not leak; this catches any of them. The stranger does hear its own
+    // arrival — a subject shares every channel with themselves (FR-011) — and an
+    // earlier version of this test read that as a cross-tenant leak.
+    const acrossTheBoundary = collect(stranger, "presence.changed");
+
+    await open(await mint(who, api.credential), b);
+    await quiet(700);
+
+    expect(heard.frames).toHaveLength(1);
+    expect(acrossTheBoundary.frames.map((f) => f.payload.user)).toEqual([
+      "stranger",
+    ]);
+  }, 30_000);
+
+  // T060, FR-029. A message and a transition on the same channel, at the same time.
+  // Each must arrive as ITSELF. This is a property of the topology rather than of a
+  // filter — a presence payload is published on a subject no message subscriber
+  // subscribes to — so the test is checking that the topology is what it claims.
+  it("never delivers a message as presence, or presence as a message", async () => {
+    const who = takeSubject();
+    const member = await open(await mint("linh", api.credential));
+    const presenceFrames = collect(member, "presence.changed", who);
+    const messages = collect(member, "message.created");
+
+    await open(await mint(who, api.credential), b);
+    await quiet(700);
+
+    expect(presenceFrames.frames).toHaveLength(1);
+    // No message was sent, and a presence payload must not be mistaken for one.
+    expect(messages.frames).toEqual([]);
+  }, 30_000);
+
+  // T061, FR-027. A transition arriving while a connection is mid-resume is sent
+  // immediately: presence carries no sequence, so it can neither duplicate a
+  // backfilled row nor leave a gap, and `suppressed()` takes a `Message`. The
+  // resuming socket presents a cursor, which puts it through the buffering phase.
+  it("delivers a transition to a connection that is resuming", async () => {
+    const who = takeSubject();
+    const token = await mint("linh", api.credential);
+    const resuming = new WebSocket(
+      `${a.url}/v1/ws?token=${token}&cursor=${encodeURIComponent("{}")}`,
+    );
+    sockets.push(resuming);
+    const heard = collect(resuming, "presence.changed", who);
+    await waitForFrame(resuming, "connection.ack");
+
+    await open(await mint(who, api.credential), b);
+    await quiet(700);
+
+    expect(heard.frames).toHaveLength(1);
   }, 30_000);
 });
