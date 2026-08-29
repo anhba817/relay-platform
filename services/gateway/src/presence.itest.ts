@@ -4,7 +4,6 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { createLogger, serve, type Logger } from "@relay/service-kit";
@@ -13,7 +12,8 @@ import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createApiClient } from "./api-client.js";
-import { createFanout, type Fanout } from "./fanout.js";
+import { createFanout } from "./fanout.js";
+import { createPresence, type PresenceOptions } from "./presence.js";
 import { attachSessions } from "./session.js";
 
 // CHAPTER 3.19, PHASE 1 — THE FAILING STATE, OBSERVED.
@@ -140,11 +140,56 @@ function waitForFrame(
   });
 }
 
+/** One gateway instance: its own server, its own fabric clients, its own
+ * `Presence`. Two of these on one Redis is what the cross-instance cases need,
+ * and **no existing gateway suite stands up two at once** — `fanout.itest.ts`
+ * does it at the fabric level with two `createFanout` clients and no sessions,
+ * and every other file builds exactly one `attachSessions` inside its own
+ * describe. So this is new harness rather than a pattern to copy.
+ *
+ * `presence` is INJECTED already built, the way `fanout` and `limits` are, which
+ * is why a test that wants a hundred-millisecond grace period passes those
+ * timings to `createPresence` here rather than to `attachSessions`. */
+interface Instance {
+  url: string;
+  close: () => Promise<void>;
+}
+
+async function startInstance(
+  apiUrl: string,
+  presenceOptions: Partial<PresenceOptions> = {},
+): Promise<Instance> {
+  const fanout = createFanout({ logger: silent });
+  const presence = createPresence({ logger: silent, ...presenceOptions });
+  const server = serve({
+    service: "gateway",
+    health: () => ({}),
+    logger: silent,
+    notFoundDocsUrl: docsUrl("not_found"),
+  });
+  const sessions = attachSessions({
+    server,
+    api: createApiClient(apiUrl),
+    logger: silent,
+    fanout,
+    presence,
+  });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  return {
+    url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    close: async () => {
+      await sessions.close();
+      await fanout.close();
+      await presence.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
 describe("presence: a member sees a co-member arrive (FR-RTM-05, FR-RTM-06)", () => {
   let api: ApiUnderTest;
-  let server: Server;
-  let fanout: Fanout;
-  let url: string;
+  let a: Instance;
+  let b: Instance;
   const sockets: WebSocket[] = [];
 
   const mintToken = async (user: string) => {
@@ -160,35 +205,25 @@ describe("presence: a member sees a co-member arrive (FR-RTM-05, FR-RTM-06)", ()
     return ((await res.json()) as { token: string }).token;
   };
 
-  const connect = (token: string) => {
-    const socket = new WebSocket(`${url}/v1/ws?token=${token}`);
+  const connect = (token: string, instance: Instance = a) => {
+    const socket = new WebSocket(`${instance.url}/v1/ws?token=${token}`);
     sockets.push(socket);
     return socket;
   };
 
   beforeAll(async () => {
     api = await startApi();
-    fanout = createFanout({ logger: silent });
-    server = serve({
-      service: "gateway",
-      health: () => ({}),
-      logger: silent,
-      notFoundDocsUrl: docsUrl("not_found"),
-    });
-    attachSessions({
-      server,
-      api: createApiClient(api.url),
-      logger: silent,
-      fanout,
-    });
-    await new Promise<void>((resolve) => server.listen(0, resolve));
-    url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    // TWO INSTANCES ON ONE REDIS — same code, same fabric, no knowledge of each
+    // other, which is chapter 2.6's phrase for the only property a single-process
+    // test cannot show. Instance A hosts the watcher; B hosts the subject.
+    a = await startInstance(api.url);
+    b = await startInstance(api.url);
   }, 60_000);
 
   afterAll(async () => {
     for (const socket of sockets) socket.close();
-    await fanout?.close();
-    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    await a?.close();
+    await b?.close();
     api?.stop();
   });
 
@@ -196,7 +231,10 @@ describe("presence: a member sees a co-member arrive (FR-RTM-05, FR-RTM-06)", ()
     const watcher = connect(await mintToken("linh"));
     await waitForFrame(watcher, "connection.ack");
 
-    const subject = connect(await mintToken("tuan"));
+    // The subject connects to the OTHER instance: presence that only worked
+    // in-process would pass a single-instance version of this test and fail the
+    // one property the fabric exists for.
+    const subject = connect(await mintToken("tuan"), b);
     await waitForFrame(subject, "connection.ack");
 
     const frame = (await waitForFrame(watcher, "presence.changed")) as {

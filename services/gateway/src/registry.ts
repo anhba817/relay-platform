@@ -90,6 +90,20 @@ export class Registry {
     return [...this.byId.values()].filter((c) => c.channelIds.has(channelId));
   }
 
+  /** Chapter 3.19. Every local connection this user holds — the question presence
+   * asks at a close: "was that the last one on this instance?"
+   *
+   * A FILTER RATHER THAN A SECOND INDEX. `subscribersOf` above is the same shape
+   * for the same reason: one instance's connection set is small, and a second map
+   * is a second thing to keep correct at `add` and `remove`. The cross-instance
+   * half of this question is not asked here at all — Redis answers it, because
+   * this file's whole point since 2.5 is that it cannot see other instances. */
+  connectionsFor(userExternalId: string): Connection[] {
+    return [...this.byId.values()].filter(
+      (c) => c.identity.userExternalId === userExternalId,
+    );
+  }
+
   all(): Connection[] {
     return [...this.byId.values()];
   }

@@ -19,6 +19,7 @@ import { authenticate, type Identity } from "./auth.js";
 import type { Fanout } from "./fanout.js";
 import type { Decision, GatewayLimits } from "./limits.js";
 import { createMeter, METER_INTERVAL_MS, type Meter } from "./meter.js";
+import { type Presence } from "./presence.js";
 import { Registry, type Connection } from "./registry.js";
 import {
   MAX_BUFFERED_FRAMES,
@@ -143,7 +144,24 @@ export interface SessionServerOptions {
    * unmetered one. `main.ts` always supplies the interval; the meter itself is
    * built here so its timer has the same owner as the heartbeat's. */
   meterIntervalMs?: number;
+  /** Chapter 3.19. Optional for the same reason `fanout`, `limits` and the meter
+   * are: 2.5's tests and a single-process dev run have no Redis, and a socket
+   * server that refused to start without one would be a worse default than a
+   * presence-less one. `main.ts` always supplies it. */
+  presence?: Presence;
 }
+
+// THE FOUR PRESENCE TIMINGS ARE NOT HERE, and an earlier draft of this chapter put
+// them here. `meterIntervalMs` is a session option because `attachSessions` BUILDS
+// the meter; `fanout`, `limits` and `presence` are injected already built, and an
+// injected thing carries its own configuration. A test that wants a hundred-
+// millisecond grace period constructs `createPresence({ graceMs: 100, … })` and
+// injects that, the way the fan-out's tests already do. Four options that only
+// forwarded values would be four more things to keep in step with `PresenceOptions`.
+//
+// eslint found this: they were declared, destructured, and used by nothing.
+// `presence` itself is declared on the interface above and destructured in phase 3,
+// where the delivery path and the two hook points consume it — for the same reason.
 
 export function attachSessions({
   server,
