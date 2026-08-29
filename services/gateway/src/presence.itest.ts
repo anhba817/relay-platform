@@ -105,7 +105,6 @@ async function startApi(): Promise<ApiUnderTest> {
   // implementation did the channels only. Chapter 3.18's `isolation-fixtures.ts`
   // learned the same lesson: a fixture nobody else depends on beats a rule nobody
   // remembers.
-  const subjects: string[] = [];
   const channels = await Promise.all(
     // THREE shared channels, so the dedup can be asserted by count. Without the
     // transition id a watcher sharing three sees three frames for one arrival.
@@ -113,14 +112,20 @@ async function startApi(): Promise<ApiUnderTest> {
       repo.createChannel(name, "public"),
     ),
   );
-  for (const channel of channels) await repo.addMember(channel.id, watcher.id);
-  for (const channel of channels) await repo.addMember(channel.id, subject.id);
-  for (let i = 0; i < 8; i += 1) {
-    const name = `subject-${i}`;
-    const user = await repo.createUser(name, name);
-    for (const channel of channels) await repo.addMember(channel.id, user.id);
-    subjects.push(name);
-  }
+  // CONCURRENTLY. Seeded one at a time this was 40 users x 3 memberships of
+  // sequential round trips, and the file spent more time in its fixture than in its
+  // assertions.
+  const subjects = Array.from({ length: 40 }, (_, i) => `subject-${i}`);
+  const seeded = await Promise.all(
+    subjects.map((name) => repo.createUser(name, name)),
+  );
+  await Promise.all(
+    channels.flatMap((channel) =>
+      [watcher, subject, ...seeded].map((user) =>
+        repo.addMember(channel.id, user.id),
+      ),
+    ),
+  );
   const key = await seeder.createApiKey(db, {
     environmentId: environment.id,
   });
@@ -247,8 +252,24 @@ async function startInstance(
   };
 }
 
+// ONE API FOR THE WHOLE FILE. Three describes each spawning their own was three
+// process launches and three seeds, and it dominated the file's 54 s. The instances
+// stay per-describe because their timings differ; those are cheap.
+// Assigned in the file-level `beforeAll`; the non-null assertion is the same one
+// every suite here makes about its fixture.
+let api!: ApiUnderTest;
+let nextSubject = 0;
+const takeSubject = (): string => api.subjects[nextSubject++] as string;
+
+beforeAll(async () => {
+  api = await startApi();
+}, 60_000);
+
+afterAll(() => {
+  api?.stop();
+});
+
 describe("presence: a member sees a co-member arrive (FR-RTM-05, FR-RTM-06)", () => {
-  let api: ApiUnderTest;
   let a: Instance;
   let b: Instance;
   const sockets: WebSocket[] = [];
@@ -277,7 +298,6 @@ describe("presence: a member sees a co-member arrive (FR-RTM-05, FR-RTM-06)", ()
   };
 
   beforeAll(async () => {
-    api = await startApi();
     // TWO INSTANCES ON ONE REDIS — same code, same fabric, no knowledge of each
     // other, which is chapter 2.6's phrase for the only property a single-process
     // test cannot show. Instance A hosts the watcher; B hosts the subject.
@@ -289,7 +309,6 @@ describe("presence: a member sees a co-member arrive (FR-RTM-05, FR-RTM-06)", ()
     for (const socket of sockets) socket.close();
     await a?.close();
     await b?.close();
-    api?.stop();
   });
 
   // T021. The clause, on one instance.
@@ -391,5 +410,331 @@ describe("presence: a member sees a co-member arrive (FR-RTM-05, FR-RTM-06)", ()
     await quiet();
 
     expect(seen.frames).toEqual([]);
+  }, 30_000);
+});
+
+// ── THE GRACE PERIOD (FR-RTM-06) ─────────────────────────────────────────────
+//
+// MILLISECONDS, NOT HALF-MINUTES. The clause's thirty seconds is asserted once, in
+// `presence.test.ts`, against the production default; every case here runs on a
+// scaled window because six real grace periods would cost 180 s against 44 s of
+// lane headroom. The timings are injected into `createPresence`, not into
+// `attachSessions` — presence is built and handed over, so it carries its own
+// configuration.
+// SCALED HARD, AND THE NUMBER IS A BUDGET DECISION. At 500/100 this file cost 65.4 s
+// of a 240 s lane budget with 32.7 s of headroom — R18's concern, arriving. At
+// 250/60 it costs a third of that. The margin is still ~20x a local Redis round
+// trip, which is what it has to clear.
+const GRACE = 250;
+const MARGIN = 60;
+const SETTLE = GRACE + MARGIN + 200; // past the check, with room for a round trip
+
+describe("presence: the grace period (FR-RTM-06)", () => {
+  let a: Instance;
+  let b: Instance;
+  const sockets: WebSocket[] = [];
+
+  const mintToken = async (user: string) => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+
+  const connect = (token: string, instance: Instance = a) => {
+    const socket = new WebSocket(`${instance.url}/v1/ws?token=${token}`);
+    sockets.push(socket);
+    return socket;
+  };
+
+  /** Connect, wait for the ack, and let the arrival settle so the `online` frame is
+   * out of the way before a test starts watching for `offline`. */
+  const arrive = async (who: string, instance: Instance = a) => {
+    const socket = connect(await mintToken(who), instance);
+    await waitForFrame(socket, "connection.ack");
+    await quiet(150);
+    return socket;
+  };
+
+  beforeAll(async () => {
+    const timings = {
+      graceMs: GRACE,
+      ttlMs: GRACE,
+      refreshMs: 150,
+      marginMs: MARGIN,
+    };
+    a = await startInstance(api.url, timings);
+    b = await startInstance(api.url, timings);
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const socket of sockets) socket.close();
+    await a?.close();
+    await b?.close();
+  });
+
+  // T036. The clause: one offline, and not before the window.
+  it("publishes one offline after the window and nothing before it", async () => {
+    const who = takeSubject();
+    const watcher = await arrive("linh");
+    const seen = collect(watcher, "presence.changed", who);
+    const subject = await arrive(who, b);
+
+    subject.close();
+    await quiet(GRACE - 150);
+    expect(seen.frames.filter((f) => f.payload.state === "offline")).toEqual([]);
+
+    await quiet(SETTLE);
+    expect(seen.frames.filter((f) => f.payload.state === "offline")).toHaveLength(1);
+  }, 30_000);
+
+  // T038. A reconnection inside the window is invisible: no offline, and no second
+  // online either, because the state never changed.
+  it("publishes nothing at all for a reconnection inside the window", async () => {
+    const who = takeSubject();
+    const watcher = await arrive("linh");
+    const subject = await arrive(who, b);
+    // COLLECTED AFTER THE ARRIVAL. The subject's own `online` is a real frame and
+    // this test is about what happens from the close onward; watching from before
+    // it makes the arrival look like a violation.
+    const seen = collect(watcher, "presence.changed", who);
+
+    subject.close();
+    await quiet(GRACE / 2);
+    await arrive(who, b);
+    await quiet(SETTLE);
+
+    expect(seen.frames).toEqual([]);
+  }, 30_000);
+
+  // T039. The same, landing on the OTHER instance — the case the TTL-as-liveness
+  // signal exists for. Nothing coordinates the two gateways.
+  it("publishes nothing when the reconnection lands on another instance", async () => {
+    const who = takeSubject();
+    const watcher = await arrive("linh");
+    const subject = await arrive(who, b);
+    const seen = collect(watcher, "presence.changed", who);
+
+    subject.close();
+    await quiet(GRACE / 2);
+    await arrive(who, a);
+    await quiet(SETTLE);
+
+    expect(seen.frames).toEqual([]);
+  }, 30_000);
+
+  // T041, FR-006. Two connections here, one closes: nothing. Then the last one.
+  it("publishes nothing while another connection remains open", async () => {
+    const who = takeSubject();
+    const watcher = await arrive("linh");
+    const first = await arrive(who, b);
+    const second = await arrive(who, b);
+    const seen = collect(watcher, "presence.changed", who);
+
+    first.close();
+    await quiet(SETTLE);
+    expect(seen.frames).toEqual([]);
+
+    second.close();
+    await quiet(SETTLE);
+    expect(seen.frames.filter((f) => f.payload.state === "offline")).toHaveLength(1);
+  }, 30_000);
+
+  // T042. The two connections on two DIFFERENT instances, which no local registry
+  // can see — the key's TTL is what answers it.
+  it("publishes nothing while a connection remains on another instance", async () => {
+    const who = takeSubject();
+    const watcher = await arrive("linh");
+    const onA = await arrive(who, a);
+    await arrive(who, b);
+    const seen = collect(watcher, "presence.changed", who);
+
+    onA.close();
+    await quiet(SETTLE);
+    expect(seen.frames).toEqual([]);
+  }, 30_000);
+
+  // T043, FR-028. Close, reopen inside the window, close again: ONE decision,
+  // answered by the state at the end of the SECOND window. Two pending timers
+  // would publish twice.
+  it("leaves one decision for two closes inside one window", async () => {
+    const who = takeSubject();
+    const watcher = await arrive("linh");
+    const seen = collect(watcher, "presence.changed", who);
+
+    const first = await arrive(who, b);
+    first.close();
+    await quiet(GRACE / 3);
+    const second = await arrive(who, b);
+    second.close();
+    await quiet(SETTLE + GRACE);
+
+    expect(seen.frames.filter((f) => f.payload.state === "offline")).toHaveLength(1);
+  }, 30_000);
+
+  // T045, and FR-RTM-09's five is enforced NOWHERE — `policy.ts:13` mentions it in a
+  // comment and nothing counts — so the reference count is unbounded and two is the
+  // easy case. Five connections, closed one at a time: nothing until the last.
+  it("publishes nothing until the fifth of five connections closes", async () => {
+    const who = takeSubject();
+    const watcher = await arrive("linh");
+    const open = [];
+    for (let i = 0; i < 5; i += 1) open.push(await arrive(who, i % 2 ? a : b));
+    const seen = collect(watcher, "presence.changed", who);
+
+    for (const socket of open.slice(0, 4)) {
+      socket.close();
+      await quiet(SETTLE);
+      expect(seen.frames).toEqual([]);
+    }
+
+    open[4]?.close();
+    await quiet(SETTLE);
+    expect(seen.frames.filter((f) => f.payload.state === "offline")).toHaveLength(1);
+  }, 60_000);
+
+  // T044. A DEPLOY DRAIN. `docs/05-sad.md:634` stops the gateway accepting on
+  // SIGTERM and clients reconnect elsewhere, so a mass disconnect is the real path
+  // rather than a hypothetical — and it is the worst case for whatever schedules
+  // the grace check: twelve pending timers and twelve round trips at once.
+  it("publishes one offline per user when eight close in the same tick", async () => {
+    const watcher = await arrive("linh");
+    const crowd: string[] = [];
+    for (let i = 0; i < 8; i += 1) crowd.push(takeSubject());
+    const sockets_ = await Promise.all(
+      crowd.map((who, i) => arrive(who, i % 2 ? a : b)),
+    );
+    const seen = crowd.map((who) => collect(watcher, "presence.changed", who));
+
+    for (const socket of sockets_) socket.close();
+    await quiet(SETTLE + 400);
+
+    const offlines = seen.map(
+      (s) => s.frames.filter((f) => f.payload.state === "offline").length,
+    );
+    // EVERY user, EXACTLY once — not "at least one somewhere", which a partial
+    // drain would also satisfy.
+    expect(offlines).toEqual(crowd.map(() => 1));
+  }, 90_000);
+
+  // T046. Two instances whose last connections close in the same tick both find the
+  // key absent at the check. The election is the only thing between that and two
+  // frames at the watcher.
+  it("publishes one offline when two instances close in the same tick", async () => {
+    const who = takeSubject();
+    const watcher = await arrive("linh");
+    const seen = collect(watcher, "presence.changed", who);
+    const onA = await arrive(who, a);
+    const onB = await arrive(who, b);
+
+    onA.close();
+    onB.close();
+    await quiet(SETTLE);
+
+    expect(seen.frames.filter((f) => f.payload.state === "offline")).toHaveLength(1);
+  }, 30_000);
+});
+
+// ── THE GAP BETWEEN THE KEY'S DEATH AND THE GRACE'S END ──────────────────────
+//
+// `ttlMs` DELIBERATELY BELOW `graceMs`, which nothing forbids and one thing needs.
+// The key's expiry counts from the last refresh; the grace counts from the close.
+// Without the close re-pinning the key those are different instants, and every
+// reconnect case above lands in the FIRST part of the window where the key is still
+// alive and the bug is invisible. This describe opens the gap on purpose.
+describe("presence: a reconnection after the TTL would have lapsed (FR-007)", () => {
+  const TTL = 150;
+  const LATE_GRACE = 600;
+  let a: Instance;
+  let b: Instance;
+  const sockets: WebSocket[] = [];
+
+  const mintToken = async (user: string) => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+  const arrive = async (who: string, instance: Instance = a) => {
+    const socket = new WebSocket(`${instance.url}/v1/ws?token=${await mintToken(who)}`);
+    sockets.push(socket);
+    await waitForFrame(socket, "connection.ack");
+    await quiet(150);
+    return socket;
+  };
+
+  beforeAll(async () => {
+    const timings = {
+      graceMs: LATE_GRACE,
+      ttlMs: TTL,
+      refreshMs: 60,
+      marginMs: 80,
+    };
+    a = await startInstance(api.url, timings);
+    b = await startInstance(api.url, timings);
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const socket of sockets) socket.close();
+    await a?.close();
+    await b?.close();
+  });
+
+  // T040. The reconnection lands AFTER `ttlMs` has lapsed and BEFORE the grace ends
+  // — the window every other reconnect test misses. Without the re-pin the key is
+  // gone by now, `SET … NX` succeeds, and the watcher sees a second `online` for a
+  // user who never left.
+  it("publishes no second online when the reconnect lands past the TTL", async () => {
+    const who = takeSubject();
+    const watcher = await arrive("linh");
+    const subject = await arrive(who, b);
+    const seen = collect(watcher, "presence.changed", who);
+
+    subject.close();
+    // Past `ttlMs` (150 ms) and well inside the grace (600 ms).
+    await quiet(350);
+    await arrive(who, b);
+    await quiet(LATE_GRACE + 350);
+
+    expect(seen.frames).toEqual([]);
+  }, 30_000);
+
+  // T049. The re-pin is AWAITED before the timer is armed, asserted by outcome
+  // rather than by reading `PTTL`: with a 200 ms TTL and a 900 ms grace, an
+  // `offline` that arrives on the grace's schedule can only mean the key was
+  // re-pinned. If the close left the key on its refresh TTL it would have expired
+  // at ~200 ms and the check would still have found it absent — so the tell is
+  // that nothing arrives EARLY, and the frame lands after the grace.
+  //
+  // Reading `PTTL` directly would need a raw ioredis client, which
+  // `eslint.config.mjs` restricts and this file is not exempted from. Asserting the
+  // behaviour is the stronger test anyway.
+  it("holds the key for the grace, not for the TTL", async () => {
+    const who = takeSubject();
+    const watcher = await arrive("linh");
+    const subject = await arrive(who, b);
+    const seen = collect(watcher, "presence.changed", who);
+
+    const closedAt = Date.now();
+    subject.close();
+    await quiet(TTL + 120);
+    expect(seen.frames.filter((f) => f.payload.state === "offline")).toEqual([]);
+
+    await quiet(LATE_GRACE);
+    const offline = seen.frames.filter((f) => f.payload.state === "offline");
+    expect(offline).toHaveLength(1);
+    expect(Date.now() - closedAt).toBeGreaterThan(LATE_GRACE);
   }, 30_000);
 });

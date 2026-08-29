@@ -445,6 +445,31 @@ export function attachSessions({
       // would turn one event into a burst of HTTP requests.
       meter?.closed(connection, new Date());
       registry.remove(connection.id);
+      // Chapter 3.19, AND THIS HANDLER NOW CARRIES THREE ORDERING CONSTRAINTS, not
+      // one. The meter is told BEFORE `registry.remove` — a socket that opened and
+      // closed between two reports would otherwise be counted zero, which is the one
+      // thing the wall-clock-minute unit was chosen to charge. Presence is told
+      // AFTER it, because it asks whether this was the user's last connection on
+      // this instance and must not count the one that is leaving. The unsubscribes
+      // come last.
+      //
+      // Swapping the two lines above is not a style change: with the order reversed
+      // the local count is 1 rather than 0, no grace check is ever scheduled, and
+      // the user never goes offline. A test asserts the scheduling for that reason.
+      // ONLY WHEN IT WAS THE LAST ONE ON THIS INSTANCE. `connectionsFor` is asked
+      // AFTER the removal above, so the closing connection is not counted — which
+      // is the whole reason the two lines are in this order. Closing one of two
+      // must publish nothing (FR-006), and the cross-instance half of the question
+      // is Redis's to answer, not this registry's.
+      if (
+        registry.connectionsFor(connection.identity.userExternalId).length === 0
+      ) {
+        void presence?.disconnected(
+          connection.identity.environmentId,
+          connection.identity.userExternalId,
+          connection.channelIds,
+        );
+      }
       // Releasing a subscription can fail — a broker that went away, or a
       // fabric already closed while sockets were still draining — and a
       // close handler is the last place that should throw. The subscribe
@@ -452,14 +477,24 @@ export function attachSessions({
       // unhandled rejection during teardown is how chapter 2.8's lane found
       // out. Nothing to recover: the connection is gone either way.
       void Promise.all(
-        [...connection.channelIds].map((channelId) =>
+        [...connection.channelIds].flatMap((channelId) => [
           fanout?.unsubscribe(channelId).catch((error: unknown) => {
             logger.log("error", "fanout.unsubscribe_failed", {
               channel: channelId,
               error: String(error),
             });
           }),
-        ),
+          // Inside the same swallowing wrapper, because a close handler is the last
+          // place that should throw — chapter 2.8's lane found the unhandled
+          // rejection on the fan-out's release path for exactly this reason.
+          presence?.unsubscribe(channelId).catch((error: unknown) => {
+            logger.log("error", "presence.failed", {
+              op: "unsubscribe",
+              channel: channelId,
+              error: String(error),
+            });
+          }),
+        ]),
       );
       logger.log("info", "connection.closed", {
         connection_id: connection.id,
