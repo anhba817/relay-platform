@@ -16,6 +16,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { ApiError, type ApiClient } from "./api-client.js";
 import { authenticate, type Identity } from "./auth.js";
 import type { Fanout } from "./fanout.js";
+import { type Presence } from "./presence.js";
 import { Registry, type Connection } from "./registry.js";
 import {
   MAX_BUFFERED_FRAMES,
@@ -71,7 +72,22 @@ export interface SessionServerOptions {
    * (chapter 2.7): the degrade branch is a contract, and a test should not
    * have to sit through half a second to see it. */
   resumeDeadlineMs?: number;
+  /** Optional for the same reason `fanout` is: the socket chapter's tests and a
+   * single-process dev run have no Redis, and a socket server that refused to start
+   * without one would be a worse default than a presence-less one. `main.ts` always
+   * supplies it, so the optionality is a test affordance rather than a deployment
+   * mode. */
+  presence?: Presence;
 }
+
+// THE FOUR PRESENCE TIMINGS ARE NOT HERE, and an earlier draft of this chapter put
+// them here. `fanout` and `presence` are INJECTED already built, and an injected thing
+// carries its own configuration: a test that wants a hundred-millisecond grace period
+// constructs `createPresence({ graceMs: 100, … })` and injects that, the way the
+// fan-out's tests already do. Four options that only forwarded values would be four
+// more things to keep in step with `PresenceOptions`.
+//
+// eslint found this: they were declared, destructured, and used by nothing.
 
 export function attachSessions({
   server,

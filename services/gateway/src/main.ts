@@ -3,6 +3,7 @@ import { createLogger, serve, type Logger } from "@relay/service-kit";
 
 import { createApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
+import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
 
 // The gateway — SAD §4.1: terminates WebSockets and never writes to the
@@ -34,15 +35,23 @@ export function createServer(logger?: Logger) {
   // here, and no instance knows how many others exist (ADR-07). Scaling
   // out is adding a process.
   const fanout = createFanout({ logger: log });
+  // THE THIRD AND FOURTH REDIS CLIENTS, and the reason is the fan-out's verbatim: a
+  // connection in subscribe mode cannot run `SET` or `EXISTS`, so presence needs a
+  // subscriber and a command client of its own. Created here rather than inside
+  // `attachSessions` so the tests that call that function directly stay Redis-free,
+  // and so its close has an owner.
+  const presence = createPresence({ logger: log });
   const sessions = attachSessions({
     server,
     api: createApiClient(process.env.RELAY_API_URL ?? DEFAULT_API_URL),
     logger: log,
     fanout,
+    presence,
   });
   server.on("close", () => {
     sessions.close();
     void fanout.close();
+    void presence.close();
   });
   return server;
 }
