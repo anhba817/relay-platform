@@ -88,6 +88,15 @@ const DRIVER_EXEMPT_TESTS = [
   // compares response bodies and a publish is a second output channel.
   "services/api/src/fanout/fanout.itest.ts",
   "services/api/src/messages/history.itest.ts",
+  // Chapter 3.19, and it is 3.18's argument in the other direction. The presence
+  // fabric's receive half has two rejection paths — a body that is not JSON, and a
+  // body that is JSON and not a transition — and neither can be reached through
+  // `createPresence`, which only ever publishes payloads its own schema produced.
+  // Putting arbitrary bytes on `presence:{channel_id}` needs a client that belongs to
+  // neither module, exactly as checking what reaches `chan:{id}` did.
+  //
+  // A `publish` and nothing else: this file reads no key and composes none.
+  "services/gateway/src/presence.itest.ts",
 ];
 
 

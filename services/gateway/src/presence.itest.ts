@@ -13,13 +13,22 @@ import {
 } from "node:net";
 
 import { createLogger, serve, type Logger } from "@relay/service-kit";
-import { docsUrl } from "@relay/protocol";
+import { docsUrl, subjectForPresence } from "@relay/protocol";
+// A CLIENT BELONGING TO NEITHER MODULE, for one reason: the two rejection paths on
+// the receive half cannot be reached through `createPresence`, which only ever
+// publishes what its own schema produced. `eslint.config.mjs` carries the exemption
+// and the argument; this client publishes and reads nothing.
+import { Redis } from "ioredis";
 import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
-import { createPresence, type PresenceOptions } from "./presence.js";
+import {
+  createPresence,
+  DEFAULT_REDIS_URL,
+  type PresenceOptions,
+} from "./presence.js";
 import { attachSessions } from "./session.js";
 
 // CHAPTER 3.19, PHASE 1 — THE FAILING STATE, OBSERVED.
@@ -131,7 +140,7 @@ async function startApi(): Promise<ApiUnderTest> {
   // CONCURRENTLY. Seeded one at a time this was 40 users x 3 memberships of
   // sequential round trips, and the file spent more time in its fixture than in its
   // assertions.
-  const subjects = Array.from({ length: 40 }, (_, i) => `subject-${i}`);
+  const subjects = Array.from({ length: 60 }, (_, i) => `subject-${i}`);
   const seeded = await Promise.all(
     subjects.map((name) => repo.createUser(name, name)),
   );
@@ -1276,7 +1285,13 @@ describe("presence: no durability, and the whole log vocabulary", () => {
     expect(suppressed[0]?.fields.reason).toBe("already online");
   }, 30_000);
 
-  it("logs presence.invalid_payload for a payload that is not a transition", async () => {
+  // RENAMED IN PHASE 9, because the title said the opposite of the assertion. This
+  // test publishes a MESSAGE on a MESSAGE subject and asserts presence never sees
+  // it — FR-029 from the other side — and `toEqual([])` is right for that. It was
+  // titled "logs presence.invalid_payload", which is a claim nothing here checks:
+  // the coverage run showed both rejection arms at zero while this test was green.
+  // The real ones are in the last describe.
+  it("does not reach the presence parser with a message payload", async () => {
     const who = takeSubject();
     await open("linh", a);
     await quiet(300);
@@ -1298,5 +1313,203 @@ describe("presence: no durability, and the whole log vocabulary", () => {
     // The message subject is not the presence subject, so this proves the reverse of
     // FR-029 too: a message payload does not reach the presence parser at all.
     expect(a.logs.filter((l) => l.msg === "presence.invalid_payload")).toEqual([]);
+  }, 30_000);
+});
+
+// THE BRANCHES A PASSING SUITE DOES NOT REACH — PHASE 9, FR-032.
+//
+// NFR-MNT-02 asks 100% branch coverage of tenant-isolation code and `presence.ts`
+// measured 81.81 with every test above green. That is the whole argument for a
+// ratchet: six arms of this module had never executed, and one of them — the
+// malformed-payload rejection — had a test whose TITLE claimed it.
+//
+// Each test here names the arm it exists for. None of them is a scenario a user
+// performs; they are the paths a failing store, a lost key or a caller using the
+// module's own interface can produce, and the module documents all of them.
+describe("presence: the arms a green suite left alone (FR-032)", () => {
+  let a: Instance;
+  const sockets: WebSocket[] = [];
+
+  const mint = async (user: string) => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+  const open = async (user: string, instance: Instance = a) => {
+    const socket = new WebSocket(`${instance.url}/v1/ws?token=${await mint(user)}`);
+    sockets.push(socket);
+    await waitForFrame(socket, "connection.ack");
+    return socket;
+  };
+
+  beforeAll(async () => {
+    a = await startInstance(api.url);
+    // `linh` is the fixture's watcher and a member of all three channels, so this
+    // one connection is what makes the instance a subscriber on `presence:{c}`.
+    // The first draft opened a user named "watcher" — the dev-token endpoint mints
+    // a token for any id, so the socket opened, the user was a member of nothing,
+    // the instance subscribed to nothing, and both publishes below reached nobody.
+    // The tests failed for a reason that had nothing to do with what they check.
+    await open("linh");
+    await quiet(300);
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const socket of sockets) socket.close();
+    await a?.close();
+  });
+
+  // The `catch` around `JSON.parse`. A subscriber receives bytes, not objects, and
+  // "not JSON at all" is a different failure from "JSON of the wrong shape" —
+  // `fanout.ts` separates them the same way and its own arm is uncovered too.
+  it("logs presence.invalid_payload for a body that is not JSON", async () => {
+    const raw = new Redis(process.env.RELAY_REDIS_URL ?? "redis://localhost:6379");
+    await raw.publish(subjectForPresence(api.channelIds[0] as string), "{not json");
+    await quiet(400);
+    await raw.quit();
+
+    const rejected = a.logs.filter((l) => l.msg === "presence.invalid_payload");
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.fields.subject).toBe(
+      subjectForPresence(api.channelIds[0] as string),
+    );
+  }, 30_000);
+
+  // The `safeParse` arm. `presenceFabricSchema` is a `strictObject`, so a field this
+  // module has never published is a rejection rather than a silent ignore — which is
+  // what makes adding a field to the fabric a decision on both sides of a deploy.
+  it("logs presence.invalid_payload for JSON that is not a transition", async () => {
+    const before = a.logs.filter((l) => l.msg === "presence.invalid_payload").length;
+    const raw = new Redis(process.env.RELAY_REDIS_URL ?? "redis://localhost:6379");
+    await raw.publish(
+      subjectForPresence(api.channelIds[0] as string),
+      JSON.stringify({ user: "someone", state: "online" }),
+    );
+    await quiet(400);
+    await raw.quit();
+
+    // No `transition`, so a receiver could not dedup it — and `strictObject` refuses
+    // it before that becomes anybody's problem.
+    expect(
+      a.logs.filter((l) => l.msg === "presence.invalid_payload").length - before,
+    ).toBe(1);
+  }, 30_000);
+
+  // FR-031's self-healing duplicate, and the only arm here that a REAL incident
+  // produces: a Redis restart or an eviction takes the key out from under a live
+  // connection. Provoked without touching the store — a TTL shorter than the refresh
+  // interval reaches the same state, because `XX` answers null for a key that is gone.
+  it("re-elects and logs when the key vanishes under a live connection", async () => {
+    const instance = await startInstance(api.url, {
+      ttlMs: 200,
+      refreshMs: 400,
+      graceMs: 200,
+      marginMs: 50,
+    });
+    try {
+      const who = takeSubject();
+      const socket = new WebSocket(
+        `${instance.url}/v1/ws?token=${await mint(who)}`,
+      );
+      await waitForFrame(socket, "connection.ack");
+      // Two refresh intervals: the key expires at 200 ms, the refresh at 400 ms finds
+      // it gone, and the re-election runs.
+      await quiet(1_000);
+      socket.close();
+
+      const reelected = instance.logs.filter(
+        (l) =>
+          l.msg === "presence.suppressed" &&
+          l.fields.reason === "key vanished under a live connection; re-electing",
+      );
+      expect(reelected.length).toBeGreaterThanOrEqual(1);
+      expect(reelected[0]?.fields.user).toBe(who);
+    } finally {
+      await instance.close();
+    }
+  }, 30_000);
+
+  // `unsubscribe` for a channel this instance never subscribed to. Not reachable
+  // through `session.ts`, which unsubscribes exactly the set it subscribed — but it
+  // is on the `Presence` interface, so a caller can do it, and the reference count
+  // must not go negative or throw.
+  it("tolerates an unsubscribe for a channel never subscribed", async () => {
+    const presence = createPresence({ logger: silent });
+    try {
+      await expect(presence.unsubscribe(randomUUID())).resolves.toBeUndefined();
+    } finally {
+      await presence.close();
+    }
+  }, 30_000);
+
+  // The no-op `deliver` the module starts with. `onTransition` is called by
+  // `attachSessions` at wiring time, and a `Presence` built without sessions still
+  // receives on its subscriptions — it must drop them rather than throw inside an
+  // ioredis event handler, where a throw is an unhandled rejection.
+  it("drops a transition when no handler has been registered", async () => {
+    const listener = createPresence({ logger: silent });
+    const publisher = createPresence({ logger: silent });
+    try {
+      const channel = api.channelIds[1] as string;
+      await listener.subscribe(channel);
+      await quiet(200);
+      await publisher.connected("env-x", takeSubject(), [channel]);
+      await quiet(400);
+      // Nothing to assert but the absence of a crash: an unhandled rejection here
+      // fails the file, which is the assertion.
+      expect(true).toBe(true);
+    } finally {
+      await listener.close();
+      await publisher.close();
+    }
+  }, 30_000);
+
+  // `close()` while a grace check is pending. A draining instance abandons its
+  // pending offlines — stated in the chapter rather than discovered — and the timer
+  // must be cleared, or a suite standing up two instances leaks one into the next
+  // file.
+  it("clears a pending grace check when the instance closes", async () => {
+    const instance = await startInstance(api.url, {
+      graceMs: 10_000,
+      marginMs: 1_000,
+    });
+    const who = takeSubject();
+    const socket = new WebSocket(`${instance.url}/v1/ws?token=${await mint(who)}`);
+    await waitForFrame(socket, "connection.ack");
+    await quiet(300);
+    // Closing the socket arms the check ten seconds out; closing the instance while
+    // it is pending is the path.
+    socket.close();
+    await quiet(400);
+    await instance.close();
+
+    expect(
+      instance.logs.filter(
+        (l) => l.msg === "presence.published" && l.fields.state === "offline",
+      ),
+    ).toEqual([]);
+  }, 30_000);
+
+  // `DEFAULT_REDIS_URL`. `main.ts` builds the module with no `url`, so the default
+  // is what a real gateway uses and no test had ever taken it — every instance here
+  // passes one, and `RELAY_REDIS_URL` is set in the lane.
+  it("falls back to the default url when neither is supplied", async () => {
+    const saved = process.env.RELAY_REDIS_URL;
+    delete process.env.RELAY_REDIS_URL;
+    try {
+      const presence = createPresence({ logger: silent });
+      await presence.subscribe(api.channelIds[2] as string);
+      await presence.close();
+    } finally {
+      if (saved !== undefined) process.env.RELAY_REDIS_URL = saved;
+    }
+    expect(DEFAULT_REDIS_URL).toBe("redis://localhost:6379");
   }, 30_000);
 });

@@ -195,9 +195,17 @@ export function createPresence({
           commands.set(key(environmentId, user), "1", "PX", ttlMs, "XX"),
         );
         // `XX` answers null when the key is gone — a Redis restart or an eviction
-        // under a live connection. Treat it as a new transition: a duplicate
-        // `online` for a user who never left, which ADR-10 permits and FR-031
-        // authorises, and which beats a user who is online and unpublishable.
+        // under a live connection. The key is put back and NOTHING IS PUBLISHED,
+        // which is FR-031's "MAY" declined: this loop holds `held`, a user and an
+        // environment, and a publish needs the subject's channel set, which only
+        // `connected` and `disconnected` are given. `presence.suppressed` says so
+        // rather than leaving the omission silent.
+        //
+        // The residual window is real and is in `gaps.md`: between the key vanishing
+        // and this refresh restoring it — at most `refreshMs` — another instance's
+        // grace check can find the key absent and publish `offline` for a user who is
+        // connected here, and no `online` follows it. Carrying the channel set on
+        // `held` would close it.
         if (reply === null) {
           logger.log("info", "presence.suppressed", {
             user,
@@ -205,14 +213,15 @@ export function createPresence({
             reason: "key vanished under a live connection; re-electing",
           });
           await failable("refresh:reelect", async () => {
-            const won = await commands.set(
-              key(environmentId, user),
-              "1",
-              "PX",
-              ttlMs,
-              "NX",
-            );
-            if (wonTransition(won)) await commands.del(marker(environmentId, user));
+            await commands.set(key(environmentId, user), "1", "PX", ttlMs, "NX");
+            // UNCONDITIONALLY, unlike `connected` below. There the loser returns
+            // early because the winner is publishing `online` and will clear the
+            // marker itself; here nobody publishes, so a loser that skipped the
+            // delete would leave a stale "somebody already said they left" standing
+            // against a user who is demonstrably connected. It also removes the one
+            // arm in this module that only a two-instance race could reach, which
+            // is a branch a test could only ever flake on.
+            await commands.del(marker(environmentId, user));
           });
         }
       }
