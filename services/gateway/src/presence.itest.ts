@@ -59,6 +59,8 @@ interface Seeder {
 interface ApiUnderTest {
   url: string;
   credential: string;
+  /** One per test — see the note in the seed. */
+  subjects: string[];
   stop: () => void;
 }
 
@@ -87,9 +89,38 @@ async function startApi(): Promise<ApiUnderTest> {
   const repo = new seeder.Repository(db, environment.id);
   const watcher = await repo.createUser("linh", "Linh");
   const subject = await repo.createUser("tuan", "Tuan");
-  const channel = await repo.createChannel("fleet", "public");
-  await repo.addMember(channel.id, watcher.id);
-  await repo.addMember(channel.id, subject.id);
+  // A user who belongs to nothing: FR-RTM-07's degenerate case, where a transition
+  // publishes on no subject at all.
+  await repo.createUser("hermit", "Hermit");
+
+  // ONE SUBJECT PER TEST, and this is not tidiness. Presence state lives in Redis
+  // under `presence:{env}:{user}` with a thirty-second TTL, so a subject who came
+  // online in one test is STILL ONLINE in the next — `SET … NX` correctly refuses,
+  // nothing publishes, and every later test sees an empty frame list. The first run
+  // of this suite failed exactly that way: test 1 passed and tests 2 to 4 reported
+  // "expected [] to have a length of 1", which reads like a broken fabric and is a
+  // shared fixture.
+  //
+  // T016 asked for fresh channel AND user ids per run for this reason and the first
+  // implementation did the channels only. Chapter 3.18's `isolation-fixtures.ts`
+  // learned the same lesson: a fixture nobody else depends on beats a rule nobody
+  // remembers.
+  const subjects: string[] = [];
+  const channels = await Promise.all(
+    // THREE shared channels, so the dedup can be asserted by count. Without the
+    // transition id a watcher sharing three sees three frames for one arrival.
+    ["fleet", "ops", "night-shift"].map((name) =>
+      repo.createChannel(name, "public"),
+    ),
+  );
+  for (const channel of channels) await repo.addMember(channel.id, watcher.id);
+  for (const channel of channels) await repo.addMember(channel.id, subject.id);
+  for (let i = 0; i < 8; i += 1) {
+    const name = `subject-${i}`;
+    const user = await repo.createUser(name, name);
+    for (const channel of channels) await repo.addMember(channel.id, user.id);
+    subjects.push(name);
+  }
   const key = await seeder.createApiKey(db, {
     environmentId: environment.id,
   });
@@ -114,8 +145,38 @@ async function startApi(): Promise<ApiUnderTest> {
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  return { url, credential: key.credential, stop: () => child.kill() };
+  return { url, credential: key.credential, subjects, stop: () => child.kill() };
 }
+
+/** Every frame of a type this socket has received. **Assertions here are by COUNT,
+ * not by arrival**: "a frame showed up" is equally true of a producer that publishes
+ * three, and three is exactly what the dedup exists to prevent. */
+function collect(
+  socket: WebSocket,
+  type: string,
+  about?: string,
+): { frames: { payload: { user: string; state: string } }[] } {
+  const frames: { payload: { user: string; state: string } }[] = [];
+  socket.on("message", (raw: unknown) => {
+    const frame = JSON.parse(String(raw)) as {
+      type: string;
+      payload: { user: string; state: string };
+    };
+    if (frame.type !== type) return;
+    // FILTERED BY SUBJECT, and the first version of this helper was not — which is
+    // how FR-011 announced itself. A watcher's own arrival is delivered to the
+    // watcher, because a subject shares every one of their channels with
+    // themselves, so an unfiltered collector sees two frames where the test means
+    // one. The behaviour is correct and the assertion was wrong.
+    if (about !== undefined && frame.payload.user !== about) return;
+    frames.push(frame);
+  });
+  return { frames };
+}
+
+/** Let the fabric settle. Redis pub/sub is fire-and-forget, so a test cannot poll a
+ * queue — a negative assertion has to wait out a window instead. */
+const quiet = (ms = 700) => new Promise((r) => setTimeout(r, ms));
 
 /** Wait for a frame of a given type, or fail loudly. Redis pub/sub is
  * fire-and-forget, so a test cannot poll a queue — it waits with a deadline. */
@@ -205,6 +266,10 @@ describe("presence: a member sees a co-member arrive (FR-RTM-05, FR-RTM-06)", ()
     return ((await res.json()) as { token: string }).token;
   };
 
+  let nextSubject = 0;
+  /** The next unused subject. Every test that brings someone online takes one. */
+  const takeSubject = () => api.subjects[nextSubject++] as string;
+
   const connect = (token: string, instance: Instance = a) => {
     const socket = new WebSocket(`${instance.url}/v1/ws?token=${token}`);
     sockets.push(socket);
@@ -227,19 +292,104 @@ describe("presence: a member sees a co-member arrive (FR-RTM-05, FR-RTM-06)", ()
     api?.stop();
   });
 
+  // T021. The clause, on one instance.
   it("delivers presence.changed online to a connected co-member", async () => {
     const watcher = connect(await mintToken("linh"));
     await waitForFrame(watcher, "connection.ack");
+    const who = takeSubject();
+    const seen = collect(watcher, "presence.changed", who);
 
-    // The subject connects to the OTHER instance: presence that only worked
-    // in-process would pass a single-instance version of this test and fail the
-    // one property the fabric exists for.
-    const subject = connect(await mintToken("tuan"), b);
+    const subject = connect(await mintToken(who));
     await waitForFrame(subject, "connection.ack");
+    await quiet();
 
-    const frame = (await waitForFrame(watcher, "presence.changed")) as {
-      payload: { user: string; state: string };
-    };
-    expect(frame.payload).toEqual({ user: "tuan", state: "online" });
+    expect(seen.frames).toEqual([
+      { type: "presence.changed", payload: { user: who, state: "online" } },
+    ]);
+  }, 30_000);
+
+  // T022. The property a single-process test cannot show (chapter 2.6's phrase).
+  it("delivers it when the subject is on another instance", async () => {
+    const watcher = connect(await mintToken("linh"), a);
+    await waitForFrame(watcher, "connection.ack");
+    const who = takeSubject();
+    const seen = collect(watcher, "presence.changed", who);
+
+    const subject = connect(await mintToken(who), b);
+    await waitForFrame(subject, "connection.ack");
+    await quiet();
+
+    expect(seen.frames).toHaveLength(1);
+  }, 30_000);
+
+  // T023, FR-012. The watcher shares THREE channels with the subject and a
+  // transition publishes on all three, so this instance receives three copies of
+  // one transition. Without the transition id this is three frames.
+  it("delivers ONE frame to a watcher sharing three channels", async () => {
+    const watcher = connect(await mintToken("linh"));
+    await waitForFrame(watcher, "connection.ack");
+    const who = takeSubject();
+    const seen = collect(watcher, "presence.changed", who);
+
+    const subject = connect(await mintToken(who), b);
+    await waitForFrame(subject, "connection.ack");
+    await quiet();
+
+    expect(seen.frames).toHaveLength(1);
+  }, 30_000);
+
+  // T024, FR-006. The state did not change, so nothing is published — asserted in
+  // a run where the FIRST connection did produce a frame, so a dead producer
+  // cannot satisfy it.
+  it("publishes nothing for a second connection of a user already online", async () => {
+    const watcher = connect(await mintToken("linh"));
+    await waitForFrame(watcher, "connection.ack");
+    const who = takeSubject();
+    const seen = collect(watcher, "presence.changed", who);
+
+    const first = connect(await mintToken(who), b);
+    await waitForFrame(first, "connection.ack");
+    await quiet();
+    expect(seen.frames).toHaveLength(1);
+
+    const second = connect(await mintToken(who), a);
+    await waitForFrame(second, "connection.ack");
+    await quiet();
+    expect(seen.frames).toHaveLength(1);
+  }, 30_000);
+
+  // T025, FR-011. A subject shares every one of their channels with themselves, so
+  // the scoping rule includes them. Both readings satisfy FR-RTM-07 — "only users
+  // sharing a channel" is an upper bound — and one of them has to be the one that
+  // ships.
+  it("delivers the subject's own transition to the subject's own socket", async () => {
+    // Collected BEFORE the ack, because the subject's own transition is published
+    // as soon as the registry has the connection and can arrive immediately after.
+    const who = takeSubject();
+    const subject = connect(await mintToken(who));
+    const seen = collect(subject, "presence.changed", who);
+    await waitForFrame(subject, "connection.ack");
+    await quiet();
+
+    // The subject's own connect elects the transition and its socket is subscribed
+    // to the same channels, so it hears itself arrive. Exactly one frame, not three
+    // — the dedup applies to the subject like anyone else.
+    expect(seen.frames).toEqual([
+      { type: "presence.changed", payload: { user: who, state: "online" } },
+    ]);
+  }, 30_000);
+
+  // T026, FR-RTM-07's degenerate case. A member of no channel publishes on no
+  // subject, and the connect still succeeds.
+  it("publishes to nobody for a subject who is a member of no channel", async () => {
+    const watcher = connect(await mintToken("linh"));
+    await waitForFrame(watcher, "connection.ack");
+    const seen = collect(watcher, "presence.changed", "hermit");
+
+    const hermit = connect(await mintToken("hermit"), b);
+    await waitForFrame(hermit, "connection.ack");
+    await quiet();
+
+    expect(seen.frames).toEqual([]);
   }, 30_000);
 });
