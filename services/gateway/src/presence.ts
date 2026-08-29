@@ -10,11 +10,12 @@ import { Redis } from "ioredis";
 
 // Presence (chapter 3.19, ADR-19): who is online, and who is allowed to know.
 //
-// A SECOND FABRIC BESIDE THE FAN-OUT, NOT A SECOND PAYLOAD ON IT. `fanout.ts` is
-// typed to messages at three points — `publish(message: Message)`, a
-// `messageCreatedSchema` parse of everything arriving, and a literal
-// `message.created` send — and the third is inside a delivery function ten
-// chapters fence. So presence gets `presence:{channel_id}` and its own module,
+// A SECOND FABRIC BESIDE THE FAN-OUT, NOT A SECOND PAYLOAD ON IT. The message path
+// is typed to messages at three points: `publish(message: Message)` and a
+// `messageCreatedSchema` parse in `fanout.ts`, and the literal `message.created`
+// send inside `session.ts`'s `deliver`, which ten chapters fence. Widening the
+// payload means editing all three, one of them in the file this feature already
+// edits most. So presence gets `presence:{channel_id}` and its own module,
 // and `fanout.ts` is not edited at all. The declared cost is two subscriptions
 // per channel instead of one.
 //
@@ -303,7 +304,7 @@ export function createPresence({
       // The offline marker is cleared by whoever wins the online transition, so the
       // next departure can elect a publisher again.
       await failable("connected:clear-marker", () =>
-        commands.del(`presence:offline:${environmentId}:${user}`),
+        commands.del(marker(environmentId, user)),
       );
       await publish(environmentId, user, "online", channelIds);
     },

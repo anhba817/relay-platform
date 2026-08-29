@@ -453,14 +453,15 @@ export function attachSessions({
       // this instance and must not count the one that is leaving. The unsubscribes
       // come last.
       //
-      // Swapping the two lines above is not a style change: with the order reversed
-      // the local count is 1 rather than 0, no grace check is ever scheduled, and
-      // the user never goes offline. A test asserts the scheduling for that reason.
-      // ONLY WHEN IT WAS THE LAST ONE ON THIS INSTANCE. `connectionsFor` is asked
-      // AFTER the removal above, so the closing connection is not counted — which
-      // is the whole reason the two lines are in this order. Closing one of two
-      // must publish nothing (FR-006), and the cross-instance half of the question
-      // is Redis's to answer, not this registry's.
+      // Swapping the middle two is not a style change. With `registry.remove` after
+      // this block, `connectionsFor` still sees the closing connection, the count is
+      // 1 rather than 0, no grace check is ever scheduled, and the user stays online
+      // for ever. A test asserts the scheduling for that reason.
+      //
+      // The condition asks a local question only. Closing one of two connections on
+      // this instance must publish nothing (FR-006); whether the user is still
+      // connected on some OTHER instance is Redis's to answer, and this registry has
+      // been unable to see other instances since 2.5.
       if (
         registry.connectionsFor(connection.identity.userExternalId).length === 0
       ) {

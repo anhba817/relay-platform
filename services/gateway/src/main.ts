@@ -3,8 +3,8 @@ import { createLogger, serve, type Logger } from "@relay/service-kit";
 
 import { createApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
-import { createPresence } from "./presence.js";
 import { createGatewayLimits } from "./limits.js";
+import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
 
 // The gateway — SAD §4.1: terminates WebSockets and never writes to the
