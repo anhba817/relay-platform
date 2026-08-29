@@ -120,7 +120,19 @@ export function createPresence({
   refreshMs = DEFAULT_REFRESH_MS,
   marginMs = DEFAULT_MARGIN_MS,
 }: PresenceOptions): Presence {
-  const commands = new Redis(url);
+  // FAIL FAST RATHER THAN QUEUE, which is the limiter's shape and not the fan-out's.
+  // Default ioredis retries forever and QUEUES commands, so against a dead store a
+  // `SET` neither succeeds nor rejects — it waits, and the failure path this module
+  // documents is never taken. Chapter 3.18 measured the same thing about its
+  // publisher: "default ioredis retries FOREVER, so `publish` never rejects and the
+  // command queues."
+  //
+  // The subscriber keeps its retry behaviour: it MUST reconnect when the store comes
+  // back, which is what "the next transition publishes without a restart" rests on.
+  const commands = new Redis(url, {
+    maxRetriesPerRequest: 0,
+    connectTimeout: 1_000,
+  });
   const subscriber = new Redis(url);
 
   // THE STATED REASON FOR THESE LISTENERS IS NOT THE ONE THE LIMITER GIVES.

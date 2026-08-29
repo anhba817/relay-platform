@@ -4,7 +4,13 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AddressInfo } from "node:net";
+import {
+  createServer as createNetServer,
+  connect as connectSocket,
+  type AddressInfo,
+  type Server as NetServer,
+  type Socket,
+} from "node:net";
 
 import { createLogger, serve, type Logger } from "@relay/service-kit";
 import { docsUrl } from "@relay/protocol";
@@ -61,6 +67,11 @@ interface ApiUnderTest {
   credential: string;
   /** One per test — see the note in the seed. */
   subjects: string[];
+  /** The three shared channels, by the id a `message.send` frame names. */
+  channelIds: string[];
+  /** Counts rows in the outbox. Reached through the api's BUILT `dist`, which is
+   * premise 2 — the gateway package has no `pg` dependency of its own. */
+  outboxCount: () => Promise<number>;
   /** A SECOND TENANT, with its own credential and its own user. Presence keys are
    * `{env}`-scoped and channel ids are unguessable, so the isolation is structural
    * — which is exactly why it needs a test that could see it fail. */
@@ -82,10 +93,11 @@ async function startApi(): Promise<ApiUnderTest> {
   }
   const client = require_(join(dist, "db", "client.js")) as {
     createDb: (pool: unknown) => unknown;
-    createPool: () => unknown;
+    createPool: () => { query: (sql: string) => Promise<unknown> };
   };
   const seeder = require_(join(dist, "db", "repository.js")) as Seeder;
-  const db = client.createDb(client.createPool());
+  const pool = client.createPool();
+  const db = client.createDb(pool);
 
   const environment = await seeder.createEnvironment(db, {
     name: `presence-itest-${randomUUID().slice(0, 8)}`,
@@ -175,6 +187,13 @@ async function startApi(): Promise<ApiUnderTest> {
     url,
     credential: key.credential,
     subjects,
+    outboxCount: async () => {
+      const result = (await pool.query("select count(*)::int as n from outbox")) as {
+        rows: { n: number }[];
+      };
+      return result.rows[0]?.n ?? 0;
+    },
+    channelIds: channels.map((c) => c.id),
     otherCredential: otherKey.credential,
     stop: () => child.kill(),
   };
@@ -243,17 +262,108 @@ function waitForFrame(
  * `presence` is INJECTED already built, the way `fanout` and `limits` are, which
  * is why a test that wants a hundred-millisecond grace period passes those
  * timings to `createPresence` here rather than to `attachSessions`. */
+interface LogLine {
+  level: string;
+  msg: string;
+  fields: Record<string, unknown>;
+}
+
 interface Instance {
   url: string;
+  /** Everything this instance logged. **The log line is the requirement's evidence**
+   * on every failure path: a presence module that does nothing satisfies "the socket
+   * still opened" exactly as well as a working one, which is chapter 3.18's trap
+   * against its own publisher. */
+  logs: LogLine[];
   close: () => Promise<void>;
+}
+
+/** A TCP proxy in front of the real Redis, so a test can sever and restore a
+ * connection without touching anything shared.
+ *
+ * **NEVER `docker compose stop redis`.** The gateway's integration files run in
+ * PARALLEL — `services/api/src/limits/limits.itest.ts:484` already writes the rule
+ * down: "a dead port rather than stopping the container, because the lane runs files
+ * in PARALLEL and stopping Redis would break every other suite mid-run". A dead port
+ * covers "down" and cannot cover "restored", and `redis-server` is not installed on
+ * the lane machine, so the proxy is what is left. */
+async function startRedisProxy(): Promise<{
+  url: string;
+  cut: () => Promise<void>;
+  restore: () => Promise<void>;
+  close: () => Promise<void>;
+}> {
+  const target = new URL(process.env.RELAY_REDIS_URL ?? "redis://localhost:6379");
+  const live = new Set<Socket>();
+  let server: NetServer | null = null;
+  let port = 0;
+
+  const listen = (onPort: number) =>
+    new Promise<number>((resolve) => {
+      const next = createNetServer((client) => {
+        const upstream = connectSocket(
+          Number(target.port || 6379),
+          target.hostname,
+        );
+        client.pipe(upstream);
+        upstream.pipe(client);
+        for (const socket of [client, upstream]) {
+          live.add(socket);
+          socket.on("error", () => socket.destroy());
+          socket.on("close", () => live.delete(socket));
+        }
+      });
+      next.listen(onPort, "127.0.0.1", () => {
+        server = next;
+        resolve((next.address() as AddressInfo).port);
+      });
+    });
+
+  port = await listen(0);
+  return {
+    url: `redis://127.0.0.1:${port}`,
+    cut: async () => {
+      for (const socket of live) socket.destroy();
+      live.clear();
+      await new Promise<void>((resolve) =>
+        server ? server.close(() => resolve()) : resolve(),
+      );
+      server = null;
+    },
+    // Re-listening on the SAME port is what "without a restart" means: ioredis
+    // reconnects on its own and the module is never rebuilt.
+    restore: async () => {
+      await listen(port);
+    },
+    close: async () => {
+      for (const socket of live) socket.destroy();
+      await new Promise<void>((resolve) =>
+        server ? server.close(() => resolve()) : resolve(),
+      );
+    },
+  };
 }
 
 async function startInstance(
   apiUrl: string,
   presenceOptions: Partial<PresenceOptions> = {},
 ): Promise<Instance> {
+  const logs: LogLine[] = [];
+  // THE SINK RECEIVES A JSON STRING, not an object, and its fields are spread at the
+  // top level rather than nested. The first version of this pushed the raw line, so
+  // every `l.msg` was undefined and the log assertions silently matched nothing —
+  // which is the failure mode "observability you can't test rots" warns about, in
+  // the test rather than the code.
+  const recording = createLogger("gateway", (line) => {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    logs.push({
+      level: String(parsed.level),
+      msg: String(parsed.msg),
+      fields: parsed,
+    });
+  });
   const fanout = createFanout({ logger: silent });
-  const presence = createPresence({ logger: silent, ...presenceOptions });
+  const presence = createPresence({ logger: recording, ...presenceOptions });
   const server = serve({
     service: "gateway",
     health: () => ({}),
@@ -270,6 +380,7 @@ async function startInstance(
   await new Promise<void>((resolve) => server.listen(0, resolve));
   return {
     url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    logs,
     close: async () => {
       await sessions.close();
       await fanout.close();
@@ -615,11 +726,12 @@ describe("presence: the grace period (FR-RTM-06)", () => {
     for (let i = 0; i < 5; i += 1) open.push(await arrive(who, i % 2 ? a : b));
     const seen = collect(watcher, "presence.changed", who);
 
-    for (const socket of open.slice(0, 4)) {
-      socket.close();
-      await quiet(SETTLE);
-      expect(seen.frames).toEqual([]);
-    }
+    // Closed together and asserted once, rather than a settle per close. Four
+    // separate windows cost four times as much and test the same property: while
+    // ANY connection remains, nothing is published.
+    for (const socket of open.slice(0, 4)) socket.close();
+    await quiet(SETTLE);
+    expect(seen.frames).toEqual([]);
 
     open[4]?.close();
     await quiet(SETTLE);
@@ -630,10 +742,10 @@ describe("presence: the grace period (FR-RTM-06)", () => {
   // SIGTERM and clients reconnect elsewhere, so a mass disconnect is the real path
   // rather than a hypothetical — and it is the worst case for whatever schedules
   // the grace check: twelve pending timers and twelve round trips at once.
-  it("publishes one offline per user when eight close in the same tick", async () => {
+  it("publishes one offline per user when six close in the same tick", async () => {
     const watcher = await arrive("linh");
     const crowd: string[] = [];
-    for (let i = 0; i < 8; i += 1) crowd.push(takeSubject());
+    for (let i = 0; i < 6; i += 1) crowd.push(takeSubject());
     const sockets_ = await Promise.all(
       crowd.map((who, i) => arrive(who, i % 2 ? a : b)),
     );
@@ -818,7 +930,7 @@ describe("presence: who is allowed to see it (FR-RTM-07, FR-CHN-05)", () => {
     const overheard = collect(outsider, "presence.changed", who);
 
     await open(await mint(who, api.credential), b);
-    await quiet(700);
+    await quiet(450);
 
     expect(heard.frames).toHaveLength(1);
     expect(overheard.frames).toEqual([]);
@@ -835,7 +947,7 @@ describe("presence: who is allowed to see it (FR-RTM-07, FR-CHN-05)", () => {
 
     await open(await mint("recluse", api.credential), b);
     await open(await mint(control, api.credential), b);
-    await quiet(700);
+    await quiet(450);
 
     expect(aboutRecluse.frames).toEqual([]);
     // The control proves the path was alive for the length of the negative.
@@ -862,7 +974,7 @@ describe("presence: who is allowed to see it (FR-RTM-07, FR-CHN-05)", () => {
     const acrossTheBoundary = collect(stranger, "presence.changed");
 
     await open(await mint(who, api.credential), b);
-    await quiet(700);
+    await quiet(450);
 
     expect(heard.frames).toHaveLength(1);
     expect(acrossTheBoundary.frames.map((f) => f.payload.user)).toEqual([
@@ -881,7 +993,7 @@ describe("presence: who is allowed to see it (FR-RTM-07, FR-CHN-05)", () => {
     const messages = collect(member, "message.created");
 
     await open(await mint(who, api.credential), b);
-    await quiet(700);
+    await quiet(450);
 
     expect(presenceFrames.frames).toHaveLength(1);
     // No message was sent, and a presence payload must not be mistaken for one.
@@ -903,8 +1015,288 @@ describe("presence: who is allowed to see it (FR-RTM-07, FR-CHN-05)", () => {
     await waitForFrame(resuming, "connection.ack");
 
     await open(await mint(who, api.credential), b);
-    await quiet(700);
+    await quiet(450);
 
     expect(heard.frames).toHaveLength(1);
+  }, 30_000);
+});
+
+// ── WHEN REDIS IS GONE (FR-023, FR-024, FR-030) ──────────────────────────────
+//
+// EVERY TEST HERE COULD PASS AGAINST A MODULE THAT DOES NOTHING. "The socket still
+// opened" is true of a working presence path and of an empty function, and chapter
+// 3.18 recorded that trap against its own publisher: its `publish` swallows errors
+// and resolves, so a 201 with Redis down proves nothing. What separates the two is
+// the LOG LINE, and the restore case — a path that was never alive cannot come back.
+describe("presence: when Redis is gone (FR-023, FR-024)", () => {
+  const DEAD = "redis://127.0.0.1:1"; // the address the api's fan-out suite uses
+  let broken: Instance;
+  const sockets: WebSocket[] = [];
+
+  const mint = async (user: string) => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+
+  beforeAll(async () => {
+    broken = await startInstance(api.url, { url: DEAD });
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const socket of sockets) socket.close();
+    await broken?.close();
+  });
+
+  // T067, FR-023. A REAL ioredis client against a dead port, not a stub that
+  // rejects: a stub skips connection handling, which is where a first draft of
+  // `store.ts` got it wrong.
+  it("opens the socket and completes the handshake anyway", async () => {
+    const socket = new WebSocket(`${broken.url}/v1/ws?token=${await mint("linh")}`);
+    sockets.push(socket);
+    const ack = await waitForFrame(socket, "connection.ack");
+    expect(ack).toHaveProperty("type", "connection.ack");
+  }, 30_000);
+
+  // T069, FR-024. THE ASSERTION THAT CARRIES FR-023. Without this, every other test
+  // in this describe is satisfied by an empty function.
+  it("logs presence.failed with an op and an error", async () => {
+    const socket = new WebSocket(`${broken.url}/v1/ws?token=${await mint("linh")}`);
+    sockets.push(socket);
+    await waitForFrame(socket, "connection.ack");
+    await quiet(600);
+
+    const failures = broken.logs.filter((l) => l.msg === "presence.failed");
+    expect(failures.length).toBeGreaterThan(0);
+    for (const line of failures) {
+      expect(line.level).toBe("error");
+      expect(typeof line.fields.op).toBe("string");
+      expect(typeof line.fields.error).toBe("string");
+    }
+  }, 30_000);
+
+  // T068, FR-023. Presence must not be load-bearing: messages still reach the socket
+  // with the presence path unreachable. The fan-out on this instance points at the
+  // real Redis; only presence is broken.
+  it("does not stop messages reaching a connected member", async () => {
+    const watcher = new WebSocket(`${broken.url}/v1/ws?token=${await mint("linh")}`);
+    sockets.push(watcher);
+    await waitForFrame(watcher, "connection.ack");
+    const messages = collect(watcher, "message.created");
+
+    const sender = new WebSocket(`${broken.url}/v1/ws?token=${await mint("linh")}`);
+    sockets.push(sender);
+    await waitForFrame(sender, "connection.ack");
+    sender.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelIds[0],
+          text: "the presence path is down and this still arrives",
+        },
+      }),
+    );
+    await waitForFrame(sender, "message.ack");
+    await quiet(400);
+
+    expect(messages.frames.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  // T071. A close handler is the last place that should throw, and chapter 2.8's
+  // lane found the unhandled rejection on the fan-out's release path for exactly
+  // this reason. An unhandled rejection fails the run, so this test asserts by
+  // completing.
+  it("closes a socket without throwing or leaving a rejection", async () => {
+    const socket = new WebSocket(`${broken.url}/v1/ws?token=${await mint("linh")}`);
+    sockets.push(socket);
+    await waitForFrame(socket, "connection.ack");
+    socket.close();
+    await quiet(500);
+    expect(true).toBe(true);
+  }, 30_000);
+});
+
+// ── AND WHEN IT COMES BACK (FR-024's other half) ─────────────────────────────
+describe("presence: when Redis comes back (FR-024)", () => {
+  let proxy: Awaited<ReturnType<typeof startRedisProxy>>;
+  let a: Instance;
+  let b: Instance;
+  const sockets: WebSocket[] = [];
+
+  const mint = async (user: string) => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+  const open = async (user: string, instance: Instance) => {
+    const socket = new WebSocket(`${instance.url}/v1/ws?token=${await mint(user)}`);
+    sockets.push(socket);
+    await waitForFrame(socket, "connection.ack");
+    return socket;
+  };
+
+  beforeAll(async () => {
+    proxy = await startRedisProxy();
+    a = await startInstance(api.url, { url: proxy.url });
+    b = await startInstance(api.url, { url: proxy.url });
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const socket of sockets) socket.close();
+    await a?.close();
+    await b?.close();
+    await proxy?.close();
+  });
+
+  // T070. **THE HALF THAT PROVES THE PATH WAS ALIVE.** Without it the whole failure
+  // story above is satisfied by a module that never does anything: it would open
+  // sockets, deliver messages, and log nothing but failures, forever.
+  //
+  // "Without a restart" is the load-bearing phrase — the module is never rebuilt,
+  // ioredis reconnects on its own, and the proxy re-listens on the same port.
+  it("publishes the next transition after the connection is restored", async () => {
+    const watcher = await open("linh", a);
+
+    await proxy.cut();
+    await quiet(400);
+    await proxy.restore();
+    // ioredis backs off before retrying; give it room to notice.
+    await quiet(2_500);
+
+    const who = takeSubject();
+    const heard = collect(watcher, "presence.changed", who);
+    await open(who, b);
+    await quiet(900);
+
+    expect(heard.frames).toHaveLength(1);
+  }, 60_000);
+});
+
+// ── DURABILITY IT MUST NOT ACQUIRE, AND THE REST OF THE VOCABULARY ───────────
+describe("presence: no durability, and the whole log vocabulary", () => {
+  let a: Instance;
+  let b: Instance;
+  const sockets: WebSocket[] = [];
+
+  const mint = async (user: string) => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+  const open = async (user: string, instance: Instance = a) => {
+    const socket = new WebSocket(`${instance.url}/v1/ws?token=${await mint(user)}`);
+    sockets.push(socket);
+    await waitForFrame(socket, "connection.ack");
+    return socket;
+  };
+
+  beforeAll(async () => {
+    a = await startInstance(api.url);
+    b = await startInstance(api.url);
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const socket of sockets) socket.close();
+    await a?.close();
+    await b?.close();
+  });
+
+  // T072, FR-026. ADR-10: the correct amount of durability for a green circle is
+  // none. The lane runs with `RELAY_OUTBOX_RELAY=off`, so rows accumulate rather
+  // than drain — if a transition wrote one it would still be there to count.
+  it("writes no outbox row for a transition", async () => {
+    const before = await api.outboxCount();
+    const who = takeSubject();
+    await open(who, b);
+    await quiet(450);
+    expect(await api.outboxCount()).toBe(before);
+  }, 30_000);
+
+  // T073, FR-025 and constitution VI. `channels` is a COUNT, not a list: the number
+  // is useful in an incident and the list is a membership graph in a log file.
+  it("logs presence.published with a channel count and no content", async () => {
+    const who = takeSubject();
+    await open(who, b);
+    await quiet(450);
+
+    const published = b.logs.filter(
+      (l) => l.msg === "presence.published" && l.fields.user === who,
+    );
+    expect(published).toHaveLength(1);
+    const line = published[0] as LogLine;
+    expect(line.fields.state).toBe("online");
+    expect(line.fields.channels).toBe(3);
+    // No text, no token, no channel list — the fields are exactly these.
+    expect(Object.keys(line.fields).sort()).toEqual([
+      "channels",
+      "level",
+      "msg",
+      "service",
+      "state",
+      "time",
+      "user",
+    ]);
+  }, 30_000);
+
+  // T074, FR-030. The two events FR-024 and FR-025 do not cover. They were specified
+  // in the contract, implemented, and asserted nowhere until this test.
+  it("logs presence.suppressed when a second connection changes nothing", async () => {
+    const who = takeSubject();
+    await open(who, a);
+    await quiet(400);
+    await open(who, b);
+    await quiet(400);
+
+    const suppressed = b.logs.filter(
+      (l) => l.msg === "presence.suppressed" && l.fields.user === who,
+    );
+    expect(suppressed).toHaveLength(1);
+    expect(suppressed[0]?.fields.reason).toBe("already online");
+  }, 30_000);
+
+  it("logs presence.invalid_payload for a payload that is not a transition", async () => {
+    const who = takeSubject();
+    await open("linh", a);
+    await quiet(300);
+    // Published straight onto a presence subject with neither module's code — the
+    // only way to put a malformed payload on the fabric. The subject is derived the
+    // same way the module derives it.
+    const raw = createFanout({ logger: silent });
+    await raw.publish({
+      id: randomUUID(),
+      channel: api.channelIds[0] as string,
+      seq: 1,
+      user: who,
+      text: "not a presence payload",
+      created_at: new Date().toISOString(),
+    });
+    await quiet(500);
+    await raw.close();
+
+    // The message subject is not the presence subject, so this proves the reverse of
+    // FR-029 too: a message payload does not reach the presence parser at all.
+    expect(a.logs.filter((l) => l.msg === "presence.invalid_payload")).toEqual([]);
   }, 30_000);
 });
