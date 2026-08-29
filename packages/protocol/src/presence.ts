@@ -18,11 +18,11 @@ import { z } from "zod";
  *     named 'subjectFor'.
  *
  * WHY A SECOND SUBJECT AT ALL, rather than enveloping two kinds on `chan:{id}`.
- * The message path is typed to messages at three points — `publish(message:
- * Message)`, a `messageCreatedSchema` parse of every arriving payload, and a
- * literal `message.created` send — and the third sits inside a delivery function
- * ten chapters fence. Enveloping means editing the hot path to serve the
- * lowest-volume traffic on it. Separating the subjects also makes cross-kind
+ * The message path is typed to messages at three points, and only two of them are
+ * in one file: `publish(message: Message)` and a `messageCreatedSchema` parse in
+ * `services/gateway/src/fanout.ts`, then the literal `message.created` send inside
+ * `session.ts`'s `deliver` — a function ten chapters fence. Enveloping means
+ * editing the hot path to serve the lowest-volume traffic on it. Separating the subjects also makes cross-kind
  * mis-delivery impossible rather than test-enforced: a presence payload cannot
  * arrive where a message parse is waiting, because nothing publishes it there.
  *
