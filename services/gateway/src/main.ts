@@ -3,6 +3,7 @@ import { createLogger, serve, type Logger } from "@relay/service-kit";
 
 import { createApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
+import { createMembership } from "./membership.js";
 import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
 
@@ -41,17 +42,25 @@ export function createServer(logger?: Logger) {
   // `attachSessions` so the tests that call that function directly stay Redis-free,
   // and so its close has an owner.
   const presence = createPresence({ logger: log });
+  // THE FIFTH REDIS CLIENT, and only one where presence needed two: this module
+  // subscribes and never runs a command, so there is nothing a subscriber-mode
+  // connection would refuse. Created here rather than inside `attachSessions` so the
+  // tests that call that function directly stay Redis-free, and so its close has an
+  // owner.
+  const membership = createMembership({ logger: log });
   const sessions = attachSessions({
     server,
     api: createApiClient(process.env.RELAY_API_URL ?? DEFAULT_API_URL),
     logger: log,
     fanout,
     presence,
+    membership,
   });
   server.on("close", () => {
     sessions.close();
     void fanout.close();
     void presence.close();
+    void membership.close();
   });
   return server;
 }

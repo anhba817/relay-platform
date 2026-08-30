@@ -17,6 +17,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { ApiError, type ApiClient } from "./api-client.js";
 import { authenticate, type Identity } from "./auth.js";
 import type { Fanout } from "./fanout.js";
+import { type Membership } from "./membership.js";
 import { type Presence } from "./presence.js";
 import { Registry, type Connection } from "./registry.js";
 import {
@@ -79,6 +80,11 @@ export interface SessionServerOptions {
    * supplies it, so the optionality is a test affordance rather than a deployment
    * mode. */
   presence?: Presence;
+  /** Optional for the same four reasons, and one more that is this
+   * chapter's own: without it a connection's membership is what it was at connect,
+   * which is the state FR-RTM-10 has been unmet in since 2.6. A gateway built
+   * without this is not broken — it is the gateway this chapter starts from. */
+  membership?: Membership;
 }
 
 // THE FOUR PRESENCE TIMINGS ARE NOT HERE, and an earlier draft of this chapter put
