@@ -213,7 +213,24 @@ interface ApiUnderTest {
 }
 
 async function startApi(): Promise<ApiUnderTest> {
-  const port = 4900 + Math.floor(Math.random() * 200);
+  // 5400–5599, AND THE FIRST TWO DRAFTS BOTH COLLIDED. The first picked
+  // 4900–5099, which is `isolation.itest.ts`'s range exactly; the second picked
+  // 5000–5199, which still overlaps it by a hundred ports, because that file's
+  // `4900 + (… % 200)` reaches 5099 and reading only its first number misses it.
+  //
+  // Seven of this package's nine integration files spawn their own api on a random
+  // port and vitest runs the files in PARALLEL, so a shared range is a collision
+  // waiting for the birthday problem. The ranges already taken, written down here
+  // because nothing else lists them:
+  //
+  //     4100–4299  limits          4400–4599  session
+  //     4610–4669  meter (gateway) 4710–4769  meter (api)
+  //     4700–4899  presence        4900–5099  isolation
+  //     5200–5399  public-surface
+  //
+  // `presence` and `meter`'s api port already overlap at 4710–4769; that is
+  // pre-existing and not this chapter's to change.
+  const port = 5400 + Math.floor(Math.random() * 200);
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error(
