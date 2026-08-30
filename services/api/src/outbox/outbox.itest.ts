@@ -596,6 +596,30 @@ describe("the membership rows (chapter 3.20, FR-WHK-02)", () => {
       .toEqual(["hai", "mai"]);
   });
 
+  it("writes no row when the membership write itself fails (FR-016)", async () => {
+    // **CONSTITUTION II'S PROPERTY, FOR THIS PATH.** Invariant 2 above proves it for
+    // `message.created`; this chapter's phase order exists because a membership write
+    // recorded nothing and the Redis publish beside it would have been exactly the
+    // publish-after-commit the principle names. The row and the state change share a
+    // transaction, so they share a fate — and nothing else in this suite would notice
+    // if the `INSERT` had been moved one line outside it.
+    //
+    // `addMember` for a channel this tenant does not own writes no member row, so the
+    // `RETURNING` finds nothing and the event is never built. What this asserts is
+    // that no outbox row survives the attempt either.
+    const before = (await rowsFor("channel.member_added")).length;
+    expect(
+      await repo.addMember("00000000-0000-0000-0000-000000000000", mai.id),
+    ).toBe("not_found");
+    expect(await rowsFor("channel.member_added")).toHaveLength(before);
+
+    // And the same for a removal naming a channel in another tenant: an outcome of
+    // `not_a_member` per entry, and no row for an event that did not happen.
+    const removedBefore = (await rowsFor("channel.member_removed")).length;
+    await repo.removeMembers("00000000-0000-0000-0000-000000000000", [mai.id]);
+    expect(await rowsFor("channel.member_removed")).toHaveLength(removedBefore);
+  });
+
   it("writes nothing at all for a role change", async () => {
     await repo.addMember(channelId, mai.id);
     const added = (await rowsFor("channel.member_added")).length;

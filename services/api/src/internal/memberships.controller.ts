@@ -1,16 +1,9 @@
-import {
-  Controller,
-  Get,
-  HttpCode,
-  Req,
-  UnauthorizedException,
-  UseGuards,
-} from "@nestjs/common";
+import { Controller, Get, HttpCode, Req, UseGuards } from "@nestjs/common";
 
 import type { InternalMembershipsResponse } from "@relay/protocol";
 
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
-import type { RequestWithPrincipal } from "../auth/principal";
+import type { UserPrincipal } from "../auth/principal";
 import { Repository } from "../db/repository";
 
 // `GET /internal/memberships` (chapter 3.20, FR-017) — REVIVED, not invented.
@@ -50,21 +43,27 @@ export class MembershipsController {
   @Get("memberships")
   @HttpCode(200)
   async memberships(
-    @Req() req: RequestWithPrincipal,
+    // NARROWED IN THE SIGNATURE RATHER THAN BY A RUNTIME CHECK, and the coverage
+    // ratchet is why. `session.controller.ts` writes
+    // `if (principal?.kind !== "user") throw` and calls it "a wiring fault rather
+    // than a client error" — which is exactly the point: `@Accepts("user")` plus
+    // `CredentialGuard` have already refused an absent, invalid or wrong-class
+    // credential, so that throw cannot be reached and its branch read 0 against a
+    // pin of 100. A check no request can fail is not a check; it is an invariant,
+    // and an invariant belongs in the type.
+    //
+    // The class decorators above are the justification, and moving either one
+    // breaks this signature's claim — which is the trade: a compile-time assertion
+    // that depends on two lines twelve lines up.
+    @Req() req: { principal: UserPrincipal },
   ): Promise<InternalMembershipsResponse> {
-    const principal = req.principal;
-    // The guard has already refused an absent, invalid or wrong-class credential,
-    // so reaching here with anything else is a wiring fault rather than a client
-    // error — `session.controller.ts` says the same about its own narrowing.
-    if (principal?.kind !== "user") {
-      throw new UnauthorizedException("a verified end-user token is required");
-    }
-
     // A verified token for a user this environment has never seen is a user with no
     // channels, not an error. 2.5's rule, and the backstop depends on it: a re-read
     // that threw for a deleted user would turn a routine refresh into a failure the
     // gateway has to interpret.
-    const user = await this.repo.getUserByExternalId(principal.userExternalId);
+    const user = await this.repo.getUserByExternalId(
+      req.principal.userExternalId,
+    );
     return {
       channel_ids: user ? await this.repo.channelsForUser(user.id) : [],
     };

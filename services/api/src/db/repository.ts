@@ -2884,14 +2884,17 @@ export class Repository {
         // recognised idempotent retry returned above without writing anything and
         // must consume no event either." An add that changed nothing publishes
         // nothing and records nothing (FR-005).
-        const row = inserted.rows[0] as { user_external_id: string | null };
-        // Refused rather than defaulted. The subquery cannot miss — the INSERT's own
-        // SELECT already joined `users` — but `membershipEvent` throws on an empty
-        // external id and a silent `""` here is the uuid-in-a-webhook defect wearing
-        // a different hat.
-        if (!row.user_external_id) {
-          throw new Error(`no external id for added member ${userId}`);
-        }
+        // THE SAME CHECK TWICE, AND THIS COPY IS THE UNREACHABLE ONE. There was a
+        // `if (!row.user_external_id) throw` here, on the grounds that a silent `""`
+        // is the uuid-in-a-webhook defect wearing a different hat. That is right, and
+        // `membershipEvent` already refuses it — `event.test.ts` covers that refusal
+        // by name. The subquery cannot miss either: the INSERT's own SELECT already
+        // joined `users`, so the row exists by the time `RETURNING` reads it.
+        //
+        // Two guards, one reachable. The coverage ratchet found the pair as two
+        // uncovered lines taking this file from 99% to 98.79%, and the honest answer
+        // is to keep the check that a test can reach.
+        const row = inserted.rows[0] as { user_external_id: string };
         const event = membershipEvent({
           eventId: randomUUID(),
           environmentId: this.environmentId,
@@ -3101,12 +3104,9 @@ export class Repository {
     // The returning clause already existed; no second query is needed to find out
     // who was actually removed.
     for (const row of deleted) {
-      // Refused rather than defaulted, as on the add path: `membershipEvent` throws
-      // on an empty external id, and a silent `""` is the uuid-in-a-webhook defect
-      // wearing a different hat.
-      if (!row.userExternalId) {
-        throw new Error(`no external id for removed member ${row.userId}`);
-      }
+      // No guard here either, for the reason the add path states: `membershipEvent`
+      // refuses an empty external id and a test reaches that refusal, while a guard
+      // in this loop cannot be reached at all.
       const event = membershipEvent({
         eventId: randomUUID(),
         environmentId: this.environmentId,

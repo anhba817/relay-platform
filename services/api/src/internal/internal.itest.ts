@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   internalSendResponseSchema,
+  internalMembershipsResponseSchema,
   internalSessionResponseSchema,
 } from "@relay/protocol";
 
@@ -168,6 +169,57 @@ describe("the internal surface", () => {
       headers: { authorization: "Bearer not-a-token" },
     });
     expect(res.status).toBe(401);
+  });
+
+  // ── THE BACKSTOP'S ROUTE (chapter 3.20, FR-017) ─────────────────────────────
+  //
+  // `GET /internal/memberships` is the one question a periodic re-read has. It was
+  // exercised end to end from the gateway's suite the moment it shipped — and the
+  // coverage ratchet still read **28.57% statements, 0% branches** for it, because
+  // that suite runs in another package and this one is where the api's coverage is
+  // measured. A route can be thoroughly tested and completely uncovered.
+  it("answers the caller's own channels, in the contract's shape", async () => {
+    const res = await fetch(`${url}/internal/memberships`, {
+      headers: await headers(),
+    });
+    expect(res.status).toBe(200);
+    const parsed = internalMembershipsResponseSchema.safeParse(await res.json());
+    expect(parsed.error?.issues ?? []).toEqual([]);
+    expect(parsed.data?.channel_ids).toContain(channelId);
+  });
+
+  it("answers a user with no row as a user with no channels", async () => {
+    // The branch the backstop depends on. A re-read that threw for a deleted user
+    // would turn a routine refresh into a failure the gateway has to interpret, and
+    // 2.5's rule already says a token for an unseen user is a user with no channels
+    // rather than an error.
+    const res = await fetch(`${url}/internal/memberships`, {
+      headers: await headers("nobody-here"),
+    });
+    expect(res.status).toBe(200);
+    expect(
+      internalMembershipsResponseSchema.parse(await res.json()).channel_ids,
+    ).toEqual([]);
+  });
+
+  it("refuses an unverifiable token", async () => {
+    const res = await fetch(`${url}/internal/memberships`, {
+      headers: { authorization: "Bearer not-a-token" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("answers a POST with 404, which is what keeps the signup fixture standing", async () => {
+    // NOT A FORMALITY. `services/api/src/tenancy/signup.itest.ts` POSTs this path
+    // with no credential and asserts the status is not 200 — a check written when
+    // the route did not exist. A GET-only route answers a POST with 404, so that
+    // assertion still means what it meant. Registering `ALL` or adding a POST twin
+    // is what would break it, and this is the test that would notice.
+    const res = await fetch(`${url}/internal/memberships`, {
+      method: "POST",
+      headers: await headers(),
+    });
+    expect(res.status).toBe(404);
   });
 
   // ── THE SOCKET'S ROUTE INHERITS THE CHECK (chapter 3.15, FR-001) ────────────

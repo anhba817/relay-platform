@@ -11,14 +11,14 @@ import {
   Post,
   Put,
   Query,
-  Req,
   UseGuards,
 } from "@nestjs/common";
 
 import { ALL_CHANNELS } from "@relay/protocol";
 
+import { Repository } from "../db/repository";
+
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
-import type { RequestWithPrincipal } from "../auth/principal";
 import {
   MEMBERSHIP_PUBLISHER,
   type MembershipPublisher,
@@ -54,6 +54,9 @@ import { UsersService } from "./users.service";
 export class UsersController {
   constructor(
     private readonly users: UsersService,
+    // For its `environment` alone — the tenant this request is scoped to, resolved
+    // from a verified credential. See the ban route.
+    private readonly repo: Repository,
     // Chapter 3.20. The controller for the reason `channels.controller.ts` states:
     // `UsersService` holds neither a request id nor a logger, and FR-015's failure
     // line needs both.
@@ -149,7 +152,7 @@ export class UsersController {
    * and banning an already-banned user is a 200 too. */
   @Post(":externalId/ban")
   @HttpCode(HttpStatus.OK)
-  async ban(@Param("externalId") externalId: string, @Req() req: RequestWithPrincipal) {
+  async ban(@Param("externalId") externalId: string) {
     const { external_id, banned, revoked } = await this.users.setBanned(
       externalId,
       true,
@@ -165,7 +168,13 @@ export class UsersController {
     // (`specs/038-chapter-3-20/contracts/membership-fabric.md`).
     if (revoked.length > 0) {
       await this.membership.publish({
-        environment: req.principal?.environmentId ?? "unknown",
+        // THE REPOSITORY'S SCOPE, NOT THE PRINCIPAL'S OPTIONAL CHAIN. `req.principal
+        // ?.environmentId ?? "unknown"` reads the same value and carries a branch no
+        // test can take: the guard has already refused a request without a principal,
+        // so the fallback is unreachable and the coverage ratchet said so — branches
+        // 75% against a pin of 100. `Repository.environment` is the same id, scoped
+        // from the same verified credential, and it is not optional.
+        environment: this.repo.environment,
         channel: ALL_CHANNELS,
         user: externalId,
         change: "removed",

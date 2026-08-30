@@ -191,7 +191,6 @@ export class ChannelsController {
   async removeMembers(
     @Param("channelId") channelId: string,
     @Body(new ZodValidationPipe(removeMembersBodySchema)) body: RemoveMembersBody,
-    @Req() req: RequestWithPrincipal,
   ) {
     const results = await this.channels.removeMembers(channelId, body);
 
@@ -209,7 +208,7 @@ export class ChannelsController {
     // the phase order exists for it.
     for (const removal of results) {
       if (removal.result !== "removed") continue;
-      await this.announce(req, channelId, removal.external_id, "removed");
+      await this.announce(channelId, removal.external_id, "removed");
     }
 
     return { results };
@@ -224,13 +223,16 @@ export class ChannelsController {
    *
    * The environment is the PRINCIPAL's, established by the guard, never a body's. */
   private async announce(
-    req: RequestWithPrincipal,
     channelId: string,
     user: string,
     change: "added" | "removed",
   ): Promise<void> {
     await this.membership.publish({
-      environment: req.principal?.environmentId ?? "unknown",
+      // THE REPOSITORY'S SCOPE, NOT AN OPTIONAL CHAIN OFF THE PRINCIPAL. Both read
+      // the same id from the same verified credential, and `?? "unknown"` carries a
+      // branch the guard makes unreachable — the coverage ratchet found the identical
+      // arm in `users.controller.ts` at 75% against a pin of 100.
+      environment: this.repo.environment,
       channel: channelId,
       user,
       change,
@@ -267,12 +269,7 @@ export class ChannelsController {
     // publish nothing, or every idempotent retry puts a frame on every member's
     // screen.
     if (result === "joined") {
-      await this.announce(
-        req,
-        channelId,
-        req.principal.userExternalId,
-        "added",
-      );
+      await this.announce(channelId, req.principal.userExternalId, "added");
     }
     return { result };
   }
@@ -287,13 +284,12 @@ export class ChannelsController {
   async addMembers(
     @Param("channelId") channelId: string,
     @Body(new ZodValidationPipe(addMembersBodySchema)) body: AddMembersBody,
-    @Req() req: RequestWithPrincipal,
   ) {
     const members = await this.channels.addMembers(channelId, body);
     // `added` only. `already_a_member` is the idempotent repeat and changed nothing.
     for (const member of members) {
       if (member.status !== "added") continue;
-      await this.announce(req, channelId, member.external_id, "added");
+      await this.announce(channelId, member.external_id, "added");
     }
     return { members };
   }

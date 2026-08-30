@@ -872,9 +872,14 @@ describe("the arms a session cannot reach (T036's list)", () => {
       b += 1;
     });
     cancel();
-    await waitFor(() => (b > 1 ? b : undefined), "the second watcher to run twice");
+    const ranTwice = await waitFor(
+      () => (b > 1 ? b : undefined),
+      "the second watcher to run twice",
+    );
     // A connection that closes must stop asking, and must not stop anyone else
-    // asking. One `clearInterval` over a shared timer would fail this.
+    // asking. One `clearInterval` over a shared timer would fail this. Both halves
+    // are `expect`s because both halves are in the title.
+    expect(ranTwice).toBeGreaterThan(1);
     expect(a).toBe(0);
   });
 
@@ -1738,7 +1743,11 @@ describe("a ban revokes everything at once (US4)", () => {
     await one.close();
   });
 
-  it("stops both channels, tells the user per channel, and leaves others alone", async () => {
+  it("tells the banned user once per channel, sentinel-free, and leaves others alone", async () => {
+    // **THE TITLE DOES NOT SAY "STOPS BOTH CHANNELS" ANY MORE.** It did, and that
+    // half moved to the shared-window test above when this file stopped paying the
+    // five-second budget twice. A title claiming an assertion the test no longer
+    // makes is chapter 3.19's defect exactly, and T130 exists to catch it.
     // **ONE WINDOW FOR THE WHOLE CASE.** Five seconds is FR-RTM-10's own budget and
     // cannot be injected shorter, so the ban, its negative assertion and the
     // bystander's positive one all share a single wait.
@@ -1908,11 +1917,14 @@ describe("the backstop — constitution IV's recovery property", () => {
     const socket = await connect(instance, users["tuan"]!);
     try {
       const frames = record(socket);
-      await waitFor(
+      const ran = await waitFor(
         () => (instance.rereads() >= 3 ? instance.rereads() : undefined),
         "three re-reads",
       );
-
+      // THE COUNT IS THE TITLE'S CLAIM, so it is an `expect` rather than a `waitFor`
+      // that happened not to throw. Both would fail; only one of them says in the
+      // report what the test was about.
+      expect(ran).toBeGreaterThanOrEqual(3);
       expect(frames.filter((f) => f.type === "membership.changed")).toEqual([]);
       // And delivery is untouched by all that re-reading.
       await postMessage(channels[0]!, sender, "still a member");
