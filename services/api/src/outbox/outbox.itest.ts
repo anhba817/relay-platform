@@ -292,8 +292,15 @@ describe("the outbox", () => {
     expect(messages.rows[0]!.n).toBeGreaterThan(0);
 
     const owed = (await db.execute(
+      // SCOPED TO THE MESSAGE'S EVENT (chapter 3.20). This counted every row in the
+      // environment, which was the same question while `message.created` was the only
+      // type. The walk's own seed calls `addMember`, and that writes a
+      // `channel.member_added` row now — a correctly written one, for a state change
+      // this invariant is not about. The assertion means "the message's event is
+      // missing" and now says so.
       `SELECT count(*)::int AS n FROM outbox
-        WHERE payload->>'environment_id' = '${environmentId}'`,
+        WHERE payload->>'environment_id' = '${environmentId}'
+          AND payload->>'type' = 'message.created'`,
     )) as unknown as { rows: { n: number }[] };
     expect(owed.rows[0]!.n).toBe(0);
   }, 60_000);
@@ -305,8 +312,12 @@ describe("the outbox", () => {
     const environmentId = await killInTheGap("outbox");
 
     const rows = (await db.execute(
+      // Scoped for the reason invariant 6 above is: the walk seeds a membership and
+      // `ORDER BY id` put that row first, so the subject assertion below compared the
+      // seed against the message it is about.
       `SELECT id, subject, payload FROM outbox
         WHERE published_at IS NULL AND payload->>'environment_id' = '${environmentId}'
+          AND payload->>'type' = 'message.created'
         ORDER BY id`,
     )) as unknown as {
       rows: { id: number; subject: string; payload: { id: string } }[];
@@ -505,3 +516,139 @@ async function outboxDepthFor(db: Db, environmentId: string): Promise<number> {
   )) as unknown as { rows: { pending: number }[] };
   return result.rows[0]?.pending ?? 0;
 }
+
+// Chapter 3.20. The membership rows, and the transaction that has to hold them.
+//
+// THIS PHASE SHIPS BEFORE ANY PUBLISH EXISTS, which is the ordering constitution II
+// forces: "publish-after-commit without the outbox is forbidden". A phase that built
+// the fabric first would ship the violation and then repair it, and the repair would
+// read as a refactor rather than as the fix it is.
+describe("the membership rows (chapter 3.20, FR-WHK-02)", () => {
+  let db: Db;
+  let repo: Repository;
+  let envId: string;
+  let channelId: string;
+  let mai: { id: string };
+  let hai: { id: string };
+
+  const rowsFor = async (type: string): Promise<Array<Record<string, unknown>>> => {
+    const result = (await db.execute(
+      // Read straight out of the table rather than through the relay: this phase is
+      // about what the transaction wrote, not about what a consumer eventually sees.
+      `select payload from outbox where payload->>'environment_id' = '${envId}'
+         and payload->>'type' = '${type}' order by id`,
+    )) as { rows: Array<{ payload: Record<string, unknown> }> };
+    return result.rows.map((r) => r.payload);
+  };
+
+  beforeAll(async () => {
+    db = createDb(createPool());
+    const env = await createEnvironment(db, {
+      name: `membership-outbox-${Date.now()}`,
+    });
+    envId = env.id;
+    repo = new Repository(db, env.id);
+    mai = await repo.createUser("mai", "Mai");
+    hai = await repo.createUser("hai", "Hai");
+    channelId = (await repo.createChannel("ops", "public")).id;
+  }, 60_000);
+
+  it("writes one row per added member, and none for a repeat", async () => {
+    // ZERO BEFORE THE WRITE, asserted in the same test. The phase's whole subject is
+    // a row that did not exist, and counting only afterwards passes against a fixture
+    // that was never clean.
+    expect(await rowsFor("channel.member_added")).toHaveLength(0);
+
+    expect(await repo.addMember(channelId, mai.id)).toBe("added");
+    const after = await rowsFor("channel.member_added");
+    expect(after).toHaveLength(1);
+    expect(after[0]!.data).toEqual({ channel_id: channelId, user: "mai" });
+
+    // THE IDEMPOTENT BRANCH IS THE ONE A READER ASSUMES WORKS. `sendMessage`'s rule
+    // verbatim: a recognised retry returned without writing anything and must consume
+    // no event either, or a client on a flaky link fires a second webhook.
+    expect(await repo.addMember(channelId, mai.id)).toBe("already_a_member");
+    expect(await rowsFor("channel.member_added")).toHaveLength(1);
+  });
+
+  it("carries the external id, never the uuid a customer cannot use", async () => {
+    const rows = await rowsFor("channel.member_added");
+    const data = rows[0]!.data as { user: string };
+    expect(data.user).toBe("mai");
+    expect(data.user).not.toBe(mai.id);
+  });
+
+  it("writes one row per ACTUALLY removed member, not per id asked for", async () => {
+    await repo.addMember(channelId, hai.id);
+    const before = (await rowsFor("channel.member_removed")).length;
+
+    // Three ids: one member, one user who is not a member, one that is no user at
+    // all. The `RETURNING` clause decides, and only the first should produce a row.
+    const ghost = "00000000-0000-4000-8000-000000000000";
+    const outcome = await repo.removeMembers(channelId, [mai.id, ghost, hai.id]);
+    expect(outcome.get(mai.id)).toBe("removed");
+    expect(outcome.get(ghost)).toBe("not_a_member");
+    expect(outcome.get(hai.id)).toBe("removed");
+
+    const rows = await rowsFor("channel.member_removed");
+    expect(rows).toHaveLength(before + 2);
+    expect(rows.slice(before).map((r) => (r.data as { user: string }).user).sort())
+      .toEqual(["hai", "mai"]);
+  });
+
+  it("writes nothing at all for a role change", async () => {
+    await repo.addMember(channelId, mai.id);
+    const added = (await rowsFor("channel.member_added")).length;
+    const removed = (await rowsFor("channel.member_removed")).length;
+
+    // `moderator`, not `admin`. `members_role_check` is ('owner','moderator','member')
+    // and `memberships_role_check` — the ORGANISATION one — is ('owner','admin',
+    // 'member'). The schema comment predicts this confusion in as many words and the
+    // first draft of this test made it anyway.
+    expect(await repo.setMemberRole(channelId, mai.id, "moderator")).toBe("set");
+
+    // `membership.changed`'s enum has two members and neither means "role".
+    // A reader who sees add and remove producing events will assume a PATCH does
+    // too; this is where they find out it does not.
+    expect(await rowsFor("channel.member_added")).toHaveLength(added);
+    expect(await rowsFor("channel.member_removed")).toHaveLength(removed);
+  });
+
+  it("writes one removal per channel when a user is banned", async () => {
+    const second = (await repo.createChannel("night-shift", "public")).id;
+    const linh = await repo.createUser("linh", "Linh");
+    await repo.addMember(channelId, linh.id);
+    await repo.addMember(second, linh.id);
+    const before = (await rowsFor("channel.member_removed")).length;
+
+    // FR-WHK-02 NAMES NO EVENT TYPE FOR A BAN, so a ban is recorded as what it is:
+    // a removal from every channel. The alternative was no durable record at all,
+    // which makes the fabric publish beside it exactly the publish-after-commit
+    // constitution II forbids. The FABRIC publish stays one per user.
+    const revoked = await repo.banUser(linh.id);
+    expect(revoked.sort()).toEqual([channelId, second].sort());
+
+    const rows = await rowsFor("channel.member_removed");
+    expect(rows).toHaveLength(before + 2);
+
+    // A RE-BAN CHANGES NO STATE AND MUST EMIT NOTHING. `isNull(users.bannedAt)`
+    // already makes the update touch nothing; without the guard on the returning
+    // rows, every repeat would emit a full set for a state that did not change.
+    expect(await repo.banUser(linh.id)).toEqual([]);
+    expect(await rowsFor("channel.member_removed")).toHaveLength(before + 2);
+  });
+
+  it("keeps the row and the write in one transaction — neither survives alone", async () => {
+    // THE PROPERTY IS SYMMETRIC and only a direction is order-dependent, which is
+    // why this fails the write rather than the insert: `addMember` writes its row
+    // last, so nothing fails after it, and the proof has to come from the other side.
+    //
+    // A channel id that is not a uuid makes the INSERT ... SELECT throw inside the
+    // transaction, after nothing and before everything. What it proves is that the
+    // outbox insert cannot outlive a failed membership write — and a row written
+    // beside the transaction rather than inside it passes every other test here.
+    const before = (await rowsFor("channel.member_added")).length;
+    await expect(repo.addMember("not-a-uuid", mai.id)).rejects.toThrow();
+    expect(await rowsFor("channel.member_added")).toHaveLength(before);
+  });
+});

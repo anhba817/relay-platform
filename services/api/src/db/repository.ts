@@ -38,7 +38,7 @@ import {
   webhookDisableNotifications,
   webhookEndpoints,
 } from "./schema";
-import { messageCreatedEvent } from "../outbox/event";
+import { membershipEvent, messageCreatedEvent } from "../outbox/event";
 import { capsFor, type Caps } from "../quotas/config";
 import { thresholdsCrossed } from "../quotas/policy";
 import { creditFor, highWaterMark } from "../quotas/credit";
@@ -2823,6 +2823,28 @@ export class Repository {
    * `not_found` keeps the conflation the isolation property needs. The follow-up
    * read distinguishes it from `already_a_member` — and it is a read, not a
    * check-then-write: the insert already happened. */
+  /** Chapter 3.20. THIS METHOD HAD NO TRANSACTION AND NOW HAS ONE, which is a
+   * different change from adding a statement to an existing one.
+   *
+   * Constitution II: "State changes and their events MUST commit atomically via the
+   * transactional outbox. Publish-after-commit without the outbox is forbidden."
+   * Chapter 3.18's Redis publish is legal because `sendMessage` already wrote the
+   * durable row inside the transaction that wrote the message; a membership write
+   * recorded nothing, so the same publish here would be exactly the case the
+   * principle names. The row has to come first, and it has to be atomic with the
+   * insert, and there was nothing to put it inside.
+   *
+   * THE EXTERNAL ID COMES OUT OF `RETURNING`, and the first draft of this chapter
+   * took it as a parameter instead. The event a customer receives carries external
+   * ids — `MessageCreatedData` fixes that boundary in its own words — and this
+   * method holds `users.id`. Adding a parameter was the obvious answer and it broke
+   * **68 call sites across 15 files**, twelve of them test fixtures and several
+   * inside files other chapters fence: a signature change to a method this old is a
+   * fence-chain cost paid by chapters that never mention membership.
+   *
+   * A subquery in the `RETURNING` clause costs one expression on the inserted branch
+   * and nothing anywhere else. The typecheck found the blast radius in four seconds;
+   * the alternative would have been found in phase 10. */
   async addMember(
     channelId: string,
     userId: string,
@@ -2832,40 +2854,71 @@ export class Repository {
      * afterwards, which is what US6's first scenario asks for. */
     role?: string,
   ): Promise<AddMemberOutcome> {
-    const inserted = await this.db.execute(
-      role === undefined
-        ? sql`INSERT INTO members (channel_id, user_id)
-          SELECT c.id, u.id FROM channels c, users u
-          WHERE c.id = ${channelId} AND c.environment_id = ${this.environmentId}
-            AND u.id = ${userId} AND u.environment_id = ${this.environmentId}
-          ON CONFLICT (channel_id, user_id) DO NOTHING
-          RETURNING channel_id`
-        : sql`INSERT INTO members (channel_id, user_id, role)
-          SELECT c.id, u.id, ${role} FROM channels c, users u
-          WHERE c.id = ${channelId} AND c.environment_id = ${this.environmentId}
-            AND u.id = ${userId} AND u.environment_id = ${this.environmentId}
-          ON CONFLICT (channel_id, user_id) DO NOTHING
-          RETURNING channel_id`,
-    );
-    // `RETURNING` and `.rows.length`, not `rowCount ?? 0`. `rowCount` is typed
-    // `number | null` by the driver and is never null for an INSERT, so the `??`
-    // was a branch nothing could take — one uncovered arm in the file
-    // constitution VI asks for 100% of, bought for nothing. A row that came back
-    // is a row that was inserted.
-    if (inserted.rows.length > 0) return "added";
-
-    const existing = await this.db
-      .select({ userId: members.userId })
-      .from(members)
-      .innerJoin(channels, eq(channels.id, members.channelId))
-      .where(
-        and(
-          eq(members.channelId, channelId),
-          eq(members.userId, userId),
-          eq(channels.environmentId, this.environmentId),
-        ),
+    return this.db.transaction(async (tx) => {
+      const inserted = await tx.execute(
+        role === undefined
+          ? sql`INSERT INTO members (channel_id, user_id)
+            SELECT c.id, u.id FROM channels c, users u
+            WHERE c.id = ${channelId} AND c.environment_id = ${this.environmentId}
+              AND u.id = ${userId} AND u.environment_id = ${this.environmentId}
+            ON CONFLICT (channel_id, user_id) DO NOTHING
+            RETURNING channel_id,
+              (SELECT external_id FROM users WHERE users.id = members.user_id)
+                AS user_external_id`
+          : sql`INSERT INTO members (channel_id, user_id, role)
+            SELECT c.id, u.id, ${role} FROM channels c, users u
+            WHERE c.id = ${channelId} AND c.environment_id = ${this.environmentId}
+              AND u.id = ${userId} AND u.environment_id = ${this.environmentId}
+            ON CONFLICT (channel_id, user_id) DO NOTHING
+            RETURNING channel_id,
+              (SELECT external_id FROM users WHERE users.id = members.user_id)
+                AS user_external_id`,
       );
-    return existing.length > 0 ? "already_a_member" : "not_found";
+      // `RETURNING` and `.rows.length`, not `rowCount ?? 0`. `rowCount` is typed
+      // `number | null` by the driver and is never null for an INSERT, so the `??`
+      // was a branch nothing could take — one uncovered arm in the file
+      // constitution VI asks for 100% of, bought for nothing. A row that came back
+      // is a row that was inserted.
+      if (inserted.rows.length > 0) {
+        // ON THE INSERTED BRANCH ONLY, which is `sendMessage`'s rule verbatim: "a
+        // recognised idempotent retry returned above without writing anything and
+        // must consume no event either." An add that changed nothing publishes
+        // nothing and records nothing (FR-005).
+        const row = inserted.rows[0] as { user_external_id: string | null };
+        // Refused rather than defaulted. The subquery cannot miss — the INSERT's own
+        // SELECT already joined `users` — but `membershipEvent` throws on an empty
+        // external id and a silent `""` here is the uuid-in-a-webhook defect wearing
+        // a different hat.
+        if (!row.user_external_id) {
+          throw new Error(`no external id for added member ${userId}`);
+        }
+        const event = membershipEvent({
+          eventId: randomUUID(),
+          environmentId: this.environmentId,
+          change: "added",
+          occurredAt: new Date().toISOString(),
+          membership: { channel_id: channelId, user: row.user_external_id },
+        });
+        await tx.insert(outbox).values({
+          subject: event.subject,
+          payload: event.payload,
+        });
+        return "added";
+      }
+
+      const existing = await tx
+        .select({ userId: members.userId })
+        .from(members)
+        .innerJoin(channels, eq(channels.id, members.channelId))
+        .where(
+          and(
+            eq(members.channelId, channelId),
+            eq(members.userId, userId),
+            eq(channels.environmentId, this.environmentId),
+          ),
+        );
+      return existing.length > 0 ? "already_a_member" : "not_found";
+    });
   }
 
   /** Archive and unarchive, both idempotent (chapter 3.15, FR-020, FR-020a).
@@ -2920,6 +2973,15 @@ export class Repository {
    * schema at the edge still cannot land. R8's trap was a constraint that reused
    * `memberships`' vocabulary — it would accept `admin`, refuse `moderator`, and
    * read as correct in review. */
+  /** Chapter 3.20. **NO OUTBOX ROW, AND NO FABRIC PUBLISH.** `membership.changed`'s
+   * `change` is an enum of `added` and `removed` — chapter 1.3 published it that way
+   * and neither member means "role" — and FR-WHK-02's event names are
+   * `channel.member_added` and `channel.member_removed`. A role change is a
+   * membership write that this chapter's vocabulary cannot express, in either shape.
+   *
+   * That is a fact about the frame rather than an omission here, and it is stated
+   * where somebody will look for it: a reader who sees add and remove producing
+   * events will otherwise assume a `PATCH` does too, and find silence. */
   async setMemberRole(
     channelId: string,
     userId: string,
@@ -2983,6 +3045,16 @@ export class Repository {
    * carries no `environment_id` — the catalogue calls it a `hop` — so the join is
    * what keeps a foreign channel's rows out of reach.
    */
+  /** Chapter 3.20. THIS ONE HAD NO TRANSACTION EITHER, and it was already two
+   * statements — the member delete and the read-position delete, with nothing
+   * between them. **A crash there left a removed member holding a read position**,
+   * which this transaction closes as a side effect of carrying the outbox rows.
+   * Saying so rather than letting it look incidental: the defect predates this
+   * chapter and is fixed here because the fix was free.
+   *
+   * THE EXTERNAL IDS COME OUT OF `RETURNING`, as `addMember`'s does and for the same
+   * reason: a third parameter here was two more call sites, and the pair of them was
+   * 68 across 15 files. */
   async removeMembers(
     channelId: string,
     userIds: string[],
@@ -3000,7 +3072,8 @@ export class Repository {
     //
     // A hundred round trips to answer one request is the cost chapter 2.4 measured
     // away on the read path; there is no reason to reintroduce it on this one.
-    const deleted = await this.db
+    return this.db.transaction(async (tx) => {
+    const deleted = await tx
       .delete(members)
       .where(
         and(
@@ -3013,10 +3086,41 @@ export class Repository {
                        AND c.environment_id = ${this.environmentId})`,
         ),
       )
-      .returning({ userId: members.userId });
+      .returning({
+        userId: members.userId,
+        // The event's `user` is what a customer reads, and this table holds only a
+        // uuid. One subquery per returned row, on the rows that were actually
+        // deleted — never on the ids that were merely asked for.
+        userExternalId: sql<string>`(SELECT external_id FROM users
+                                      WHERE users.id = ${members.userId})`,
+      });
     const removed = new Set(deleted.map((r) => r.userId));
 
-    await this.db
+    // ONE ROW PER ID THE `RETURNING` CLAUSE GAVE BACK, not one per id asked for.
+    // A bulk call naming five of which two were not members writes three (FR-005).
+    // The returning clause already existed; no second query is needed to find out
+    // who was actually removed.
+    for (const row of deleted) {
+      // Refused rather than defaulted, as on the add path: `membershipEvent` throws
+      // on an empty external id, and a silent `""` is the uuid-in-a-webhook defect
+      // wearing a different hat.
+      if (!row.userExternalId) {
+        throw new Error(`no external id for removed member ${row.userId}`);
+      }
+      const event = membershipEvent({
+        eventId: randomUUID(),
+        environmentId: this.environmentId,
+        change: "removed",
+        occurredAt: new Date().toISOString(),
+        membership: { channel_id: channelId, user: row.userExternalId },
+      });
+      await tx.insert(outbox).values({
+        subject: event.subject,
+        payload: event.payload,
+      });
+    }
+
+    await tx
       .delete(readPositions)
       .where(
         and(
@@ -3030,6 +3134,7 @@ export class Repository {
       outcome.set(id, removed.has(id) ? "removed" : "not_a_member");
     }
     return outcome;
+    });
   }
 
   /** How many deliveries an endpoint holds, scoped. Added for chapter 3.12's
@@ -3288,17 +3393,71 @@ export class Repository {
    *
    * `banned_at` HAD NO WRITER, the same omission `channels.archived_at` had. The column
    * has been in the schema since chapter 2.1 with zero references outside tests. */
-  async banUser(userId: string): Promise<void> {
-    await this.db
-      .update(users)
-      .set({ bannedAt: new Date() })
-      .where(
-        and(
-          eq(users.id, userId),
-          eq(users.environmentId, this.environmentId),
-          isNull(users.bannedAt),
-        ),
-      );
+  /** Chapter 3.20. A BAN WRITES ONE `channel.member_removed` PER CHANNEL, and the
+   * task list said "one event for the user, not one per channel" until this method
+   * was written and the question turned out to have no such answer.
+   *
+   * **FR-WHK-02 names no event type for a ban.** Its eight are `message.created`,
+   * `message.updated`, `message.deleted`, `channel.created`, `channel.member_added`,
+   * `channel.member_removed`, `user.connected` and `user.disconnected`, and inventing
+   * a ninth is scope this chapter does not have — the spelling belongs to the clause
+   * and a customer's subscription filters on it.
+   *
+   * So the choice was: no durable record at all, or the removals a ban actually is.
+   * No record makes the Redis publish beside it publish-after-commit with nothing in
+   * the outbox, which is the case constitution II names by name. **A ban IS a removal
+   * from every channel** — a consumer subscribed to `channel.member_removed` wants to
+   * know, and would be wrong to learn about it only for administrative removals.
+   *
+   * THE FABRIC PUBLISH IS STILL ONE, and `specs/038-chapter-3-20/data-model.md` §5's
+   * "once per user, not once per channel" is about that publish rather than about
+   * these rows. The two were the same sentence in that document and are not the same
+   * thing; the row count is bounded by FR-CHN-07's thousand members per channel.
+   *
+   * The returned list is the channels the ban revoked — the caller needs it for the
+   * fabric publish, and reading it inside the transaction is what makes the rows and
+   * the flag agree. */
+  async banUser(userId: string): Promise<string[]> {
+    return this.db.transaction(async (tx) => {
+      const banned = await tx
+        .update(users)
+        .set({ bannedAt: new Date() })
+        .where(
+          and(
+            eq(users.id, userId),
+            eq(users.environmentId, this.environmentId),
+            isNull(users.bannedAt),
+          ),
+        )
+        .returning({ externalId: users.externalId });
+
+      // ONLY WHEN A ROW WAS UPDATED. `isNull(users.bannedAt)` already makes a re-ban
+      // touch nothing, so without this guard every repeated ban would emit a full set
+      // of events for a state that did not change (FR-005).
+      if (banned.length === 0) return [];
+      const externalId = banned[0]!.externalId;
+
+      const channelRows = await tx
+        .select({ channelId: members.channelId })
+        .from(members)
+        .where(eq(members.userId, userId));
+
+      const occurredAt = new Date().toISOString();
+      for (const { channelId } of channelRows) {
+        const event = membershipEvent({
+          eventId: randomUUID(),
+          environmentId: this.environmentId,
+          change: "removed",
+          occurredAt,
+          membership: { channel_id: channelId, user: externalId },
+        });
+        await tx.insert(outbox).values({
+          subject: event.subject,
+          payload: event.payload,
+        });
+      }
+      return channelRows.map((r) => r.channelId);
+    });
   }
 
   async unbanUser(userId: string): Promise<void> {
