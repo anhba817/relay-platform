@@ -36,6 +36,7 @@ import {
   DEFAULT_REREAD_INTERVAL_MS,
   type Membership,
 } from "./membership.js";
+import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
 
 // Chapter 3.20, phase 3 — the fabric, and ONLY the fabric.
@@ -198,6 +199,10 @@ interface ApiUnderTest {
   environmentId: string;
   credential: string;
   repo: Repo;
+  /** A SECOND TENANT: its own environment, its own key, its own user and channel.
+   * Nothing shared with the first but a Redis instance and a gateway, which is
+   * exactly the pair the isolation assertions are about. */
+  other: { environmentId: string; credential: string; repo: Repo };
   stop: () => void;
 }
 
@@ -221,6 +226,11 @@ async function startApi(): Promise<ApiUnderTest> {
     name: `membership-itest-${randomUUID().slice(0, 8)}`,
   });
   const key = await seeder.createApiKey(db, { environmentId: environment.id });
+
+  const other = await seeder.createEnvironment(db, {
+    name: `membership-itest-other-${randomUUID().slice(0, 8)}`,
+  });
+  const otherKey = await seeder.createApiKey(db, { environmentId: other.id });
 
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     env: {
@@ -247,6 +257,11 @@ async function startApi(): Promise<ApiUnderTest> {
     environmentId: environment.id,
     credential: key.credential,
     repo: new seeder.Repository(db, environment.id),
+    other: {
+      environmentId: other.id,
+      credential: otherKey.credential,
+      repo: new seeder.Repository(db, other.id),
+    },
     stop: () => child.kill(),
   };
 }
@@ -294,12 +309,15 @@ async function seed(users: string[], channels: number): Promise<{
   return { users: names, channels: channelRows.map((c) => c.id), sender };
 }
 
-async function mintToken(user: string): Promise<string> {
+async function mintToken(
+  user: string,
+  credential: string = api.credential,
+): Promise<string> {
   const res = await fetch(`${api.url}/auth/dev-token`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${api.credential}`,
+      authorization: `Bearer ${credential}`,
     },
     body: JSON.stringify({ user, ttl_seconds: 3600 }),
   });
@@ -310,21 +328,26 @@ async function mintToken(user: string): Promise<string> {
 /** The route under test. Answers 200 with a per-entry result, so a caller that
  * removed nobody still gets a 200 — which is why the tests assert the result and
  * not the status. */
-async function removeMember(channelId: string, user: string): Promise<string> {
+async function removeMember(
+  channelId: string,
+  users: string | string[],
+  credential: string = api.credential,
+): Promise<string[]> {
+  const user_ids = Array.isArray(users) ? users : [users];
   const res = await fetch(
     `${api.url}/v1/channels/${channelId}/members/remove`,
     {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${api.credential}`,
+        authorization: `Bearer ${credential}`,
       },
-      body: JSON.stringify({ user_ids: [user] }),
+      body: JSON.stringify({ user_ids }),
     },
   );
   if (!res.ok) throw new Error(`remove: ${res.status} ${await res.text()}`);
   const body = (await res.json()) as { results: { result: string }[] };
-  return body.results[0]?.result ?? "none";
+  return body.results.map((r) => r.result);
 }
 
 /** `user` is required and must have a row: an application credential carries no
@@ -375,6 +398,10 @@ async function startInstance(
 ): Promise<Instance> {
   const { logs, logger } = recorder();
   const fanout = createFanout({ logger: silent });
+  // PRESENCE TOO, and only one test needs it — T072's cross-kind assertion. Four
+  // subject shapes now share one Redis, and "each kind arrives under its own `type`"
+  // cannot be asserted by a gateway that produces three of them.
+  const presence = createPresence({ logger: silent });
   const membership = createMembership({ logger });
   const client = createApiClient(api.url);
   const slowed: ApiClient =
@@ -398,6 +425,7 @@ async function startInstance(
     api: slowed,
     logger,
     fanout,
+    presence,
     membership,
     ...(resumeDeadlineMs === undefined ? {} : { resumeDeadlineMs }),
   });
@@ -408,6 +436,7 @@ async function startInstance(
     close: async () => {
       await sessions.close();
       await fanout.close();
+      await presence.close();
       await membership.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
@@ -439,10 +468,11 @@ async function connect(
    * (`session.ts:372`), which is the only way to reach the resume buffer from a
    * test. */
   cursor?: string,
+  credential: string = api.credential,
 ): Promise<WebSocket> {
   const query = cursor === undefined ? "" : `&cursor=${cursor}`;
   const socket = new WebSocket(
-    `${instance.url}/v1/ws?token=${await mintToken(user)}${query}`,
+    `${instance.url}/v1/ws?token=${await mintToken(user, credential)}${query}`,
   );
   sockets.push(socket);
   await new Promise<void>((resolve, reject) => {
@@ -756,7 +786,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
     const frames = record(socket);
 
     const started = Date.now();
-    expect(await removeMember(channels[0]!, users["tuan"]!)).toBe("removed");
+    expect(await removeMember(channels[0]!, users["tuan"]!)).toEqual(["removed"]);
 
     const notices = await waitFor(
       () =>
@@ -904,7 +934,13 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
     // The subject is told, and the channel they were told about is the one they no
     // longer have. A gateway that mutated first would deliver the message and then
     // go quiet with no explanation.
-    const kinds = frames.map((f) => f.type);
+    // FILTERED TO THE TWO KINDS THIS TEST IS ABOUT. The instances carry presence
+    // now, so an unfiltered frame list also holds `presence.changed` — which is
+    // correct behaviour and would make this assertion a record of which other
+    // features happen to be wired in.
+    const kinds = frames
+      .map((f) => f.type)
+      .filter((t) => t === "message.created" || t === "membership.changed");
     expect(kinds).toEqual(["message.created", "membership.changed"]);
     const notice = frames.find((f) => f.type === "membership.changed")!;
     expect(notice.payload["user"]).toBe(users["tuan"]!);
@@ -1025,4 +1061,238 @@ describe("nothing arrives after the revocation (US1, FR-RTM-10)", () => {
       await slow.close();
     }
   }, 20_000);
+});
+
+describe("the channel's other members see who left (US2)", () => {
+  let one: Instance;
+  let two: Instance;
+
+  beforeAll(async () => {
+    [one, two] = await Promise.all([startInstance(), startInstance()]);
+  }, 30_000);
+
+  afterAll(async () => {
+    await Promise.all([one.close(), two.close()]);
+  });
+
+  it("reaches a remaining member on a DIFFERENT instance from the removed user", async () => {
+    // What separates this from the single-instance case: the receiving gateway does
+    // not host the removed user, and the removal originated at an api that is
+    // neither gateway. One publish on `member:{channel_id}` has to reach both, which
+    // is the whole reason a removal can ride the channel's subject (research R1).
+    const { users, channels } = await seed(["tuan", "linh"], 1);
+    await connect(one, users["tuan"]!);
+    const watcher = await connect(two, users["linh"]!);
+    const theirs = record(watcher);
+
+    await removeMember(channels[0]!, users["tuan"]!);
+
+    const notice = await waitFor(
+      () => theirs.find((f) => f.type === "membership.changed"),
+      "the notice on the other instance",
+    );
+    expect(notice.payload["user"]).toBe(users["tuan"]!);
+    expect(theirs.filter((f) => f.type === "membership.changed")).toHaveLength(1);
+  });
+
+  it("sends ONE frame to a member sharing three channels, not three", async () => {
+    // The publish goes to one channel's subject, so the dedup here is structural
+    // rather than a claim counter — presence needed `claim()` because a transition
+    // fans out over every shared channel and this does not. Asserted anyway: the
+    // structure is the argument, and an argument is not a measurement.
+    const { users, channels } = await seed(["tuan", "linh"], 3);
+    await connect(one, users["tuan"]!);
+    const watcher = await connect(one, users["linh"]!);
+    const theirs = record(watcher);
+
+    await removeMember(channels[0]!, users["tuan"]!);
+    await new Promise((r) => setTimeout(r, 700));
+
+    const notices = theirs.filter((f) => f.type === "membership.changed");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.payload["channel"]).toBe(channels[0]!);
+  });
+
+  it("sends one frame per removed user in a bulk removal, none coalesced", async () => {
+    const { users, channels } = await seed(["tuan", "mai", "linh"], 1);
+    await connect(one, users["tuan"]!);
+    await connect(one, users["mai"]!);
+    const watcher = await connect(one, users["linh"]!);
+    const theirs = record(watcher);
+
+    expect(
+      await removeMember(channels[0]!, [users["tuan"]!, users["mai"]!]),
+    ).toEqual(["removed", "removed"]);
+
+    await waitFor(
+      () =>
+        theirs.filter((f) => f.type === "membership.changed").length === 2
+          ? true
+          : undefined,
+      "two notices",
+    );
+    const named = theirs
+      .filter((f) => f.type === "membership.changed")
+      .map((f) => f.payload["user"])
+      .sort();
+    expect(named).toEqual([users["mai"]!, users["tuan"]!].sort());
+  });
+
+  it("delivers nothing to a user who shares no channel, in a run where a member does", async () => {
+    // A MUST-NOT-RECEIVE TEST THAT PASSES BECAUSE THE PRODUCER IS DEAD PROVES
+    // NOTHING. The positive half runs in the same act, on the same instance, over
+    // the same publish.
+    const { users, channels } = await seed(["tuan", "linh"], 1);
+    const outsider = await seed(["hermit"], 1);
+    await connect(one, users["tuan"]!);
+    const member = await connect(one, users["linh"]!);
+    const stranger = await connect(one, outsider.users["hermit"]!);
+    const theirs = record(member);
+    const nothing = record(stranger);
+
+    await removeMember(channels[0]!, users["tuan"]!);
+    await waitFor(
+      () => theirs.find((f) => f.type === "membership.changed"),
+      "the member's notice",
+    );
+
+    expect(nothing.filter((f) => f.type === "membership.changed")).toEqual([]);
+  });
+
+  it("delivers nothing to another TENANT's user, in the same run", async () => {
+    const { users, channels } = await seed(["tuan", "linh"], 1);
+    // The second tenant's own environment, key, user and channel — nothing shared
+    // with the first but a Redis instance and a gateway.
+    const tag = randomUUID().slice(0, 8);
+    const foreign = `stranger-${tag}`;
+    await api.other.repo.createUser(foreign, "Stranger");
+    const elsewhere = await api.other.repo.createChannel(`elsewhere-${tag}`, "public");
+    const foreignRow = await api.other.repo.createUser(foreign);
+    await api.other.repo.addMember(elsewhere.id, foreignRow.id);
+
+    await connect(one, users["tuan"]!);
+    const member = await connect(one, users["linh"]!);
+    const outsider = await connect(one, foreign, undefined, api.other.credential);
+    const theirs = record(member);
+    const nothing = record(outsider);
+
+    await removeMember(channels[0]!, users["tuan"]!);
+    await waitFor(
+      () => theirs.find((f) => f.type === "membership.changed"),
+      "the member's notice",
+    );
+
+    expect(nothing.filter((f) => f.type === "membership.changed")).toEqual([]);
+  });
+
+  it("retains nothing for a user who was not connected (FR-007)", async () => {
+    // PRESENCE IS NOT A QUEUE AND A MEMBERSHIP CHANGE IS NOT EITHER. A change
+    // published while nobody holds a connection is gone; connecting afterwards
+    // delivers no backlog, because there is no backlog to deliver. The membership
+    // itself is in Postgres and the connect path reads it — which is why nothing is
+    // lost by this and why a replay would be the wrong mechanism.
+    const { users, channels } = await seed(["tuan", "linh"], 1);
+    await removeMember(channels[0]!, users["tuan"]!);
+    await new Promise((r) => setTimeout(r, 300));
+
+    const late = await connect(one, users["tuan"]!);
+    const frames = record(late);
+    await new Promise((r) => setTimeout(r, 700));
+
+    expect(frames.filter((f) => f.type === "membership.changed")).toEqual([]);
+    // And the connect path did the right thing anyway: the channel is not theirs, so
+    // a message posted to it reaches nothing.
+    expect(late.readyState).toBe(WebSocket.OPEN);
+  });
+
+  it("produces NO frame for a role change (FR-006)", async () => {
+    // A role change is a membership WRITE and not a membership change: the person is
+    // still a member and their access has not moved. FR-WHK-02 names two event types
+    // and neither is `channel.member_role_changed`.
+    //
+    // `members.role` is ('owner','moderator','member'). `memberships.role` — the
+    // ORGANISATION table — is ('owner','admin','member'), and `schema.ts:423`
+    // predicts the confusion in prose. This suite made it once anyway.
+    const { users, channels } = await seed(["tuan", "linh"], 1);
+    const subject = await connect(one, users["tuan"]!);
+    const watcher = await connect(one, users["linh"]!);
+    const a = record(subject);
+    const b = record(watcher);
+
+    const res = await fetch(
+      `${api.url}/v1/channels/${channels[0]!}/members/${users["tuan"]!}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${api.credential}`,
+        },
+        body: JSON.stringify({ role: "moderator" }),
+      },
+    );
+    expect(res.status, await res.clone().text()).toBe(200);
+    await new Promise((r) => setTimeout(r, 700));
+
+    expect(a.filter((f) => f.type === "membership.changed")).toEqual([]);
+    expect(b.filter((f) => f.type === "membership.changed")).toEqual([]);
+  });
+
+  it("keeps the four kinds apart — each arrives under its own type, once (FR-033)", async () => {
+    // FOUR SUBJECT SHAPES NOW SHARE ONE REDIS: `chan:{id}`, `presence:{id}`,
+    // `member:{id}` and `member:{env}:{user}`. Nothing filters by kind on the receive
+    // side — the topology is what keeps them apart, and a topology is exactly the
+    // sort of claim that is true right up until someone reuses a prefix.
+    const { users, channels, sender } = await seed(["tuan", "linh"], 3);
+    const watcher = await connect(one, users["linh"]!);
+    const frames = record(watcher);
+    // The subject connects second, so the watcher sees a presence transition for
+    // them rather than for itself.
+    await connect(two, users["tuan"]!);
+
+    await postMessage(channels[1]!, sender, "a message, not a membership change");
+    await removeMember(channels[0]!, users["tuan"]!);
+
+    await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the membership change",
+    );
+    await waitFor(
+      () => frames.find((f) => f.type === "message.created"),
+      "the message",
+    );
+    await waitFor(
+      () => frames.find((f) => f.type === "presence.changed"),
+      "the presence transition",
+    );
+    await new Promise((r) => setTimeout(r, 500));
+
+    // ONE OF EACH ABOUT THE SUBJECT, and each under its own name. The counts matter
+    // as much as the types: a kind delivered twice is a subject subscribed twice,
+    // which is the failure a shared prefix would produce.
+    //
+    // **COUNTED BY SUBJECT, NOT BY TYPE**, and the first version counted by type and
+    // read two presence frames. Both were correct: a watcher shares every one of
+    // their own channels with themselves, so `linh` sees `linh` arrive. Chapter
+    // 3.19's `collect()` carries this warning in its own comment, T043 repeats it as
+    // an instruction — "filter every collector by subject" — and this suite counted
+    // unfiltered anyway. The behaviour was right and the assertion was wrong, for
+    // the fourth time across two chapters.
+    const about = (type: string, user: string): number =>
+      frames.filter((f) => f.type === type && f.payload["user"] === user).length;
+    expect(about("membership.changed", users["tuan"]!)).toBe(1);
+    expect(about("presence.changed", users["tuan"]!)).toBe(1);
+    expect(frames.filter((f) => f.type === "message.created")).toHaveLength(1);
+
+    // And each payload is its own shape rather than another kind wearing this type.
+    expect(
+      Object.keys(frames.find((f) => f.type === "membership.changed")!.payload).sort(),
+    ).toEqual(["change", "channel", "user"]);
+    expect(
+      Object.keys(
+        frames.find(
+          (f) => f.type === "presence.changed" && f.payload["user"] === users["tuan"]!,
+        )!.payload,
+      ).sort(),
+    ).toEqual(["state", "user"]);
+  }, 15_000);
 });
