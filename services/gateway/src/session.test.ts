@@ -54,6 +54,11 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
         : null,
     backfill: async () => ({}),
     sendMessage: async () => committed(42),
+        // The backstop reads this. The default answers what the session above says,
+        // so a stub that never overrides it is a stub whose re-read agrees with its
+        // own connect — which is the state every test in this file that is not about
+        // membership wants.
+        memberships: async () => [CHANNEL],
     ...overrides,
   };
 }

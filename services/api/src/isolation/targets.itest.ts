@@ -129,7 +129,7 @@ describe("the gauntlet's target list derives from the running application", () =
   // added and never classified fails the accounting test above; a route classified
   // and never built fails this one, because the derivation reads the running
   // router.
-  it("derives every route the last two chapters added, and nothing else new", () => {
+  it("derives every route the chapters since have added, and nothing else new", () => {
     // THE LIST GROWS BY CHAPTER AND THE ASSERTION DOES NOT MOVE. Each chapter that
     // adds a route adds its key here, so a route added and never classified fails the
     // accounting test above and a route classified and never built fails this one —

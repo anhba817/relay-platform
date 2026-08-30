@@ -240,6 +240,20 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     accepts: "user",
     shape: "credential",
   },
+
+  // ── credential, internal, end-user token ─────────────────────────────────────
+  //
+  // `credential` AND NOT `read`, WHICH IS THE SIBLING ROUTE'S ARGUMENT VERBATIM. The
+  // backstop asks what this connection may hear and changes nothing, so `read` is the
+  // tempting shape — but a `read` attack forges an IDENTIFIER, and this route takes
+  // none: no body, no path parameter, no query. Its only tenant-scoped input is the
+  // token, which is exactly what `credential` attacks and what `/internal/session`
+  // two entries up was reclassified for.
+  //
+  // Classifying it `read` would have produced an attack that sends a valid request
+  // with nothing forged in it and proves nothing — the failure mode this shape list
+  // exists to make visible.
+  { method: "GET", path: "/internal/memberships", accepts: "user", shape: "credential" },
 ];
 
 export function targetKey(t: { method: string; path: string }): string {

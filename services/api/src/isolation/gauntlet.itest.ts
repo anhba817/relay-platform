@@ -219,6 +219,22 @@ describe("the isolation gauntlet", () => {
     expect(serialised).not.toContain(t.victim.environmentId);
   });
 
+  it("GET /internal/memberships — the attacker's token hears only its own channels", async () => {
+    attacked.add("GET /internal/memberships");
+    // THE SAME ATTACK AS `/internal/session` AND FOR THE SAME REASON: nothing here is
+    // forgeable but the credential. The backstop's whole job is to answer "what may
+    // this connection hear now", so a leak here is a channel id the caller could then
+    // subscribe to.
+    const res = await fetch(`${url}/internal/memberships`, {
+      headers: { authorization: `Bearer ${attackerToken}` },
+    });
+    const body: unknown = res.ok ? await res.json() : null;
+    const serialised = JSON.stringify(body ?? "");
+    expect(serialised).not.toContain(t.victim.channelId);
+    expect(serialised).not.toContain(t.victim.userId);
+    expect(serialised).not.toContain(t.victim.environmentId);
+  });
+
   // ── the two routes this chapter added ──────────────────────────────────────────
   //
   // A chapter that adds an endpoint attacks it in the same chapter. The derivation

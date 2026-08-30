@@ -132,6 +132,10 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
+      // Agrees with `session` above: this file is about the resume,
+      // and a backstop that disagreed with the connect would be a second subject
+      // under test.
+      memberships: async () => [CHANNEL],
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -164,6 +168,10 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
+      // Agrees with `session` above: this file is about the resume,
+      // and a backstop that disagreed with the connect would be a second subject
+      // under test.
+      memberships: async () => [CHANNEL],
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -190,6 +198,10 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
+      // Agrees with `session` above: this file is about the resume,
+      // and a backstop that disagreed with the connect would be a second subject
+      // under test.
+      memberships: async () => [CHANNEL],
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -236,6 +248,10 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
+      // Agrees with `session` above: this file is about the resume,
+      // and a backstop that disagreed with the connect would be a second subject
+      // under test.
+      memberships: async () => [CHANNEL],
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -275,6 +291,10 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
+      // Agrees with `session` above: this file is about the resume,
+      // and a backstop that disagreed with the connect would be a second subject
+      // under test.
+      memberships: async () => [CHANNEL],
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -314,6 +334,10 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
+      // Agrees with `session` above: this file is about the resume,
+      // and a backstop that disagreed with the connect would be a second subject
+      // under test.
+      memberships: async () => [CHANNEL],
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -373,6 +397,9 @@ describe("two instances on one fabric", () => {
     sendMessage: async () => {
       throw new Error("not used");
     },
+    // The same list `session` answers with, so the backstop confirms
+    // what the connect already established and changes nothing.
+    memberships: async () => channels,
   });
 
   afterEach(async () => {
