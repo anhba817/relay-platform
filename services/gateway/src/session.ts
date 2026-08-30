@@ -3,6 +3,7 @@ import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 
 import {
+  ALL_CHANNELS,
   CLOSE_CODES,
   docsUrl,
   frameSchema,
@@ -264,6 +265,42 @@ export function attachSessions({
    * to a client whose membership no longer grants access, and the frame is then the
    * one thing the cut was supposed to stop. */
   function deliverMembership(change: MembershipFabric): void {
+    // A BAN ARRIVES AS ONE CHANGE AND LEAVES AS N (US4, T091). `channel` is the
+    // all-channels sentinel, which exists on the fabric and in this module's log
+    // lines and **never on the wire**: a client receives exactly the frames N
+    // individual removals would have produced, and never a channel id of `"*"`.
+    //
+    // The expansion is here rather than in the api because the api cannot do it. It
+    // knows which channels the ban revoked; it does not know which of them any given
+    // connection on any given instance holds, and that is the set a client's frames
+    // have to match.
+    //
+    // Recursion of depth one: each inner change names a real channel, so it takes
+    // the branch below and never this one.
+    if (change.channel === ALL_CHANNELS) {
+      for (const connection of registry.connectionsFor(change.user)) {
+        if (connection.identity.environmentId !== change.environment) {
+          logger.log("error", "membership.rejected", {
+            reason: "environment_mismatch",
+            connection_id: connection.id,
+            channel: change.channel,
+          });
+          continue;
+        }
+        // A COPY, because the recursion below deletes from `channelIds` and
+        // iterating a Set while deleting from it skips entries. The bug that avoids
+        // is a ban which revokes every other channel.
+        for (const channelId of [...connection.channelIds]) {
+          deliverMembership({ ...change, channel: channelId });
+        }
+      }
+      logger.log("info", "membership.revoked_all", {
+        user: change.user,
+        environment: change.environment,
+      });
+      return;
+    }
+
     // TWO LOOKUPS, AND THE ASYMMETRY IS RESEARCH R1'S, NOT AN OPTIMISATION.
     //
     // On a REMOVAL, `subscribersOf(channel)` is the whole audience: the removed user

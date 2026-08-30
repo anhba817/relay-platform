@@ -4,15 +4,25 @@ import {
   Delete,
   Get,
   HttpCode,
+  HttpStatus,
+  Inject,
   Param,
   Patch,
   Post,
   Put,
   Query,
+  Req,
   UseGuards,
 } from "@nestjs/common";
 
+import { ALL_CHANNELS } from "@relay/protocol";
+
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
+import type { RequestWithPrincipal } from "../auth/principal";
+import {
+  MEMBERSHIP_PUBLISHER,
+  type MembershipPublisher,
+} from "../membership/publisher";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 import {
   listingQuerySchema,
@@ -42,7 +52,14 @@ import { UsersService } from "./users.service";
 @UseGuards(CredentialGuard)
 @Accepts("application")
 export class UsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    // Chapter 3.20. The controller for the reason `channels.controller.ts` states:
+    // `UsersService` holds neither a request id nor a logger, and FR-015's failure
+    // line needs both.
+    @Inject(MEMBERSHIP_PUBLISHER)
+    private readonly membership: MembershipPublisher,
+  ) {}
 
   @Get(":externalId/channels")
   async listChannels(
@@ -131,13 +148,52 @@ export class UsersController {
    * `@HttpCode(200)` on the POST for the reason the upsert has it: nothing is created,
    * and banning an already-banned user is a 200 too. */
   @Post(":externalId/ban")
-  @HttpCode(200)
-  async ban(@Param("externalId") externalId: string) {
-    return this.users.setBanned(externalId, true);
+  @HttpCode(HttpStatus.OK)
+  async ban(@Param("externalId") externalId: string, @Req() req: RequestWithPrincipal) {
+    const { external_id, banned, revoked } = await this.users.setBanned(
+      externalId,
+      true,
+    );
+    // ONE PUBLISH FOR THE USER, not one per channel. The subject is the principal's
+    // own — `member:{env}:{user}` — because there is no channel subject to use when
+    // the change is "every channel", and because the gateway is the only place that
+    // knows which of them a given connection holds.
+    //
+    // `revoked` empty means nothing changed, so a repeated ban publishes nothing
+    // (FR-005). `ALL_CHANNELS` is the one spelling of the sentinel, and it never
+    // reaches a client: the gateway expands it per channel
+    // (`specs/038-chapter-3-20/contracts/membership-fabric.md`).
+    if (revoked.length > 0) {
+      await this.membership.publish({
+        environment: req.principal?.environmentId ?? "unknown",
+        channel: ALL_CHANNELS,
+        user: externalId,
+        change: "removed",
+      });
+    }
+    return { external_id, banned };
   }
 
+  /** THE UNBAN PUBLISHES NOTHING, and that is a decision rather than an omission.
+   *
+   * A ban leaves the `members` rows alone — it sets `users.banned_at` — so an
+   * unbanned user's memberships are exactly what they were. What the ban destroyed
+   * is the live connection's `channelIds`, and restoring that needs the channel list
+   * the api would have to re-derive plus an `added` frame per channel, which is the
+   * per-channel shape this contract rules out.
+   *
+   * Two things already repair it, and the phase that adds the second says so:
+   * reconnecting reads membership at the door (chapter 3.2), and the backstop's
+   * periodic re-read picks it up within its interval. Both are the mechanism this
+   * chapter already builds; a third would be a special case for the rarer half of a
+   * rare pair. `chapter-notes.md` records the choice. */
   @Delete(":externalId/ban")
+  @HttpCode(HttpStatus.OK)
   async unban(@Param("externalId") externalId: string) {
-    return this.users.setBanned(externalId, false);
+    // The two fields the route has always answered with, named rather than
+    // destructured away: this config does not treat a leading underscore as
+    // "deliberately unused", so `const { revoked: _x, ...rest }` is a lint error.
+    const { external_id, banned } = await this.users.setBanned(externalId, false);
+    return { external_id, banned };
   }
 }

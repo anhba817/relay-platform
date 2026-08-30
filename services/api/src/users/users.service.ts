@@ -243,10 +243,22 @@ export class UsersService {
    * channels, and every route naming them answers 404. Banning one would be a state with
    * no observable difference.
    */
-  async setBanned(externalId: string, banned: boolean): Promise<{ external_id: string; banned: boolean }> {
+  async setBanned(
+    externalId: string,
+    banned: boolean,
+  ): Promise<{ external_id: string; banned: boolean; revoked: string[] }> {
     const user = await this.requireUser(externalId);
-    if (banned) await this.repo.banUser(user.id);
-    else await this.repo.unbanUser(user.id);
-    return { external_id: externalId, banned };
+    // `revoked` IS THE CHANGE, and the route's body does not carry it. `banUser`
+    // returns the channels the ban actually revoked and an empty array when nothing
+    // changed — `isNull(users.bannedAt)` makes a re-ban touch no row — so the
+    // controller publishes on a non-empty list and nothing on a repeat (FR-005).
+    //
+    // ONE CASE READS AS "NO CHANGE" AND IS NOT: banning a user who belongs to no
+    // channel returns `[]` too. Nothing is lost by the silence — a connection with no
+    // channels receives nothing whether or not it is told — and distinguishing the
+    // two would mean widening the repository's return for a publish with no audience.
+    const revoked = banned ? await this.repo.banUser(user.id) : [];
+    if (!banned) await this.repo.unbanUser(user.id);
+    return { external_id: externalId, banned, revoked };
   }
 }

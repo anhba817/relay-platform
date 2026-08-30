@@ -405,6 +405,18 @@ async function joinChannel(channelId: string, user: string): Promise<string> {
   return ((await res.json()) as { result: string }).result;
 }
 
+async function ban(
+  user: string,
+  banned = true,
+  credential: string = api.credential,
+): Promise<void> {
+  const res = await fetch(`${api.url}/v1/users/${user}/ban`, {
+    method: banned ? "POST" : "DELETE",
+    headers: { authorization: `Bearer ${credential}` },
+  });
+  if (!res.ok) throw new Error(`ban: ${res.status} ${await res.text()}`);
+}
+
 async function postMessage(
   channelId: string,
   user: string,
@@ -1027,7 +1039,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
   });
 });
 
-describe("nothing arrives after the revocation (US1, FR-RTM-10)", () => {
+describe("nothing arrives after a revocation — one window, three cases (FR-RTM-10)", () => {
   let one: Instance;
   let two: Instance;
 
@@ -1039,7 +1051,7 @@ describe("nothing arrives after the revocation (US1, FR-RTM-10)", () => {
     await Promise.all([one.close(), two.close()]);
   });
 
-  it("delivers nothing on either instance after the clause's own five seconds", async () => {
+  it("delivers nothing after the clause's own five seconds — removal, cross-instance, ban", async () => {
     // **ONE WINDOW, TWO CASES**, and the sharing is deliberate rather than tidy. This
     // is the first timing in two chapters that cannot be injected shorter — five
     // seconds is FR-RTM-10's own budget, not a module constant — so a file that waits
@@ -1050,25 +1062,45 @@ describe("nothing arrives after the revocation (US1, FR-RTM-10)", () => {
     const a = record(local);
     const b = record(elsewhere);
 
+    // THE THIRD CASE RIDES THE SAME WINDOW (US4). A ban is the other way to lose
+    // access, its clause is the same five seconds, and setting it up here rather
+    // than in its own test is what keeps this file under its budget — two waits were
+    // 12.2 s of a 37.9 s file.
+    const banned = await seed(["mai"], 2);
+    const bannedSocket = await connect(one, banned.users["mai"]!);
+    const c = record(bannedSocket);
+
     await removeMember(channels[0]!, users["tuan"]!);
+    await ban(banned.users["mai"]!);
     await Promise.all([
       waitFor(() => a.find((f) => f.type === "membership.changed"), "notice on one"),
       waitFor(() => b.find((f) => f.type === "membership.changed"), "notice on two"),
+      waitFor(
+        () =>
+          c.filter((f) => f.type === "membership.changed").length === 2
+            ? true
+            : undefined,
+        "both of the banned user's channels",
+      ),
     ]);
 
     // THE CLAUSE'S OWN BUDGET, not a shorter one. Five seconds is what FR-RTM-10
     // gives a mechanism to take effect, so a send inside it proves nothing.
     await new Promise((r) => setTimeout(r, 5_500));
     await postMessage(channels[0]!, sender, "after the window");
+    await postMessage(banned.channels[0]!, banned.sender, "after the ban");
+    await postMessage(banned.channels[1]!, banned.sender, "after the ban, second");
     await new Promise((r) => setTimeout(r, 500));
 
     expect(a.filter((f) => f.type === "message.created")).toEqual([]);
     expect(b.filter((f) => f.type === "message.created")).toEqual([]);
-    // AND BOTH SOCKETS ARE STILL OPEN. "Nothing arrived" is equally true of two dead
-    // connections, which is the assertion this file would otherwise be making.
+    expect(c.filter((f) => f.type === "message.created")).toEqual([]);
+    // AND EVERY SOCKET IS STILL OPEN. "Nothing arrived" is equally true of three
+    // dead connections, which is the assertion this file would otherwise be making.
     expect(local.readyState).toBe(WebSocket.OPEN);
     expect(elsewhere.readyState).toBe(WebSocket.OPEN);
-  }, 20_000);
+    expect(bannedSocket.readyState).toBe(WebSocket.OPEN);
+  }, 25_000);
 
   it("drops the channel's BUFFERED frames when the removal lands mid-resume (FR-029)", async () => {
     // **THIS FAILS AGAINST AN IMPLEMENTATION THAT PASSES THE TEST ABOVE**, which is
@@ -1584,5 +1616,119 @@ describe("the window between the add committing and the subscription landing", (
       socket.close();
       await slow.close();
     }
+  }, 20_000);
+});
+
+describe("a ban revokes everything at once (US4)", () => {
+  let one: Instance;
+
+  beforeAll(async () => {
+    one = await startInstance();
+  }, 30_000);
+
+  afterAll(async () => {
+    await one.close();
+  });
+
+  it("stops both channels, tells the user per channel, and leaves others alone", async () => {
+    // **ONE WINDOW FOR THE WHOLE CASE.** Five seconds is FR-RTM-10's own budget and
+    // cannot be injected shorter, so the ban, its negative assertion and the
+    // bystander's positive one all share a single wait.
+    const { users, channels, sender } = await seed(["tuan", "linh"], 2);
+    const banned = await connect(one, users["tuan"]!);
+    const bystander = await connect(one, users["linh"]!);
+    const theirs = record(banned);
+    const others = record(bystander);
+
+    await ban(users["tuan"]!);
+
+    // TWO FRAMES, ONE PER CHANNEL, and neither carrying the sentinel. The fabric
+    // carried one change with `channel: "*"`; the client sees what two individual
+    // removals would have produced.
+    await waitFor(
+      () =>
+        theirs.filter((f) => f.type === "membership.changed").length === 2
+          ? true
+          : undefined,
+      "one frame per revoked channel",
+    );
+    const named = theirs
+      .filter((f) => f.type === "membership.changed")
+      .map((f) => f.payload["channel"])
+      .sort();
+    expect(named).toEqual([...channels].sort());
+    expect(theirs.some((f) => f.payload["channel"] === "*")).toBe(false);
+
+    // THE FIVE-SECOND NEGATIVE IS NOT HERE. It is the same clause the removal test
+    // waits out, and this file pays that budget ONCE — the shared-window test above
+    // sets up a ban beside its removals for exactly this reason. What is left here
+    // is what makes the ban a ban rather than a removal, which needs no wait.
+    await postMessage(channels[0]!, sender, "for the bystander");
+    await postMessage(channels[1]!, sender, "for the bystander, second channel");
+    await waitFor(
+      () =>
+        others.filter((f) => f.type === "message.created").length === 2
+          ? true
+          : undefined,
+      "both channels still delivering to the bystander",
+    );
+    // THE BYSTANDER IS UNAFFECTED, over the same publish. A ban that silenced the
+    // channel rather than the person would pass every assertion above this one.
+    expect(theirs.filter((f) => f.type === "message.created")).toEqual([]);
+    expect(banned.readyState).toBe(WebSocket.OPEN);
+  }, 15_000);
+
+  it("publishes nothing on a repeated ban (FR-005)", async () => {
+    const { users } = await seed(["tuan"], 1);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+
+    await ban(users["tuan"]!);
+    await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the first ban",
+    );
+    await ban(users["tuan"]!);
+    await new Promise((r) => setTimeout(r, 700));
+
+    // `banUser` guards on `isNull(users.banned_at)`, so the second call touches no
+    // row, returns no channels, and the controller publishes nothing.
+    expect(frames.filter((f) => f.type === "membership.changed")).toHaveLength(1);
+  }, 15_000);
+
+  it("restores delivery on reconnect after an unban, not on the live socket", async () => {
+    // **THE UNBAN PUBLISHES NOTHING**, which is a decision recorded in
+    // `chapter-notes.md` and in the route's own comment. A ban leaves the `members`
+    // rows alone, so the memberships survive; what it destroyed is this connection's
+    // `channelIds`, and restoring that would need an `added` frame per channel — the
+    // per-channel shape the fabric contract rules out.
+    //
+    // Two mechanisms already repair it. This asserts the one that exists now:
+    // reconnecting reads membership at the door (chapter 3.2). The other is the
+    // backstop's periodic re-read, which the next phase adds — and when it does, the
+    // first assertion here becomes true only within the re-read interval.
+    const { users, channels, sender } = await seed(["tuan", "linh"], 1);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+
+    await ban(users["tuan"]!);
+    await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the ban",
+    );
+    await ban(users["tuan"]!, false);
+    await postMessage(channels[0]!, sender, "while still connected");
+    await new Promise((r) => setTimeout(r, 700));
+    expect(frames.filter((f) => f.type === "message.created")).toEqual([]);
+
+    // A fresh connection reads membership at the door and gets the channel back.
+    const reconnected = await connect(one, users["tuan"]!);
+    const after = record(reconnected);
+    await postMessage(channels[0]!, sender, "after reconnecting");
+    const delivered = await waitFor(
+      () => after.find((f) => f.type === "message.created"),
+      "delivery after a reconnect",
+    );
+    expect(delivered.payload["text"]).toBe("after reconnecting");
   }, 20_000);
 });
