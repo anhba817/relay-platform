@@ -108,18 +108,26 @@ describe("the gauntlet's target list derives from the running application", () =
   // ── SC-014: THE COUNT MOVED BY EXACTLY WHAT THIS FEATURE ADDS ──────────────
   //
   // Chapter 3.12 closed at **24** derived targets, recorded in
-  // `specs/033-chapter-3-12/baseline.txt` and re-measured at the start of this
-  // feature (T008). Chapters 3.15 and 3.16 add fourteen routes, so the closing
-  // number is 38.
+  // `specs/033-chapter-3-12/baseline.txt` and re-measured at the start of that
+  // feature. Chapters 3.15 and 3.16 add fourteen routes, taking it to 38, and
+  // chapter 3.20 revives `GET /internal/memberships` for the membership backstop
+  // — one route, so 39.
   //
   // A NUMBER RATHER THAN A DELTA, because a delta cannot fail: `after - before`
   // computed from the same run is an identity. This is the figure a reader can
-  // check against the route table, and the route table lists which fourteen.
-  it("has grown from chapter 3.12's 24 by exactly the routes this feature adds", () => {
-    // The routes built so far. This assertion moves ONE line per phase, which is
-    // the point: a phase that adds a route and forgets to classify it fails the
-    // test above, and a phase that adds a route nobody planned fails this one.
-    const BUILT_SO_FAR = 14;
+  // check against the route table, and the route table lists which routes.
+  //
+  // **THIS TEST DID ITS JOB AGAIN.** Chapter 3.20 added its route, ran this file,
+  // and got three failures naming the route by hand — unclassified, 38 against 39,
+  // and the entry count. CLAUDE.md calls the derived list the highest-yield check
+  // in the repository on the strength of five previous occasions; this is the
+  // sixth, and the first where the route being added was a REVIVAL of one the
+  // classification list had never carried.
+  it("has grown from chapter 3.12's 24 by exactly the routes since", () => {
+    // This assertion moves ONE line per phase, which is the point: a phase that
+    // adds a route and forgets to classify it fails the test above, and a phase
+    // that adds a route nobody planned fails this one.
+    const BUILT_SO_FAR = 15;
     expect(derived.length).toBe(24 + BUILT_SO_FAR);
   });
 

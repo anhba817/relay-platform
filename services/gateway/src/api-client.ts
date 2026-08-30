@@ -1,5 +1,6 @@
 import {
   internalBackfillResponseSchema,
+  internalMembershipsResponseSchema,
   internalSendResponseSchema,
   internalSessionResponseSchema,
   internalUsageReportResponseSchema,
@@ -80,6 +81,12 @@ export interface ApiClient {
   session(
     token: string,
   ): Promise<InternalSessionResponse | { quotaExceeded: string } | null>;
+  /** Chapter 3.20's backstop: what this connection may hear, now.
+   *
+   * The one question a periodic re-read has, asked of the route that answers only
+   * it. `session()` would answer this too and three other things, one of which can
+   * refuse. */
+  memberships(identity: Identity): Promise<string[]>;
   /** Resume backfill (chapter 2.7): everything past the cursors, per
    * channel, already shaped as wire frames. */
   backfill(
@@ -183,6 +190,25 @@ export function createApiClient(
         };
       }
       return parse(res, internalSessionResponseSchema, "session");
+    },
+    async memberships(identity) {
+      // Chapter 3.20's backstop. A GET, unlike every other method here: it presents
+      // the token in a header and reads, so there is no body and nothing to POST.
+      //
+      // NOT `session()`. That route answers identity, memberships, limits AND a
+      // connect policy that can throw a 402 when an environment is over its monthly
+      // allowance — so re-reading through it would let a routine refresh fail for a
+      // reason that has nothing to do with membership. This route asks the one
+      // question the backstop has (FR-017).
+      const res = await fetch(`${baseUrl}/internal/memberships`, {
+        headers: headers(identity),
+      });
+      const body = await parse(
+        res,
+        internalMembershipsResponseSchema,
+        "memberships",
+      );
+      return body.channel_ids;
     },
     async backfill(identity, cursors) {
       const res = await fetch(`${baseUrl}/internal/backfill`, {

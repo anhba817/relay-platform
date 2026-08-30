@@ -219,6 +219,19 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   { method: "POST", path: "/internal/session", accepts: "user", shape: "write" },
   { method: "POST", path: "/internal/backfill", accepts: "user", shape: "write" },
 
+  // ── read, internal, end-user token (chapter 3.20) ────────────────────────────
+  //
+  // THE ONLY INTERNAL ROUTE THAT IS NOT A `write`, and the shape is the honest one:
+  // the backstop asks what this connection may hear and changes nothing. `session`
+  // and `backfill` are POSTs classified as writes because they present a credential
+  // in a body-carrying request; this presents one in a header and reads.
+  //
+  // `read` and not `list`: `list` is a collection endpoint a foreign id can be
+  // paged against, and this takes no identifier at all — the subject is the token's
+  // own principal, which is what makes the foreign-id attack inapplicable and the
+  // foreign-CREDENTIAL attack the one that matters.
+  { method: "GET", path: "/internal/memberships", accepts: "user", shape: "read" },
+
   // ── write, internal, platform credential: carries no environment ────────────
   { method: "POST", path: "/internal/usage/connections", accepts: "platform", shape: "write" },
   { method: "POST", path: "/internal/dispatch/expand", accepts: "platform", shape: "write" },

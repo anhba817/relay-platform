@@ -280,8 +280,8 @@ export function attachSessions({
     if (change.channel === ALL_CHANNELS) {
       for (const connection of registry.connectionsFor(change.user)) {
         if (connection.identity.environmentId !== change.environment) {
-          logger.log("error", "membership.rejected", {
-            reason: "environment_mismatch",
+          logger.log("error", "membership.failed", {
+            op: "environment_mismatch",
             connection_id: connection.id,
             channel: change.channel,
           });
@@ -294,10 +294,9 @@ export function attachSessions({
           deliverMembership({ ...change, channel: channelId });
         }
       }
-      logger.log("info", "membership.revoked_all", {
-        user: change.user,
-        environment: change.environment,
-      });
+      // NO LINE OF ITS OWN. The per-channel `membership.applied` lines below say
+      // what happened and how many times; a summary beside them would be a fifth
+      // name in a vocabulary FR-032 keeps closed, saying nothing the others do not.
       return;
     }
 
@@ -337,8 +336,8 @@ export function attachSessions({
       // publisher away from cross-tenant delivery — the exact shape the restriction
       // exists to prevent.
       if (connection.identity.environmentId !== change.environment) {
-        logger.log("error", "membership.rejected", {
-          reason: "environment_mismatch",
+        logger.log("error", "membership.failed", {
+          op: "environment_mismatch",
           connection_id: connection.id,
           channel: change.channel,
         });
@@ -372,7 +371,8 @@ export function attachSessions({
           () => {
             connection.channelIds.add(change.channel);
             send(connection.socket, frame);
-            logger.log("info", "membership.granted", {
+            logger.log("info", "membership.applied", {
+              change: "added",
               connection_id: connection.id,
               channel: change.channel,
               user: change.user,
@@ -424,7 +424,16 @@ export function attachSessions({
         }),
         membership?.unsubscribeChannel(change.channel),
       ]);
-      logger.log("info", "membership.revoked", {
+      // THE WORKING PATH SAYS SOMETHING (FR-031's argument, applied to the delivery
+      // half). `membership.published` is the api's line and means "it went onto the
+      // fabric"; this one means "it took effect on a connection", which is the event
+      // an operator actually wants when a customer says access did not change.
+      //
+      // ONE NAME CARRYING ITS DIRECTION rather than a `granted`/`revoked` pair: the
+      // fabric's own payload spells the direction in a field, and two names would be
+      // two more entries in a closed vocabulary for one event.
+      logger.log("info", "membership.applied", {
+        change: "removed",
         connection_id: connection.id,
         channel: change.channel,
         user: change.user,
@@ -432,6 +441,46 @@ export function attachSessions({
     }
   }
   membership?.onChange(deliverMembership);
+
+  /** The backstop (chapter 3.20, FR-018, constitution IV).
+   *
+   * **CONSTITUTION IV PERMITS A LOSSY FABRIC** *"precisely because durability and
+   * resume live in PostgreSQL sequences and cursors"*, and requires any new delivery
+   * mechanism to preserve that recovery property. A message recovers through its
+   * resume cursor. **A revocation has none** — it is not in a stream, it has no
+   * sequence, and a client cannot ask for the ones it missed. This is what stands in
+   * for the cursor: the truth is re-read on a timer and the difference applied.
+   *
+   * **ONE ACT, TWO TRIGGERS.** Every difference goes through `deliverMembership`,
+   * the same function a published change takes, so the backstop cannot drift from
+   * the fast path — a second application path would be a second set of rules about
+   * buffers, reference counts and frame ordering, kept in step by hope.
+   *
+   * The client cannot tell which trigger fired, and that is correct: a
+   * `membership.changed` frame means the same thing either way. */
+  async function reread(connection: Connection): Promise<void> {
+    const actual = new Set(await api.memberships(connection.identity));
+    const held = new Set(connection.channelIds);
+
+    for (const channelId of held) {
+      if (actual.has(channelId)) continue;
+      deliverMembership({
+        environment: connection.identity.environmentId,
+        channel: channelId,
+        user: connection.identity.userExternalId,
+        change: "removed",
+      });
+    }
+    for (const channelId of actual) {
+      if (held.has(channelId)) continue;
+      deliverMembership({
+        environment: connection.identity.environmentId,
+        channel: channelId,
+        user: connection.identity.userExternalId,
+        change: "added",
+      });
+    }
+  }
   // noServer: the upgrade is handled by hand so the token can be checked
   // BEFORE the handshake completes. Letting ws own the upgrade would mean
   // rejecting a socket that already exists (EIR-WS-05 wants the close code
@@ -609,6 +658,12 @@ export function attachSessions({
         membership?.subscribeChannel(channelId),
       ]),
     );
+    // THE BACKSTOP'S TIMER, one per connection and cancelled at close. Registered
+    // here rather than once per instance because the re-read is per principal: the
+    // api answers for the token this connection presented, and one instance-wide
+    // timer would have to loop the registry and would still make one request per
+    // connection. `watch` returns its own cancel for that reason.
+    const stopWatching = membership?.watch(() => reread(connection));
     // T079. THE PRINCIPAL'S OWN SUBJECT, reference-counted per user rather than per
     // channel — the first subscription in this gateway keyed on who someone is
     // instead of what they can hear. An ADDITION cannot ride the channel's subject:
@@ -680,6 +735,7 @@ export function attachSessions({
           connection.channelIds,
         );
       }
+      stopWatching?.();
       // RELEASED PER CONNECTION, NOT PER USER, and the difference from the block
       // above is deliberate. Presence asks "was that the user's last connection
       // here?" because a transition is about the person. This is a reference count

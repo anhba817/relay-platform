@@ -4,7 +4,13 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AddressInfo } from "node:net";
+import {
+  createServer as createNetServer,
+  connect as connectSocket,
+  type AddressInfo,
+  type Server as NetServer,
+  type Socket,
+} from "node:net";
 
 import { createLogger, serve, type Logger } from "@relay/service-kit";
 import {
@@ -436,7 +442,75 @@ async function postMessage(
 interface Instance {
   url: string;
   logs: LogLine[];
+  /** How many times this instance's backstop has asked the api. T100 asserts a
+   * no-op by COUNT — "nothing changed" is equally true of a re-read that never
+   * ran. */
+  rereads: () => number;
   close: () => Promise<void>;
+}
+
+/** A TCP proxy in front of the real Redis, so a test can sever and restore one
+ * instance's fabric without touching anything shared.
+ *
+ * **NEVER `docker compose stop redis`.** The gateway's integration files run in
+ * PARALLEL, and stopping the container would break every other suite mid-run —
+ * `limits.itest.ts` writes that rule down and `presence.itest.ts` carries this same
+ * proxy for it. A dead port covers "down" and cannot cover "restored", which is what
+ * T102 needs. */
+async function startRedisProxy(): Promise<{
+  url: string;
+  cut: () => Promise<void>;
+  restore: () => Promise<void>;
+  close: () => Promise<void>;
+}> {
+  const target = new URL(url);
+  const live = new Set<Socket>();
+  let server: NetServer | null = null;
+
+  const listen = (onPort: number): Promise<number> =>
+    new Promise((resolve) => {
+      const next = createNetServer((client) => {
+        const upstream = connectSocket(
+          Number(target.port || 6379),
+          target.hostname,
+        );
+        client.pipe(upstream);
+        upstream.pipe(client);
+        for (const socket of [client, upstream]) {
+          live.add(socket);
+          socket.on("error", () => socket.destroy());
+          socket.on("close", () => live.delete(socket));
+        }
+      });
+      next.listen(onPort, "127.0.0.1", () => {
+        server = next;
+        resolve((next.address() as AddressInfo).port);
+      });
+    });
+
+  const port = await listen(0);
+  return {
+    url: `redis://127.0.0.1:${port}`,
+    cut: async () => {
+      for (const socket of live) socket.destroy();
+      live.clear();
+      await new Promise<void>((resolve) =>
+        server ? server.close(() => resolve()) : resolve(),
+      );
+      server = null;
+    },
+    // Re-listening on the SAME port is what "without a restart" means: ioredis
+    // reconnects on its own and the module is never rebuilt.
+    restore: async () => {
+      await listen(port);
+    },
+    close: async () => {
+      for (const socket of live) socket.destroy();
+      await new Promise<void>((resolve) =>
+        server ? server.close(() => resolve()) : resolve(),
+      );
+    },
+  };
 }
 
 /** One gateway instance: its own server, its own fabric clients, its own
@@ -456,13 +530,31 @@ interface Instance {
  * So the delay goes on the `ApiClient`, which `attachSessions` takes as a parameter
  * and which is therefore a seam the test already owns. The code path under test is
  * the real one; only the clock moved. */
-async function startInstance(
-  resumeDeadlineMs?: number,
-  backfillDelayMs?: number,
-  subscribeDelayMs?: number,
-): Promise<Instance> {
+interface InstanceOptions {
+  resumeDeadlineMs?: number;
+  backfillDelayMs?: number;
+  subscribeDelayMs?: number;
+  /** The backstop's interval. Production is sixty seconds; a test injects a short
+   * one, the way chapter 3.19's grace-period tests inject a hundred-millisecond
+   * grace. Waiting out sixty would put one test at a quarter of the lane's budget. */
+  rereadIntervalMs?: number;
+  /** The proxy's url, so one instance can lose its fabric while the rest keep
+   * theirs. */
+  redisUrl?: string;
+}
+
+async function startInstance({
+  resumeDeadlineMs,
+  backfillDelayMs,
+  subscribeDelayMs,
+  rereadIntervalMs,
+  redisUrl,
+}: InstanceOptions = {}): Promise<Instance> {
   const { logs, logger } = recorder();
-  const built = createFanout({ logger: silent });
+  const built = createFanout({
+    logger: silent,
+    ...(redisUrl === undefined ? {} : { url: redisUrl }),
+  });
   const fanout =
     subscribeDelayMs === undefined
       ? built
@@ -476,9 +568,24 @@ async function startInstance(
   // PRESENCE TOO, and only one test needs it — T072's cross-kind assertion. Four
   // subject shapes now share one Redis, and "each kind arrives under its own `type`"
   // cannot be asserted by a gateway that produces three of them.
-  const presence = createPresence({ logger: silent });
-  const membership = createMembership({ logger });
-  const client = createApiClient(api.url);
+  const presence = createPresence({
+    logger: silent,
+    ...(redisUrl === undefined ? {} : { url: redisUrl }),
+  });
+  const membership = createMembership({
+    logger,
+    ...(redisUrl === undefined ? {} : { url: redisUrl }),
+    ...(rereadIntervalMs === undefined ? {} : { rereadIntervalMs }),
+  });
+  const plain = createApiClient(api.url);
+  let rereads = 0;
+  const client: ApiClient = {
+    ...plain,
+    memberships: async (identity) => {
+      rereads += 1;
+      return plain.memberships(identity);
+    },
+  };
   const slowed: ApiClient =
     backfillDelayMs === undefined
       ? client
@@ -508,6 +615,7 @@ async function startInstance(
   return {
     url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}`,
     logs,
+    rereads: () => rereads,
     close: async () => {
       await sessions.close();
       await built.close();
@@ -1121,7 +1229,7 @@ describe("nothing arrives after a revocation — one window, three cases (FR-RTM
     // A two-second backfill, so the connection is DEMONSTRABLY still buffering when
     // the removal lands, and a resume deadline comfortably past it so the fabric
     // confirmation does not degrade first.
-    const slow = await startInstance(6_000, 2_000);
+    const slow = await startInstance({ resumeDeadlineMs: 6_000, backfillDelayMs: 2_000 });
     const socket = await connect(slow, users["tuan"]!, `${channels[0]!}:1`);
     try {
       const frames = record(socket);
@@ -1585,7 +1693,7 @@ describe("the window between the add committing and the subscription landing", (
     // committing and the gateway's subscribe landing reaches the new member through
     // history and not through the socket.
     const { users, empty, sender } = await seed(["tuan"], 1, 1);
-    const slow = await startInstance(undefined, undefined, 1_500);
+    const slow = await startInstance({ subscribeDelayMs: 1_500 });
     const socket = await connect(slow, users["tuan"]!);
     try {
       const frames = record(socket);
@@ -1731,4 +1839,241 @@ describe("a ban revokes everything at once (US4)", () => {
     );
     expect(delivered.payload["text"]).toBe("after reconnecting");
   }, 20_000);
+});
+
+describe("the backstop — constitution IV's recovery property", () => {
+  it("corrects a removal the fabric never delivered, within one interval", async () => {
+    // **THE CLAUSE THIS EXISTS FOR.** Constitution IV permits a lossy fabric
+    // "precisely because durability and resume live in PostgreSQL sequences and
+    // cursors" and requires any new mechanism to preserve that recovery property. A
+    // message recovers through its resume cursor; **a revocation has none**. So the
+    // truth is re-read on a timer, and this is the test that the timer works when
+    // the fabric does not.
+    //
+    // The fabric is severed at the TCP layer for THIS INSTANCE ONLY — the lane runs
+    // nine files in parallel and stopping the container would break all of them.
+    const proxy = await startRedisProxy();
+    const instance = await startInstance({
+      redisUrl: proxy.url,
+      rereadIntervalMs: 300,
+    });
+    const { users, channels, sender } = await seed(["tuan", "linh"], 1);
+    const socket = await connect(instance, users["tuan"]!);
+    try {
+      const frames = record(socket);
+      // Confirm delivery works before cutting anything: a test that severs first
+      // cannot tell a working backstop from a socket that never worked.
+      await postMessage(channels[0]!, sender, "before the cut");
+      await waitFor(
+        () => frames.find((f) => f.payload["text"] === "before the cut"),
+        "delivery before the fabric is cut",
+      );
+
+      await proxy.cut();
+      await removeMember(channels[0]!, users["tuan"]!);
+
+      // No publish can reach this instance. The only thing that can correct it is
+      // the re-read.
+      const notice = await waitFor(
+        () => frames.find((f) => f.type === "membership.changed"),
+        "the backstop's correction",
+      );
+      expect(notice.payload["change"]).toBe("removed");
+      expect(notice.payload["channel"]).toBe(channels[0]!);
+
+      // AND THE CORRECTION IS REAL, not just announced. The channel is out of the
+      // connection's set and its subscriptions released, which is what makes this
+      // the same act a published change performs rather than a frame beside it.
+      await proxy.restore();
+      await new Promise((r) => setTimeout(r, 400));
+      await postMessage(channels[0]!, sender, "after the correction");
+      await new Promise((r) => setTimeout(r, 600));
+      expect(
+        frames.filter((f) => f.payload["text"] === "after the correction"),
+      ).toEqual([]);
+    } finally {
+      socket.close();
+      await instance.close();
+      await proxy.close();
+    }
+  }, 20_000);
+
+  it("changes nothing when nothing changed, and is asserted by request count", async () => {
+    // "NOTHING HAPPENED" IS EQUALLY TRUE OF A RE-READ THAT NEVER RAN. The count is
+    // what separates a backstop that agrees with the database from one that is not
+    // running at all — and a no-op that emitted a frame would be worse than either,
+    // because every connection would get a `membership.changed` every interval.
+    const instance = await startInstance({ rereadIntervalMs: 200 });
+    const { users, channels, sender } = await seed(["tuan"], 1);
+    const socket = await connect(instance, users["tuan"]!);
+    try {
+      const frames = record(socket);
+      await waitFor(
+        () => (instance.rereads() >= 3 ? instance.rereads() : undefined),
+        "three re-reads",
+      );
+
+      expect(frames.filter((f) => f.type === "membership.changed")).toEqual([]);
+      // And delivery is untouched by all that re-reading.
+      await postMessage(channels[0]!, sender, "still a member");
+      await waitFor(
+        () => frames.find((f) => f.type === "message.created"),
+        "delivery after several no-op re-reads",
+      );
+    } finally {
+      socket.close();
+      await instance.close();
+    }
+  }, 20_000);
+
+  it("converges a pair that arrived in the wrong order", async () => {
+    // **THE ONLY TEST OF `data-model.md` §6's CLAIM.** Redis pub/sub guarantees no
+    // order between two publishes, so a removal and a re-add for the same user and
+    // channel can arrive reversed — and the connection would settle on `removed`
+    // while the database says otherwise. The backstop is what reconciles them, and
+    // the claim is worth nothing without this.
+    //
+    // The pair is delivered reversed ON PURPOSE by publishing straight onto the
+    // fabric, which is the one way to control an order the fabric does not promise.
+    const instance = await startInstance({ rereadIntervalMs: 300 });
+    const { users, channels, sender } = await seed(["tuan"], 1);
+    const socket = await connect(instance, users["tuan"]!);
+    try {
+      const frames = record(socket);
+      const subject = subjectForChannelMembership(channels[0]!);
+      const body = {
+        environment: api.environmentId,
+        channel: channels[0]!,
+        user: users["tuan"]!,
+      };
+      // ADDED first, then REMOVED — the reverse of what happened, and what the
+      // database says is that the user is still a member.
+      await publisher.publish(subject, JSON.stringify({ ...body, change: "added" }));
+      await publisher.publish(
+        subject,
+        JSON.stringify({ ...body, change: "removed" }),
+      );
+      await waitFor(
+        () =>
+          frames.filter((f) => f.type === "membership.changed").length >= 2
+            ? true
+            : undefined,
+        "both halves of the reversed pair",
+      );
+
+      // The connection now believes it is not a member. The database disagrees, and
+      // one interval is what it takes for the truth to win.
+      await waitFor(
+        () =>
+          frames.filter(
+            (f) => f.type === "membership.changed" && f.payload["change"] === "added",
+          ).length >= 2
+            ? true
+            : undefined,
+        "the backstop restoring what the database says",
+      );
+      await postMessage(channels[0]!, sender, "converged");
+      const delivered = await waitFor(
+        () => frames.find((f) => f.payload["text"] === "converged"),
+        "delivery once the sets agree",
+      );
+      expect(delivered.type).toBe("message.created");
+    } finally {
+      socket.close();
+      await instance.close();
+    }
+  }, 20_000);
+
+  it("answers the route, writes the row and logs once with Redis unreachable", async () => {
+    // FR-015 AND FR-016. Three things must be true and only one is obvious: **a
+    // publisher that does nothing satisfies the first two exactly as well.** So the
+    // log line is what carries the requirement, which is chapter 3.18's trap against
+    // its own publisher, restated.
+    const proxy = await startRedisProxy();
+    const instance = await startInstance({ redisUrl: proxy.url, rereadIntervalMs: 200 });
+    const { users, channels } = await seed(["tuan"], 1);
+    const socket = await connect(instance, users["tuan"]!);
+    try {
+      await proxy.cut();
+      // The ROUTE still answers, with the outcome it would give on a working day.
+      expect(await removeMember(channels[0]!, users["tuan"]!)).toEqual(["removed"]);
+      // And the backstop applies it despite the fabric, which is what puts
+      // `membership.applied` in this run's log beside the failure.
+      await waitFor(
+        () => instance.logs.find((l) => l.msg === "membership.applied"),
+        "the correction, applied",
+      );
+
+      // The gateway's own module says so once, in this chapter's vocabulary.
+      const failure = await waitFor(
+        () => instance.logs.find((l) => l.msg === "membership.failed"),
+        "one membership.failed",
+      );
+      expect(failure.level).toBe("error");
+      expect(typeof failure.fields["op"]).toBe("string");
+
+      // **AND THE VOCABULARY IS CLOSED** (FR-032). Every name this instance emitted
+      // on the membership path is one of the four the clause allows. The check is on
+      // what WAS emitted rather than on what a grep can find, so a fifth name added
+      // later fails here rather than in a review.
+      //
+      // `membership.published` is the API's line and never appears in a gateway's
+      // log — the two halves share a vocabulary, not a process. The api-side names
+      // are covered by `services/api/src/membership/publisher.test.ts`.
+      const ALLOWED = new Set([
+        "membership.published",
+        "membership.applied",
+        "membership.failed",
+        "membership.invalid_payload",
+      ]);
+      const emitted = new Set(
+        instance.logs.map((l) => l.msg).filter((m) => m.startsWith("membership.")),
+      );
+      expect([...emitted].filter((m) => !ALLOWED.has(m))).toEqual([]);
+      // And the working name was reached in this same run, by the correction above.
+      expect(emitted.has("membership.applied")).toBe(true);
+
+      // AND THE DISCONNECT PATH STILL COMPLETES with the fabric down — the release
+      // of three subscriptions over a severed connection, in a close handler that is
+      // the last place that should throw.
+      socket.close();
+      await new Promise((r) => setTimeout(r, 400));
+      await expect(instance.close()).resolves.toBeUndefined();
+    } finally {
+      await proxy.close();
+    }
+  }, 20_000);
+
+  it("publishes normally again once the fabric is restored, without a restart", async () => {
+    // The subscriber keeps ioredis's default retry for exactly this reason: it must
+    // reconnect when the store comes back, and nothing here is rebuilt.
+    const proxy = await startRedisProxy();
+    const instance = await startInstance({ redisUrl: proxy.url, rereadIntervalMs: 60_000 });
+    const { users, channels } = await seed(["tuan", "linh"], 2);
+    const socket = await connect(instance, users["tuan"]!);
+    try {
+      const frames = record(socket);
+      await proxy.cut();
+      await removeMember(channels[0]!, users["tuan"]!);
+      await new Promise((r) => setTimeout(r, 400));
+      // The interval is production's, so nothing can correct this within the test.
+      expect(frames.filter((f) => f.type === "membership.changed")).toEqual([]);
+
+      await proxy.restore();
+      // ioredis reconnects on its own; give it a moment, then publish a NEW change.
+      await new Promise((r) => setTimeout(r, 1_500));
+      await removeMember(channels[1]!, users["tuan"]!);
+
+      const notice = await waitFor(
+        () => frames.find((f) => f.type === "membership.changed"),
+        "a change published after the fabric came back",
+        8_000,
+      );
+      expect(notice.payload["channel"]).toBe(channels[1]!);
+    } finally {
+      socket.close();
+      await instance.close();
+      await proxy.close();
+    }
+  }, 25_000);
 });

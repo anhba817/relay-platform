@@ -66,6 +66,11 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // it is the right default here: every test in this file is about the socket,
     // and a meter that reported would only add a call nobody asserts on.
     reportUsage: async () => null,
+    // Chapter 3.20's backstop reads this. The default answers what the session
+    // above says, so a stub that never overrides it is a stub whose re-read agrees
+    // with its own connect — which is the state every test in this file that is not
+    // about membership wants.
+    memberships: async () => [CHANNEL],
     ...overrides,
   };
 }

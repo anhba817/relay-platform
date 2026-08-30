@@ -12,6 +12,7 @@ import type { Publisher } from "../outbox/publisher";
 import { ANALYTICS_PUBLISHER } from "../webhooks/analytics";
 import { BackfillController } from "./backfill.controller";
 import { InternalController } from "./internal.controller";
+import { MembershipsController } from "./memberships.controller";
 import { DispatchController } from "./dispatch.controller";
 import { SessionController } from "./session.controller";
 import { UsageController } from "./usage.controller";
@@ -33,6 +34,10 @@ import { UsageController } from "./usage.controller";
     InternalController,
     BackfillController,
     SessionController,
+    // Chapter 3.20. Registered here for the reason the comment below `UsageController`
+    // gives: a controller nobody registers is a route that does not exist, and chapter
+    // 3.10's third analysis pass found exactly that.
+    MembershipsController,
     DispatchController,
     // Chapter 3.11. Registered HERE and not in `app.module.ts`, which carries
     // only `HealthController` and already imports this module — a controller
