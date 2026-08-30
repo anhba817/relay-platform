@@ -274,9 +274,17 @@ async function startApi(): Promise<ApiUnderTest> {
  *
  * Rows are cheap; the api process is not. That is the whole reason the spawn is
  * shared and the seed is not. */
-async function seed(users: string[], channels: number): Promise<{
+async function seed(
+  users: string[],
+  channels: number,
+  /** Channels created but joined by NOBODY. US3 needs a channel a connected user is
+   * not yet in — the whole point of an addition is that the instance holding them
+   * is subscribed to nothing of it. */
+  empty = 0,
+): Promise<{
   users: Record<string, string>;
   channels: string[];
+  empty: string[];
   sender: string;
 }> {
   const tag = randomUUID().slice(0, 8);
@@ -300,13 +308,23 @@ async function seed(users: string[], channels: number): Promise<{
       rows.map((user) => api.repo.addMember(channel.id, user.id)),
     ),
   );
+  const emptyRows = await Promise.all(
+    Array.from({ length: empty }, (_, i) =>
+      api.repo.createChannel(`empty-${i}-${tag}`, "public"),
+    ),
+  );
   const sender = `sender-${tag}`;
   await api.repo.upsertUser(sender, {
     display_name: "Sender",
     kind: "bot",
     description: "posts the messages this suite asserts about",
   });
-  return { users: names, channels: channelRows.map((c) => c.id), sender };
+  return {
+    users: names,
+    channels: channelRows.map((c) => c.id),
+    empty: emptyRows.map((c) => c.id),
+    sender,
+  };
 }
 
 async function mintToken(
@@ -353,6 +371,40 @@ async function removeMember(
 /** `user` is required and must have a row: an application credential carries no
  * user of its own, and FR-MSG-15 says every message has a sender. So the sender is
  * one of the seeded externals rather than a literal. */
+async function addMember(
+  channelId: string,
+  user: string,
+  credential: string = api.credential,
+): Promise<string> {
+  const res = await fetch(`${api.url}/v1/channels/${channelId}/members`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${credential}`,
+    },
+    body: JSON.stringify({ user_ids: [user] }),
+  });
+  if (!res.ok) throw new Error(`add: ${res.status} ${await res.text()}`);
+  const body = (await res.json()) as { members: { status: string }[] };
+  return body.members[0]?.status ?? "none";
+}
+
+/** The self-service half of FR-004. A USER token, not the api key: the route is
+ * `@Accepts("user")` and an application credential carries no user to join with.
+ *
+ * NOT NAMED `join`. This file imports `join` from `node:path` for the api's dist
+ * directory, and a local `join` shadows it — TypeScript said so (`TS2440`) while
+ * vitest, which transpiles without typechecking, ran the tests anyway and asserted
+ * against a filesystem path: `expected '692d98b8-…/…' to be 'joined'`. */
+async function joinChannel(channelId: string, user: string): Promise<string> {
+  const res = await fetch(`${api.url}/v1/channels/${channelId}/join`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${await mintToken(user)}` },
+  });
+  if (!res.ok) throw new Error(`join: ${res.status} ${await res.text()}`);
+  return ((await res.json()) as { result: string }).result;
+}
+
 async function postMessage(
   channelId: string,
   user: string,
@@ -395,9 +447,20 @@ interface Instance {
 async function startInstance(
   resumeDeadlineMs?: number,
   backfillDelayMs?: number,
+  subscribeDelayMs?: number,
 ): Promise<Instance> {
   const { logs, logger } = recorder();
-  const fanout = createFanout({ logger: silent });
+  const built = createFanout({ logger: silent });
+  const fanout =
+    subscribeDelayMs === undefined
+      ? built
+      : {
+          ...built,
+          subscribe: async (channelId: string) => {
+            await new Promise((r) => setTimeout(r, subscribeDelayMs));
+            return built.subscribe(channelId);
+          },
+        };
   // PRESENCE TOO, and only one test needs it — T072's cross-kind assertion. Four
   // subject shapes now share one Redis, and "each kind arrives under its own `type`"
   // cannot be asserted by a gateway that produces three of them.
@@ -435,7 +498,7 @@ async function startInstance(
     logs,
     close: async () => {
       await sessions.close();
-      await fanout.close();
+      await built.close();
       await presence.close();
       await membership.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -1295,4 +1358,231 @@ describe("the channel's other members see who left (US2)", () => {
       ).sort(),
     ).toEqual(["state", "user"]);
   }, 15_000);
+});
+
+describe("a member added mid-connection starts receiving (US3)", () => {
+  let one: Instance;
+  let two: Instance;
+
+  beforeAll(async () => {
+    [one, two] = await Promise.all([startInstance(), startInstance()]);
+  }, 30_000);
+
+  afterAll(async () => {
+    await Promise.all([one.close(), two.close()]);
+  });
+
+  it("tells the added user, on a subject addressed to THEM", async () => {
+    // The first event in this system addressed to a principal rather than a
+    // channel. The instance holding this connection is subscribed to nothing of
+    // `empty[0]` — it cannot be, the user is not in it — so `member:{env}:{user}`
+    // is the only way the news reaches here.
+    const { users, empty } = await seed(["tuan"], 1, 1);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+
+    expect(await addMember(empty[0]!, users["tuan"]!)).toBe("added");
+
+    const notice = await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the addition",
+    );
+    expect(notice.payload).toEqual({
+      channel: empty[0]!,
+      user: users["tuan"]!,
+      change: "added",
+    });
+  });
+
+  it("delivers a message posted to the new channel afterwards", async () => {
+    const { users, empty, sender } = await seed(["tuan"], 1, 1);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+
+    await addMember(empty[0]!, users["tuan"]!);
+    await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the addition",
+    );
+    await postMessage(empty[0]!, sender, "welcome aboard");
+
+    const message = await waitFor(
+      () => frames.find((f) => f.type === "message.created"),
+      "a message on the newly joined channel",
+    );
+    expect(message.payload["text"]).toBe("welcome aboard");
+    expect(message.payload["channel"]).toBe(empty[0]!);
+  });
+
+  it("makes the new member's presence visible to that channel's members", async () => {
+    // **CHAPTER 3.19'S `gaps.md` ITEM 2, CLOSING.** Presence subscriptions were
+    // fixed at connect exactly as delivery was, so a user added afterwards was
+    // invisible to their new channel's members until they reconnected. The
+    // `presence?.subscribe` in the added branch is what closes it, and this test is
+    // what makes the closure a fact rather than a claim.
+    const { users, empty } = await seed(["tuan", "linh"], 1, 1);
+    // `linh` is already in the new channel; `tuan` is added to it mid-connection.
+    await addMember(empty[0]!, users["linh"]!);
+    const newcomer = await connect(one, users["tuan"]!);
+    const frames = record(newcomer);
+    await addMember(empty[0]!, users["tuan"]!);
+    await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the addition",
+    );
+
+    // `linh` connects AFTER `tuan` was added, so the transition `tuan` observes is
+    // one that only reaches them through a subscription made mid-connection.
+    await connect(two, users["linh"]!);
+    const seenPresence = await waitFor(
+      () =>
+        frames.find(
+          (f) => f.type === "presence.changed" && f.payload["user"] === users["linh"]!,
+        ),
+      "the co-member's arrival, over a channel joined mid-connection",
+    );
+    expect(seenPresence.payload["state"]).toBe("online");
+  }, 15_000);
+
+  it("gives a self-service join the same delivery as an administrative add", async () => {
+    // FR-004 names four paths and `join` is the one that gets forgotten: it is a
+    // separate service method calling `repo.addMember` directly, so a publish hung
+    // off `addMembers` alone leaves this route silent and nothing fails.
+    const { users, empty, sender } = await seed(["tuan"], 1, 1);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+
+    expect(await joinChannel(empty[0]!, users["tuan"]!)).toBe("joined");
+    const notice = await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the join",
+    );
+    expect(notice.payload["change"]).toBe("added");
+
+    await postMessage(empty[0]!, sender, "joined under my own token");
+    const message = await waitFor(
+      () => frames.find((f) => f.type === "message.created"),
+      "delivery after a self-service join",
+    );
+    expect(message.payload["text"]).toBe("joined under my own token");
+  });
+
+  it("publishes nothing when the user is already a member (FR-005)", async () => {
+    // ASSERTED BY COUNT, not by the absence of a frame in a window. "Nothing arrived
+    // within 700 ms" is true of a broken publisher; "exactly one arrived across two
+    // calls" is only true of one that filters.
+    const { users, empty } = await seed(["tuan"], 1, 1);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+
+    expect(await addMember(empty[0]!, users["tuan"]!)).toBe("added");
+    await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the first addition",
+    );
+    expect(await addMember(empty[0]!, users["tuan"]!)).toBe("already_a_member");
+    expect(await joinChannel(empty[0]!, users["tuan"]!)).toBe("already_a_member");
+    await new Promise((r) => setTimeout(r, 700));
+
+    expect(frames.filter((f) => f.type === "membership.changed")).toHaveLength(1);
+  });
+
+  it("settles as ADDED when a re-add follows a removal", async () => {
+    // The race worth naming: the removal's unsubscribe is fire-and-forget, and the
+    // re-add's subscribe is too. If the pending unsubscribe outlived the
+    // resubscribe, the channel would end up delivering nothing while the connection
+    // believed it was a member — a state no assertion about frames would catch, so
+    // the end state is asserted by DELIVERY.
+    const { users, channels, sender } = await seed(["tuan", "linh"], 1);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+
+    await removeMember(channels[0]!, users["tuan"]!);
+    await waitFor(
+      () =>
+        frames.filter((f) => f.type === "membership.changed").length === 1
+          ? true
+          : undefined,
+      "the removal",
+    );
+    expect(await addMember(channels[0]!, users["tuan"]!)).toBe("added");
+    await waitFor(
+      () =>
+        frames.filter((f) => f.type === "membership.changed").length === 2
+          ? true
+          : undefined,
+      "the re-add",
+    );
+
+    const changes = frames
+      .filter((f) => f.type === "membership.changed")
+      .map((f) => f.payload["change"]);
+    expect(changes).toEqual(["removed", "added"]);
+
+    await postMessage(channels[0]!, sender, "back in the room");
+    const message = await waitFor(
+      () => frames.find((f) => f.type === "message.created"),
+      "delivery after the re-add",
+    );
+    expect(message.payload["text"]).toBe("back in the room");
+  }, 15_000);
+});
+
+describe("the window between the add committing and the subscription landing", () => {
+  it("loses a message published inside it, under EITHER ordering (T086)", async () => {
+    // **T080 ASKED FOR AN ORDERING WHOSE FAILURE MODE DOES NOT EXIST**, and T086
+    // asked for the proof, which is how it was found. The task reads: inserting into
+    // `channelIds` before subscribing "opens a window where `registry.subscribersOf`
+    // returns a connection for a channel this instance is not yet receiving — a
+    // silently lost message rather than an error".
+    //
+    // The message is lost either way. `subscribersOf` returning the connection
+    // changes nothing while the INSTANCE is not subscribed: the frame never reaches
+    // this process, so there is no delivery for the registry to be consulted about.
+    // Widening the window to 1.5 s with a delayed `fanout.subscribe` and posting
+    // inside it produced byte-identical results under both orders:
+    //
+    //     [["presence.changed",null],["membership.changed","added"]]
+    //
+    // Both orders lose it, so this test asserts the loss rather than the ordering.
+    // The shipped order is subscribe-then-insert anyway — it cannot produce a
+    // connection claiming a subscription it does not hold, which is worth having for
+    // anyone reading the code even though no test can see the difference.
+    //
+    // THE GAP IS REAL AND IS `gaps.md` ITEM 5: a message published between the add
+    // committing and the gateway's subscribe landing reaches the new member through
+    // history and not through the socket.
+    const { users, empty, sender } = await seed(["tuan"], 1, 1);
+    const slow = await startInstance(undefined, undefined, 1_500);
+    const socket = await connect(slow, users["tuan"]!);
+    try {
+      const frames = record(socket);
+      await addMember(empty[0]!, users["tuan"]!);
+      await new Promise((r) => setTimeout(r, 300));
+      await postMessage(empty[0]!, sender, "inside the window");
+      await new Promise((r) => setTimeout(r, 2_500));
+
+      // The notice arrives — the subscription completed and the frame followed it.
+      expect(
+        frames.filter((f) => f.type === "membership.changed"),
+      ).toHaveLength(1);
+      // The message posted inside the window does not. Asserted so that a future
+      // change which closes this gap turns this test red and has to say so.
+      expect(
+        frames.filter((f) => f.payload["text"] === "inside the window"),
+      ).toEqual([]);
+
+      // AND THE CHANNEL WORKS AFTERWARDS, which is what separates a window gap from a
+      // broken subscription.
+      await postMessage(empty[0]!, sender, "after the window");
+      const later = await waitFor(
+        () => frames.find((f) => f.payload["text"] === "after the window"),
+        "delivery once the subscription has landed",
+      );
+      expect(later.type).toBe("message.created");
+    } finally {
+      socket.close();
+      await slow.close();
+    }
+  }, 20_000);
 });

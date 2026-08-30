@@ -264,13 +264,36 @@ export function attachSessions({
    * to a client whose membership no longer grants access, and the frame is then the
    * one thing the cut was supposed to stop. */
   function deliverMembership(change: MembershipFabric): void {
-    // Everyone subscribed to the channel, split by whether they are the subject.
-    // The removed user is still in `channelIds` at this instant, which is why one
-    // publish reaches both audiences (research R1) and why this list is complete.
-    const audience = registry.subscribersOf(change.channel);
+    // TWO LOOKUPS, AND THE ASYMMETRY IS RESEARCH R1'S, NOT AN OPTIMISATION.
+    //
+    // On a REMOVAL, `subscribersOf(channel)` is the whole audience: the removed user
+    // is still in `channelIds` at this instant, which is exactly why one publish on
+    // the channel's subject reaches both the remaining members and the subject.
+    //
+    // On an ADDITION it cannot be. The new member is not in that channel yet — that
+    // is what is changing — so `subscribersOf` would return every member EXCEPT the
+    // one the frame is about, and the person being added would never be told. They
+    // are found by who they are: `connectionsFor(user)`, which is why the addition
+    // needs a principal-addressed subject to arrive on in the first place.
+    //
+    // Written first with one lookup for both, and the addition path silently told
+    // everyone but its subject.
+    const audience =
+      change.change === "added"
+        ? [
+            ...registry.subscribersOf(change.channel),
+            ...registry.connectionsFor(change.user),
+          ]
+        : registry.subscribersOf(change.channel);
     const subject: Connection[] = [];
     const others: Connection[] = [];
+    const seen = new Set<string>();
     for (const connection of audience) {
+      // The two lists overlap when a member of the channel is also the subject —
+      // impossible for a genuine addition, and cheap insurance against telling
+      // somebody twice if it ever is.
+      if (seen.has(connection.id)) continue;
+      seen.add(connection.id);
       // PRINCIPLE I IS STRUCTURAL HERE (FR-006). The environment compared is the
       // CONNECTION's, established at the door by the api, never the payload's. A
       // gateway that acted on a payload's environment id would be one compromised
@@ -298,6 +321,39 @@ export function attachSessions({
       // SEND, THEN CUT. Reversing these two statements is the whole of FR-008, and
       // T065 proves the ordering test bites by removing this line and watching it
       // fail.
+      if (change.change === "added") {
+        // SUBSCRIBE, THEN INSERT, THEN SEND (T080), and the order is the whole of
+        // it. `registry.subscribersOf` reads `channelIds`, so inserting first opens
+        // a window in which this connection is a subscriber of a channel the
+        // instance is not yet receiving — and a message published in that window is
+        // silently lost rather than refused. T086 proves this ordering bites.
+        void Promise.all([
+          fanout?.subscribe(change.channel),
+          presence?.subscribe(change.channel),
+          membership?.subscribeChannel(change.channel),
+        ]).then(
+          () => {
+            connection.channelIds.add(change.channel);
+            send(connection.socket, frame);
+            logger.log("info", "membership.granted", {
+              connection_id: connection.id,
+              channel: change.channel,
+              user: change.user,
+            });
+          },
+          (error: unknown) => {
+            // Swallowed and logged (FR-015). An addition whose subscribe failed
+            // leaves the connection as it was: not a member, not told, and repaired
+            // by the backstop rather than by a half-applied state.
+            logger.log("error", "membership.failed", {
+              op: "subscribe:added",
+              channel: change.channel,
+              error: String(error),
+            });
+          },
+        );
+        continue;
+      }
       send(connection.socket, frame);
       if (change.change !== "removed") continue;
 
@@ -516,6 +572,15 @@ export function attachSessions({
         membership?.subscribeChannel(channelId),
       ]),
     );
+    // T079. THE PRINCIPAL'S OWN SUBJECT, reference-counted per user rather than per
+    // channel — the first subscription in this gateway keyed on who someone is
+    // instead of what they can hear. An ADDITION cannot ride the channel's subject:
+    // this instance is not subscribed to a channel the user is about to join, which
+    // is the asymmetry research R1 names and the reason this grammar has two shapes.
+    void membership?.subscribeUser(
+      identity.environmentId,
+      identity.userExternalId,
+    );
     // AFTER `registry.add`, so "is this the user's first connection here?" is asked
     // of a registry that already contains it. The close handler needs the opposite
     // and gets it three lines apart — see the note there.
@@ -578,6 +643,16 @@ export function attachSessions({
           connection.channelIds,
         );
       }
+      // RELEASED PER CONNECTION, NOT PER USER, and the difference from the block
+      // above is deliberate. Presence asks "was that the user's last connection
+      // here?" because a transition is about the person. This is a reference count
+      // over the same subject, so the second connection's release is exactly what
+      // decrements it to zero — and putting it inside the `=== 0` branch would
+      // decrement once for two increments.
+      void membership?.unsubscribeUser(
+        connection.identity.environmentId,
+        connection.identity.userExternalId,
+      );
       // Releasing a subscription can fail — a broker that went away, or a
       // fabric already closed while sockets were still draining — and a
       // close handler is the last place that should throw. The subscribe

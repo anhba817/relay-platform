@@ -209,15 +209,32 @@ export class ChannelsController {
     // the phase order exists for it.
     for (const removal of results) {
       if (removal.result !== "removed") continue;
-      await this.membership.publish({
-        environment: req.principal?.environmentId ?? "unknown",
-        channel: channelId,
-        user: removal.external_id,
-        change: "removed",
-      });
+      await this.announce(req, channelId, removal.external_id, "removed");
     }
 
     return { results };
+  }
+
+  /** The one publish both directions and all four routes go through.
+   *
+   * ONE HELPER RATHER THAN FOUR CALL SITES, and FR-004 names four paths: the bulk
+   * add, `join`, the bulk remove, and the ban. Written per route, `join` is the one
+   * that gets forgotten — it is a separate service method calling `repo.addMember`
+   * directly, so a publish hung off `addMembers` leaves it silent and nothing fails.
+   *
+   * The environment is the PRINCIPAL's, established by the guard, never a body's. */
+  private async announce(
+    req: RequestWithPrincipal,
+    channelId: string,
+    user: string,
+    change: "added" | "removed",
+  ): Promise<void> {
+    await this.membership.publish({
+      environment: req.principal?.environmentId ?? "unknown",
+      channel: channelId,
+      user,
+      change,
+    });
   }
 
   /** The user-initiated half of FR-CHN-03 (chapter 3.15).
@@ -245,7 +262,19 @@ export class ChannelsController {
     }
     const user = await this.repo.getUserByExternalId(req.principal.userExternalId);
     if (!user) throw new BadRequestException("unknown user");
-    return { result: await this.channels.join(channelId, user.id) };
+    const result = await this.channels.join(channelId, user.id);
+    // `joined`, not `already_a_member` (FR-005): a join that changed nothing must
+    // publish nothing, or every idempotent retry puts a frame on every member's
+    // screen.
+    if (result === "joined") {
+      await this.announce(
+        req,
+        channelId,
+        req.principal.userExternalId,
+        "added",
+      );
+    }
+    return { result };
   }
 
   /** Members by external id, users created on first membership (FR-CHN-04).
@@ -258,7 +287,14 @@ export class ChannelsController {
   async addMembers(
     @Param("channelId") channelId: string,
     @Body(new ZodValidationPipe(addMembersBodySchema)) body: AddMembersBody,
+    @Req() req: RequestWithPrincipal,
   ) {
-    return { members: await this.channels.addMembers(channelId, body) };
+    const members = await this.channels.addMembers(channelId, body);
+    // `added` only. `already_a_member` is the idempotent repeat and changed nothing.
+    for (const member of members) {
+      if (member.status !== "added") continue;
+      await this.announce(req, channelId, member.external_id, "added");
+    }
+    return { members };
   }
 }
