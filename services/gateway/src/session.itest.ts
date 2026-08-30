@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createApiClient } from "./api-client.js";
 import { createFanout, type Fanout } from "./fanout.js";
+import { createMembership, type Membership } from "./membership.js";
 import { attachSessions } from "./session.js";
 import { docsUrl } from "@relay/protocol";
 
@@ -349,6 +350,11 @@ describe("the socket's delivery, with a fan-out attached", () => {
    * subscriber under test must not be the publisher, or the test proves only
    * that an object can call itself. */
   let publisher: Fanout;
+  /** **Its dependency injection is three hundred lines above the test
+   * that needs it**, and without this line the inversion below simply fails: this
+   * describe injected no `presence`, no `limits` and no `membership`, so the gateway
+   * under it never learned of a removal. */
+  let membership: Membership;
   const sockets: WebSocket[] = [];
 
   const mintToken = async (user = "tuan") => {
@@ -410,11 +416,13 @@ describe("the socket's delivery, with a fan-out attached", () => {
       logger: silent,
       notFoundDocsUrl: docsUrl("not_found"),
     });
+    membership = createMembership({ logger: silent });
     attachSessions({
       server,
       api: createApiClient(api.url),
       logger: silent,
       fanout,
+      membership,
     });
     await new Promise<void>((resolve) => server.listen(0, resolve));
     url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -427,6 +435,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
   afterAll(async () => {
     await fanout.close();
     await publisher.close();
+    await membership.close();
     server.close();
     api?.stop();
   });
@@ -538,24 +547,32 @@ describe("the socket's delivery, with a fan-out attached", () => {
     expect(delivered.payload.seq).toBeGreaterThan(0);
   });
 
-  it("keeps delivering to a member who was REMOVED while connected (FR-RTM-10)", async () => {
-    // T032/T033. THIS TEST ASSERTS THE VIOLATION, and that is deliberate.
+  it("stops delivering to a member who was REMOVED while connected (FR-RTM-10)", async () => {
+    // INVERTED IN THE MEMBERSHIP-REVOCATION CHAPTER, AND THE TITLE WITH IT. This test read "keeps
+    // delivering" and asserted the violation on purpose from the fan-out chapter until
+    // now — its own closing comment carried the instruction: "change this to
+    // `.rejects` on the day a re-read exists".
     //
-    // FR-RTM-10 is P1: events "shall not be delivered to a client whose
-    // membership no longer grants access, effective within 5 seconds of the
-    // membership change". Measured here: they are, indefinitely.
+    // FR-RTM-10 is P1: events "shall not be delivered to a client whose membership
+    // no longer grants access, effective within 5 seconds of the membership change".
+    // What the old comment described is what changed:
     //
-    // The mechanism, read in `session.ts` before this was written rather than
-    // after it failed: `connection.channelIds` is a Set built once at connect
-    // from `POST /internal/session`, `fanout.subscribe` runs once over it at
-    // :356, `fanout.unsubscribe` runs once at :398 when the socket CLOSES, and
-    // `registry.subscribersOf` at :175 reads that same set on every delivery.
-    // Nothing in between re-reads membership. There is no code path that could.
+    //   `connection.channelIds` is a Set built once at connect, `fanout.subscribe`
+    //   runs once over it, `fanout.unsubscribe` runs once when the socket CLOSES,
+    //   and `registry.subscribersOf` reads that same set on every delivery. Nothing
+    //   in between re-reads membership. **There is no code path that could.**
     //
-    // SO THIS IS NOT THIS CHAPTER'S REGRESSION. The gap has existed since 2.6
-    // for socket-originated messages; the fan-out chapter only gives it a second
-    // entrance. Pinning it here — rather than narrowing FR-013 until it passes —
-    // is what `gaps.md` item 4 is for. Invert this test the day it is fixed.
+    // There is now: `deliverMembership` in `session.ts` deletes the channel from
+    // that Set when the fabric says the membership ended.
+    //
+    // **THE 5,500 ms WAIT IS UNCHANGED**, which is the whole point of inverting this
+    // test rather than writing a new one. A pass means the clause is met, not that
+    // the assertion moved to somewhere easier.
+    //
+    // AND THE TITLE IS PART OF THE CHANGE. THE PRESENCE CHAPTER shipped a test whose title
+    // claimed an arm it never touched and nothing caught it for four phases; a title
+    // saying "keeps delivering" over an assertion that nothing arrives is the same
+    // defect with the sign flipped.
     const channel = api.channelId;
     const frames = record(connect(await mintToken()));
     await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
@@ -593,17 +610,22 @@ describe("the socket's delivery, with a fan-out attached", () => {
     });
     expect(posted.status).toBe(201);
 
-    const delivered = (await waitFor(
-      frames,
-      (f) =>
-        f.type === "message.created" &&
-        (f as { payload: { text: string } }).payload.text === text,
-      "the frame FR-RTM-10 says must not arrive",
-    )) as { payload: { text: string } };
+    await expect(
+      waitFor(
+        frames,
+        (f) =>
+          f.type === "message.created" &&
+          (f as { payload: { text: string } }).payload.text === text,
+        "the frame FR-RTM-10 says must not arrive",
+      ),
+    ).rejects.toThrow(/must not arrive/);
 
-    // Reads as a pass and documents a failure. The assertion is the violation:
-    // change this to `.rejects` on the day a re-read exists.
-    expect(delivered.payload.text).toBe(text);
+    // AND THE NOTICE DID ARRIVE, which is the half that separates a working
+    // revocation from a socket that broke. `waitFor` rejecting proves only that
+    // nothing came; a gateway that dropped the connection satisfies that perfectly.
+    expect(
+      frames.filter((f) => f.type === "membership.changed"),
+    ).toHaveLength(1);
   }, 20_000);
 
   it("delivers nothing from a PRIVATE channel to a non-member's socket (FR-014, SC-007)", async () => {
