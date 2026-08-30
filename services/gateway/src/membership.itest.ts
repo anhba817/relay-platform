@@ -1,7 +1,14 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { AddressInfo } from "node:net";
 
-import { createLogger, type Logger } from "@relay/service-kit";
+import { createLogger, serve, type Logger } from "@relay/service-kit";
 import {
+  docsUrl,
   subjectForChannelMembership,
   subjectForUserMembership,
   type MembershipFabric,
@@ -11,13 +18,25 @@ import {
 // the fabric needs its own publisher. `presence.itest.ts` carries the same one for
 // the same reason and `eslint.config.mjs` carries the exemption.
 import { Redis } from "ioredis";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { WebSocket } from "ws";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 
+import { createApiClient, type ApiClient } from "./api-client.js";
+import { createFanout } from "./fanout.js";
 import {
   createMembership,
   DEFAULT_REREAD_INTERVAL_MS,
   type Membership,
 } from "./membership.js";
+import { attachSessions } from "./session.js";
 
 // Chapter 3.20, phase 3 — the fabric, and ONLY the fabric.
 //
@@ -123,6 +142,330 @@ afterEach(async () => {
 
 afterAll(() => {
   publisher.disconnect();
+});
+
+// ---------------------------------------------------------------------------
+// PHASE 4'S HARNESS. Deferred out of phase 3 deliberately: written a phase early,
+// every function below is declared and called by nothing, which is a lint error
+// rather than a head start. **This is the seventh api spawn in the gateway package**
+// and it makes chapter 3.19's `gaps.md` item 17 worse rather than better — six files
+// already spawn their own with their own helper, and building the shared fixture is
+// item 17's actual fix and a job of its own. The decision here is to pay the seventh,
+// say so, and leave the fix an owner in `gaps.md`.
+// ---------------------------------------------------------------------------
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO = join(HERE, "..", "..", "..");
+const require_ = createRequire(import.meta.url);
+
+interface Repo {
+  createUser: (externalId: string, displayName?: string) => Promise<{ id: string }>;
+  /** THE SENDER MUST BE A BOT, and `createUser` cannot make one — chapter 3.17 made
+   * that refusal deliberately, and the send route enforces the other half: "an
+   * application credential may send only as a bot user". The seed's people are the
+   * audience; the sender is a separate row created through the one method that can
+   * set `kind`. */
+  upsertUser: (
+    externalId: string,
+    profile: {
+      display_name?: string;
+      kind?: "person" | "bot";
+      /** REQUIRED FOR A BOT, by `users_bot_description_check`: "a description is what
+       * turns an opaque sender into an answerable one, so a bot without one is not a
+       * bot". A database constraint rather than a validator, so it refuses a seed as
+       * readily as a route. */
+      description?: string;
+    },
+  ) => Promise<unknown>;
+  createChannel: (
+    externalId: string,
+    type: "public" | "private",
+  ) => Promise<{ id: string }>;
+  addMember: (channelId: string, userId: string) => Promise<unknown>;
+}
+
+interface Seeder {
+  createEnvironment: (db: unknown, input: { name: string }) => Promise<{ id: string }>;
+  createApiKey: (
+    db: unknown,
+    input: { environmentId: string },
+  ) => Promise<{ credential: string }>;
+  Repository: new (db: unknown, environmentId: string) => Repo;
+}
+
+interface ApiUnderTest {
+  url: string;
+  environmentId: string;
+  credential: string;
+  repo: Repo;
+  stop: () => void;
+}
+
+async function startApi(): Promise<ApiUnderTest> {
+  const port = 4900 + Math.floor(Math.random() * 200);
+  const dist = join(REPO, "services", "api", "dist");
+  if (!existsSync(join(dist, "main.js"))) {
+    throw new Error(
+      "the api is not built — run `pnpm build` before this lane " +
+        "(the suite talks to the real service, not a stub)",
+    );
+  }
+  const client = require_(join(dist, "db", "client.js")) as {
+    createDb: (pool: unknown) => unknown;
+    createPool: () => unknown;
+  };
+  const seeder = require_(join(dist, "db", "repository.js")) as Seeder;
+  const db = client.createDb(client.createPool());
+
+  const environment = await seeder.createEnvironment(db, {
+    name: `membership-itest-${randomUUID().slice(0, 8)}`,
+  });
+  const key = await seeder.createApiKey(db, { environmentId: environment.id });
+
+  const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
+    env: {
+      ...process.env,
+      PORT: String(port),
+      RELAY_OUTBOX_RELAY: "off",
+      RELAY_NOTIFICATION_RELAY: "off",
+      RELAY_EVENT_CONSUMER: "off",
+    },
+    stdio: "ignore",
+  });
+  const url = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 100; i += 1) {
+    try {
+      const res = await fetch(`${url}/health`);
+      if (res.ok) break;
+    } catch {
+      /* not up yet */
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return {
+    url,
+    environmentId: environment.id,
+    credential: key.credential,
+    repo: new seeder.Repository(db, environment.id),
+    stop: () => child.kill(),
+  };
+}
+
+/** FRESH USERS AND CHANNELS PER TEST, and this is not tidiness. A user removed in
+ * one test is still removed in the next, and a shared fixture presents that as an
+ * empty frame list — chapter 3.19's first run failed exactly that way, with test 1
+ * passing and tests 2 to 4 reporting `expected [] to have a length of 1`, which
+ * reads like a broken fabric.
+ *
+ * Rows are cheap; the api process is not. That is the whole reason the spawn is
+ * shared and the seed is not. */
+async function seed(users: string[], channels: number): Promise<{
+  users: Record<string, string>;
+  channels: string[];
+  sender: string;
+}> {
+  const tag = randomUUID().slice(0, 8);
+  const names: Record<string, string> = {};
+  const rows = await Promise.all(
+    users.map(async (name) => {
+      const external = `${name}-${tag}`;
+      names[name] = external;
+      return api.repo.createUser(external, name);
+    }),
+  );
+  const channelRows = await Promise.all(
+    Array.from({ length: channels }, (_, i) =>
+      api.repo.createChannel(`channel-${i}-${tag}`, "public"),
+    ),
+  );
+  // Everyone in every channel. A test that wants someone out removes them through
+  // the route, which is the path under test.
+  await Promise.all(
+    channelRows.flatMap((channel) =>
+      rows.map((user) => api.repo.addMember(channel.id, user.id)),
+    ),
+  );
+  const sender = `sender-${tag}`;
+  await api.repo.upsertUser(sender, {
+    display_name: "Sender",
+    kind: "bot",
+    description: "posts the messages this suite asserts about",
+  });
+  return { users: names, channels: channelRows.map((c) => c.id), sender };
+}
+
+async function mintToken(user: string): Promise<string> {
+  const res = await fetch(`${api.url}/auth/dev-token`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${api.credential}`,
+    },
+    body: JSON.stringify({ user, ttl_seconds: 3600 }),
+  });
+  if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+  return ((await res.json()) as { token: string }).token;
+}
+
+/** The route under test. Answers 200 with a per-entry result, so a caller that
+ * removed nobody still gets a 200 — which is why the tests assert the result and
+ * not the status. */
+async function removeMember(channelId: string, user: string): Promise<string> {
+  const res = await fetch(
+    `${api.url}/v1/channels/${channelId}/members/remove`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user_ids: [user] }),
+    },
+  );
+  if (!res.ok) throw new Error(`remove: ${res.status} ${await res.text()}`);
+  const body = (await res.json()) as { results: { result: string }[] };
+  return body.results[0]?.result ?? "none";
+}
+
+/** `user` is required and must have a row: an application credential carries no
+ * user of its own, and FR-MSG-15 says every message has a sender. So the sender is
+ * one of the seeded externals rather than a literal. */
+async function postMessage(
+  channelId: string,
+  user: string,
+  text: string,
+): Promise<void> {
+  const res = await fetch(`${api.url}/v1/channels/${channelId}/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${api.credential}`,
+    },
+    body: JSON.stringify({ user, text, idempotency_key: randomUUID() }),
+  });
+  if (!res.ok) throw new Error(`send: ${res.status} ${await res.text()}`);
+}
+
+interface Instance {
+  url: string;
+  logs: LogLine[];
+  close: () => Promise<void>;
+}
+
+/** One gateway instance: its own server, its own fabric clients, its own
+ * `Membership`. Two of these on one Redis is what the cross-instance case needs. */
+/** `backfillDelayMs` WIDENS THE RESUME WINDOW, and it is the only way to reach it.
+ *
+ * A connection is `buffering` from the upgrade until `api.backfill` returns, which
+ * on this lane is one local HTTP round trip — about twenty milliseconds. Racing that
+ * from a test is a flake generator, and the first version of the FR-029 test did
+ * exactly that: it passed, and it passed just as happily with the buffer filter
+ * deleted, because the connection had gone live long before the removal landed.
+ *
+ * Slowing the fabric instead does not work. `withDeadline(subscribing,
+ * resumeDeadlineMs)` failing calls `degrade()`, and `degrade()` empties the buffer
+ * itself — a wider window that discards the very frames the test is about.
+ *
+ * So the delay goes on the `ApiClient`, which `attachSessions` takes as a parameter
+ * and which is therefore a seam the test already owns. The code path under test is
+ * the real one; only the clock moved. */
+async function startInstance(
+  resumeDeadlineMs?: number,
+  backfillDelayMs?: number,
+): Promise<Instance> {
+  const { logs, logger } = recorder();
+  const fanout = createFanout({ logger: silent });
+  const membership = createMembership({ logger });
+  const client = createApiClient(api.url);
+  const slowed: ApiClient =
+    backfillDelayMs === undefined
+      ? client
+      : {
+          ...client,
+          backfill: async (identity, cursors) => {
+            await new Promise((r) => setTimeout(r, backfillDelayMs));
+            return client.backfill(identity, cursors);
+          },
+        };
+  const server = serve({
+    service: "gateway",
+    health: () => ({}),
+    logger: silent,
+    notFoundDocsUrl: docsUrl("not_found"),
+  });
+  const sessions = attachSessions({
+    server,
+    api: slowed,
+    logger,
+    fanout,
+    membership,
+    ...(resumeDeadlineMs === undefined ? {} : { resumeDeadlineMs }),
+  });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  return {
+    url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    logs,
+    close: async () => {
+      await sessions.close();
+      await fanout.close();
+      await membership.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+interface Frame {
+  type: string;
+  payload: Record<string, unknown>;
+}
+
+/** Every frame this socket received, in ARRIVAL ORDER — which is what FR-008 is
+ * asserted against. A collector that bucketed by type could not see an ordering at
+ * all, and "the notice arrived and the messages stopped" is true of both orders. */
+function record(socket: WebSocket): Frame[] {
+  const frames: Frame[] = [];
+  socket.on("message", (raw: unknown) => {
+    frames.push(JSON.parse(String(raw)) as Frame);
+  });
+  return frames;
+}
+
+const sockets: WebSocket[] = [];
+
+async function connect(
+  instance: Instance,
+  user: string,
+  /** `channelId:seq`. Present means the connection is BORN BUFFERING
+   * (`session.ts:372`), which is the only way to reach the resume buffer from a
+   * test. */
+  cursor?: string,
+): Promise<WebSocket> {
+  const query = cursor === undefined ? "" : `&cursor=${cursor}`;
+  const socket = new WebSocket(
+    `${instance.url}/v1/ws?token=${await mintToken(user)}${query}`,
+  );
+  sockets.push(socket);
+  await new Promise<void>((resolve, reject) => {
+    socket.once("open", () => resolve());
+    socket.once("error", reject);
+  });
+  return socket;
+}
+
+const silent: Logger = createLogger("gateway", () => {});
+
+let api!: ApiUnderTest;
+
+beforeAll(async () => {
+  api = await startApi();
+}, 60_000);
+
+afterAll(() => {
+  api?.stop();
+});
+
+afterEach(() => {
+  for (const socket of sockets.splice(0)) socket.close();
 });
 
 describe("the membership fabric carries a change between two processes", () => {
@@ -383,4 +726,303 @@ describe("the arms a session cannot reach (T036's list)", () => {
     );
     expect(line.fields["op"]).toBe("connection");
   });
+});
+
+describe("a removed member stops receiving, and is told why (US1)", () => {
+  let one: Instance;
+  let two: Instance;
+
+  // PER DESCRIBE, NOT PER TEST, and the first version was per test. `server.close()`
+  // does not resolve while a connection is open, and vitest runs `afterEach` hooks in
+  // reverse registration order — so the describe's teardown ran BEFORE the file-level
+  // one that closes the sockets, and every test in here failed with
+  // `Hook timed out in 10000ms` pointing at a teardown rather than at anything the
+  // test did. Seven tests, 83 s, and not one of the failures named its own cause.
+  //
+  // Fresh instances per test buy nothing anyway: the isolation this file needs is
+  // fresh USERS and CHANNELS, which `seed()` gives per test at the cost of a few
+  // inserts.
+  beforeAll(async () => {
+    [one, two] = await Promise.all([startInstance(), startInstance()]);
+  }, 30_000);
+
+  afterAll(async () => {
+    await Promise.all([one.close(), two.close()]);
+  });
+
+  it("tells the removed user, once, naming themselves and the channel", async () => {
+    const { users, channels } = await seed(["tuan", "linh"], 1);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+
+    const started = Date.now();
+    expect(await removeMember(channels[0]!, users["tuan"]!)).toBe("removed");
+
+    const notices = await waitFor(
+      () =>
+        frames.filter((f) => f.type === "membership.changed").length > 0
+          ? frames.filter((f) => f.type === "membership.changed")
+          : undefined,
+      "a membership.changed frame",
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.payload).toEqual({
+      channel: channels[0]!,
+      user: users["tuan"]!,
+      change: "removed",
+    });
+    // RESEARCH R5 PREDICTED MILLISECONDS AND IT IS MILLISECONDS. The five seconds
+    // FR-RTM-10 names is not a latency budget — it is the margin the clause left for
+    // a mechanism that did not exist. The measured value is in `baseline.txt`; the
+    // bound asserted here is loose on purpose, because a tight one would be a
+    // timing flake in a lane that runs nine files at once.
+    const elapsed = Date.now() - started;
+    // eslint-disable-next-line no-console
+    console.log(`[T066] request-return to notice: ${String(elapsed)} ms`);
+    expect(elapsed).toBeLessThan(1_000);
+  });
+
+  it("keeps the socket open — no close code, no error frame (FR-013)", async () => {
+    // Close code 4009 exists and this is not it, which is the refusal chapter 3.8
+    // made by name. A revocation is not a protocol violation.
+    const { users, channels } = await seed(["tuan"], 1);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+    let closed: number | null = null;
+    socket.on("close", (code: number) => {
+      closed = code;
+    });
+
+    await removeMember(channels[0]!, users["tuan"]!);
+    await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the notice",
+    );
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(closed).toBeNull();
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    expect(frames.filter((f) => f.type === "error")).toEqual([]);
+  });
+
+  it("keeps delivering the removed user's OTHER channel", async () => {
+    // A test that only checks the channel went quiet is satisfied by a socket that
+    // broke. This is the half that says the connection is still a connection.
+    const { users, channels, sender } = await seed(["tuan", "linh"], 2);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+
+    await removeMember(channels[0]!, users["tuan"]!);
+    await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the notice",
+    );
+    await postMessage(channels[1]!, sender, "still here");
+
+    const message = await waitFor(
+      () => frames.find((f) => f.type === "message.created"),
+      "a message on the second channel",
+    );
+    expect(message.payload["channel"]).toBe(channels[1]!);
+  });
+
+  it("keeps delivering to a SECOND LOCAL MEMBER of the same channel", async () => {
+    // RESEARCH R6'S SHARP TEST, and the only one in this file that fails against an
+    // implementation that unsubscribes the channel outright. Both sockets are on the
+    // SAME instance, so one reference count decides for both — the obvious test
+    // passes either way and this one does not.
+    const { users, channels, sender } = await seed(["tuan", "linh"], 1);
+    const removed = await connect(one, users["tuan"]!);
+    const stays = await connect(one, users["linh"]!);
+    const theirs = record(stays);
+
+    await removeMember(channels[0]!, users["tuan"]!);
+    await waitFor(
+      () => theirs.find((f) => f.type === "membership.changed"),
+      "the other member's notice",
+    );
+    await postMessage(channels[0]!, sender, "for the ones still here");
+
+    const message = await waitFor(
+      () => theirs.find((f) => f.type === "message.created"),
+      "a message to the remaining member",
+    );
+    expect(message.payload["text"]).toBe("for the ones still here");
+    expect(removed.readyState).toBe(WebSocket.OPEN);
+  });
+
+  it("tells the channel's remaining members too (US2)", async () => {
+    const { users, channels } = await seed(["tuan", "linh"], 1);
+    await connect(one, users["tuan"]!);
+    const watcher = await connect(one, users["linh"]!);
+    const theirs = record(watcher);
+
+    await removeMember(channels[0]!, users["tuan"]!);
+
+    const notice = await waitFor(
+      () => theirs.find((f) => f.type === "membership.changed"),
+      "the remaining member's notice",
+    );
+    // Naming the person who left, not the person being told.
+    expect(notice.payload["user"]).toBe(users["tuan"]!);
+    expect(notice.payload["change"]).toBe("removed");
+  });
+
+  it("tells the subject in the same act that revokes them (FR-008)", async () => {
+    // **THIS TEST WAS AN ARRIVAL-ORDER ASSERTION AND IT PROVED NOTHING.** T061 asked
+    // for the `membership.changed` frame to be recorded as preceding the last
+    // `message.created` the socket ever sees, on the grounds that "both orders end
+    // with the notice delivered and the channel quiet". Run against a deliberately
+    // reversed implementation — `channelIds.delete()` moved above `send()` — it
+    // stayed green, because the notice goes to a socket reference this function
+    // already holds and the cut only affects FUTURE fabric routing. Swapping those
+    // two statements changes nothing any client can observe.
+    //
+    // What FR-008 actually forbids is one line further out: deriving the audience
+    // AFTER the mutation. `registry.subscribersOf(channel)` is how the removed user
+    // is found, and cutting them from `channelIds` first removes them from their own
+    // notice's audience — they are revoked and never told. That implementation was
+    // built and run: the first test in this file failed, in 5 s, with no notice.
+    //
+    // So the ordering that matters is audience-then-mutate, this test asserts it
+    // directly, and the arrival order is left to the window test where it is real.
+    const { users, channels, sender } = await seed(["tuan", "linh"], 1);
+    const socket = await connect(one, users["tuan"]!);
+    const frames = record(socket);
+
+    await postMessage(channels[0]!, sender, "before");
+    await waitFor(
+      () => frames.find((f) => f.type === "message.created"),
+      "the message before the removal",
+    );
+    await removeMember(channels[0]!, users["tuan"]!);
+    await waitFor(
+      () => frames.find((f) => f.type === "membership.changed"),
+      "the notice",
+    );
+
+    // The subject is told, and the channel they were told about is the one they no
+    // longer have. A gateway that mutated first would deliver the message and then
+    // go quiet with no explanation.
+    const kinds = frames.map((f) => f.type);
+    expect(kinds).toEqual(["message.created", "membership.changed"]);
+    const notice = frames.find((f) => f.type === "membership.changed")!;
+    expect(notice.payload["user"]).toBe(users["tuan"]!);
+    expect(notice.payload["channel"]).toBe(channels[0]!);
+  });
+
+  it("stops delivery on BOTH instances when the removal happened elsewhere", async () => {
+    // The cross-instance case: the api that handled the removal has no idea which
+    // gateway holds the user, and neither gateway knows about the other. Two sockets
+    // for one user on two instances, and both must stop.
+    const { users, channels } = await seed(["tuan", "linh"], 1);
+    const first = await connect(one, users["tuan"]!);
+    const second = await connect(two, users["tuan"]!);
+    const a = record(first);
+    const b = record(second);
+
+    await removeMember(channels[0]!, users["tuan"]!);
+
+    await waitFor(() => a.find((f) => f.type === "membership.changed"), "instance one");
+    await waitFor(() => b.find((f) => f.type === "membership.changed"), "instance two");
+  });
+});
+
+describe("nothing arrives after the revocation (US1, FR-RTM-10)", () => {
+  let one: Instance;
+  let two: Instance;
+
+  beforeAll(async () => {
+    [one, two] = await Promise.all([startInstance(), startInstance()]);
+  }, 30_000);
+
+  afterAll(async () => {
+    await Promise.all([one.close(), two.close()]);
+  });
+
+  it("delivers nothing on either instance after the clause's own five seconds", async () => {
+    // **ONE WINDOW, TWO CASES**, and the sharing is deliberate rather than tidy. This
+    // is the first timing in two chapters that cannot be injected shorter — five
+    // seconds is FR-RTM-10's own budget, not a module constant — so a file that waits
+    // it out per case pays it per case. Set both up, post to both, wait once.
+    const { users, channels, sender } = await seed(["tuan", "linh"], 1);
+    const local = await connect(one, users["tuan"]!);
+    const elsewhere = await connect(two, users["tuan"]!);
+    const a = record(local);
+    const b = record(elsewhere);
+
+    await removeMember(channels[0]!, users["tuan"]!);
+    await Promise.all([
+      waitFor(() => a.find((f) => f.type === "membership.changed"), "notice on one"),
+      waitFor(() => b.find((f) => f.type === "membership.changed"), "notice on two"),
+    ]);
+
+    // THE CLAUSE'S OWN BUDGET, not a shorter one. Five seconds is what FR-RTM-10
+    // gives a mechanism to take effect, so a send inside it proves nothing.
+    await new Promise((r) => setTimeout(r, 5_500));
+    await postMessage(channels[0]!, sender, "after the window");
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(a.filter((f) => f.type === "message.created")).toEqual([]);
+    expect(b.filter((f) => f.type === "message.created")).toEqual([]);
+    // AND BOTH SOCKETS ARE STILL OPEN. "Nothing arrived" is equally true of two dead
+    // connections, which is the assertion this file would otherwise be making.
+    expect(local.readyState).toBe(WebSocket.OPEN);
+    expect(elsewhere.readyState).toBe(WebSocket.OPEN);
+  }, 20_000);
+
+  it("drops the channel's BUFFERED frames when the removal lands mid-resume (FR-029)", async () => {
+    // **THIS FAILS AGAINST AN IMPLEMENTATION THAT PASSES THE TEST ABOVE**, which is
+    // the only reason it is written separately. A connection presenting a cursor is
+    // born buffering (`session.ts:372`); frames for its channels queue in
+    // `connection.buffer` until the backfill has had its turn. `flushable(buffer,
+    // marks)` filters on `frame.seq` and on NOTHING ELSE — so a removal that
+    // unsubscribes the channel would still flush that channel's backlog on the way
+    // to live. Access revoked and the messages delivered, in the same act.
+    const { users, channels, sender } = await seed(["tuan", "linh"], 2);
+    // **SEQ 1 FIRST, AND THE CURSOR AT 1.** The first version of this test presented
+    // `channel:1` and then buffered the channel's FIRST message, whose seq is also 1
+    // — so `flushable(buffer, marks)` dropped it as at-or-below the mark and the test
+    // passed with the FR-029 filter deleted. It proved the resume works, under a
+    // title about revocation. The buffered frame has to sit ABOVE the cursor or
+    // nothing in this test is about membership at all.
+    await postMessage(channels[0]!, sender, "before the cursor");
+    // A two-second backfill, so the connection is DEMONSTRABLY still buffering when
+    // the removal lands, and a resume deadline comfortably past it so the fabric
+    // confirmation does not degrade first.
+    const slow = await startInstance(6_000, 2_000);
+    const socket = await connect(slow, users["tuan"]!, `${channels[0]!}:1`);
+    try {
+      const frames = record(socket);
+
+      // Into the buffer, both channels: the removal must take one and leave the
+      // other, which a blanket `buffer = []` would not.
+      await postMessage(channels[0]!, sender, "buffered, revoked");
+      await postMessage(channels[1]!, sender, "buffered, kept");
+      await new Promise((r) => setTimeout(r, 400));
+
+      await removeMember(channels[0]!, users["tuan"]!);
+      await waitFor(
+        () => frames.find((f) => f.type === "membership.changed"),
+        "the notice, which must arrive DURING the resume (FR-030)",
+      );
+
+      // Let the backfill return and flush whatever the buffer still holds.
+      await new Promise((r) => setTimeout(r, 3_000));
+
+      const texts = frames
+        .filter((f) => f.type === "message.created")
+        .map((f) => f.payload["text"]);
+      expect(texts).not.toContain("buffered, revoked");
+      expect(texts).toContain("buffered, kept");
+    } finally {
+      // THE SOCKET FIRST, THEN THE SERVER. `server.close()` does not resolve while a
+      // connection is open, and the file-level `afterEach` that closes sockets runs
+      // AFTER this `finally` — so closing the instance here first hangs the test out
+      // to its own 20 s timeout, reported as a timeout rather than as the teardown it
+      // is. The same trap took seven tests earlier in this file.
+      socket.close();
+      await slow.close();
+    }
+  }, 20_000);
 });

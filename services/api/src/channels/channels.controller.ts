@@ -14,9 +14,15 @@ import {
   UseGuards,
 } from "@nestjs/common";
 
+import { Inject } from "@nestjs/common";
+
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import type { RequestWithPrincipal } from "../auth/principal";
 import { Repository } from "../db/repository";
+import {
+  MEMBERSHIP_PUBLISHER,
+  type MembershipPublisher,
+} from "../membership/publisher";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 import { ChannelsService } from "./channels.service";
 import {
@@ -58,6 +64,12 @@ export class ChannelsController {
     // For resolving a user token's subject to a row id. The service takes an id
     // because the repository's membership lookup is keyed on it.
     private readonly repo: Repository,
+    // THE CONTROLLER, NOT THE SERVICE (chapter 3.20, FR-004). `ChannelsService`'s
+    // constructor takes only the `Repository`, so it holds no request id and no
+    // logger — and FR-015's failure line needs both. `messages.controller.ts` puts
+    // the fan-out publish at this same layer for this same reason.
+    @Inject(MEMBERSHIP_PUBLISHER)
+    private readonly membership: MembershipPublisher,
   ) {}
 
   /** 201 on creation, 200 on the idempotent repeat (FR-017, FR-CHN-02).
@@ -179,8 +191,33 @@ export class ChannelsController {
   async removeMembers(
     @Param("channelId") channelId: string,
     @Body(new ZodValidationPipe(removeMembersBodySchema)) body: RemoveMembersBody,
+    @Req() req: RequestWithPrincipal,
   ) {
-    return { results: await this.channels.removeMembers(channelId, body) };
+    const results = await this.channels.removeMembers(channelId, body);
+
+    // ONLY THE ONES THAT CHANGED SOMETHING (FR-005). The route reports per entry and
+    // `not_a_member` is a legitimate outcome, so publishing the whole list would tell
+    // a gateway to revoke access nobody had — and would put a `membership.changed`
+    // frame on a socket whose owner was never removed from anything.
+    //
+    // ONE PUBLISH, BOTH AUDIENCES. The removed user is still a member at the moment
+    // this goes out, so the channel's subject reaches the remaining members and the
+    // subject too (research R1). An addition is the case that cannot do this.
+    //
+    // AFTER the service returns, which is after the transaction that wrote both the
+    // membership row and its outbox row. Constitution II forbids the other order and
+    // the phase order exists for it.
+    for (const removal of results) {
+      if (removal.result !== "removed") continue;
+      await this.membership.publish({
+        environment: req.principal?.environmentId ?? "unknown",
+        channel: channelId,
+        user: removal.external_id,
+        change: "removed",
+      });
+    }
+
+    return { results };
   }
 
   /** The user-initiated half of FR-CHN-03 (chapter 3.15).

@@ -10,6 +10,7 @@ import {
   type Frame,
   type Message,
   isErrorCode,
+  type MembershipFabric,
   type PresenceFabric,
 } from "@relay/protocol";
 import { newRequestId, type Logger } from "@relay/service-kit";
@@ -180,6 +181,7 @@ export function attachSessions({
   limits,
   meterIntervalMs = METER_INTERVAL_MS,
   presence,
+  membership,
 }: SessionServerOptions): {
   registry: Registry;
   meter: Meter;
@@ -245,6 +247,98 @@ export function attachSessions({
     }
   }
   presence?.onTransition(deliverPresence);
+
+  /** A membership change arriving from its own fabric (chapter 3.20, FR-RTM-05,
+   * FR-RTM-10).
+   *
+   * `deliverPresence`'s path rather than `deliver`'s, for its reason exactly: a
+   * membership change carries no sequence, so it can neither duplicate a backfilled
+   * row nor leave a gap. It consults neither `connection.phase` nor
+   * `connection.marks` (FR-030) — and here that is not merely harmless but required,
+   * because a notice put into the resume buffer either arrives after the cut-off or
+   * is dropped by the filter this same function installs three lines below.
+   *
+   * MEMBERS, AND THE SUBJECT LAST. The channel's remaining members are told, and the
+   * removed user is told too — as the last frame that channel will ever produce for
+   * them. The ordering is the requirement (FR-008): cut-then-send delivers a notice
+   * to a client whose membership no longer grants access, and the frame is then the
+   * one thing the cut was supposed to stop. */
+  function deliverMembership(change: MembershipFabric): void {
+    // Everyone subscribed to the channel, split by whether they are the subject.
+    // The removed user is still in `channelIds` at this instant, which is why one
+    // publish reaches both audiences (research R1) and why this list is complete.
+    const audience = registry.subscribersOf(change.channel);
+    const subject: Connection[] = [];
+    const others: Connection[] = [];
+    for (const connection of audience) {
+      // PRINCIPLE I IS STRUCTURAL HERE (FR-006). The environment compared is the
+      // CONNECTION's, established at the door by the api, never the payload's. A
+      // gateway that acted on a payload's environment id would be one compromised
+      // publisher away from cross-tenant delivery — the exact shape the restriction
+      // exists to prevent.
+      if (connection.identity.environmentId !== change.environment) {
+        logger.log("error", "membership.rejected", {
+          reason: "environment_mismatch",
+          connection_id: connection.id,
+          channel: change.channel,
+        });
+        continue;
+      }
+      if (connection.identity.userExternalId === change.user) subject.push(connection);
+      else others.push(connection);
+    }
+
+    const frame = {
+      type: "membership.changed" as const,
+      payload: { channel: change.channel, user: change.user, change: change.change },
+    };
+    for (const connection of others) send(connection.socket, frame);
+
+    for (const connection of subject) {
+      // SEND, THEN CUT. Reversing these two statements is the whole of FR-008, and
+      // T065 proves the ordering test bites by removing this line and watching it
+      // fail.
+      send(connection.socket, frame);
+      if (change.change !== "removed") continue;
+
+      // THE FIRST MUTATION OF THIS SET AFTER THE CONNECTION EXISTS. Every reader of
+      // `channelIds` has assumed it immutable since chapter 2.5.
+      connection.channelIds.delete(change.channel);
+      // AND THE BUFFER IS ONE OF THOSE READERS (FR-029). `flushable(buffer, marks)`
+      // filters on `frame.seq` and on nothing else, so a removal landing mid-resume
+      // would unsubscribe the channel and then flush its buffered messages anyway —
+      // access revoked and the backlog delivered in the same act.
+      connection.buffer = connection.buffer.filter(
+        (message) => message.channel !== change.channel,
+      );
+      // DECREMENT, NEVER RELEASE (research R6). This is the first caller of these
+      // counters that is not a connection's own open or close path, and the sharp
+      // test is that a SECOND local member of the same channel still receives —
+      // which an implementation that unsubscribed the channel outright would fail.
+      void Promise.all([
+        fanout?.unsubscribe(change.channel).catch((error: unknown) => {
+          logger.log("error", "fanout.unsubscribe_failed", {
+            channel: change.channel,
+            error: String(error),
+          });
+        }),
+        presence?.unsubscribe(change.channel).catch((error: unknown) => {
+          logger.log("error", "presence.failed", {
+            op: "unsubscribe",
+            channel: change.channel,
+            error: String(error),
+          });
+        }),
+        membership?.unsubscribeChannel(change.channel),
+      ]);
+      logger.log("info", "membership.revoked", {
+        connection_id: connection.id,
+        channel: change.channel,
+        user: change.user,
+      });
+    }
+  }
+  membership?.onChange(deliverMembership);
   // noServer: the upgrade is handled by hand so the token can be checked
   // BEFORE the handshake completes. Letting ws own the upgrade would mean
   // rejecting a socket that already exists (EIR-WS-05 wants the close code
@@ -413,6 +507,13 @@ export function attachSessions({
         // carries two subscriptions. `ioredis` takes a variadic `subscribe`, so the
         // count doubles and the round trips do not.
         presence?.subscribe(channelId),
+        // Chapter 3.20, and the third. Without this line the membership fabric has
+        // no receiver at all — the publisher publishes, the module parses nothing,
+        // and every test of the revocation path fails for a reason that looks like a
+        // broken fabric. **No task owned it**: T054 covers the release on a
+        // revocation and T079 covers the user's own subject, and the ordinary open
+        // path fell between them.
+        membership?.subscribeChannel(channelId),
       ]),
     );
     // AFTER `registry.add`, so "is this the user's first connection here?" is asked
@@ -501,6 +602,10 @@ export function attachSessions({
               error: String(error),
             });
           }),
+          // The membership module swallows and logs its own failures internally, so
+          // there is no `.catch` to add here — `failable()` in `membership.ts` is
+          // where that decision lives, and duplicating it would log twice.
+          membership?.unsubscribeChannel(channelId),
         ]),
       );
       logger.log("info", "connection.closed", {
