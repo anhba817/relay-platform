@@ -2,6 +2,7 @@ import { Module, Scope } from "@nestjs/common";
 import { REQUEST } from "@nestjs/core";
 
 import { AuthModule } from "../auth/auth.module";
+import { MembershipModule } from "../membership/membership.module";
 import { createDb, createPool, type Db } from "../db/client";
 import { Repository } from "../db/repository";
 import { ChannelsController } from "./channels.controller";
@@ -12,7 +13,7 @@ import type { RequestWithTenant } from "../messages/request-with-tenant";
 // is the plain 2.1 class, constructed per request with the tenant the middleware
 // already resolved from a verified credential (ADR-15).
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, MembershipModule],
   controllers: [ChannelsController],
   providers: [
     {

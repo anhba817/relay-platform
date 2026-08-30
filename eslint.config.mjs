@@ -97,6 +97,18 @@ const DRIVER_EXEMPT_TESTS = [
   //
   // A `publish` and nothing else: this file reads no key and composes none.
   "services/gateway/src/presence.itest.ts",
+  // Chapter 3.20's, for that same reason and on THIS list rather than the `**/*.ts`
+  // block's `ignores` — which is where it was written first, and where an `.itest.ts`
+  // entry does nothing. The `**/*.itest.ts` block below REPLACES the rule for every
+  // integration test not on one of these two lists, so an exemption above it is
+  // overwritten in silence. This file's header states that hazard (R23, FR-043) and
+  // the entry still went to the wrong list.
+  //
+  // The membership fabric's receive half has the same two rejection paths presence's
+  // has — a body that is not JSON, and JSON the schema refuses — and neither is
+  // reachable through `createMembership`, which only delivers what it already
+  // accepted. A `publish` and nothing else: no key read, no key composed.
+  "services/gateway/src/membership.itest.ts",
 ];
 
 
@@ -215,6 +227,18 @@ export default tseslint.config(
       // already subscribed. The gateway's `fanout.ts` is on this list one line
       // up for the same reason; the api needs it too now that it publishes.
       "services/api/src/fanout/**",
+      // Chapter 3.20, AND IT IS THE ENTRY ABOVE'S CASE RATHER THAN THE LIMITER'S.
+      // The membership publisher calls PUBLISH and nothing else, onto
+      // `member:{channel_id}` and `member:{env}:{user}` — a subject is not
+      // readable at all, only listened to by whoever is already subscribed, so
+      // there is no key here for a cross-tenant read to reach.
+      //
+      // The SECOND of those subjects carries an environment id, which is the
+      // shape the restriction guards, and it still does not make this the
+      // limiter's case: the id is composed from the repository's own scope on
+      // the way out, never read from a payload on the way in. The gateway's half
+      // of this fabric IS the limiter's case, and its entry says so.
+      "services/api/src/membership/**",
       // Chapter 3.19. THIS IS `limits.ts`'s CASE, NOT `fanout.ts`'s, and the
       // distinction is the rule's own reason. The entry above is justified by
       // "this client touches no keys" — a publish onto a channel UUID, and a
@@ -228,6 +252,17 @@ export default tseslint.config(
       // environment id from a client, and no scan, `KEYS` or pattern read that
       // could reach a key belonging to another tenant.
       "services/gateway/src/presence.ts",
+      // Chapter 3.20, AND IT IS THE FAN-OUT'S CASE RATHER THAN PRESENCE'S — the
+      // opposite of what the entry above had to argue. This client SUBSCRIBES and
+      // nothing else: no `SET`, no `EXISTS`, no key of any kind, because the
+      // module's only command-shaped work is an HTTP re-read against the api.
+      //
+      // One of its two subject shapes carries an environment id
+      // (`member:{env}:{user}`) and that still does not make it presence's case: a
+      // subject is not readable, only listened to by whoever already subscribed, and
+      // the id is composed from the authenticated connection's own identity on the
+      // way in. There is no path here that takes an environment id from a payload.
+      "services/gateway/src/membership.ts",
       // The test harness IS data access — its whole job is to plant rows the
       // repository layer must never plant and to hold a connection carrying an
       // exemption no product code may carry (feature 030). Restricting it from

@@ -4,6 +4,7 @@ import { createLogger, serve, type Logger } from "@relay/service-kit";
 import { createApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
 import { createGatewayLimits } from "./limits.js";
+import { createMembership } from "./membership.js";
 import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
 
@@ -49,6 +50,12 @@ export function createServer(logger?: Logger) {
   // rather than inside `attachSessions` so the tests that call that function
   // directly stay Redis-free, and so its close has an owner.
   const presence = createPresence({ logger: log });
+  // Chapter 3.20. The SIXTH Redis client, and only one where presence needed two:
+  // this module subscribes and never runs a command, so there is nothing a
+  // subscriber-mode connection would refuse. Created here rather than inside
+  // `attachSessions` so the tests that call that function directly stay Redis-free,
+  // and so its close has an owner.
+  const membership = createMembership({ logger: log });
   // Chapter 3.11. THE FIRST SECRET THIS SERVICE HAS EVER HELD, and it is not a
   // signing secret: chapter 3.2's claim that "the gateway holds no signing
   // secret" is untouched, because this one verifies nothing and signs nothing.
@@ -75,6 +82,7 @@ export function createServer(logger?: Logger) {
     fanout,
     limits,
     presence,
+    membership,
     // Overridable so `meter.itest.ts` can drive a spawned gateway without
     // waiting a real minute per assertion. The two tests there are the ones an
     // in-process gateway cannot run — a signal has to arrive at a process — and
@@ -98,6 +106,7 @@ export function createServer(logger?: Logger) {
     await fanout.close();
     await limits.close();
     await presence.close();
+    await membership.close();
   }
   return Object.assign(server, { shutdown });
 }

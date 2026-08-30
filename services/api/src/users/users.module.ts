@@ -2,6 +2,7 @@ import { Module, Scope } from "@nestjs/common";
 import { REQUEST } from "@nestjs/core";
 
 import { AuthModule } from "../auth/auth.module";
+import { MembershipModule } from "../membership/membership.module";
 import { createDb, createPool, type Db } from "../db/client";
 import { Repository } from "../db/repository";
 import { UsersController } from "./users.controller";
@@ -16,7 +17,7 @@ import type { RequestWithTenant } from "../messages/request-with-tenant";
 // lifecycle behind a channel path. `POST /v1/channels/users` is a sentence about
 // nothing.
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, MembershipModule],
   controllers: [UsersController],
   providers: [
     {

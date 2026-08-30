@@ -20,6 +20,7 @@ import { authenticate, type Identity } from "./auth.js";
 import type { Fanout } from "./fanout.js";
 import type { Decision, GatewayLimits } from "./limits.js";
 import { createMeter, METER_INTERVAL_MS, type Meter } from "./meter.js";
+import { type Membership } from "./membership.js";
 import { type Presence } from "./presence.js";
 import { Registry, type Connection } from "./registry.js";
 import {
@@ -150,6 +151,11 @@ export interface SessionServerOptions {
    * server that refused to start without one would be a worse default than a
    * presence-less one. `main.ts` always supplies it. */
   presence?: Presence;
+  /** Chapter 3.20. Optional for the same four reasons, and one more that is this
+   * chapter's own: without it a connection's membership is what it was at connect,
+   * which is the state FR-RTM-10 has been unmet in since 2.6. A gateway built
+   * without this is not broken — it is the gateway this chapter starts from. */
+  membership?: Membership;
 }
 
 // THE FOUR PRESENCE TIMINGS ARE NOT HERE, and an earlier draft of this chapter put
