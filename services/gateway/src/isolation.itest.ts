@@ -732,3 +732,174 @@ describe("the socket refuses another tenant's identifiers", () => {
     socket.socket.close();
   });
 });
+
+// ── T049, T050: the eleven frames, classified ────────────────────────────────
+//
+// THE MEMBER LIST IS DERIVED; THE DIRECTION IS NOT. `frameSchema.options` yields
+// all eleven discriminator values at runtime, so a frame added to the union appears
+// here without an edit and fails the totality check until somebody classifies it
+// — the same property `targets.itest.ts` gives the route list.
+//
+// The DIRECTION cannot be derived, and an earlier draft of this task and of
+// `contracts/gauntlet.md` §4 both said it could. The union carries no direction
+// metadata: no inbound/outbound split, no client/server marker, nothing but the
+// discriminator. So each entry below is a classification with a reason, and the
+// authority for every one of them is `session.ts`, which refuses anything that is
+// not `message.send` with `unknown_frame_type` and close 4002.
+const DIRECTIONS: ReadonlyArray<readonly [string, "inbound" | "outbound", string]> = [
+  ["message.send", "inbound", "the only frame a client may utter (session.ts)"],
+  ["connection.ack", "outbound", "the server's answer to the handshake"],
+  ["message.ack", "outbound", "the server's answer to a send, after commit"],
+  ["message.created", "outbound", "a real-time event; the server decides who hears it"],
+  ["message.updated", "outbound", "as message.created"],
+  ["message.deleted", "outbound", "as message.created"],
+  ["membership.changed", "outbound", "membership is written through the api, never the socket"],
+  ["presence.changed", "outbound", "derived from connections the gateway holds, not claimed"],
+  ["typing", "outbound", "server-fanned; a client claiming one could type as anybody"],
+  // The typing chapter, and the second inbound frame in twenty chapters. It carries no
+  // `user` — the connection supplies it — which is what keeps the row above true
+  // rather than contradicted: same subject, two frames, and only the server's
+  // names a person.
+  //
+  // AND NO CASE IN `sample()` BELOW, which an earlier version of this task
+  // mandated. That builder feeds the refusal loop, and the loop iterates
+  // `DIRECTIONS.filter(([, d]) => d === "outbound")` — so nothing ever asks for
+  // an inbound frame's sample and the case would be dead code a task required.
+  // Said here because the next reader adding an inbound type will wonder.
+  ["typing.send", "inbound", "this chapter: a client may say it is typing (session.ts)"],
+  ["error", "outbound", "the server's refusal shape"],
+];
+
+/** Something schema-valid for each type, so a refusal is `unknown_frame_type`
+ * rather than `invalid_frame` — the two are different findings and only one of
+ * them is about direction. */
+function sample(type: string, channel: string, user: string): unknown {
+  const message = {
+    id: randomUUID(),
+    channel,
+    seq: 1,
+    user,
+    text: "forged",
+    created_at: new Date().toISOString(),
+  };
+  switch (type) {
+    case "connection.ack":
+      return { type, payload: { user, cursor: {}, resume_ok: true, truncated: [] } };
+    case "message.ack":
+      return { type, payload: { seq: 1 } };
+    case "message.created":
+    case "message.updated":
+    case "message.deleted":
+      return { type, payload: message };
+    case "membership.changed":
+      return { type, payload: { channel, user, change: "added" } };
+    case "presence.changed":
+      return { type, payload: { user, state: "online" } };
+    case "typing":
+      return { type, payload: { channel, user } };
+    case "error":
+      // NO `request_id`. The payload is a `strictObject`, so an extra field is refused
+      // as `invalid_frame` — and this loop asserts `unknown_frame_type`, which is a
+      // claim about DIRECTION. A sample that fails validation tests the validator
+      // instead, and the assertion then passes or fails for the wrong reason.
+      return {
+        type,
+        payload: { code: "forged", message: "forged", docs_url: "/x" },
+      };
+    default:
+      return { type, payload: { idem_key: randomUUID(), channel, text: "forged" } };
+  }
+}
+
+describe("every frame in the union is classified, in both directions", () => {
+  const members = frameSchema.options.map(
+    (option) => (option.shape.type as { value: string }).value,
+  );
+
+  it("derives all eleven members from the union itself", () => {
+    // ELEVEN with this chapter's `typing.send`. **The title carries the number
+    // too**, and updating the assertion without the title is how the presence
+    // chapter shipped a good test under a false name.
+    expect(members.length).toBe(11);
+  });
+
+  it("classifies every member exactly once", () => {
+    const classified = DIRECTIONS.map(([type]) => type);
+    const missing = members.filter((m) => !classified.includes(m));
+    expect(
+      missing,
+      `these frames are in frameSchema and classified nowhere: ${missing.join(", ")}`,
+    ).toEqual([]);
+    expect(new Set(classified).size).toBe(classified.length);
+  });
+
+  it("names no frame the union does not have", () => {
+    const stale = DIRECTIONS.map(([type]) => type).filter((t) => !members.includes(t));
+    expect(stale, `classified but no longer in frameSchema: ${stale.join(", ")}`).toEqual([]);
+  });
+
+  /** **`it.fails` FROM PHASE 2 TO PHASE 4, and it is the bridge this test exists
+   * to be.** The table above now classifies `typing.send` as inbound and
+   * `session.ts` still accepts only `message.send`, so the two disagree — which
+   * is exactly what this assertion is for. Phase 4 narrows the refusal to the
+   * named set and this becomes an ordinary `it` expecting both.
+   *
+   * T015 predicted the union widening would fail the gauntlet three ways and it
+   * failed TWO: the count, and the totality check. "names no frame the union
+   * does not have" cannot fail on an ADDITION — only a removal reaches it. This
+   * is the third failure, and it arrives one edit later than predicted. */
+  it.fails("agrees with the gateway: exactly one member is inbound", () => {
+    const inbound = DIRECTIONS.filter(([, d]) => d === "inbound").map(([t]) => t);
+    // Not a taste assertion. `session.ts` compares against this one literal and
+    // closes 4002 on everything else, so a second inbound frame here would be a
+    // classification the code does not implement.
+    expect(inbound).toEqual(["message.send"]);
+  });
+});
+
+// The behavioural half: the classification above is checked against the running
+// gateway rather than believed. Nine sockets, one per outbound frame, because the
+// refusal closes the connection.
+describe("a client uttering a server frame is refused, frame by frame", () => {
+  let server: Server;
+  let wsUrl: string;
+  let tenants: SocketTenants;
+
+  beforeAll(async () => {
+    // The fixture starts the api itself and hands back its url, so this suite has no
+    // `startApi` of its own — one place decides how a child is spawned.
+    tenants = await seedSocketTenants();
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
+    attachSessions({ server, api: createApiClient(tenants.apiUrl), logger: silent });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    wsUrl = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  }, 90_000);
+
+  afterAll(async () => {
+    // SOCKETS FIRST: `server.close()` waits for its connections.
+    closeAll();
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    tenants?.stop();
+  });
+
+  for (const [type, direction] of DIRECTIONS.filter(([, d]) => d === "outbound")) {
+    it(`${type} (${direction}) is refused with unknown_frame_type`, async () => {
+      const client = read(new WebSocket(`${wsUrl}/v1/ws?token=${tenants.attacker.token}`));
+      await client.opened();
+      await client.waitFor("connection.ack");
+      client.socket.send(
+        JSON.stringify(
+          sample(type, tenants.attacker.channelId, tenants.attacker.userExternalId),
+        ),
+      );
+      const error = await client.waitFor<{ payload: { code: string } }>("error");
+      expect(error.payload.code).toBe("unknown_frame_type");
+      client.socket.close();
+    });
+  }
+});
