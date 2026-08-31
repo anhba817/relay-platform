@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseFrame } from "./frames.js";
+import { frameSchema, parseFrame } from "./frames.js";
 
 // The contract must bite: for every frame, one specimen that parses and a
 // table of malformed near-misses that MUST reject. A schema that accepts
@@ -37,6 +37,9 @@ const valid: Record<string, unknown> = {
     payload: { user: "u1", state: "online" },
   },
   typing: { type: "typing", payload: { channel: "c1", user: "u1" } },
+  // Chapter 3.21, and the only INBOUND member besides `message.send`. One
+  // field: the connection supplies the user.
+  "typing.send": { type: "typing.send", payload: { channel: "c1" } },
   error: {
     type: "error",
     payload: {
@@ -111,9 +114,60 @@ describe("malformed frames reject", () => {
     ],
   ];
 
+  // Chapter 3.21. THE `user` REJECTION IS THE SECURITY PROPERTY, not a schema
+  // nicety: a client that could name a user could type as anybody (FR-006).
+  rejects.push(
+    [
+      "typing.send naming a user",
+      { type: "typing.send", payload: { channel: "c1", user: "someone-else" } },
+    ],
+    [
+      "typing.send with an unknown field",
+      { type: "typing.send", payload: { channel: "c1", renew: true } },
+    ],
+    ["typing.send with no channel", { type: "typing.send", payload: {} }],
+    [
+      "typing.send with an empty channel",
+      { type: "typing.send", payload: { channel: "" } },
+    ],
+  );
+
   for (const [name, frame] of rejects) {
     it(name, () => {
       expect(parseFrame(frame).success).toBe(false);
     });
   }
+});
+
+// T014. THE COUNT AND THE SET, both asserted, on `codes.test.ts`'s precedent:
+// an exact count makes a new member a decision rather than an accident, and an
+// exact set makes it the RIGHT decision. The count alone would pass if somebody
+// swapped one member for another.
+describe("the frame union's membership (chapter 3.21)", () => {
+  const members = frameSchema.options.map((o) => o.shape.type.value);
+
+  it("has eleven members", () => {
+    expect(members).toHaveLength(11);
+  });
+
+  it("names exactly two inbound frames, and both end in `.send`", () => {
+    // The direction is not derivable from the schema — `isolation.itest.ts`'s
+    // DIRECTIONS table is where it lives, and this asserts the naming rule that
+    // makes the table's inbound rows predictable rather than remembered.
+    expect(members.filter((m) => m.endsWith(".send")).sort()).toEqual([
+      "message.send",
+      "typing.send",
+    ]);
+  });
+
+  it("keeps `typing` outbound-shaped: it carries a user and the inbound frame does not", () => {
+    // FR-008: `typingSchema` is not edited by this chapter. The pair is the
+    // proof — same subject, two frames, and only the server's has a `user`.
+    expect(parseFrame({ type: "typing", payload: { channel: "c1" } }).success).toBe(
+      false,
+    );
+    expect(
+      parseFrame({ type: "typing.send", payload: { channel: "c1" } }).success,
+    ).toBe(true);
+  });
 });

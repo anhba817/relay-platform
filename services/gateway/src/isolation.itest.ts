@@ -705,10 +705,10 @@ describe("the socket gauntlet", () => {
   });
 });
 
-// ── T049, T050: the ten frames, classified ───────────────────────────────────
+// ── T049, T050: the eleven frames, classified ────────────────────────────────
 //
 // THE MEMBER LIST IS DERIVED; THE DIRECTION IS NOT. `frameSchema.options` yields
-// all ten discriminator values at runtime, so a frame added to the union appears
+// all eleven discriminator values at runtime, so a frame added to the union appears
 // here without an edit and fails the totality check until somebody classifies it
 // — the same property `targets.itest.ts` gives the route list.
 //
@@ -728,6 +728,17 @@ const DIRECTIONS: ReadonlyArray<readonly [string, "inbound" | "outbound", string
   ["membership.changed", "outbound", "membership is written through the api, never the socket"],
   ["presence.changed", "outbound", "derived from connections the gateway holds, not claimed"],
   ["typing", "outbound", "server-fanned; a client claiming one could type as anybody"],
+  // CHAPTER 3.21, and the second inbound frame in twenty chapters. It carries no
+  // `user` — the connection supplies it — which is what keeps the row above true
+  // rather than contradicted: same subject, two frames, and only the server's
+  // names a person.
+  //
+  // AND NO CASE IN `sample()` BELOW, which an earlier version of this task
+  // mandated. That builder feeds the refusal loop, and the loop iterates
+  // `DIRECTIONS.filter(([, d]) => d === "outbound")` — so nothing ever asks for
+  // an inbound frame's sample and the case would be dead code a task required.
+  // Said here because the next reader adding an inbound type will wonder.
+  ["typing.send", "inbound", "chapter 3.21: a client may say it is typing (session.ts)"],
   ["error", "outbound", "the server's refusal shape"],
 ];
 
@@ -773,8 +784,11 @@ describe("every frame in the union is classified, in both directions", () => {
     (option) => (option.shape.type as { value: string }).value,
   );
 
-  it("derives all ten members from the union itself", () => {
-    expect(members.length).toBe(10);
+  it("derives all eleven members from the union itself", () => {
+    // ELEVEN with chapter 3.21's `typing.send`. **The title carries the number
+    // too**, and updating the assertion without the title is how chapter 3.19
+    // shipped a good test under a false name.
+    expect(members.length).toBe(11);
   });
 
   it("classifies every member exactly once", () => {
@@ -792,7 +806,17 @@ describe("every frame in the union is classified, in both directions", () => {
     expect(stale, `classified but no longer in frameSchema: ${stale.join(", ")}`).toEqual([]);
   });
 
-  it("agrees with the gateway: exactly one member is inbound", () => {
+  /** **`it.fails` FROM PHASE 2 TO PHASE 4, and it is the bridge this test exists
+   * to be.** The table above now classifies `typing.send` as inbound and
+   * `session.ts` still accepts only `message.send`, so the two disagree — which
+   * is exactly what this assertion is for. Phase 4 narrows the refusal to the
+   * named set and this becomes an ordinary `it` expecting both.
+   *
+   * T015 predicted the union widening would fail the gauntlet three ways and it
+   * failed TWO: the count, and the totality check. "names no frame the union
+   * does not have" cannot fail on an ADDITION — only a removal reaches it. This
+   * is the third failure, and it arrives one edit later than predicted. */
+  it.fails("agrees with the gateway: exactly one member is inbound", () => {
     const inbound = DIRECTIONS.filter(([, d]) => d === "inbound").map(([t]) => t);
     // Not a taste assertion. `session.ts` compares against this one literal and
     // closes 4002 on everything else, so a second inbound frame here would be a

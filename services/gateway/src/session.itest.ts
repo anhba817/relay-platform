@@ -817,77 +817,30 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
 
     expect(frames.filter((f) => f.type === "message.created")).toEqual([]);
   });
-  /** CHAPTER 3.21, T009 — RED ON PURPOSE, and the red is not the one the task
-   * predicted.
+  /** CHAPTER 3.21, T009 — and this is the third of the refusal's three states.
    *
-   * T009 said a client uttering the typing signal today "receives
-   * `unknown_frame_type` and close 4002". It does not, and reading `handle`
-   * says why: `unknown_frame_type` is the DIRECTION refusal, reached only by a
-   * frame that PARSED. `typing.send` is not in `frameSchema` yet, so
-   * `safeParse` fails first and the answer is `invalid_frame` with the socket
-   * left open (session.ts:939).
+   * T009 predicted a client uttering the typing signal would get
+   * `unknown_frame_type` and close 4002. In phase 1 it did not: `typing.send`
+   * was not in `frameSchema`, so `safeParse` failed first and the answer was
+   * `invalid_frame` with the socket left open (session.ts:939). Phase 2 put the
+   * type in the union, so the same send now reaches the DIRECTION refusal one
+   * line further down and gets exactly what T009 said.
    *
-   * So the refusal this chapter narrows has THREE states, not two:
+   *   phase 1   not in the union         ->  invalid_frame, socket open
+   *   phase 2   in the union, not send   ->  unknown_frame_type, close 4002   <- here
+   *   phase 4   in the named inbound set ->  accepted
    *
-   *   phase 1  not in the union          -> invalid_frame, socket open
-   *   phase 2  in the union, not send    -> unknown_frame_type, close 4002
-   *   phase 4  in the named inbound set  -> accepted
-   *
-   * This test asserts phase 1. Phase 2 changes it, phase 4 inverts it, and each
-   * transition is a line in `baseline.txt` rather than a surprise.
+   * **Phase 1 held two tests and phase 2 holds one.** The first asserted the
+   * `invalid_frame` state and was correct until this commit; keeping it would
+   * assert a state that no longer exists. Its record is in `baseline.txt`, which
+   * is where a state the code has left belongs. The second was `it.fails` and
+   * **flipped on schedule** — it failed the moment the behaviour arrived, which
+   * is the whole reason it was written that way rather than as a red test.
    *
    * THE FRAME TYPE IS A STRING, not a union member: this file sends
    * `JSON.stringify({ type: … })` on an object literal, so nothing here
-   * typechecks against `frameSchema` and the test compiles a phase before the
-   * schema exists. */
-  it("answers typing.send with invalid_frame today, and keeps the socket open", async () => {
-    const socket = connect(await mintToken());
-    const frames = record(socket);
-    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
-
-    let closeCode: number | undefined;
-    socket.on("close", (code) => {
-      closeCode = code;
-    });
-
-    socket.send(
-      JSON.stringify({
-        type: "typing.send",
-        payload: { channel: api.channelId },
-      }),
-    );
-
-    const error = await waitFor(frames, (f) => f.type === "error", "error");
-    expect(error.payload).toMatchObject({ code: "invalid_frame" });
-
-    // The socket survives a malformed frame. A direction violation would have
-    // closed it with 4002 — which is what this same send will answer once
-    // phase 2 puts the type in the union.
-    await new Promise((r) => setTimeout(r, 300));
-    expect(closeCode).toBeUndefined();
-    expect(socket.readyState).toBe(WebSocket.OPEN);
-  });
-  /** CHAPTER 3.21, T009's RED HALF — and it is red for one phase, not four.
-   *
-   * The task asked for a test that is red on purpose. The test above is green,
-   * because it asserts what the code does today; this one asserts the state
-   * phase 2 creates, when `typing.send` joins `frameSchema` and the direction
-   * refusal at session.ts:947 catches it instead of the parser.
-   *
-   * **`it.fails`, NOT a red test, and the reason is the lane rather than the
-   * chapter.** `--concurrency=1` makes turbo abort every remaining task when a
-   * package fails, and `@relay/gateway` runs before `@relay/e2e`. A red test
-   * here therefore hides three files and ten tests — including
-   * `packages/e2e/src/tuan.itest.ts`, the suite that guards chapter 3.6's
-   * duplicate delivery, which is the defect the twenty-run battery exists for.
-   * Measured: the lane read 40 files and 693 tests against chapter 3.20's
-   * recorded 43 and 701, and the missing 3 and 10 are exactly the e2e package.
-   *
-   * `it.fails` inverts the reporting instead of the lane: it passes while the
-   * assertion throws, and **fails the moment the behaviour arrives** — so phase
-   * 2 does not have to remember to look. Then phase 2 makes it an ordinary
-   * `it`, and phase 4 inverts what it asserts. */
-  it.fails("PHASE 2: refuses typing.send as a direction violation, not a parse failure", async () => {
+   * typechecks against `frameSchema`. */
+  it("refuses typing.send as a direction violation, and closes 4002", async () => {
     const socket = connect(await mintToken());
     const frames = record(socket);
     await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");

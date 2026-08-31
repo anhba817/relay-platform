@@ -101,6 +101,31 @@ export const typingSchema = z.strictObject({
   }),
 });
 
+/** CLIENT → SERVER: "I am typing in this channel" (chapter 3.21, FR-001).
+ *
+ * **`typing.send`, and the name is an argument.** `typing.start` would read as a
+ * state machine with a missing `typing.stop` — and `typing.stop` is exactly the
+ * frame this protocol does not have, because `typingSchema` above carries no
+ * `state` field and the expiry therefore belongs to the receiving client
+ * (FR-009). A name that says *signal* rather than *state* keeps that honest.
+ *
+ * The `.send` suffix is the other half: `message.send` is the only inbound frame
+ * this protocol had for twenty chapters, so the inbound set becomes
+ * `{ message.send, typing.send }` and **the rule is legible — an inbound frame
+ * ends in `.send`**. FR-003 asks for a named set rather than a list, and a set
+ * with a spelling rule is one a reader can extend correctly.
+ *
+ * **NO `user` IN THE PAYLOAD, AND THE ABSENCE IS THE SECURITY PROPERTY**
+ * (data-model §2, FR-006). The connection supplies the identity; a client that
+ * could name a user could type as anybody. `typingSchema` carries a `user`
+ * because the SERVER fills it in on the way out. */
+export const typingSendSchema = z.strictObject({
+  type: z.literal("typing.send"),
+  payload: z.strictObject({
+    channel: z.string().min(1),
+  }),
+});
+
 /** Protocol-level error — EIR-API-04's error shape, reused on the socket
  * (chapter 1.3's recorded decision).
  *
@@ -137,6 +162,7 @@ export const frameSchema = z.discriminatedUnion("type", [
   membershipChangedSchema,
   presenceChangedSchema,
   typingSchema,
+  typingSendSchema,
   errorFrameSchema,
 ]);
 

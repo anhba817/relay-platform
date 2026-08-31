@@ -35,7 +35,12 @@ describe("gateway skeleton", () => {
       const expectedFrames = frameSchema.options.map((o) => o.shape.type.value);
       expect(body.protocol.frames).toEqual(expectedFrames);
       expect(body.protocol.frames).toContain("connection.ack");
-      expect(body.protocol.frames).toHaveLength(10);
+      // ELEVEN from chapter 3.21's `typing.send`. The `toEqual` above is derived
+      // on both sides and needed nothing; this line is the second of the two
+      // hard-coded frame counts in the repository, and the only one no task
+      // owned until analysis pass 17. It failed here in the UNIT lane, which
+      // `test:integration` does not run and no phase gate ran until pass 18.
+      expect(body.protocol.frames).toHaveLength(11);
       expect(body.protocol.close_codes).toEqual(
         Object.keys(CLOSE_CODES).map(Number),
       );
