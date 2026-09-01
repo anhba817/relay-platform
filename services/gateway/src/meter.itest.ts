@@ -120,8 +120,11 @@ describe("a signal, and what it does to a bill", () => {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    api.stdout?.resume();
-    api.stderr?.resume();
+    api.stdout?.on("data", keep);
+    api.stderr?.on("data", keep);
+    api.on("exit", (code, signal) => {
+      keep(`\n[api child exited code=${String(code)} signal=${String(signal)}]\n`);
+    });
     apiUrl = `http://127.0.0.1:${apiPort}`;
     await waitForHealth(`${apiUrl}/healthz`, "api");
 
@@ -147,6 +150,26 @@ describe("a signal, and what it does to a bill", () => {
 
   /** A gateway of its own per test, because each of these tests ends by killing
    * one and the two signals must not share a victim. */
+  /** CHAPTER 3.21. **`.resume()` DRAINS A STREAM AND KEEPS NOTHING**, which is a
+   * third variant of chapter 3.20's `gaps.md` item 19a and the most deceptive of
+   * the three: `stdio: "ignore"` never creates the output, a pipe nobody reads
+   * leaves it in a kernel buffer, and `.resume()` actively reads it and throws it
+   * away — while looking like someone handled the stream.
+   *
+   * **This file's test is the one that failed run 8 of chapter 3.21's battery**
+   * (`no ack within 5s`), and the log for that run contains ZERO
+   * `"service":"gateway"` lines, because all four streams here were resumed. Every
+   * aggregate the run log can offer — 429 counts, `auth_degraded`, connection
+   * errors — is identical between that run and the green ones.
+   *
+   * A ring per child, so the next occurrence has something to read. */
+  const childOutput: string[] = [];
+  const keep = (chunk: unknown): void => {
+    childOutput.push(String(chunk));
+    if (childOutput.length > 300) childOutput.splice(0, childOutput.length - 300);
+  };
+  const childTail = (): string => childOutput.join("");
+
   async function startGateway(
     port: number,
     credential = PLATFORM,
@@ -167,8 +190,11 @@ describe("a signal, and what it does to a bill", () => {
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
-    child.stdout?.resume();
-    child.stderr?.resume();
+    child.stdout?.on("data", keep);
+    child.stderr?.on("data", keep);
+    child.on("exit", (code, signal) => {
+      keep(`\n[gateway child exited code=${String(code)} signal=${String(signal)}]\n`);
+    });
     await waitForHealth(`http://127.0.0.1:${port}/healthz`, "gateway");
     gateway = child;
     return child;
@@ -275,7 +301,15 @@ describe("a signal, and what it does to a bill", () => {
         const frame = JSON.parse(raw.toString()) as { type: string };
         if (frame.type === "connection.ack") resolve(frame);
       });
-      setTimeout(() => reject(new Error("no ack within 5s")), 5_000);
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `no ack within 5s\n--- child output ---\n${childTail()}`,
+            ),
+          ),
+        5_000,
+      );
     });
     expect(await acked).toBeTruthy();
 
