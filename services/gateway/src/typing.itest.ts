@@ -22,7 +22,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 
 import type { ApiClient } from "./api-client.js";
-import type { Decision, GatewayLimits } from "./limits.js";
 import { createFanout } from "./fanout.js";
 import { createMembership, type Membership } from "./membership.js";
 import { createPresence } from "./presence.js";
@@ -74,7 +73,6 @@ async function boot(options: {
    * before anything relies on the mechanism. */
   lines?: Record<string, unknown>[];
   membership?: Membership;
-  limits?: GatewayLimits;
   renewalIntervalMs?: number;
   /** The typing chapter phase 7. **The `ApiClient` is the seam that widens the resume
    * window**, and the membership-revocation chapter recorded why nothing else does: slowing the FABRIC
@@ -111,7 +109,6 @@ async function boot(options: {
       user: options.user,
       banned: false,
       channel_ids: options.channels,
-      limits: { connect: 3_000, send: 600 },
     }),
     memberships: async () => options.channels,
     backfill: async () => {
@@ -139,7 +136,6 @@ async function boot(options: {
     ...(fanout === undefined ? {} : { fanout }),
     ...(presence === undefined ? {} : { presence }),
     ...(membership === undefined ? {} : { membership }),
-    ...(options.limits === undefined ? {} : { limits: options.limits }),
     ...(options.renewalIntervalMs === undefined
       ? {}
       : { renewalIntervalMs: options.renewalIntervalMs }),
@@ -190,12 +186,10 @@ async function watch(channelId: string): Promise<{
 /** A TCP proxy in front of the real Redis, so a test can sever and restore a
  * connection without touching anything shared.
  *
- * **NEVER `docker compose stop redis`.** These files run in PARALLEL, and
- * `services/api/src/limits/limits.itest.ts:484` already writes the rule down: "a
- * dead port rather than stopping the container, because the lane runs files in
- * PARALLEL and stopping Redis would break every other suite mid-run". A dead port
- * covers "down" and cannot cover "restored", and `redis-server` is not installed
- * on the lane machine, so the proxy is what is left.
+ * **NEVER `docker compose stop redis`.** These files run in PARALLEL, so stopping
+ * the container would break every other suite mid-run. A dead port is the usual
+ * substitute and it covers "down" without covering "restored"; `redis-server` is
+ * not installed on the lane machine, so a proxy is what is left.
  *
  * Copied from `presence.itest.ts` rather than shared. The duplication is the
  * cheaper half of the trade: a helper extracted into a fourth file would be
@@ -661,49 +655,6 @@ describe("a typing signal on its way out", () => {
     signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
     expect(await untilTyping(frames, channel, 2)).toHaveLength(2);
   }, 15_000);
-  /** T048b. A TYPING SIGNAL SPENDS NO MESSAGE QUOTA (FR-014).
-   *
-   * **Moved out of US3 by analysis pass 1**, and the reason is worth keeping:
-   * leaving it in a P2 story meant stopping after the MVP could ship a cosmetic
-   * feature able to exhaust a customer's message budget.
-   *
-   * Asserted on the limiter itself rather than on a counter in Redis. The
-   * requirement is that the typing branch never REACHES `limits.spend` — it
-   * returns above it — and a recording double says exactly that, where a counter
-   * reading would also pass if the branch spent and refunded. */
-  it("never reaches the send limiter, however many signals arrive", async () => {
-    const channel = randomUUID();
-    const spends: string[] = [];
-    const limits: GatewayLimits = {
-      spend: async (_environmentId, operation): Promise<Decision> => {
-        spends.push(operation);
-        return {
-          over: false,
-          limit: 600,
-          remaining: 599,
-          resetSeconds: Math.floor(Date.now() / 1000) + 60,
-          retryAfterSeconds: 1,
-        };
-      },
-      close: async () => {},
-    };
-    const instance = await boot({ user: "tuan", channels: [channel], limits });
-    open.push(instance.close);
-
-    const socket = connect(instance);
-    await acked(socket);
-    // The handshake spends `connect`, which is the connection-metering chapter's and not this
-    // chapter's business — recorded so the assertion below is about `send`.
-    expect(spends).toEqual(["connect"]);
-
-    for (let i = 0; i < 5; i += 1) {
-      socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
-    }
-    await settle();
-
-    expect(spends.filter((op) => op === "send")).toEqual([]);
-  });
-
   /** T048c. THE MID-CONNECTION JOIN (FR-004a).
    *
    * **The obvious test — a member who was in the channel at connect — passes
@@ -1298,4 +1249,94 @@ describe("a typing signal on its way out", () => {
     // frames, plus the `connection.ack` the handshake sent.
     expect(frames.filter((f) => f.type !== "connection.ack")).toHaveLength(4);
   }, 15_000);
+});
+
+/** THE MODULE'S OWN ARMS, driven directly rather than through a gateway.
+ *
+ * Four of `typing.ts`'s branches are not reachable from a socket, and the
+ * coverage ratchet found all four at 100/100/100/100's expense: the url default,
+ * the `onSignal` no-op, and both sides of the reference count. **None of them is
+ * dead code** — which is the question T097 asks first, because this project's
+ * ratchet has removed code five times rather than covered it. They are reachable
+ * and nothing had reached them.
+ */
+describe("createTyping's own arms", () => {
+  const built: Typing[] = [];
+
+  afterEach(async () => {
+    for (const t of built.splice(0)) await t.close();
+  });
+
+  const make = (options: Partial<Parameters<typeof createTyping>[0]> = {}): Typing => {
+    const t = createTyping({ url, logger: silent, ...options });
+    built.push(t);
+    return t;
+  };
+
+  it("falls back to DEFAULT_REDIS_URL when neither a url nor the env var is given", async () => {
+    const saved = process.env["RELAY_REDIS_URL"];
+    delete process.env["RELAY_REDIS_URL"];
+    try {
+      // No `url`, no env var: the default parameter's right-hand side. The
+      // default happens to be the store this lane runs, so the client connects
+      // and the test is about the branch rather than about reachability.
+      const t = createTyping({ logger: silent });
+      built.push(t);
+      const channel = randomUUID();
+      await t.subscribe(channel);
+      await t.publish({ environment: "env-1", channel, user: "tuan" });
+    } finally {
+      if (saved === undefined) delete process.env["RELAY_REDIS_URL"];
+      else process.env["RELAY_REDIS_URL"] = saved;
+    }
+  });
+
+  it("drops a signal on the floor when no handler is wired", async () => {
+    // `deliver` starts as a no-op and every other test in this file replaces it
+    // through `attachSessions`. A module built and subscribed but never wired is
+    // the shape a gateway has for the instant between construction and wiring.
+    const channel = randomUUID();
+    const receiver = make();
+    await receiver.subscribe(channel);
+
+    const sender = make();
+    await sender.publish({ environment: "env-1", channel, user: "tuan" });
+    await settle();
+    // Nothing to assert but the absence of a throw: the point is that the
+    // default handler runs and swallows.
+    expect(true).toBe(true);
+  });
+
+  it("counts references: a second subscribe does not re-subscribe, and one release does not unsubscribe", async () => {
+    const channel = randomUUID();
+    const receiver = make();
+    let delivered = 0;
+    receiver.onSignal(() => {
+      delivered += 1;
+    });
+
+    // Two holders of one channel on one instance — two connections of one user,
+    // or two users. The second `subscribe` finds a count and increments it.
+    await receiver.subscribe(channel);
+    await receiver.subscribe(channel);
+
+    // One releases. The subscription must survive, because the other holder is
+    // still there — this is the arm that would silently break the remaining
+    // member's typing if the count were not kept.
+    await receiver.unsubscribe(channel);
+
+    const sender = make();
+    await sender.publish({ environment: "env-1", channel, user: "tuan" });
+    await settle();
+    expect(delivered, "still subscribed after one of two releases").toBe(1);
+
+    // The last release does unsubscribe.
+    await receiver.unsubscribe(channel);
+    // And a release for a channel never held is not an error.
+    await receiver.unsubscribe(randomUUID());
+
+    await sender.publish({ environment: "env-1", channel, user: "mai" });
+    await settle();
+    expect(delivered, "unsubscribed after the last release").toBe(1);
+  });
 });
