@@ -10,6 +10,7 @@ import {
   type ErrorCode,
   type Frame,
   type Message,
+  type TypingFabric,
   isErrorCode,
   type MembershipFabric,
   type PresenceFabric,
@@ -282,6 +283,52 @@ export function attachSessions({
   }
   fanout?.onDelivery(deliver);
 
+  /** A typing signal arriving from its own fabric (chapter 3.21, T043).
+   *
+   * **DO NOT COPY `deliverPresence` BELOW, WHICH IS DELIBERATELY UNFILTERED.**
+   * That function walks `subscribersOf` and sends to everyone, so a user sees
+   * their own presence transition — chapter 3.20 confirmed it from the other
+   * side, counting two frames where a watcher correctly sees their own arrival.
+   * **Typing's rule is the opposite, and the two functions sit adjacent in this
+   * file with opposite self-delivery rules.** The reason is worth a sentence
+   * rather than a convention: "you are online" is worth telling your other
+   * devices, and "you are typing" is not.
+   *
+   * SKIP EVERY CONNECTION WHOSE IDENTITY IS THE SIGNALLER, not the socket that
+   * sent it (FR-005). The signal arrives here from Redis with no socket
+   * reference — on the publishing instance too, which subscribes to its own
+   * subject — and a user may hold several connections. A socket comparison would
+   * show a user their own indicator on their own second device, and a test with
+   * one connection per user cannot tell the two apart.
+   *
+   * THE ENVIRONMENT IS CHECKED AGAINST THE CONNECTION, not trusted from the
+   * payload. Principle I is structural here: the fabric carries a tenant id
+   * precisely so a receiving gateway can refuse a frame that does not match the
+   * connection it is about to write to.
+   *
+   * Like presence, this consults neither `connection.phase` nor
+   * `connection.marks`: a typing signal carries no sequence, so it can neither
+   * duplicate a backfilled row nor leave a gap, and buffering it during a resume
+   * would delay a frame for no benefit (FR-018). */
+  function deliverTyping(signal: TypingFabric): void {
+    for (const connection of registry.subscribersOf(signal.channel)) {
+      if (connection.identity.environmentId !== signal.environment) {
+        logger.log("error", "typing.failed", {
+          op: "environment_mismatch",
+          connection_id: connection.id,
+          channel: signal.channel,
+        });
+        continue;
+      }
+      if (connection.identity.userExternalId === signal.user) continue;
+      send(connection.socket, {
+        type: "typing",
+        payload: { channel: signal.channel, user: signal.user },
+      });
+    }
+  }
+  typing?.onSignal(deliverTyping);
+
   /** A presence transition arriving from its own fabric.
    *
    * NOT `deliver`'s path, and the differences are the point. Presence carries no
@@ -424,6 +471,12 @@ export function attachSessions({
           fanout?.subscribe(change.channel),
           presence?.subscribe(change.channel),
           membership?.subscribeChannel(change.channel),
+          // Chapter 3.21 (T043a). **Without this a user added mid-connection
+          // receives messages and presence but no typing**, and FR-004 is silently
+          // false for exactly the case the previous chapter built. Found by
+          // analysis pass 2 reading this function rather than the feature's own
+          // documents, every one of which was internally consistent and wrong.
+          typing?.subscribe(change.channel),
         ]).then(
           () => {
             connection.channelIds.add(change.channel);
@@ -480,6 +533,10 @@ export function attachSessions({
           });
         }),
         membership?.unsubscribeChannel(change.channel),
+        // Chapter 3.21 (T043b). A revoked channel leaves `channelIds`, and its
+        // reference count has to follow it — otherwise this instance keeps a
+        // subscription for a channel it holds no member of.
+        typing?.unsubscribe(change.channel),
       ]);
       // THE WORKING PATH SAYS SOMETHING (FR-031's argument, applied to the delivery
       // half). `membership.published` is the api's line and means "it went onto the
@@ -713,6 +770,13 @@ export function attachSessions({
         // revocation and T079 covers the user's own subject, and the ordinary open
         // path fell between them.
         membership?.subscribeChannel(channelId),
+        // Chapter 3.21, and the fourth. A channel now carries four subscriptions
+        // on one instance, all reference-counted, all released by the last member
+        // to leave. **This line and the two release sites below are what the
+        // previous chapter's own note warned about**: its equivalent had no task,
+        // because the revocation release and the user subject each had one and the
+        // ordinary open path fell between them.
+        typing?.subscribe(channelId),
       ]),
     );
     // THE BACKSTOP'S TIMER, one per connection and cancelled at close. Registered
@@ -831,6 +895,10 @@ export function attachSessions({
           // there is no `.catch` to add here — `failable()` in `membership.ts` is
           // where that decision lives, and duplicating it would log twice.
           membership?.unsubscribeChannel(channelId),
+          // Chapter 3.21. Like the membership module, `typing.ts` swallows and
+          // logs its own failures in `failable()`, so there is no `.catch` here —
+          // adding one would log twice.
+          typing?.unsubscribe(channelId),
         ]),
       );
       logger.log("info", "connection.closed", {
