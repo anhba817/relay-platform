@@ -89,7 +89,7 @@ interface Seeder {
   };
 }
 
-async function waitForHealth(url: string): Promise<void> {
+async function waitForHealth(url: string, why?: () => string): Promise<void> {
   const deadline = Date.now() + 30_000;
   for (;;) {
     try {
@@ -97,7 +97,17 @@ async function waitForHealth(url: string): Promise<void> {
     } catch {
       // not up yet
     }
-    if (Date.now() > deadline) throw new Error(`api never became healthy`);
+    if (Date.now() > deadline) {
+      // CHAPTER 3.21. **The child has already said why and nobody was
+      // listening.** This file spawns with `stdio: ["ignore", "pipe", "pipe"]`
+      // and never read either pipe, so an api that died took its reason with it —
+      // which is the entire reason chapter 3.20's `gaps.md` item 19a has four
+      // occurrences and three eliminated hypotheses rather than a cause. The
+      // buffer is drained below and its tail is attached here.
+      throw new Error(
+        `api never became healthy${why === undefined ? "" : `\n--- child output ---\n${why()}`}`,
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
@@ -178,8 +188,25 @@ async function startApi(
       RELAY_AUTH_KEY_PREFIX: `rlauth-session-${randomUUID().slice(0, 8)}` },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // DRAINED, AND KEPT. Two reasons, and the second is why this exists at all:
+  // an undrained pipe fills (chapter 3.20 measured 4,000 requests before it
+  // mattered, so this is not the cause of any death), and an unread pipe throws
+  // the evidence away when one happens. Item 19a is four unexplained failures
+  // across two chapters — `ECONNREFUSED` on a port this file chose — and every
+  // one of them had an api that already said why.
+  const output: string[] = [];
+  const keep = (chunk: unknown): void => {
+    output.push(String(chunk));
+    // A ring, so a long-lived child cannot turn diagnosis into a memory leak.
+    if (output.length > 200) output.splice(0, output.length - 200);
+  };
+  child.stdout?.on("data", keep);
+  child.stderr?.on("data", keep);
+  child.on("exit", (code, signal) => {
+    keep(`\n[child exited code=${String(code)} signal=${String(signal)}]\n`);
+  });
   const url = `http://127.0.0.1:${port}`;
-  await waitForHealth(`${url}/healthz`);
+  await waitForHealth(`${url}/healthz`, () => output.join(""));
 
   return {
     url,
