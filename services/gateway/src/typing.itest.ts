@@ -1044,13 +1044,17 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
   /** T068 and T071. THE FABRIC SEVERED, AND RESTORED.
    *
    * A publish failure must not fail the connection, the send, or a message
-   * delivery (FR-015). The socket stays open, the client is told nothing, and
-   * **one** structured event is logged — one, because a burst of keystrokes
-   * against a dead Redis must not become a burst of log lines.
+   * delivery (FR-015). The socket stays open and the client is told nothing.
+   *
+   * **THE TITLE SAID "logs it once" UNTIL T098 READ IT AGAINST THE BODY**, and
+   * the body proves the opposite: five `op: "connection"` lines and zero
+   * `op: "publish"`. FR-015's third clause is what this test refutes, so a title
+   * quoting that clause was a good test under a false name — chapter 3.19's
+   * exact failure, in this chapter's own file.
    *
    * Then the proxy re-listens on the SAME port and the next signal publishes with
    * no restart, which is what ioredis's default retry on the publisher buys. */
-  it("survives a severed fabric, logs it once, and publishes again when it returns", async () => {
+  it("survives a severed fabric, logs the CONNECTION failure rather than a publish one, and publishes again when it returns", async () => {
     const channel = randomUUID();
     const lines: Record<string, unknown>[] = [];
     const proxy = await startRedisProxy();
@@ -1135,7 +1139,7 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
    * inside the renewal interval.** It is expected traffic rather than a failure,
    * and one line per keystroke over the limit is the unbounded output NFR-OBS-01
    * exists to prevent. */
-  it("emits exactly the three names it declares, and none for a debounced signal", async () => {
+  it("emits the two names this run reaches, and none at all for a debounced signal", async () => {
     const channel = randomUUID();
     const lines: Record<string, unknown>[] = [];
     const instance = await boot({
@@ -1298,8 +1302,18 @@ describe("createTyping's own arms (chapter 3.21)", () => {
       const t = createTyping({ logger: silent });
       built.push(t);
       const channel = randomUUID();
+      let delivered: unknown;
+      t.onSignal((signal) => {
+        delivered = signal;
+      });
       await t.subscribe(channel);
       await t.publish({ environment: "env-1", channel, user: "tuan" });
+      await settle();
+      // **ASSERTED, not merely exercised.** The first version of this test had no
+      // `expect` at all: it took the branch, moved the coverage number, and
+      // proved nothing about where the client connected. A round trip through
+      // the fallback url is what says the default is the store this lane runs.
+      expect(delivered).toEqual({ environment: "env-1", channel, user: "tuan" });
     } finally {
       if (saved === undefined) delete process.env["RELAY_REDIS_URL"];
       else process.env["RELAY_REDIS_URL"] = saved;
@@ -1314,12 +1328,22 @@ describe("createTyping's own arms (chapter 3.21)", () => {
     const receiver = make();
     await receiver.subscribe(channel);
 
+    // A SECOND receiver, wired, on the same subject. Without it this test would
+    // assert nothing about its own subject: "no throw" is also true of a module
+    // that never received the signal at all. The wired one proves the publish
+    // landed, so the unwired one's silence is the no-op default running.
+    const wired = make();
+    let delivered = 0;
+    wired.onSignal(() => {
+      delivered += 1;
+    });
+    await wired.subscribe(channel);
+
     const sender = make();
     await sender.publish({ environment: "env-1", channel, user: "tuan" });
     await settle();
-    // Nothing to assert but the absence of a throw: the point is that the
-    // default handler runs and swallows.
-    expect(true).toBe(true);
+
+    expect(delivered, "the wired module received it, so the publish landed").toBe(1);
   });
 
   it("counts references: a second subscribe does not re-subscribe, and one release does not unsubscribe", async () => {
