@@ -89,7 +89,7 @@ interface Seeder {
   };
 }
 
-async function waitForHealth(url: string): Promise<void> {
+async function waitForHealth(url: string, why?: () => string): Promise<void> {
   const deadline = Date.now() + 30_000;
   for (;;) {
     try {
@@ -97,7 +97,17 @@ async function waitForHealth(url: string): Promise<void> {
     } catch {
       // not up yet
     }
-    if (Date.now() > deadline) throw new Error(`api never became healthy`);
+    if (Date.now() > deadline) {
+      // **The child has already said why and nobody was
+      // listening.** This file spawns with `stdio: ["ignore", "pipe", "pipe"]`
+      // and never read either pipe, so an api that died took its reason with it —
+      // which is the entire reason the membership-revocation chapter's `gaps.md` item 19a has four
+      // occurrences and three eliminated hypotheses rather than a cause. The
+      // buffer is drained below and its tail is attached here.
+      throw new Error(
+        `api never became healthy${why === undefined ? "" : `\n--- child output ---\n${why()}`}`,
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
@@ -148,6 +158,19 @@ async function startApi(): Promise<ApiUnderTest> {
     env: { ...process.env, PORT: "0", RELAY_OUTBOX_RELAY: "off" },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // DRAINED, AND KEPT. Two reasons, and the second is why this exists at all: an
+  // undrained pipe eventually fills, and an unread pipe throws the evidence away when
+  // the child dies. The port reader below listens on `stdout` for one line; this keeps
+  // BOTH streams and hands their tail to `waitForHealth`.
+  const output: string[] = [];
+  const keep = (chunk: unknown): void => {
+    output.push(String(chunk));
+    // A ring, so a long-lived child cannot turn diagnosis into a memory leak.
+    if (output.length > 200) output.splice(0, output.length - 200);
+  };
+  child.stdout?.on("data", keep);
+  child.stderr?.on("data", keep);
+
   const port = await new Promise<number>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("api never reported a port")), 30_000);
     let buffered = "";
@@ -167,13 +190,19 @@ async function startApi(): Promise<ApiUnderTest> {
         }
       }
     });
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
+      keep(`\n[child exited code=${String(code)} signal=${String(signal)}]\n`);
       clearTimeout(timer);
-      reject(new Error(`api exited before listening (code ${String(code)})`));
+      reject(
+        new Error(
+          `api exited before listening (code ${String(code)})` +
+            `\n--- child output ---\n${output.join("")}`,
+        ),
+      );
     });
   });
   const url = `http://127.0.0.1:${port}`;
-  await waitForHealth(`${url}/healthz`);
+  await waitForHealth(`${url}/healthz`, () => output.join(""));
 
   return {
     url,
