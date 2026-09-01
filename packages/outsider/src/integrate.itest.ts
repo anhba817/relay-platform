@@ -308,6 +308,115 @@ describe("integrating with Relay from the outside", () => {
     socket.close();
   });
 
+  /** CHAPTER 3.21, T100a — **the first `socket.send` in this file's history.**
+   *
+   * `grep -c "\.send(" packages/outsider/src/integrate.itest.ts` read **0** across
+   * eleven tests before this one: ten REST, and one socket test whose title says
+   * "sent over REST" because chapter 3.18 corrected it. This file is the only
+   * check in the repository that uses the public surface as a customer does —
+   * Node's global `WebSocket`, no workspace import — and until now it had never
+   * exercised the inbound seam at all.
+   *
+   * That matters for this chapter in particular: **every other check on the
+   * inbound frame is in-workspace, using the `ws` package this file refuses to
+   * import.** A protocol a customer cannot drive is a protocol nobody has tested
+   * from outside. */
+  it("says it is typing, and a second member's socket hears it", async () => {
+    const second = await post("/auth/dev-token", { user: "ben", ttl_seconds: 3600 }, credential);
+    expect(second.status).toBe(200);
+    const benToken = second.body["token"] as string;
+
+    const open = async (
+      forToken: string,
+    ): Promise<{
+      socket: WebSocket;
+      frames: { type: string; payload?: { channel?: string; user?: string } }[];
+    }> => {
+      const socket = new WebSocket(`${ws}/v1/ws?token=${forToken}`);
+      const frames: { type: string; payload?: { channel?: string; user?: string } }[] = [];
+      socket.addEventListener("message", (event) => {
+        frames.push(JSON.parse(String(event.data)) as { type: string });
+      });
+      socket.addEventListener("error", () => undefined);
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve());
+        setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
+      });
+      return { socket, frames };
+    };
+
+    const until = async (
+      frames: { type: string; payload?: { channel?: string; user?: string } }[],
+      predicate: (f: { type: string; payload?: { channel?: string; user?: string } }) => boolean,
+      what: string,
+    ): Promise<void> => {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        if (frames.some(predicate)) return;
+        if (Date.now() > deadline) {
+          throw new Error(`no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`);
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    };
+
+    const ana = await open(token);
+    const ben = await open(benToken);
+    await until(ana.frames, (f) => f.type === "connection.ack", "ana's ack");
+    await until(ben.frames, (f) => f.type === "connection.ack", "ben's ack");
+
+    ana.socket.send(JSON.stringify({ type: "typing.send", payload: { channel: channelId } }));
+
+    await until(
+      ben.frames,
+      (f) => f.type === "typing" && f.payload?.channel === channelId && f.payload?.user === "ana",
+      "a typing frame naming ana",
+    );
+    // And the signaller hears nothing of their own — checked here rather than only
+    // in-workspace, because it is the half a customer would notice.
+    expect(ana.frames.filter((f) => f.type === "typing")).toEqual([]);
+
+    ana.socket.close();
+    ben.socket.close();
+  });
+
+  /** CHAPTER 3.21, T100b — the refusal, from outside.
+   *
+   * `docs/08-error-reference.md` tells a customer *"send `message.send` … Do not
+   * send events; receive them."* **Nothing had ever checked what happens when they
+   * do.** This is that correction in bytes rather than in prose. */
+  it("is refused with unknown_frame_type for a frame only the server may send", async () => {
+    const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
+    const frames: { type: string; payload?: { code?: string } }[] = [];
+    socket.addEventListener("message", (event) => {
+      frames.push(JSON.parse(String(event.data)) as { type: string });
+    });
+    socket.addEventListener("error", () => undefined);
+    const closed = new Promise<number>((resolve) => {
+      socket.addEventListener("close", (event) => resolve((event as CloseEvent).code));
+    });
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve());
+      setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
+    });
+
+    // `message.ack` is the server's word. A client sending it is claiming to be the
+    // server, which is a protocol violation rather than a malformed frame.
+    socket.send(JSON.stringify({ type: "message.ack", payload: { seq: 1 } }));
+
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const error = frames.find((f) => f.type === "error");
+      if (error) {
+        expect(error.payload?.code).toBe("unknown_frame_type");
+        break;
+      }
+      if (Date.now() > deadline) throw new Error("no error frame within 10s");
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(await closed).toBe(4002);
+  });
+
   it("cannot see another tenant's channel, and cannot tell it apart from an absent one", async () => {
     // The documented isolation property, exercised the only way an outsider can:
     // with an id that is well formed and is not theirs. The reference says both

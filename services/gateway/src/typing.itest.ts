@@ -1265,3 +1265,93 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
     expect(frames.filter((f) => f.type !== "connection.ack")).toHaveLength(4);
   }, 15_000);
 });
+
+/** THE MODULE'S OWN ARMS, driven directly rather than through a gateway.
+ *
+ * Four of `typing.ts`'s branches are not reachable from a socket, and the
+ * coverage ratchet found all four at 100/100/100/100's expense: the url default,
+ * the `onSignal` no-op, and both sides of the reference count. **None of them is
+ * dead code** — which is the question T097 asks first, because this project's
+ * ratchet has removed code five times rather than covered it. They are reachable
+ * and nothing had reached them.
+ */
+describe("createTyping's own arms (chapter 3.21)", () => {
+  const built: Typing[] = [];
+
+  afterEach(async () => {
+    for (const t of built.splice(0)) await t.close();
+  });
+
+  const make = (options: Partial<Parameters<typeof createTyping>[0]> = {}): Typing => {
+    const t = createTyping({ url, logger: silent, ...options });
+    built.push(t);
+    return t;
+  };
+
+  it("falls back to DEFAULT_REDIS_URL when neither a url nor the env var is given", async () => {
+    const saved = process.env["RELAY_REDIS_URL"];
+    delete process.env["RELAY_REDIS_URL"];
+    try {
+      // No `url`, no env var: the default parameter's right-hand side. The
+      // default happens to be the store this lane runs, so the client connects
+      // and the test is about the branch rather than about reachability.
+      const t = createTyping({ logger: silent });
+      built.push(t);
+      const channel = randomUUID();
+      await t.subscribe(channel);
+      await t.publish({ environment: "env-1", channel, user: "tuan" });
+    } finally {
+      if (saved === undefined) delete process.env["RELAY_REDIS_URL"];
+      else process.env["RELAY_REDIS_URL"] = saved;
+    }
+  });
+
+  it("drops a signal on the floor when no handler is wired", async () => {
+    // `deliver` starts as a no-op and every other test in this file replaces it
+    // through `attachSessions`. A module built and subscribed but never wired is
+    // the shape a gateway has for the instant between construction and wiring.
+    const channel = randomUUID();
+    const receiver = make();
+    await receiver.subscribe(channel);
+
+    const sender = make();
+    await sender.publish({ environment: "env-1", channel, user: "tuan" });
+    await settle();
+    // Nothing to assert but the absence of a throw: the point is that the
+    // default handler runs and swallows.
+    expect(true).toBe(true);
+  });
+
+  it("counts references: a second subscribe does not re-subscribe, and one release does not unsubscribe", async () => {
+    const channel = randomUUID();
+    const receiver = make();
+    let delivered = 0;
+    receiver.onSignal(() => {
+      delivered += 1;
+    });
+
+    // Two holders of one channel on one instance — two connections of one user,
+    // or two users. The second `subscribe` finds a count and increments it.
+    await receiver.subscribe(channel);
+    await receiver.subscribe(channel);
+
+    // One releases. The subscription must survive, because the other holder is
+    // still there — this is the arm that would silently break the remaining
+    // member's typing if the count were not kept.
+    await receiver.unsubscribe(channel);
+
+    const sender = make();
+    await sender.publish({ environment: "env-1", channel, user: "tuan" });
+    await settle();
+    expect(delivered, "still subscribed after one of two releases").toBe(1);
+
+    // The last release does unsubscribe.
+    await receiver.unsubscribe(channel);
+    // And a release for a channel never held is not an error.
+    await receiver.unsubscribe(randomUUID());
+
+    await sender.publish({ environment: "env-1", channel, user: "mai" });
+    await settle();
+    expect(delivered, "unsubscribed after the last release").toBe(1);
+  });
+});

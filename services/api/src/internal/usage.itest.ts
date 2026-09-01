@@ -15,6 +15,7 @@ import {
   usageFor,
 } from "../db/repository";
 import { mintUserToken } from "../auth/user-token";
+import { periodOf } from "../quotas/period";
 
 // `POST /internal/usage/connections` — who may reach it, and what a refusal
 // leaves behind (chapter 3.11).
@@ -53,7 +54,18 @@ import { mintUserToken } from "../auth/user-token";
 const PLATFORM = "rk_svc_usage_itest_0123456789abcdef012345";
 /** The dispatcher's, kept so the refusal can be tested in both directions (T030e). */
 const DISPATCHER_CREDENTIAL = "rk_svc_usage_itest_dispatcher_0123456789";
-const AUGUST = "2026-08-01";
+/** THE PERIOD THE SUBJECT WILL READ, not a month somebody typed.
+ *
+ * This was `"2026-08-01"` and it broke at midnight UTC on 1 September 2026 —
+ * during chapter 3.21's close-out, in a file that chapter never touched. The
+ * fixture credited connection-minutes to August while
+ * `session.controller.ts:104` asks `periodOf(new Date())` whether the cap is
+ * spent, so the quota read zero used and a session that should have been refused
+ * with 402 was allowed with 200.
+ *
+ * **A fixture that names a month while its subject reads the clock is a test with
+ * an expiry date.** Derived here, so the two agree in every month. */
+const PERIOD = periodOf(new Date());
 
 describe("POST /internal/usage/connections", () => {
   let app: INestApplication;
@@ -116,14 +128,14 @@ describe("POST /internal/usage/connections", () => {
       {
         connection_id: randomUUID(),
         environment_id: environment,
-        period: AUGUST,
+        period: PERIOD,
         minutes,
       },
     ],
   });
 
   const minutes = async (environment = environmentId) =>
-    (await usageFor(db, environment, AUGUST)).connectionMinutes;
+    (await usageFor(db, environment, PERIOD)).connectionMinutes;
 
   describe("who may write a bill (NFR-SEC-06)", () => {
     it("accepts the platform credential and says what it credited", async () => {
@@ -237,14 +249,14 @@ describe("POST /internal/usage/connections", () => {
     it("refuses a second environment for a connection that already has one", async () => {
       const connection = randomUUID();
       const first = await post(
-        { connections: [{ connection_id: connection, environment_id: environmentId, period: AUGUST, minutes: 3 }] },
+        { connections: [{ connection_id: connection, environment_id: environmentId, period: PERIOD, minutes: 3 }] },
         PLATFORM,
       );
       expect(first.status).toBe(200);
 
       const before = await minutes(otherEnvironmentId);
       const stolen = await post(
-        { connections: [{ connection_id: connection, environment_id: otherEnvironmentId, period: AUGUST, minutes: 90 }] },
+        { connections: [{ connection_id: connection, environment_id: otherEnvironmentId, period: PERIOD, minutes: 90 }] },
         PLATFORM,
       );
 
@@ -259,7 +271,7 @@ describe("POST /internal/usage/connections", () => {
       // a state the caller would have to reason about, and it does not exist.
       const stolen = randomUUID();
       await post(
-        { connections: [{ connection_id: stolen, environment_id: environmentId, period: AUGUST, minutes: 2 }] },
+        { connections: [{ connection_id: stolen, environment_id: environmentId, period: PERIOD, minutes: 2 }] },
         PLATFORM,
       );
 
@@ -267,8 +279,8 @@ describe("POST /internal/usage/connections", () => {
       const res = await post(
         {
           connections: [
-            { connection_id: randomUUID(), environment_id: otherEnvironmentId, period: AUGUST, minutes: 5 },
-            { connection_id: stolen, environment_id: otherEnvironmentId, period: AUGUST, minutes: 5 },
+            { connection_id: randomUUID(), environment_id: otherEnvironmentId, period: PERIOD, minutes: 5 },
+            { connection_id: stolen, environment_id: otherEnvironmentId, period: PERIOD, minutes: 5 },
           ],
         },
         PLATFORM,
