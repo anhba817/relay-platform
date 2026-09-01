@@ -1,9 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import {
+  createServer as createNetServer,
+  connect as connectSocket,
+  type AddressInfo,
+  type Server as NetServer,
+  type Socket,
+} from "node:net";
 
 import {
   docsUrl,
+  subjectForChannel,
+  subjectForChannelMembership,
+  subjectForPresence,
   subjectForTyping,
   subjectForUserMembership,
 } from "@relay/protocol";
@@ -14,7 +23,9 @@ import { WebSocket } from "ws";
 
 import type { ApiClient } from "./api-client.js";
 import type { Decision, GatewayLimits } from "./limits.js";
+import { createFanout } from "./fanout.js";
 import { createMembership, type Membership } from "./membership.js";
+import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
 import { createTyping, type Typing } from "./typing.js";
 
@@ -65,6 +76,20 @@ async function boot(options: {
   membership?: Membership;
   limits?: GatewayLimits;
   renewalIntervalMs?: number;
+  /** Chapter 3.21 phase 7. **The `ApiClient` is the seam that widens the resume
+   * window**, and chapter 3.20 recorded why nothing else does: slowing the FABRIC
+   * calls `degrade()`, which empties the buffer itself. A connection is
+   * `buffering` only from the upgrade until `api.backfill` returns — about twenty
+   * milliseconds on this lane — so a test about mid-resume delivery has to make
+   * that call slow. The code path is the real one; only the clock moves. */
+  backfillDelayMs?: number;
+  backfillFrames?: Record<string, { messages: unknown[]; truncated: boolean }>;
+  /** Points this instance's fabric at a proxy instead of Redis, so a test can
+   * sever the connection without touching anything shared. */
+  redisUrl?: string;
+  /** T072 only: the other three fabrics, so one watcher can receive all four
+   * kinds over the same channel. */
+  allFabrics?: boolean;
 }): Promise<Instance> {
   const environment = options.environment ?? "env-1";
   const logger =
@@ -73,7 +98,7 @@ async function boot(options: {
       : createLogger("gateway", (line: string) => {
           options.lines?.push(JSON.parse(line) as Record<string, unknown>);
         });
-  const typing = createTyping({ url, logger });
+  const typing = createTyping({ url: options.redisUrl ?? url, logger });
   const server: Server = serve({
     service: "gateway",
     health: () => ({}),
@@ -89,18 +114,32 @@ async function boot(options: {
       limits: { connect: 3_000, send: 600 },
     }),
     memberships: async () => options.channels,
-    backfill: async () => ({}),
+    backfill: async () => {
+      if (options.backfillDelayMs !== undefined) {
+        await new Promise((r) => setTimeout(r, options.backfillDelayMs));
+      }
+      return (options.backfillFrames ?? {}) as never;
+    },
     sendMessage: async () => {
       throw new Error("not used");
     },
     reportUsage: async () => null,
   };
+  const fanout = options.allFabrics ? createFanout({ url, logger: silent }) : undefined;
+  const presence = options.allFabrics
+    ? createPresence({ url, logger: silent })
+    : undefined;
+  const membership =
+    options.membership ??
+    (options.allFabrics ? createMembership({ url, logger: silent }) : undefined);
   const sessions = attachSessions({
     server,
     api,
     logger,
     typing,
-    ...(options.membership === undefined ? {} : { membership: options.membership }),
+    ...(fanout === undefined ? {} : { fanout }),
+    ...(presence === undefined ? {} : { presence }),
+    ...(membership === undefined ? {} : { membership }),
     ...(options.limits === undefined ? {} : { limits: options.limits }),
     ...(options.renewalIntervalMs === undefined
       ? {}
@@ -114,6 +153,10 @@ async function boot(options: {
     close: async () => {
       await sessions.close();
       await typing.close();
+      await fanout?.close();
+      await presence?.close();
+      // Only the one this harness built: an injected module belongs to its test.
+      if (options.membership === undefined) await membership?.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
@@ -141,6 +184,77 @@ async function watch(channelId: string): Promise<{
     signals,
     close: async () => {
       subscriber.disconnect();
+    },
+  };
+}
+
+/** A TCP proxy in front of the real Redis, so a test can sever and restore a
+ * connection without touching anything shared.
+ *
+ * **NEVER `docker compose stop redis`.** These files run in PARALLEL, and
+ * `services/api/src/limits/limits.itest.ts:484` already writes the rule down: "a
+ * dead port rather than stopping the container, because the lane runs files in
+ * PARALLEL and stopping Redis would break every other suite mid-run". A dead port
+ * covers "down" and cannot cover "restored", and `redis-server` is not installed
+ * on the lane machine, so the proxy is what is left.
+ *
+ * Copied from `presence.itest.ts` rather than shared. The duplication is the
+ * cheaper half of the trade: a helper extracted into a fourth file would be
+ * imported by two suites that run in parallel and would then need its own
+ * lifetime story. */
+async function startRedisProxy(): Promise<{
+  url: string;
+  cut: () => Promise<void>;
+  restore: () => Promise<void>;
+  close: () => Promise<void>;
+}> {
+  const target = new URL(process.env.RELAY_REDIS_URL ?? "redis://localhost:6379");
+  const live = new Set<Socket>();
+  let server: NetServer | null = null;
+  let port = 0;
+
+  const listen = (onPort: number): Promise<number> =>
+    new Promise<number>((resolve) => {
+      const next = createNetServer((client) => {
+        const upstream = connectSocket(
+          Number(target.port || 6379),
+          target.hostname,
+        );
+        client.pipe(upstream);
+        upstream.pipe(client);
+        for (const socket of [client, upstream]) {
+          live.add(socket);
+          socket.on("error", () => socket.destroy());
+          socket.on("close", () => live.delete(socket));
+        }
+      });
+      next.listen(onPort, "127.0.0.1", () => {
+        server = next;
+        resolve((next.address() as AddressInfo).port);
+      });
+    });
+
+  port = await listen(0);
+  return {
+    url: `redis://127.0.0.1:${port}`,
+    cut: async () => {
+      for (const socket of live) socket.destroy();
+      live.clear();
+      await new Promise<void>((resolve) =>
+        server ? server.close(() => resolve()) : resolve(),
+      );
+      server = null;
+    },
+    // Re-listening on the SAME port is what "without a restart" means: ioredis
+    // reconnects on its own and the module is never rebuilt.
+    restore: async () => {
+      await listen(port);
+    },
+    close: async () => {
+      for (const socket of live) socket.destroy();
+      await new Promise<void>((resolve) =>
+        server ? server.close(() => resolve()) : resolve(),
+      );
     },
   };
 }
@@ -264,6 +378,63 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
     return frames;
   };
 
+  /** **POLL FOR AN ARRIVAL, NEVER SLEEP FOR ONE.**
+   *
+   * A connection is acked before its Redis SUBSCRIBE has necessarily landed: the
+   * non-resume branch of `open()` acks without awaiting `subscribing`. So a test
+   * that acks a watcher and immediately signals can miss the frame, and a fixed
+   * `settle()` after the signal only makes that unlikely rather than impossible.
+   *
+   * Found the honest way — `sends nothing at all after the signal` failed once at
+   * 315 ms in a run that passed on repeat, which is exactly the shape the
+   * twenty-run battery exists to catch and exactly the shape that gets waved away
+   * as "flaky". Negative assertions still use a fixed wait, because there is
+   * nothing to poll for. */
+  const untilTyping = async (
+    frames: { type: string; payload?: { channel?: string; user?: string } }[],
+    channel: string,
+    count: number,
+    ms = 4_000,
+  ): Promise<{ channel?: string; user?: string }[]> => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const found = typingFor(frames, channel);
+      if (found.length >= count) return found;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `only ${found.length} of ${count} typing frames for ${channel}; saw ${frames
+            .map((f) => f.type)
+            .join(", ")}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+
+  /** The fabric-side twin of `untilTyping`: poll a subscriber for N signals.
+   *
+   * Needed for the same reason and one more — an instance publishing through the
+   * TCP proxy opens a fresh connection through an extra hop, and the first
+   * publish after a boot can land later than a fixed 300 ms wait. That is what
+   * `expected [] to have a length of 1` was, and it is a property of the fixture
+   * rather than of the code. */
+  const untilSignals = async (
+    watcher: { signals: unknown[] },
+    count: number,
+    ms = 5_000,
+  ): Promise<unknown[]> => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (watcher.signals.length >= count) return watcher.signals;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `only ${watcher.signals.length} of ${count} signals reached the fabric`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+
   /** T044. CROSS-INSTANCE, which is the only delivery that proves the fabric.
    *
    * Two instances, one channel, one signal. If both sockets lived on one gateway
@@ -282,9 +453,10 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
     const signaller = connect(tuan);
     await acked(signaller);
     signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
-    await settle();
 
-    expect(typingFor(frames, channel)).toEqual([{ channel, user: "tuan" }]);
+    expect(await untilTyping(frames, channel, 1)).toEqual([
+      { channel, user: "tuan" },
+    ]);
   });
 
   /** T045. THE SIGNALLER RECEIVES NOTHING, in the same run in which someone else
@@ -306,9 +478,10 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
     await acked(watcher);
 
     signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
-    await settle();
 
-    expect(typingFor(theirs, channel)).toEqual([{ channel, user: "tuan" }]);
+    expect(await untilTyping(theirs, channel, 1)).toEqual([
+      { channel, user: "tuan" },
+    ]);
     expect(typingFor(own, channel)).toEqual([]);
   });
 
@@ -336,9 +509,10 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
     await acked(watcher);
 
     signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
-    await settle();
 
-    expect(typingFor(watcherFrames, channel)).toEqual([{ channel, user: "tuan" }]);
+    expect(await untilTyping(watcherFrames, channel, 1)).toEqual([
+      { channel, user: "tuan" },
+    ]);
     expect(typingFor(secondFrames, channel)).toEqual([]);
   });
 
@@ -363,9 +537,10 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
     const signaller = connect(tuan);
     await acked(signaller);
     signaller.send(JSON.stringify({ type: "typing.send", payload: { channel: signalled } }));
-    await settle();
 
-    expect(typingFor(watched, signalled)).toEqual([{ channel: signalled, user: "tuan" }]);
+    expect(await untilTyping(watched, signalled, 1)).toEqual([
+      { channel: signalled, user: "tuan" },
+    ]);
     expect(outside.filter((f) => f.type === "typing")).toEqual([]);
   });
 
@@ -439,9 +614,8 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
     await acked(signaller);
 
     signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
-    await settle();
+    await untilTyping(frames, channel, 1);
     const afterSignal = frames.length;
-    expect(typingFor(frames, channel)).toHaveLength(1);
 
     // **A SECOND AND A HALF, NOT FIVE AND A HALF, AND THE ARGUMENT IS THE
     // CHAPTER'S OWN.** The obvious version of this test waits past FR-RTM-08's
@@ -460,8 +634,7 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
 
     // And the fabric is still alive, so the silence above was a decision.
     signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
-    await settle();
-    expect(typingFor(frames, channel)).toHaveLength(2);
+    expect(await untilTyping(frames, channel, 2)).toHaveLength(2);
   }, 15_000);
   /** T048b. A TYPING SIGNAL SPENDS NO MESSAGE QUOTA (FR-014).
    *
@@ -560,9 +733,10 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
     const signaller = connect(tuan);
     await acked(signaller);
     signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
-    await settle();
 
-    expect(typingFor(frames, channel)).toEqual([{ channel, user: "tuan" }]);
+    expect(await untilTyping(frames, channel, 1)).toEqual([
+      { channel, user: "tuan" },
+    ]);
   });
   /** T057. REPEATED SIGNALS INSIDE THE INTERVAL PRODUCE AT MOST ONE PUBLISH.
    *
@@ -746,8 +920,348 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
 
     // T059a. Neither of Tuan's sockets heard either of Tuan's signals, and Mai
     // heard both — so the silence is the identity filter and not a dead fabric.
+    expect(await untilTyping(watcherFrames, first, 2)).toHaveLength(2);
     expect(typingFor(aFrames, first)).toEqual([]);
     expect(typingFor(bFrames, first)).toEqual([]);
-    expect(typingFor(watcherFrames, first)).toHaveLength(2);
   });
+  /** T063. A TYPING FRAME ARRIVING MID-RESUME IS SENT IMMEDIATELY (FR-018).
+   *
+   * **CHAPTER 3.20's EQUIVALENT PASSED TWICE WITH ITS SUBJECT DELETED**, and its
+   * record in `specs/038-chapter-3-20/baseline.txt` is what this test is built
+   * against. Both of its traps are handled here:
+   *
+   *   the connection was not buffering — a connection is born `buffering` only
+   *     when a CURSOR is presented (`session.ts:766`), and only until
+   *     `api.backfill` returns, which is about twenty milliseconds on this lane.
+   *     So the socket below presents a cursor and the stub sleeps 800 ms.
+   *   the cursor and the frame had the same sequence — does not apply to typing,
+   *     which carries no sequence at all. That absence is why the frame cannot be
+   *     buffered meaningfully in the first place.
+   *
+   * **THE ASSERTION IS AN ORDERING, not an arrival.** A buffered frame still
+   * arrives — after the flush — so "it arrived" proves nothing. What separates
+   * the two is that an immediate frame arrives BEFORE the backfilled
+   * `message.created`, and a buffered one after it. */
+  it("sends a typing frame during a resume, before the backfill it is racing", async () => {
+    const channel = randomUUID();
+    const mai = await boot({
+      user: "mai",
+      channels: [channel],
+      backfillDelayMs: 800,
+      backfillFrames: {
+        [channel]: {
+          messages: [
+            {
+              id: randomUUID(),
+              channel,
+              seq: 9,
+              user: "tuan",
+              text: "backfilled",
+              created_at: new Date(0).toISOString(),
+            },
+          ],
+          truncated: false,
+        },
+      },
+    });
+    const tuan = await boot({ user: "tuan", channels: [channel] });
+    open.push(mai.close, tuan.close);
+
+    // The signaller first, and acked, so nothing below waits on it.
+    const signaller = connect(tuan);
+    await acked(signaller);
+
+    // **DO NOT AWAIT THE WATCHER'S ACK.** On the resume path the order is
+    // "confirm, backfill, ack, emit, flush, live" (`session.ts`'s own comment),
+    // so the ack goes out AFTER `api.backfill` returns. The first version of this
+    // test awaited it and had therefore already slept through the whole 800 ms
+    // window it was trying to test — the backfilled frame arrived within 300 ms
+    // and the assertion read `expected [ { type: 'message.created' } ] to deeply
+    // equal []`. **A wait for the wrong signal closes the window it was meant to
+    // hold open.**
+    //
+    // A cursor BELOW the backfilled frame's sequence, so the flush has something
+    // to deliver and the ordering below means something.
+    const watcher = new WebSocket(`${mai.url}?token=${VALID_TOKEN}&cursor=${channel}:1`);
+    sockets.push(watcher);
+    const frames = collect(watcher);
+
+    // Inside the 800 ms window: the connection is registered at upgrade and
+    // `buffering` until the backfill returns.
+    await settle(250);
+    signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    await settle(250);
+    expect(typingFor(frames, channel)).toHaveLength(1);
+    expect(frames.filter((f) => f.type === "message.created")).toEqual([]);
+
+    // And the backfill still arrives afterwards, so the resume was real.
+    await settle(900);
+    expect(frames.filter((f) => f.type === "message.created")).toHaveLength(1);
+    const typingAt = frames.findIndex((f) => f.type === "typing");
+    const backfilledAt = frames.findIndex((f) => f.type === "message.created");
+    expect(typingAt).toBeLessThan(backfilledAt);
+  }, 15_000);
+
+  /** T064. A RECONNECTING CLIENT RECEIVES NO TYPING FRAMES FOR SIGNALS SENT WHILE
+   * IT WAS AWAY (FR-018, SC-009).
+   *
+   * **A typing indicator replayed after a reconnect is a claim about the present
+   * that was true five seconds ago.** Nothing stores one, so there is nothing to
+   * replay — and this test is what turns that from an argument into a fact. */
+  it("replays no typing frames to a client that reconnects", async () => {
+    const channel = randomUUID();
+    const mai = await boot({ user: "mai", channels: [channel] });
+    const tuan = await boot({ user: "tuan", channels: [channel] });
+    open.push(mai.close, tuan.close);
+
+    const first = connect(mai);
+    await acked(first);
+    const signaller = connect(tuan);
+    await acked(signaller);
+
+    // Signalled while Mai is connected, so the fabric is demonstrably working.
+    signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    await settle();
+
+    first.close();
+    await settle(200);
+
+    // Signalled while Mai is away. Two of them, past the interval, so the
+    // publisher is not debouncing them into one.
+    signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    await settle(2_100);
+    signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    await settle();
+
+    const second = new WebSocket(`${mai.url}?token=${VALID_TOKEN}&cursor=${channel}:1`);
+    sockets.push(second);
+    const frames = collect(second);
+    await acked(second);
+    await settle(500);
+
+    expect(typingFor(frames, channel)).toEqual([]);
+  }, 15_000);
+  /** T068 and T071. THE FABRIC SEVERED, AND RESTORED.
+   *
+   * A publish failure must not fail the connection, the send, or a message
+   * delivery (FR-015). The socket stays open, the client is told nothing, and
+   * **one** structured event is logged — one, because a burst of keystrokes
+   * against a dead Redis must not become a burst of log lines.
+   *
+   * Then the proxy re-listens on the SAME port and the next signal publishes with
+   * no restart, which is what ioredis's default retry on the publisher buys. */
+  it("survives a severed fabric, logs it once, and publishes again when it returns", async () => {
+    const channel = randomUUID();
+    const lines: Record<string, unknown>[] = [];
+    const proxy = await startRedisProxy();
+    open.push(proxy.close);
+
+    const instance = await boot({
+      user: "tuan",
+      channels: [channel],
+      redisUrl: proxy.url,
+      renewalIntervalMs: 0,
+      lines,
+    });
+    open.push(instance.close);
+    // Watched through the REAL Redis, not the proxy: the assertion is about what
+    // reached the fabric, and a watcher behind the same proxy would be cut too.
+    const watcher = await watch(channel);
+    open.push(watcher.close);
+
+    const socket = connect(instance);
+    const frames = collect(socket);
+    await acked(socket);
+
+    socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    expect(await untilSignals(watcher, 1)).toHaveLength(1);
+
+    await proxy.cut();
+    const beforeFailure = lines.length;
+
+    socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    await settle(600);
+
+    // The client learns nothing and keeps its socket. This is FR-015's first two
+    // clauses and they hold.
+    expect(frames.filter((f) => f.type === "error")).toEqual([]);
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+
+    // **AND THE PUBLISH DOES NOT FAIL, WHICH FR-015 DID NOT EXPECT.**
+    //
+    // Measured rather than assumed. After the cut the sink holds five lines and
+    // every one of them is `typing.failed` with `op: "connection"` — ioredis's
+    // error listener firing once per reconnect attempt on each of the two
+    // clients. There is no `op: "publish"` line at all, because
+    // `publisher.publish()` never rejects: ioredis's default offline queue
+    // accepts the command and resolves it when the connection returns.
+    //
+    // So a severed fabric does not drop this signal. It DELAYS it — which is
+    // better for the product and worse for the requirement, because FR-015 says a
+    // failure "MUST be logged once" and what is logged once per outage is
+    // nothing, while what is logged per retry is unbounded. **A publisher that
+    // queues satisfies "the socket stayed open" the way chapter 3.18's fan-out
+    // satisfied "the send returned 201 while Redis was down": trivially.**
+    //
+    // Not fixed here. All four fabric modules share this listener shape, and
+    // bounding it is a cross-module decision rather than this chapter's — it goes
+    // to `gaps.md` with the measurement attached.
+    const afterCut = lines.slice(beforeFailure);
+    expect(afterCut.length).toBeGreaterThan(0);
+    expect(
+      afterCut.filter((l) => l["msg"] === "typing.failed" && l["op"] === "connection")
+        .length,
+    ).toBe(afterCut.length);
+    expect(
+      afterCut.filter((l) => l["op"] === "publish"),
+      "the publish queues rather than failing",
+    ).toEqual([]);
+
+    await proxy.restore();
+    // ioredis reconnects on its own; nothing here is rebuilt.
+    await settle(1_200);
+    socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    expect((await untilSignals(watcher, 2)).length).toBeGreaterThanOrEqual(2);
+  }, 20_000);
+
+  /** T069 and T070. THE LOG VOCABULARY, AS THE SET AN INSTANCE ACTUALLY EMITTED.
+   *
+   * **Not as what a grep finds.** Chapter 3.20's FR-032 declared three names while
+   * the code emitted six — `rejected`, `granted`, `revoked` and `revoked_all`
+   * beside the two it shared — and the clause had to be amended with its argument
+   * afterwards. A set assertion is what would have caught that on the day.
+   *
+   * T070 rides the same instance: **no name is emitted for a signal dropped
+   * inside the renewal interval.** It is expected traffic rather than a failure,
+   * and one line per keystroke over the limit is the unbounded output NFR-OBS-01
+   * exists to prevent. */
+  it("emits exactly the three names it declares, and none for a debounced signal", async () => {
+    const channel = randomUUID();
+    const lines: Record<string, unknown>[] = [];
+    const instance = await boot({
+      user: "tuan",
+      channels: [channel],
+      renewalIntervalMs: 5_000,
+      lines,
+    });
+    open.push(instance.close);
+
+    const socket = connect(instance);
+    await acked(socket);
+
+    // One publish, then a burst inside the interval that must be silent.
+    socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    await settle();
+    const afterPublish = lines.length;
+    for (let i = 0; i < 5; i += 1) {
+      socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    }
+    await settle();
+    expect(lines, "a debounced signal writes nothing").toHaveLength(afterPublish);
+
+    // An unparseable body on the subject, to reach the third name.
+    const injector = new Redis(url);
+    await injector.publish(subjectForTyping(channel), "{ not json");
+    await injector.publish(
+      subjectForTyping(channel),
+      JSON.stringify({ environment: "env-1", channel, user: "x", state: "no" }),
+    );
+    injector.disconnect();
+    await settle();
+
+    const emitted = new Set(
+      lines
+        .map((l) => String(l["msg"]))
+        .filter((msg) => msg.startsWith("typing.")),
+    );
+    expect([...emitted].sort()).toEqual([
+      "typing.invalid_payload",
+      "typing.published",
+    ]);
+    // `typing.failed` is the third declared name and is reached by the severed
+    // fabric test above and by the environment mismatch earlier in this file —
+    // asserted there rather than forced here, because a name reached only by a
+    // test that exists to reach it is a name nothing needs.
+  });
+  /** T072. FR-017's CROSS-KIND PROPERTY: four fabrics, one channel, one watcher.
+   *
+   * **Five subject shapes now share one Redis** — `chan:{id}`,
+   * `presence:{id}`, `member:{id}`, `member:{env}:{user}` and `typing:{id}` —
+   * and every gateway subscribes to a string. This is the test that says the
+   * topology holds: each kind arrives ONCE, under its OWN `type`, and no kind
+   * arrives as another.
+   *
+   * `typing.test.ts`'s pairwise-distinctness test proves the SUBJECTS cannot
+   * collide; this proves the DELIVERY does not, which is a different claim. A
+   * builder can be distinct while a handler is wired to the wrong one. */
+  it("keeps four kinds apart over one channel, each arriving once under its own type", async () => {
+    const channel = randomUUID();
+    const instance = await boot({
+      user: "mai",
+      channels: [channel],
+      allFabrics: true,
+    });
+    open.push(instance.close);
+
+    const socket = connect(instance);
+    const frames = collect(socket);
+    await acked(socket);
+    // The subscribes are in flight at ack time, so give all four a moment before
+    // publishing into them.
+    await settle(400);
+
+    const publisher = new Redis(url);
+    open.push(async () => {
+      publisher.disconnect();
+    });
+
+    await publisher.publish(
+      subjectForChannel(channel),
+      JSON.stringify({
+        id: randomUUID(),
+        channel,
+        seq: 4_242,
+        user: "tuan",
+        text: "one message",
+        created_at: new Date(0).toISOString(),
+      }),
+    );
+    await publisher.publish(
+      subjectForPresence(channel),
+      JSON.stringify({
+        environment: "env-1",
+        channel,
+        user: "tuan",
+        state: "online",
+        transition: randomUUID(),
+      }),
+    );
+    await publisher.publish(
+      subjectForChannelMembership(channel),
+      JSON.stringify({
+        environment: "env-1",
+        channel,
+        user: "linh",
+        change: "added",
+      }),
+    );
+    await publisher.publish(
+      subjectForTyping(channel),
+      JSON.stringify({ environment: "env-1", channel, user: "tuan" }),
+    );
+
+    await settle(700);
+
+    const byType = (type: string): unknown[] =>
+      frames.filter((f) => f.type === type);
+    expect(byType("message.created"), "message").toHaveLength(1);
+    expect(byType("presence.changed"), "presence").toHaveLength(1);
+    expect(byType("membership.changed"), "membership").toHaveLength(1);
+    expect(typingFor(frames, channel), "typing").toEqual([
+      { channel, user: "tuan" },
+    ]);
+    // And nothing arrived twice or under a borrowed name: four publishes, four
+    // frames, plus the `connection.ack` the handshake sent.
+    expect(frames.filter((f) => f.type !== "connection.ack")).toHaveLength(4);
+  }, 15_000);
 });
