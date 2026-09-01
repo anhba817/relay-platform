@@ -5,6 +5,7 @@ import { createApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
 import { createMembership } from "./membership.js";
 import { createPresence } from "./presence.js";
+import { createTyping } from "./typing.js";
 import { attachSessions } from "./session.js";
 
 // The gateway — SAD §4.1: terminates WebSockets and never writes to the
@@ -48,6 +49,11 @@ export function createServer(logger?: Logger) {
   // tests that call that function directly stay Redis-free, and so its close has an
   // owner.
   const membership = createMembership({ logger: log });
+  // THE SIXTH AND SEVENTH REDIS CLIENTS, and this module needs two of its own — a
+  // publisher and a subscriber — because it is the first fabric this service both
+  // publishes to and consumes from. `fanout.ts` states why they cannot be one client:
+  // a subscribed connection cannot issue ordinary commands, and PUBLISH is one.
+  const typing = createTyping({ logger: log });
   const sessions = attachSessions({
     server,
     api: createApiClient(process.env.RELAY_API_URL ?? DEFAULT_API_URL),
@@ -55,12 +61,14 @@ export function createServer(logger?: Logger) {
     fanout,
     presence,
     membership,
+    typing,
   });
   server.on("close", () => {
     sessions.close();
     void fanout.close();
     void presence.close();
     void membership.close();
+    void typing.close();
   });
   return server;
 }
