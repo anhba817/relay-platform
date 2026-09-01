@@ -15,7 +15,7 @@ import type { InternalSendResponse, Message } from "@relay/protocol";
 import type { ApiClient } from "./api-client.js";
 import type { Fanout } from "./fanout.js";
 import { decide, type GatewayLimits } from "./limits.js";
-import { attachSessions } from "./session.js";
+import { attachSessions, INBOUND_FRAME_TYPES } from "./session.js";
 
 // The door, the frames, and the liveness clock — all provable without a
 // database, because the gateway has no database (ADR-05). The api is a
@@ -987,5 +987,40 @@ describe("the socket's limits (chapter 3.8)", () => {
     // And the vocabulary still declares both, so 4009 is "unused", not "gone".
     expect(CLOSE_CODES[4008]).toBeDefined();
     expect(CLOSE_CODES[4009]).toBeDefined();
+  });
+});
+
+// T038. THE INBOUND SET, ASSERTED BY SIZE AND BY MEMBERSHIP.
+//
+// For twenty chapters this was one string literal in one `!==`, and nothing said
+// how many inbound frames there were because one is not a number anybody writes
+// down. Widening it to a set is what makes the count a fact, and a fact is what a
+// test can hold.
+//
+// `codes.test.ts` is the precedent: it asserts the exact close-code set AND the
+// exact count, which is what makes a seventeenth code a decision rather than an
+// accident. The same argument applies harder here — **the inbound seam is where a
+// protocol is attacked**, and a third member arriving unnoticed is the failure
+// this file exists to prevent.
+describe("INBOUND_FRAME_TYPES (chapter 3.21)", () => {
+  it("has exactly two members", () => {
+    expect(INBOUND_FRAME_TYPES.size).toBe(2);
+  });
+
+  it("is exactly message.send and typing.send", () => {
+    expect([...INBOUND_FRAME_TYPES].sort()).toEqual([
+      "message.send",
+      "typing.send",
+    ]);
+  });
+
+  it("holds no server-to-client type, checked against the ones that matter", () => {
+    // Not a restatement of the test above. That one pins the set; this one says
+    // WHY the pin matters, in the vocabulary of the frames a forger would reach
+    // for first — an ack a client could fake, and the outbound `typing` a client
+    // could use to type as somebody else.
+    for (const forgeable of ["message.ack", "message.created", "typing"]) {
+      expect(INBOUND_FRAME_TYPES.has(forgeable as never)).toBe(false);
+    }
   });
 });

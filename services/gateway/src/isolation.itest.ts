@@ -12,7 +12,7 @@ import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createApiClient } from "./api-client.js";
-import { attachSessions } from "./session.js";
+import { attachSessions, INBOUND_FRAME_TYPES } from "./session.js";
 import { seedSocketTenants, type SocketTenants } from "./isolation-fixtures.js";
 
 // THE SOCKET HALF OF THE GAUNTLET (FR-007, NFR-SEC-09, constitution I).
@@ -806,22 +806,24 @@ describe("every frame in the union is classified, in both directions", () => {
     expect(stale, `classified but no longer in frameSchema: ${stale.join(", ")}`).toEqual([]);
   });
 
-  /** **`it.fails` FROM PHASE 2 TO PHASE 4, and it is the bridge this test exists
-   * to be.** The table above now classifies `typing.send` as inbound and
-   * `session.ts` still accepts only `message.send`, so the two disagree — which
-   * is exactly what this assertion is for. Phase 4 narrows the refusal to the
-   * named set and this becomes an ordinary `it` expecting both.
+  /** **THIS WAS `it.fails` FROM PHASE 2 TO PHASE 4, and the gap was the point.**
+   * Phase 2 classified `typing.send` as inbound in the table above while
+   * `session.ts` still accepted only `message.send`; the two disagreed, and this
+   * assertion is the bridge that says so. Phase 4 widened the seam to a named
+   * set, the disagreement closed, and the test is ordinary again.
    *
    * T015 predicted the union widening would fail the gauntlet three ways and it
    * failed TWO: the count, and the totality check. "names no frame the union
    * does not have" cannot fail on an ADDITION — only a removal reaches it. This
-   * is the third failure, and it arrives one edit later than predicted. */
-  it.fails("agrees with the gateway: exactly one member is inbound", () => {
+   * was the third failure, and it arrived one edit later than predicted. */
+  it("agrees with the gateway: exactly the inbound set is inbound", () => {
     const inbound = DIRECTIONS.filter(([, d]) => d === "inbound").map(([t]) => t);
-    // Not a taste assertion. `session.ts` compares against this one literal and
-    // closes 4002 on everything else, so a second inbound frame here would be a
-    // classification the code does not implement.
-    expect(inbound).toEqual(["message.send"]);
+    // Not a taste assertion, and no longer a literal: `session.ts` refuses every
+    // type outside `INBOUND_FRAME_TYPES` with 4002, so this compares the table
+    // against the code itself. A row added here without a member added there is
+    // a classification the gateway does not implement — which is exactly the
+    // state phase 2 left behind on purpose, and phase 4 closed.
+    expect(inbound.sort()).toEqual([...INBOUND_FRAME_TYPES].sort());
   });
 });
 

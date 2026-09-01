@@ -109,6 +109,11 @@ const DRIVER_EXEMPT_TESTS = [
   // reachable through `createMembership`, which only delivers what it already
   // accepted. A `publish` and nothing else: no key read, no key composed.
   "services/gateway/src/membership.itest.ts",
+  // Chapter 3.21, and the same case as the two above: the assertion is on Redis,
+  // read with neither service's code. A publish count taken through this
+  // chapter's own module would be satisfied by a module that does nothing —
+  // chapter 3.18's warning, in a new place.
+  "services/gateway/src/typing.itest.ts",
 ];
 
 

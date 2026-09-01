@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 
 import { createLogger, serve, type Logger } from "@relay/service-kit";
-import { docsUrl } from "@relay/protocol";
+import { docsUrl, frameSchema } from "@relay/protocol";
 import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -817,37 +817,75 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
 
     expect(frames.filter((f) => f.type === "message.created")).toEqual([]);
   });
-  /** CHAPTER 3.21, T009 — and this is the third of the refusal's three states.
+  /** Something schema-valid for each outbound type, so the refusal under test is
+   * the direction one. Mirrors `isolation.itest.ts`'s builder; the duplication is
+   * deliberate, because that file proves a client cannot FORGE these and this one
+   * proves the seam still refuses them after being widened. */
+  const sampleOutbound = (type: string, channel: string): unknown => {
+    const message = {
+      id: randomUUID(),
+      channel,
+      seq: 1,
+      user: "tuan",
+      text: "forged",
+      created_at: new Date().toISOString(),
+    };
+    switch (type) {
+      case "connection.ack":
+        return {
+          type,
+          payload: { user: "tuan", cursor: {}, resume_ok: true, truncated: [] },
+        };
+      case "message.ack":
+        return { type, payload: { seq: 1 } };
+      case "message.created":
+      case "message.updated":
+      case "message.deleted":
+        return { type, payload: message };
+      case "membership.changed":
+        return { type, payload: { channel, user: "tuan", change: "added" } };
+      case "presence.changed":
+        return { type, payload: { user: "tuan", state: "online" } };
+      case "typing":
+        return { type, payload: { channel, user: "tuan" } };
+      default:
+        return {
+          type,
+          payload: {
+            code: "forged",
+            message: "forged",
+            docs_url: "/x",
+            request_id: "x",
+          },
+        };
+    }
+  };
+
+  /** CHAPTER 3.21, T034 — T009 INVERTED, and the same shape on purpose.
    *
-   * T009 predicted a client uttering the typing signal would get
-   * `unknown_frame_type` and close 4002. In phase 1 it did not: `typing.send`
-   * was not in `frameSchema`, so `safeParse` failed first and the answer was
-   * `invalid_frame` with the socket left open (session.ts:939). Phase 2 put the
-   * type in the union, so the same send now reaches the DIRECTION refusal one
-   * line further down and gets exactly what T009 said.
+   * The send is byte-identical to the one that got `unknown_frame_type` and a
+   * 4002 in phase 2. Only the seam moved, so a pass here means the seam moved —
+   * not that somebody softened an assertion until it passed.
+   *
+   * The refusal's three states, closed:
    *
    *   phase 1   not in the union         ->  invalid_frame, socket open
-   *   phase 2   in the union, not send   ->  unknown_frame_type, close 4002   <- here
-   *   phase 4   in the named inbound set ->  accepted
+   *   phase 2   in the union, not send   ->  unknown_frame_type, close 4002
+   *   phase 4   in the named inbound set ->  accepted, socket open        <- here
    *
-   * **Phase 1 held two tests and phase 2 holds one.** The first asserted the
-   * `invalid_frame` state and was correct until this commit; keeping it would
-   * assert a state that no longer exists. Its record is in `baseline.txt`, which
-   * is where a state the code has left belongs. The second was `it.fails` and
-   * **flipped on schedule** — it failed the moment the behaviour arrived, which
-   * is the whole reason it was written that way rather than as a red test.
-   *
-   * THE FRAME TYPE IS A STRING, not a union member: this file sends
-   * `JSON.stringify({ type: … })` on an object literal, so nothing here
-   * typechecks against `frameSchema`. */
-  it("refuses typing.send as a direction violation, and closes 4002", async () => {
+   * NO ACK, AND THAT IS THE ASSERTION. A typing signal is answered by nothing:
+   * no `message.ack`, no error, no close. So "accepted" can only be tested as
+   * the absence of a refusal plus a socket still open — which is why the wait
+   * below is real time rather than a frame to await. */
+  it("accepts typing.send and answers with nothing at all", async () => {
     const socket = connect(await mintToken());
     const frames = record(socket);
     await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
 
-    const closed = new Promise<number>((resolve) =>
-      socket.on("close", (code: number) => resolve(code)),
-    );
+    let closeCode: number | undefined;
+    socket.on("close", (code: number) => {
+      closeCode = code;
+    });
 
     socket.send(
       JSON.stringify({
@@ -856,8 +894,75 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
       }),
     );
 
+    await new Promise((r) => setTimeout(r, 400));
+    expect(frames.filter((f) => f.type === "error")).toEqual([]);
+    expect(closeCode).toBeUndefined();
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+  });
+
+  /** T035. EVERY OTHER TYPE, DRIVEN FROM THE UNION rather than from a list.
+   *
+   * A hand-written list is a second place to forget the eleventh type — and this
+   * chapter added one, so the list would already be wrong. `frameSchema.options`
+   * yields the discriminators at runtime, so a twelfth frame appears here without
+   * an edit and fails until somebody decides its direction.
+   *
+   * **EVERY SAMPLE IS SCHEMA-VALID FOR ITS TYPE**, which is the whole care in
+   * this test. A frame that fails `safeParse` is answered `invalid_frame` and
+   * never reaches the direction check — so a sloppy payload would turn nine
+   * direction assertions into nine parser assertions and still be green.
+   * `isolation.itest.ts`'s sample builder makes the same point in its own
+   * comment, and this is a second copy rather than a shared helper because the
+   * two files disagree about what they are proving. */
+  it("refuses every non-inbound type with unknown_frame_type and 4002", async () => {
+    const outbound = frameSchema.options
+      .map((option) => (option.shape.type as { value: string }).value)
+      .filter((type) => type !== "message.send" && type !== "typing.send");
+
+    expect(outbound).toHaveLength(9);
+
+    for (const type of outbound) {
+      const socket = connect(await mintToken());
+      const frames = record(socket);
+      await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+      const closed = new Promise<number>((resolve) =>
+        socket.on("close", (code: number) => resolve(code)),
+      );
+
+      socket.send(JSON.stringify(sampleOutbound(type, api.channelId)));
+
+      const error = await waitFor(frames, (f) => f.type === "error", `error for ${type}`);
+      expect(error.payload, `direction refusal for ${type}`).toMatchObject({
+        code: "unknown_frame_type",
+      });
+      expect(await closed, `close code for ${type}`).toBe(4002);
+    }
+  });
+
+  /** T037. THE PAYLOAD CANNOT NAME A USER, and the delivered frame names the
+   * connection's identity in the same run.
+   *
+   * Two halves because they fail differently: a `user` on the way IN is a schema
+   * rejection (`typingSendSchema` is strict and has no such field), and the user
+   * on the way OUT is `signalTyping` reading `connection.identity`. A test that
+   * only checked the first would pass against a handler that took the user from
+   * anywhere. */
+  it("refuses a typing.send whose payload names a user", async () => {
+    const socket = connect(await mintToken());
+    const frames = record(socket);
+    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+
+    socket.send(
+      JSON.stringify({
+        type: "typing.send",
+        payload: { channel: api.channelId, user: "somebody-else" },
+      }),
+    );
+
     const error = await waitFor(frames, (f) => f.type === "error", "error");
-    expect(error.payload).toMatchObject({ code: "unknown_frame_type" });
-    expect(await closed).toBe(4002);
+    // `invalid_frame`, not `unknown_frame_type`: the type IS inbound, so this
+    // never reaches the direction check — the strict schema rejects it first.
+    expect(error.payload).toMatchObject({ code: "invalid_frame" });
+    expect(socket.readyState).toBe(WebSocket.OPEN);
   });
 });

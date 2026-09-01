@@ -47,6 +47,52 @@ import {
 const PING_INTERVAL_MS = 30_000;
 const MAX_MISSED_PINGS = 2;
 
+/** THE FRAME TYPES A CLIENT MAY SEND (chapter 3.21, FR-003).
+ *
+ * A SET WITH A NAME, not a second `!==` and not an array inlined at the check.
+ * For twenty chapters this was one literal compared with `!==`, and a second
+ * comparison would have been the cheapest edit and the worst one: two conditions
+ * to keep in step, and nothing anywhere that says how many there are. A named set
+ * has one home, and `session.test.ts` asserts both its size and its membership —
+ * so a third inbound frame is a decision somebody made rather than a diff nobody
+ * read.
+ *
+ * **BOTH MEMBERS END IN `.send`, and that is the rule rather than a coincidence.**
+ * `message.send` was the only one until this chapter; `typing.send` was named to
+ * match it, so the next person adding an inbound frame has a spelling to follow
+ * and `frames.test.ts` asserts the correspondence.
+ *
+ * THE AUTHORITY IS STILL THIS FILE. `isolation.itest.ts`'s DIRECTIONS table
+ * classifies every union member and its `inbound` rows must equal this set —
+ * that test is the bridge, and it was `it.fails` from phase 2 until this line
+ * landed. */
+export type InboundFrameType = "message.send" | "typing.send";
+
+export const INBOUND_FRAME_TYPES: ReadonlySet<InboundFrameType> = new Set([
+  "message.send",
+  "typing.send",
+]);
+
+/** **A `Set.has` IS NOT A TYPE GUARD, AND THE SINGLE `!==` WAS ONE FOR FREE.**
+ *
+ * Replacing `frame.data.type !== "message.send"` with a set lookup compiled and
+ * then broke the send path forty lines below with three `TS2339`s — `channel`,
+ * `text` and `idem_key` "does not exist on type" — because the union was no
+ * longer narrowed. The comparison had been doing two jobs and only one of them
+ * was visible.
+ *
+ * A predicate keeps both: the set stays the single home FR-003 asks for, and the
+ * narrowing comes back. **It has to take the FRAME rather than the type string** —
+ * the first version took `type: string` and compiled, and the send path still did
+ * not narrow, because TypeScript cannot push a narrowing of `.type` back onto the
+ * discriminated union it came from. The alternative was an unreachable
+ * `if (type !== "message.send") return;` after the branch below, which is dead
+ * code the coverage ratchet would have to be told to ignore — and this chapter's
+ * pins are 100/100/100/100. */
+function isInboundFrame(frame: Frame): frame is Extract<Frame, { type: InboundFrameType }> {
+  return INBOUND_FRAME_TYPES.has(frame.type as InboundFrameType);
+}
+
 function send(socket: WebSocket, frame: Frame): void {
   socket.send(JSON.stringify(frame));
 }
@@ -193,6 +239,7 @@ export function attachSessions({
   meterIntervalMs = METER_INTERVAL_MS,
   presence,
   membership,
+  typing,
 }: SessionServerOptions): {
   registry: Registry;
   meter: Meter;
@@ -938,6 +985,43 @@ export function attachSessions({
     });
   }
 
+  /** CHAPTER 3.21 (T033): a client's typing signal, on its way out.
+   *
+   * **THREE THINGS THE CLIENT DOES NOT GET TO DECIDE**, and each is one line:
+   *
+   *   the user           `connection.identity.userExternalId`, never the payload.
+   *                      `typingSendSchema` has no `user` field at all, so this is
+   *                      belt and braces — but the field is what a reader checks,
+   *                      and a schema is not where they look (FR-006).
+   *   the environment    the connection's, for the same reason. It travels on the
+   *                      fabric and not on the wire, so a receiving gateway can
+   *                      check it against the connection it is about to act on.
+   *   the audience       whoever is subscribed to the channel's subject, which is
+   *                      not this function's business at all.
+   *
+   * **A SIGNAL FOR A CHANNEL THE CONNECTION DOES NOT HOLD PUBLISHES NOTHING AND
+   * SAYS NOTHING** (FR-007). Not an error frame: an error would tell a client
+   * whether a channel exists, which is the probe chapter 3.15 closed on the REST
+   * surface. `channelIds` is the membership this connection was granted, kept
+   * current by chapter 3.20's two branches, so the check is a set lookup rather
+   * than a question for the api.
+   *
+   * No await on delivery, no ack, nothing stored. `publish` swallows its own
+   * failures and logs them (FR-015): a lost typing frame costs one renewal
+   * interval and corrects itself, and it must never fail the socket that sent
+   * it. */
+  async function signalTyping(
+    connection: Connection,
+    channelId: string,
+  ): Promise<void> {
+    if (!connection.channelIds.has(channelId)) return;
+    await typing?.publish({
+      environment: connection.identity.environmentId,
+      channel: channelId,
+      user: connection.identity.userExternalId,
+    });
+  }
+
   async function handle(connection: Connection, raw: string): Promise<void> {
     let parsed: unknown;
     try {
@@ -955,7 +1039,7 @@ export function attachSessions({
       );
       return;
     }
-    if (frame.data.type !== "message.send") {
+    if (!isInboundFrame(frame.data)) {
       // Everything else in the union is server → client. A client uttering
       // one is a protocol violation, not a malformed frame (EIR-WS-06).
       sendError(
@@ -964,6 +1048,15 @@ export function attachSessions({
         `clients may not send ${frame.data.type}`,
       );
       connection.socket.close(4002, CLOSE_CODES[4002]);
+      return;
+    }
+
+    // Chapter 3.21. THE SECOND INBOUND FRAME, and it leaves before the send
+    // limiter below: a typing signal is not a send and must not spend a send's
+    // budget (FR-014). It also never reaches the api — the whole path is this
+    // gateway, Redis, and whoever is subscribed.
+    if (frame.data.type === "typing.send") {
+      await signalTyping(connection, frame.data.payload.channel);
       return;
     }
 
