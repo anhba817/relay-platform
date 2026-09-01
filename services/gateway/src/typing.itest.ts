@@ -64,6 +64,7 @@ async function boot(options: {
   lines?: Record<string, unknown>[];
   membership?: Membership;
   limits?: GatewayLimits;
+  renewalIntervalMs?: number;
 }): Promise<Instance> {
   const environment = options.environment ?? "env-1";
   const logger =
@@ -101,6 +102,9 @@ async function boot(options: {
     typing,
     ...(options.membership === undefined ? {} : { membership: options.membership }),
     ...(options.limits === undefined ? {} : { limits: options.limits }),
+    ...(options.renewalIntervalMs === undefined
+      ? {}
+      : { renewalIntervalMs: options.renewalIntervalMs }),
   });
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
@@ -413,7 +417,18 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
    * otherwise satisfied by a server that sends nothing at all. */
   it("sends nothing at all after the signal, until another signal is sent", async () => {
     const channel = randomUUID();
-    const tuan = await boot({ user: "tuan", channels: [channel] });
+    // **`renewalIntervalMs: 40`, AND PHASE 6 IS WHY.** This test was written in
+    // phase 5 with the default and passed; phase 6 gave the default a two-second
+    // debounce and the probe below — a second signal, sent to show the fabric is
+    // still alive — landed inside it and was dropped. The failure was
+    // `expected [ … ] to have a length of 2 but got 1`, and it is a P2 story's
+    // mechanism changing a P1 story's test. The subject here is FR-009a's
+    // silence, not the interval, so the interval is set out of the way.
+    const tuan = await boot({
+      user: "tuan",
+      channels: [channel],
+      renewalIntervalMs: 40,
+    });
     const mai = await boot({ user: "mai", channels: [channel] });
     open.push(tuan.close, mai.close);
 
@@ -548,5 +563,191 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
     await settle();
 
     expect(typingFor(frames, channel)).toEqual([{ channel, user: "tuan" }]);
+  });
+  /** T057. REPEATED SIGNALS INSIDE THE INTERVAL PRODUCE AT MOST ONE PUBLISH.
+   *
+   * **Asserted on a raw `ioredis` subscriber, not on frame counts at a socket and
+   * not through this chapter's own module.** Counting publishes through the code
+   * that publishes is the shape chapter 3.18 warned about — a publisher that does
+   * nothing satisfies it — and counting frames at a socket cannot distinguish one
+   * publish from two when the second is deduplicated downstream. */
+  it("publishes once for a burst inside the interval", async () => {
+    const channel = randomUUID();
+    const instance = await boot({
+      user: "tuan",
+      channels: [channel],
+      renewalIntervalMs: 2_000,
+    });
+    open.push(instance.close);
+    const watcher = await watch(channel);
+    open.push(watcher.close);
+
+    const socket = connect(instance);
+    await acked(socket);
+    for (let i = 0; i < 8; i += 1) {
+      socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    }
+    await settle();
+
+    expect(watcher.signals).toHaveLength(1);
+  });
+
+  /** T060. THE INTERVAL BITES — as a case, not a source edit.
+   *
+   * The same burst against an instance built with `renewalIntervalMs: 0`
+   * publishes eight times where the test above publishes once. **Edit-and-restore
+   * is the proof form that has now failed twice** — chapter 3.20 ran it on two
+   * orderings and got no failure either time, because both were unobservable — and
+   * a proof written as a case stays in the suite instead of being something
+   * somebody did once and wrote down. */
+  it("publishes every signal when the interval is zero, which is what makes the test above a proof", async () => {
+    const channel = randomUUID();
+    const instance = await boot({
+      user: "tuan",
+      channels: [channel],
+      renewalIntervalMs: 0,
+    });
+    open.push(instance.close);
+    const watcher = await watch(channel);
+    open.push(watcher.close);
+
+    const socket = connect(instance);
+    await acked(socket);
+    for (let i = 0; i < 8; i += 1) {
+      socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    }
+    await settle();
+
+    expect(watcher.signals).toHaveLength(8);
+  });
+
+  /** T047, MOVED HERE FROM PHASE 5 DURING IMPLEMENTATION. Both halves need an
+   * interval, and the option that supplies one is this phase's.
+   *
+   * **BUILT WITH 40 ms RATHER THAN WAITING OUT TWO REAL SECONDS.** The gateway
+   * package paces the lane at ~45 s and the whole budget has about four seconds of
+   * headroom; chapter 3.20 tests a sixty-second backstop at 40 ms for the same
+   * reason. And the wait below is 120 ms against a 40 ms interval — **never
+   * exactly the interval**, which would put two deadlines on one instant reached
+   * by two clocks, the shape that stranded a user online for ever in 3.19. */
+  it("publishes again after the interval, and not inside it", async () => {
+    const channel = randomUUID();
+    const instance = await boot({
+      user: "tuan",
+      channels: [channel],
+      renewalIntervalMs: 40,
+    });
+    open.push(instance.close);
+    const watcher = await watch(channel);
+    open.push(watcher.close);
+
+    const socket = connect(instance);
+    await acked(socket);
+
+    socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    await settle(120);
+    expect(watcher.signals, "the second was inside the interval").toHaveLength(1);
+
+    socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    await settle();
+    expect(watcher.signals, "the third was after it").toHaveLength(2);
+  });
+
+  /** T058. A DROPPED SIGNAL WRITES NO LOG LINE (FR-013).
+   *
+   * The sink is captured across the burst and compared before and after. **A line
+   * per keystroke is the unbounded output NFR-OBS-01 exists to prevent**, and this
+   * is the first refusal in the platform that answers with nothing at all — so
+   * "nothing" has to include the log, not just the wire. */
+  it("drops a signal with no frame, no close and no log line", async () => {
+    const channel = randomUUID();
+    const lines: Record<string, unknown>[] = [];
+    const instance = await boot({
+      user: "tuan",
+      channels: [channel],
+      renewalIntervalMs: 2_000,
+      lines,
+    });
+    open.push(instance.close);
+
+    const socket = connect(instance);
+    const frames = collect(socket);
+    await acked(socket);
+
+    socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    await settle();
+    const afterFirst = lines.length;
+    expect(lines.some((l) => l["msg"] === "typing.published")).toBe(true);
+
+    for (let i = 0; i < 6; i += 1) {
+      socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    }
+    await settle();
+
+    expect(lines).toHaveLength(afterFirst);
+    expect(frames.filter((f) => f.type === "error")).toEqual([]);
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+  });
+
+  /** T059 and T059a. THE INTERVAL IS PER CONNECTION AND PER CHANNEL (FR-011a),
+   * and the same topology answers a second question.
+   *
+   * Two connections of one user in one channel both publish — a well-behaved
+   * client and a hostile one cost the fabric the same, and the state is per
+   * connection rather than per user. And one connection typing in two channels
+   * publishes twice.
+   *
+   * **T059a rides the same fixture**: the signaller's OTHER connection receives
+   * nothing, which T045 cannot see because with one connection per user it passes
+   * whether the filter compares identities or sockets. */
+  it("debounces per connection and per channel, and still tells neither of the user's own sockets", async () => {
+    const first = randomUUID();
+    const second = randomUUID();
+    const tuanA = await boot({
+      user: "tuan",
+      channels: [first, second],
+      renewalIntervalMs: 2_000,
+    });
+    const tuanB = await boot({
+      user: "tuan",
+      channels: [first],
+      renewalIntervalMs: 2_000,
+    });
+    const mai = await boot({ user: "mai", channels: [first] });
+    open.push(tuanA.close, tuanB.close, mai.close);
+
+    const watchFirst = await watch(first);
+    const watchSecond = await watch(second);
+    open.push(watchFirst.close, watchSecond.close);
+
+    const a = connect(tuanA);
+    const aFrames = collect(a);
+    await acked(a);
+    const b = connect(tuanB);
+    const bFrames = collect(b);
+    await acked(b);
+    const watcher = connect(mai);
+    const watcherFrames = collect(watcher);
+    await acked(watcher);
+
+    // Two connections of one user, one channel: the interval is per connection,
+    // so both publish.
+    a.send(JSON.stringify({ type: "typing.send", payload: { channel: first } }));
+    b.send(JSON.stringify({ type: "typing.send", payload: { channel: first } }));
+    await settle();
+    expect(watchFirst.signals).toHaveLength(2);
+
+    // One connection, a second channel: the interval is per channel, so it
+    // publishes again despite having just published.
+    a.send(JSON.stringify({ type: "typing.send", payload: { channel: second } }));
+    await settle();
+    expect(watchSecond.signals).toHaveLength(1);
+
+    // T059a. Neither of Tuan's sockets heard either of Tuan's signals, and Mai
+    // heard both — so the silence is the identity filter and not a dead fabric.
+    expect(typingFor(aFrames, first)).toEqual([]);
+    expect(typingFor(bFrames, first)).toEqual([]);
+    expect(typingFor(watcherFrames, first)).toHaveLength(2);
   });
 });

@@ -48,6 +48,20 @@ import {
 const PING_INTERVAL_MS = 30_000;
 const MAX_MISSED_PINGS = 2;
 
+/** THE RENEWAL INTERVAL (chapter 3.21, FR-011).
+ *
+ * **TWO SECONDS AGAINST FR-RTM-08's FIVE, AND THEY ARE TWO QUANTITIES.** Five is
+ * the receiving client's expiry and cannot move — it is the clause. Two is this
+ * gateway's minimum gap between publishes for one connection and one channel, and
+ * it is argued: 2.5 renewals per expiry window, so **one dropped publish does not
+ * make an indicator flicker**. At 1.67 s the margin is thinner for no gain; at
+ * 4 s a single loss blanks the indicator for a user who never stopped typing.
+ *
+ * Chapter 3.19 armed a grace check at exactly its own grace period and stranded a
+ * user online for ever — two deadlines on one instant, reached by two clocks. The
+ * ratio here is what keeps these two numbers from becoming one. */
+export const DEFAULT_RENEWAL_INTERVAL_MS = 2_000;
+
 /** THE FRAME TYPES A CLIENT MAY SEND (chapter 3.21, FR-003).
  *
  * A SET WITH A NAME, not a second `!==` and not an array inlined at the check.
@@ -215,6 +229,12 @@ export interface SessionServerOptions {
    * phase, which makes the phase uncommittable — chapter 3.20 paid for that exact
    * task once. Phase 5 destructures it in the same commit that calls it. */
   typing?: Typing;
+  /** Chapter 3.21. Injectable for the reason `meterIntervalMs` above and chapter
+   * 3.20's `rereadIntervalMs` are: **a test that waits out two real seconds pays
+   * them in the package that paces the lane**, which has about four seconds of
+   * headroom in the whole budget. That chapter's itest builds with 40 to test a
+   * sixty-second backstop; this one builds with 40 and with 0. */
+  renewalIntervalMs?: number;
 }
 
 // THE FOUR PRESENCE TIMINGS ARE NOT HERE, and an earlier draft of this chapter put
@@ -241,6 +261,7 @@ export function attachSessions({
   presence,
   membership,
   typing,
+  renewalIntervalMs = DEFAULT_RENEWAL_INTERVAL_MS,
 }: SessionServerOptions): {
   registry: Registry;
   meter: Meter;
@@ -538,6 +559,11 @@ export function attachSessions({
         // subscription for a channel it holds no member of.
         typing?.unsubscribe(change.channel),
       ]);
+      // And the debounce entry, in the same act (T043b). A revoked channel leaves
+      // `channelIds`, so a signal for it would be refused above — but the entry
+      // would sit in the map until the connection closed, and a re-added member
+      // would inherit a stale timestamp from a membership they no longer had.
+      lastPublished.get(connection.id)?.delete(change.channel);
       // THE WORKING PATH SAYS SOMETHING (FR-031's argument, applied to the delivery
       // half). `membership.published` is the api's line and means "it went onto the
       // fabric"; this one means "it took effect on a connection", which is the event
@@ -901,6 +927,10 @@ export function attachSessions({
           typing?.unsubscribe(channelId),
         ]),
       );
+      // Chapter 3.21: the debounce entry for this whole connection. One of the
+      // three deletions the map needs; the other two are a revocation dropping a
+      // channel, and an elapsed entry deleted on read.
+      lastPublished.delete(connection.id);
       logger.log("info", "connection.closed", {
         connection_id: connection.id,
         code,
@@ -1053,6 +1083,30 @@ export function attachSessions({
     });
   }
 
+  /** THE DEBOUNCE (chapter 3.21, T054): the last publish time per (connection,
+   * channel).
+   *
+   * **IN THIS CLOSURE, NOT ON `Connection`.** That type lives in `registry.ts`,
+   * which chapters 3.7, 3.8, 3.11 and 3.19 all fence — a field there is four
+   * chapters' diffs regenerated for a value with a two-second lifetime. A closure
+   * map needs no fenced type and has a clearer end: it dies with `attachSessions`.
+   *
+   * **NOT A TOKEN BUCKET, AND THE PLANNED THIRD `operation` IS NOT BUILT**
+   * (FR-013a). Research R5 recommended `limits.ts`'s bucket and analysis pass 1
+   * found it cannot express this rule on three counts, each fatal alone: that
+   * limiter keys on `rl:{environmentId}:{operation}:{window}`, so it is per TENANT
+   * where this is per connection; its window is 60 seconds where this is 2; and
+   * its `operation` is a two-member union that a third member would change at
+   * every call site. `limits.ts` is not edited by this chapter.
+   *
+   * **THREE DELETIONS, and the third is the one an obvious implementation
+   * misses.** The connection's whole entry goes in the close handler and a
+   * channel's on revocation — but an entry whose interval has elapsed is also
+   * deleted on READ, below. Without that the bound is channels a connection has
+   * EVER typed in while connected rather than channels it is typing in, and a
+   * stale entry is pure weight: the next signal republishes regardless. */
+  const lastPublished = new Map<string, Map<string, number>>();
+
   /** CHAPTER 3.21 (T033): a client's typing signal, on its way out.
    *
    * **THREE THINGS THE CLIENT DOES NOT GET TO DECIDE**, and each is one line:
@@ -1083,6 +1137,28 @@ export function attachSessions({
     channelId: string,
   ): Promise<void> {
     if (!connection.channelIds.has(channelId)) return;
+
+    // T055. DROPPED WITH NO FRAME, NO CLOSE CODE AND NO LOG LINE (FR-013).
+    //
+    // **The first refusal in this platform that answers with nothing at all**, and
+    // the reason is NFR-OBS-01 rather than politeness: a client renewing on every
+    // keystroke is expected traffic, not a failure, and one line per keystroke is
+    // exactly the unbounded output that clause exists to prevent. A refused
+    // connect is a 429 with `Retry-After`; a refused send is an error frame the
+    // client must handle; a refused typing signal is dropped on the floor,
+    // defensibly, because the feature is cosmetic.
+    const now = Date.now();
+    const channels = lastPublished.get(connection.id) ?? new Map<string, number>();
+    const last = channels.get(channelId);
+    if (last !== undefined && now - last < renewalIntervalMs) return;
+    // Deleted on read once elapsed, so the map holds what is being typed in
+    // rather than what has ever been typed in. Set below either way.
+    for (const [channel, at] of channels) {
+      if (now - at > renewalIntervalMs) channels.delete(channel);
+    }
+    channels.set(channelId, now);
+    lastPublished.set(connection.id, channels);
+
     await typing?.publish({
       environment: connection.identity.environmentId,
       channel: channelId,
