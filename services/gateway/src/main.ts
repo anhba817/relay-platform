@@ -90,6 +90,19 @@ export function createServer(logger?: Logger) {
     limits,
     presence,
     membership,
+    // CHAPTER 3.21, AND THIS LINE HAD NO OWNER UNTIL THE SEALED CLIENT ASKED FOR
+    // IT. Phase 3's task deferred the destructuring in `session.ts` to keep that
+    // phase committable — `no-unused-vars` rejects a binding whose first consumer
+    // is a later phase — and recorded the wiring as a later task's job. No later
+    // task had it.
+    //
+    // Everything looked correct: the module is built above, its `close()` is
+    // awaited in `shutdown()` so lint saw a used variable, the seam accepts
+    // `typing.send`, and `/healthz` advertises eleven frames. `signalTyping` then
+    // called `typing?.publish(...)` on `undefined` and the optional chain made it
+    // a silent no-op. **The feature was inert in the product and green in every
+    // test**, because every test injects this option directly.
+    typing,
     // Overridable so `meter.itest.ts` can drive a spawned gateway without
     // waiting a real minute per assertion. The two tests there are the ones an
     // in-process gateway cannot run — a signal has to arrive at a process — and
