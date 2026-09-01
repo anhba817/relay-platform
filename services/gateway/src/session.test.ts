@@ -11,7 +11,7 @@ import type { InternalSendResponse, Message } from "@relay/protocol";
 
 import type { ApiClient } from "./api-client.js";
 import type { Fanout } from "./fanout.js";
-import { attachSessions } from "./session.js";
+import { attachSessions, INBOUND_FRAME_TYPES } from "./session.js";
 import { docsUrl } from "@relay/protocol";
 
 // The door, the frames, and the liveness clock — all provable without a
@@ -688,5 +688,28 @@ describe("the socket (chapter 2.5)", () => {
     // resume work, and a channel the caller is not in is not a question.
     expect(seen).toEqual({ [CHANNEL]: 41 });
     socket.close();
+  });
+});
+
+describe("INBOUND_FRAME_TYPES", () => {
+  it("has exactly two members", () => {
+    expect(INBOUND_FRAME_TYPES.size).toBe(2);
+  });
+
+  it("is exactly message.send and typing.send", () => {
+    expect([...INBOUND_FRAME_TYPES].sort()).toEqual([
+      "message.send",
+      "typing.send",
+    ]);
+  });
+
+  it("holds no server-to-client type, checked against the ones that matter", () => {
+    // Not a restatement of the test above. That one pins the set; this one says WHY
+    // the pin matters, in the vocabulary of the frames a forger would reach for
+    // first — an ack a client could fake, and the outbound `typing` a client could
+    // use to type as somebody else.
+    for (const forgeable of ["message.ack", "message.created", "typing"]) {
+      expect(INBOUND_FRAME_TYPES.has(forgeable as never)).toBe(false);
+    }
   });
 });
