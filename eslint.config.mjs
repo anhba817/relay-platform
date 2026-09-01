@@ -263,6 +263,23 @@ export default tseslint.config(
       // the id is composed from the authenticated connection's own identity on the
       // way in. There is no path here that takes an environment id from a payload.
       "services/gateway/src/membership.ts",
+      // Chapter 3.21, AND IT IS THE FAN-OUT'S CASE — the cleanest of the four, and
+      // the only one of them that both publishes and subscribes. This client calls
+      // PUBLISH and SUBSCRIBE and nothing else, onto `typing:{channel_id}` — a
+      // channel UUID, not an environment-scoped key — and a subject is not readable
+      // at all, only listened to by whoever is already subscribed.
+      //
+      // No environment id appears in the subject, so this entry does not even need
+      // the argument the two above had to make. The environment travels INSIDE the
+      // payload, where a receiving gateway checks it against the connection it is
+      // about to act on; it is never composed into a key, because this module
+      // composes no keys.
+      //
+      // THE `.itest.ts` FILE IS NOT LISTED HERE. Chapter 3.20 put an `.itest.ts`
+      // entry in this block's `ignores` and the later `**/*.itest.ts` block
+      // silently overrode it. The typing suite's exemption lives in
+      // `DRIVER_EXEMPT_TESTS` instead, which is the list that governs test files.
+      "services/gateway/src/typing.ts",
       // The test harness IS data access — its whole job is to plant rows the
       // repository layer must never plant and to hold a connection carrying an
       // exemption no product code may carry (feature 030). Restricting it from

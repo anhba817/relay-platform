@@ -7,6 +7,7 @@ import { createGatewayLimits } from "./limits.js";
 import { createMembership } from "./membership.js";
 import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
+import { createTyping } from "./typing.js";
 
 // The gateway — SAD §4.1: terminates WebSockets and never writes to the
 // database (ADR-05). Chapter 1.4 stood up the HTTP half (health, request
@@ -56,6 +57,12 @@ export function createServer(logger?: Logger) {
   // `attachSessions` so the tests that call that function directly stay Redis-free,
   // and so its close has an owner.
   const membership = createMembership({ logger: log });
+  // Chapter 3.21: the SEVENTH and EIGHTH Redis clients. Chapter 3.20 closed at
+  // six, and this module needs two of its own — a publisher and a subscriber —
+  // because it is the first fabric this service both publishes to and consumes
+  // from. `fanout.ts:33` states why they cannot be one client: a subscribed
+  // connection cannot issue ordinary commands, and PUBLISH is one.
+  const typing = createTyping({ logger: log });
   // Chapter 3.11. THE FIRST SECRET THIS SERVICE HAS EVER HELD, and it is not a
   // signing secret: chapter 3.2's claim that "the gateway holds no signing
   // secret" is untouched, because this one verifies nothing and signs nothing.
@@ -107,6 +114,7 @@ export function createServer(logger?: Logger) {
     await limits.close();
     await presence.close();
     await membership.close();
+    await typing.close();
   }
   return Object.assign(server, { shutdown });
 }

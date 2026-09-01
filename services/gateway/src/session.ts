@@ -25,6 +25,7 @@ import { createMeter, METER_INTERVAL_MS, type Meter } from "./meter.js";
 import { type Membership } from "./membership.js";
 import { type Presence } from "./presence.js";
 import { Registry, type Connection } from "./registry.js";
+import { type Typing } from "./typing.js";
 import {
   MAX_BUFFERED_FRAMES,
   SUBSCRIBE_DEADLINE_MS,
@@ -158,6 +159,15 @@ export interface SessionServerOptions {
    * which is the state FR-RTM-10 has been unmet in since 2.6. A gateway built
    * without this is not broken — it is the gateway this chapter starts from. */
   membership?: Membership;
+  /** Chapter 3.21. Optional for the same reasons as the four above, and its own:
+   * without it a client's typing signal is refused at the seam rather than
+   * published, which is the gateway phase 2 left behind.
+   *
+   * **THE DESTRUCTURING IS NOT HERE**, and that is deliberate rather than an
+   * omission. `no-unused-vars` rejects a binding whose first consumer is a later
+   * phase, which makes the phase uncommittable — chapter 3.20 paid for that exact
+   * task once. Phase 5 destructures it in the same commit that calls it. */
+  typing?: Typing;
 }
 
 // THE FOUR PRESENCE TIMINGS ARE NOT HERE, and an earlier draft of this chapter put
