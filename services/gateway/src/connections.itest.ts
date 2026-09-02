@@ -65,7 +65,6 @@ async function boot(options: {
     sendMessage: async () => {
       throw new Error("not used");
     },
-    reportUsage: async () => null,
   };
   const sessions = attachSessions({
     server,

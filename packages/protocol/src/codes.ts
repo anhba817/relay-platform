@@ -19,6 +19,27 @@ export const CLOSE_CODES = {
   // protocol violation — and a ban is none of them. Numbered here, the way chapter 1.3
   // numbered 4002 and 4008.
   4003: "banned in this environment",
+  // FR-RTM-09. A SIXTH CODE, AND EVERY REUSE FAILS THIS FILE'S OWN TEST.
+  //
+  // The remedy for this refusal is unlike every other one here: close one of the
+  // connections you already hold, and reconnect immediately. No waiting, no new
+  // credential, no client fix. That is why none of the five above can carry it —
+  // "a client that cannot tell them apart retries the wrong one for ever":
+  //
+  //   4001  would send a client to re-authenticate. The token is valid; minting a
+  //         new one succeeds and connecting fails again, which is the channel-control chapter's
+  //         infinite loop against a wall.
+  //   4002  would blame a client that did nothing wrong.
+  //   4003  would tell a person they are barred while four of their connections
+  //         are working.
+  //   4008  would tell a client to wait for a quota window. Waiting never helps,
+  //         and the slot it needs may free a second later.
+  //
+  // EIR-WS-06 names four classes to distinguish — authentication, quota, shutdown,
+  // protocol violation — and a concurrency cap is none of them, exactly as a ban
+  // was none of them. Numbered here, in the space chapter 1.3 and the
+  // channel-control chapter drew from.
+  4004: "connection limit reached",
   4008: "quota exhausted",
   4009: "server shutdown (drain)",
 } as const;
@@ -127,6 +148,21 @@ export const ERROR_CODES = {
   // the wrong one waits for ever.
   channel_member_limit_exceeded:
     "this channel already holds the maximum number of members; remove one before adding another",
+    // FR-RTM-09, and the socket's half of the connection cap: an error frame carrying
+    // the limit and the count, sent immediately before close 4004.
+    //
+    // THE FIGURES GO IN THE MESSAGE, not in payload fields. `errorFrameSchema` is a
+    // `z.strictObject` of `code`, `message`, `docs_url` and an optional `field`, so two
+    // new fields would mean widening a shape every error frame shares for one code's
+    // benefit — and the reference's Status line is where the close code is recorded.
+    //
+    // NOT `rate_limited`, which is one word away in the register and means the opposite
+    // thing. That code throttles a tenant's establishments per window and its own
+    // message reads "too many connections; retry after the window resets". Retrying is
+    // exactly what this code must not suggest: five connections are already open and
+    // the remedy is to close one, which no amount of waiting does.
+    connection_limit_reached:
+      "the user already holds the maximum concurrent connections; the message names the limit and the count, and the remedy is to close one and reconnect",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

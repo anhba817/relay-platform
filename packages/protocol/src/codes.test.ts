@@ -15,9 +15,9 @@ describe("close codes cover EIR-WS-06's four classes", () => {
   // THIS ASSERTION IS WHY THE NUMBER IS DELIBERATE. It failed on the build that added
   // 4003 — an exact-set assertion is the only kind that makes a new close code a decision
   // rather than an accident, and updating it is the act of making that decision.
-  it("contains exactly 4001, 4002, 4003, 4008, 4009", () => {
+  it("contains exactly 4001, 4002, 4003, 4004, 4008, 4009", () => {
     expect(Object.keys(CLOSE_CODES).map(Number).sort()).toEqual([
-      4001, 4002, 4003, 4008, 4009,
+      4001, 4002, 4003, 4004, 4008, 4009,
     ]);
   });
 
@@ -132,5 +132,31 @@ describe("the docs URL is built in one place, with the code as the anchor", () =
   it("gives every code a distinct URL", () => {
     const urls = (Object.keys(ERROR_CODES) as ErrorCode[]).map(docsUrl);
     expect(new Set(urls).size).toBe(urls.length);
+  });
+});
+
+describe("the refusal this chapter's cap adds", () => {
+  // NAMED, NOT COUNTED, for the reason the channel block above gives.
+  //
+  // What matters about this one is that it is **not** `rate_limited`. The two sit one
+  // word apart in the register and mean opposite things: `rate_limited` throttles
+  // frames and says "slow down and retry", which is exactly what a client at the
+  // connection cap must not do — five sockets are already open and no amount of
+  // waiting closes one. The remedy is a client action, not a delay.
+  it("registers connection_limit_reached with a description a client can act on", () => {
+    expect(ERROR_CODES).toHaveProperty("connection_limit_reached");
+    expect(ERROR_CODES.connection_limit_reached).not.toBe("");
+  });
+
+  it("keeps it distinct from rate_limited, which is what it exists instead of", () => {
+    expect(ERROR_CODES.connection_limit_reached).not.toBe(ERROR_CODES.rate_limited);
+  });
+
+  it("names a remedy the client can perform rather than a delay to wait out", () => {
+    // THE ONE ASSERTION ABOUT THE WORDS, and it is the whole reason for a separate
+    // code. A message telling a capped client to retry sends it into a loop against a
+    // wall, which is the failure `codes.ts` has now argued against five times.
+    expect(ERROR_CODES.connection_limit_reached).toContain("close one");
+    expect(ERROR_CODES.rate_limited).toContain("retry");
   });
 });
