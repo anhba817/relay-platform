@@ -15,9 +15,9 @@ describe("close codes cover EIR-WS-06's four classes", () => {
   // THIS ASSERTION IS WHY THE NUMBER IS DELIBERATE. It failed on the build that added
   // 4003 — an exact-set assertion is the only kind that makes a new close code a decision
   // rather than an accident, and updating it is the act of making that decision.
-  it("contains exactly 4001, 4002, 4003, 4008, 4009", () => {
+  it("contains exactly 4001, 4002, 4003, 4004, 4008, 4009", () => {
     expect(Object.keys(CLOSE_CODES).map(Number).sort()).toEqual([
-      4001, 4002, 4003, 4008, 4009,
+      4001, 4002, 4003, 4004, 4008, 4009,
     ]);
   });
 
@@ -59,7 +59,7 @@ describe("error codes stay unique and described", () => {
 // that is not in this object cannot be constructed anywhere in the platform without
 // failing the build. This suite checks the shape of the object those types rest on.
 describe("the registry is the whole vocabulary (FR-024)", () => {
-  it("holds seventeen codes", () => {
+  it("holds eighteen codes", () => {
     // A number, so adding one is a visible edit rather than a silent widening. The
     // count is here and not in a comment because a comment does not fail.
     //
@@ -71,7 +71,7 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
     // failed on the build that added it** — "expected 16 but got 17", which is the
     // third time this line has turned a new code into a decision instead of an
     // accident. Chapter 3.11's close-code set did the same for 4003.
-    expect(Object.keys(ERROR_CODES)).toHaveLength(17);
+    expect(Object.keys(ERROR_CODES)).toHaveLength(18);
   });
 
   it("contains the five the status ladder emits", () => {
