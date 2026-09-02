@@ -438,6 +438,48 @@ describe("the cap at the door (chapter 3.11, US3)", () => {
     api?.stop();
   });
 
+  // CHAPTER 3.22, T011. RED ON PURPOSE, and the phase commit says so.
+  //
+  // FR-RTM-09 permits five concurrent connections per user and nothing counts
+  // them, so all six of these are accepted today. This test asserts the sixth is
+  // refused, which is the behaviour the chapter builds — so it fails now and
+  // passes when Phase 5 lands. A red lane nobody explained is indistinguishable
+  // from a red lane nobody noticed, and CI cannot tell them apart.
+  //
+  // IT LIVES IN THIS DESCRIBE FOR A REASON, and the reason was found in Phase 1.
+  // Every gateway module is an optional parameter (`session.ts:192` onward) and
+  // this block calls `attachSessions` with none, so the cap will not be enforced
+  // here until Phase 5 passes the module in — which it must, or this test can
+  // never go green. The block is named "the cap at the door" and already holds
+  // the other two door refusals: chapter 3.8's rate limit and chapter 3.11's
+  // quota. The connection cap is the third and belongs beside them.
+  //
+  // `expect.fail` is deliberate over `it.fails`: the assertion below states the
+  // requirement, and a reader of a red run should see the count that was allowed
+  // rather than "this test was expected to throw".
+  it("refuses a sixth connection for one user (FR-RTM-09 (3.22))", async () => {
+    const token = await mintToken();
+    const accepted: number[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const frame = (await firstFrame(connect(token), "connection.ack")) as {
+        payload: { user: string };
+      };
+      expect(frame.payload.user).toBe("tuan");
+      accepted.push(i);
+    }
+    expect(accepted).toHaveLength(5);
+
+    // The sixth. Today it acks like the rest; after Phase 5 it closes with the
+    // cap's own code, which is NOT 4001, 4002, 4003, 4008 or 4009 — every reuse
+    // fails `codes.ts`'s standing test, "a client that cannot tell them apart
+    // retries the wrong one for ever".
+    const sixth = connect(token);
+    const code = await closeCode(sixth);
+    expect(code).not.toBe(4001);
+    expect(code).toBeGreaterThanOrEqual(4000);
+    expect(code).toBeLessThan(5000);
+  }, 30_000);
+
   it("closes 4008 with an error frame naming the resume date", async () => {
     // THE CLIENT'S HALF. The api answers 402; what reaches the browser is the
     // socket's own vocabulary — a code the protocol has declared since chapter
