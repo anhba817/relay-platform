@@ -5,6 +5,7 @@ import { createApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
 import { createMembership } from "./membership.js";
 import { createPresence } from "./presence.js";
+import { createConnections } from "./connections.js";
 import { createTyping } from "./typing.js";
 import { attachSessions } from "./session.js";
 
@@ -54,6 +55,11 @@ export function createServer(logger?: Logger) {
   // publishes to and consumes from. `fanout.ts` states why they cannot be one client:
   // a subscribed connection cannot issue ordinary commands, and PUBLISH is one.
   const typing = createTyping({ logger: log });
+  // The connection registry's own client. Its keys put the environment id FIRST —
+  // `conn:{env}:{user}:{slot}` — so a cross-tenant read would need a caller to hand
+  // this module another environment's id, which the session layer takes from the
+  // api's verified identity and never from a payload.
+  const connections = createConnections({ logger: log });
   const sessions = attachSessions({
     server,
     api: createApiClient(process.env.RELAY_API_URL ?? DEFAULT_API_URL),
@@ -62,13 +68,24 @@ export function createServer(logger?: Logger) {
     presence,
     membership,
     typing,
+    // AND THIS LINE IS WHAT `main.test.ts` GUARDS. Without it the cap does nothing:
+    // `connections?.claim(...)` is an optional chain on `undefined`, so every socket
+    // is admitted and no number moves — `**/main.ts` is excluded from the coverage
+    // ratchet, so no figure could show it. Registering `close()` below is the other
+    // half and neither substitutes for the other: without this line the cap is inert,
+    // without that one every gateway leaks a Redis client.
+    connections,
   });
   server.on("close", () => {
-    sessions.close();
+    // `void`, LIKE ITS SIBLINGS. `sessions.close()` returns a promise as of the
+    // connection cap — it frees the places this instance holds before closing the
+    // socket server — and `server.on("close")` has nowhere to await one.
+    void sessions.close();
     void fanout.close();
     void presence.close();
     void membership.close();
     void typing.close();
+    void connections.close();
   });
   return server;
 }

@@ -15,6 +15,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createApiClient } from "./api-client.js";
 import { createFanout, type Fanout } from "./fanout.js";
 import { createMembership, type Membership } from "./membership.js";
+import { createConnections, type Connections } from "./connections.js";
 import { attachSessions } from "./session.js";
 
 // The socket's credential cases, against a REAL api.
@@ -367,91 +368,6 @@ describe("the socket's credentials", () => {
     api?.stop();
     server?.close();
   });
-});
-
-describe("the cap at the door", () => {
-  let api: ApiUnderTest;
-  let server: Server;
-  let url: string;
-  const sockets: WebSocket[] = [];
-
-  const mintToken = async (user = "tuan") => {
-    const res = await fetch(`${api.url}/auth/dev-token`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${api.credential}`,
-      },
-      body: JSON.stringify({ user, ttl_seconds: 3600 }),
-    });
-    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
-    return ((await res.json()) as { token: string }).token;
-  };
-
-  const connect = (token: string) => {
-    const socket = new WebSocket(`${url}/v1/ws?token=${token}`);
-    sockets.push(socket);
-    return socket;
-  };
-
-  beforeAll(async () => {
-    api = await startApi();
-    server = serve({
-      service: "gateway",
-      health: () => ({}),
-      logger: silent,
-      notFoundDocsUrl: docsUrl("not_found"),
-    });
-    attachSessions({ server, api: createApiClient(api.url), logger: silent });
-    await new Promise<void>((resolve) => server.listen(0, resolve));
-    url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  }, 90_000);
-
-  afterAll(async () => {
-    for (const socket of sockets.splice(0)) socket.close();
-    api?.stop();
-    server?.close();
-  });
-
-  // T011. RED ON PURPOSE, and the phase commit says so.
-  //
-  // FR-RTM-09 permits five concurrent connections per user and nothing counts them,
-  // so all six of these are accepted today. This test asserts the sixth is refused,
-  // which is the behaviour the chapter builds — so it fails now and passes when the
-  // cap lands. A red lane nobody explained is indistinguishable from a red lane
-  // nobody noticed, and CI cannot tell them apart.
-  //
-  // IT NEEDS ITS OWN DESCRIBE HERE, and the published order gave a reason it does
-  // not have. There, this test joined a block that already held two door refusals —
-  // a rate limit and a quota — and the block was named for them. Both of those
-  // arrive later in this order, so **the connection cap is the first refusal at the
-  // door rather than the third**, and the block is named for what it holds.
-  //
-  // The fixture calls `attachSessions` with none of the optional modules, which is
-  // load-bearing rather than incidental: the cap will not be enforced here until a
-  // later phase passes the module in, which it must, or this test can never go green.
-  it("refuses a sixth connection for one user (FR-RTM-09)", async () => {
-    const token = await mintToken();
-    const accepted: number[] = [];
-    for (let i = 0; i < 5; i += 1) {
-      const frame = (await firstFrame(connect(token), "connection.ack")) as {
-        payload: { user: string };
-      };
-      expect(frame.payload.user).toBe("tuan");
-      accepted.push(i);
-    }
-    expect(accepted).toHaveLength(5);
-
-    // The sixth. Today it acks like the rest; once the cap lands it closes with the
-    // cap's own code, which is NOT 4001, 4002, 4003, 4008 or 4009 — every reuse
-    // fails `codes.ts`'s standing test, "a client that cannot tell them apart
-    // retries the wrong one for ever".
-    const sixth = connect(token);
-    const code = await closeCode(sixth);
-    expect(code).not.toBe(4001);
-    expect(code).toBeGreaterThanOrEqual(4000);
-    expect(code).toBeLessThan(5000);
-  }, 30_000);
 });
 
 describe("the socket's delivery, with a fan-out attached", () => {
@@ -946,4 +862,119 @@ describe("the socket's delivery, with a fan-out attached", () => {
     expect(error.payload).toMatchObject({ code: "invalid_frame" });
     expect(socket.readyState).toBe(WebSocket.OPEN);
   });
+});
+
+
+describe("the connection cap at the door (US1)", () => {
+  // ITS OWN FIXTURE, AND THE PUBLISHED ORDER PAID FOR THAT LESSON. There, this
+  // module was wired into an existing "cap at the door" describe whose quota tests
+  // all shared the user "tuan" — so the cap bit them and two went red:
+  //
+  //   × opens normally the moment the cap is raised
+  //   × leaves a socket opened before the breach open and receiving
+  //
+  // **Wiring a new module into an existing describe changes the behaviour of every
+  // test in it.** The same class as the leak inside `connections.itest.ts`, where
+  // tests sharing a user shared five places — fixed there with a fresh user per
+  // test, and fixed here by not joining anybody else's fixture at all. In this
+  // order there is nothing to join: the connection cap is the first refusal at the
+  // door, so the block holds only what it is named for.
+  let api: ApiUnderTest;
+  let server: Server;
+  let url: string;
+  let connections: Connections;
+  let stopSessions: () => Promise<void>;
+  const sockets: WebSocket[] = [];
+
+  const mintToken = async (user: string) => {
+    const res = await fetch(`${api.url}/auth/dev-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user, ttl_seconds: 3600 }),
+    });
+    if (!res.ok) throw new Error(`dev-token: ${res.status}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+
+  const connect = (token: string) => {
+    const socket = new WebSocket(`${url}/v1/ws?token=${token}`);
+    sockets.push(socket);
+    return socket;
+  };
+
+  beforeAll(async () => {
+    api = await startApi();
+    connections = createConnections({ logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
+    const sessions = attachSessions({
+      server,
+      api: createApiClient(api.url),
+      logger: silent,
+      connections,
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    stopSessions = sessions.close;
+  }, 60_000);
+
+  afterAll(async () => {
+    for (const socket of sockets) socket.close();
+    await stopSessions?.();
+    await connections?.close();
+    server?.close();
+    api?.stop();
+  });
+
+  // T011. RED ON PURPOSE, and the phase commit says so.
+  //
+  // FR-RTM-09 permits five concurrent connections per user and nothing counts
+  // them, so all six of these are accepted today. This test asserts the sixth is
+  // refused, which is the behaviour the chapter builds — so it fails now and
+  // passes when Phase 5 lands. A red lane nobody explained is indistinguishable
+  // from a red lane nobody noticed, and CI cannot tell them apart.
+  //
+  // IT LIVES IN THIS DESCRIBE FOR A REASON, and the reason was found in Phase 1.
+  // Every gateway module is an optional parameter (`session.ts:192` onward) and
+  // this block calls `attachSessions` with none, so the cap will not be enforced
+  // here until Phase 5 passes the module in — which it must, or this test can
+  // never go green. The block is named "the cap at the door" and already holds
+  // the other two door refusals: the rate-limit chapter's rate limit and the connection-metering chapter's
+  // quota. The connection cap is the third and belongs beside them.
+  //
+  // `expect.fail` is deliberate over `it.fails`: the assertion below states the
+  // requirement, and a reader of a red run should see the count that was allowed
+  // rather than "this test was expected to throw".
+  it("refuses a sixth connection for one user (FR-RTM-09)", async () => {
+    // A user this test alone uses. The api's seed created "tuan"; a dev token for
+    // any name works, and a name of its own is what keeps five places to itself.
+    const token = await mintToken("tuan");
+    const accepted: number[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const frame = (await firstFrame(connect(token), "connection.ack")) as {
+        payload: { user: string };
+      };
+      expect(frame.payload.user).toBe("tuan");
+      accepted.push(i);
+    }
+    expect(accepted).toHaveLength(5);
+
+    // The sixth. Today it acks like the rest; after Phase 5 it closes with the
+    // cap's own code, which is NOT 4001, 4002, 4003, 4008 or 4009 — every reuse
+    // fails `codes.ts`'s standing test, "a client that cannot tell them apart
+    // retries the wrong one for ever".
+    const sixth = connect(token);
+    const code = await closeCode(sixth);
+    expect(code).not.toBe(4001);
+    expect(code).toBeGreaterThanOrEqual(4000);
+    expect(code).toBeLessThan(5000);
+  }, 30_000);
+
 });

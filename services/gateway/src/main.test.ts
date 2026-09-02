@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 
 import { CLOSE_CODES, frameSchema } from "@relay/protocol";
+
 import { describe, expect, it } from "vitest";
 
 import { createLogger } from "@relay/service-kit";
@@ -63,6 +65,57 @@ describe("gateway skeleton", () => {
       expect(typeof body.docs_url).toBe("string");
     } finally {
       server.close();
+    }
+  });
+
+  // T042b. THE SHUTDOWN SET, NAMED EXPLICITLY AND FAILING ON AN
+  // UNKNOWN MEMBER.
+  //
+  // Nothing verified the registration before analysis pass 6. `shutdown()` awaits
+  // each module's `close()`, `main.test.ts` called `server.close()` and asserted
+  // nothing about which modules closed, so a missing registration leaks one Redis
+  // client per gateway — silently and for ever.
+  //
+  // THIS IS THE TYPING CHAPTER'S DEFECT INVERTED. There, awaiting `close()` made lint
+  // see a used variable and hid a module that was never passed to
+  // `attachSessions`. Here, NOT awaiting it is what nothing could see. The two
+  // halves need two checks, and this is the second one's.
+  //
+  // Read from the source rather than executed: a shutdown that actually closes
+  // seven Redis clients is not something a unit test can observe without seven
+  // servers. What it CAN observe is that every module the file builds is also
+  // closed, which is the property that breaks when somebody adds an eighth.
+  // THE OTHER HALF OF THE PAIR BELOW, and neither substitutes for the other: a
+  // module that is built and never injected is inert, and one that is built and
+  // never closed leaks a Redis client per gateway. Same derivation, two properties.
+  it("closes every module it builds", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(join(here, "main.ts"), "utf8");
+    const built = [...source.matchAll(/^ {2}const (\w+) = create(\w+)\(/gm)].map(
+      (m) => m[1],
+    );
+    // TWO NAMED EXCEPTIONS, and named rather than pattern-excluded. `createLogger`
+    // returns a writer with nothing to release and `createServer` is this file's
+    // own export, not a module it owns. **The first version of this test had
+    // neither and went red on the logger** — which is the check working: an unknown
+    // member fails instead of being quietly skipped, and adding one to this list is
+    // a decision somebody has to write down.
+    const NOT_CLOSEABLE = ["logger", "server"];
+    const closeable = built.filter((name) => !NOT_CLOSEABLE.includes(name ?? ""));
+    // A POSITIVE CONTROL RATHER THAN A COUNT. The published version of this test
+    // asserted `toHaveLength(6)`, which is a number every later chapter that adds a
+    // module has to edit — and a number edited on every change is a number nobody
+    // reads. The loop below is the assertion; this line only says the derivation
+    // found something to loop over.
+    expect(closeable.length, "no `const x = createY(` found in main.ts").toBeGreaterThan(1);
+    // DERIVED, NOT NAMED. The closing site is wherever this file registers one —
+    // `server.on("close", …)` here — and reading the whole source rather than a
+    // named function means a refactor that moves the calls cannot silently pass.
+    for (const name of closeable) {
+      expect(
+        new RegExp(`(void |await )${String(name)}\\.close\\(\\)`).test(source),
+        `${String(name)} is built but never closed`,
+      ).toBe(true);
     }
   });
 });
