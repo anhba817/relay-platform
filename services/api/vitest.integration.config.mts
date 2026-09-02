@@ -34,17 +34,40 @@ export default defineConfig({
       RELAY_EVENT_CONSUMER: "off",
     },
     include: ["src/**/*.itest.ts"],
-    // ONE FILE AT A TIME, BECAUSE THEY SHARE ONE DATABASE.
+    // FILES IN PARALLEL AGAIN, AND EIGHT PLACES ARE WHY IT COULD NOT BE.
     //
-    // Every suite here runs migrations before it starts. Vitest runs FILES in parallel
-    // by default, so several of them issue `CREATE TYPE` against the same schema at the
-    // same moment and Postgres answers `duplicate key value violates unique constraint
-    // "pg_type_typname_nsp_index"` — an error about its own catalogue, which reads like
-    // a driver fault and is not one.
+    // This lane ran one file at a time from the outbox chapter, for a real reason: a
+    // PENDING migration lets two suites issue `CREATE TYPE` against one schema, and
+    // Postgres answers `duplicate key value violates unique constraint
+    // "pg_type_typname_nsp_index"` — an error about its own catalogue that reads like a
+    // driver fault. That window closed in the instruments chapter, when `globalSetup`
+    // began migrating once before any file starts; the setting outlived it by eight
+    // chapters. The probe is a fresh database with every file racing, and it passes.
     //
-    // It only bites when a migration is PENDING. With the schema already applied every
-    // suite finds nothing to do and the race has no window, which is why serialising the
-    // turbo tasks was enough until this chapter added a table.
-    fileParallelism: false,
+    // What actually kept the files apart was EIGHT places scoped wider than their own
+    // subject, spread across eight chapters. The connection-cap chapter has them in a
+    // table with what each one really read. Three were known and carried in; five came
+    // from running the lane without the setting and reading what fell over, one at a
+    // time, over six runs. **Three of the five are not assertions at all.**
+    //
+    // AND THE WORKER COUNT IS MEASURED, NOT INHERITED. Vitest defaults to roughly one
+    // worker per core, which here is nine NestJS applications against one Postgres:
+    //
+    //   maxWorkers    1      2      3      5    default(9)
+    //   api lane    177s   102s   102s   102s     102s
+    //   peak used  4188M  4275M  4467M  4817M    5456M
+    //
+    // **Every second of the saving is in one-to-two.** This lane waits on a shared
+    // database and broker far more than it computes, so a second file fills the first
+    // one's gaps and a third has no gap left to fill — it just pays for another runtime.
+    // The gateway's curve has its knee at FOUR, not two (69s, 46s, 35s, 35s), because its
+    // suites each drive a child process of their own; **the right number is per-lane and
+    // measured, and a default is neither.** Above the knee it stops being free: the
+    // gateway at six workers is no faster than at four and its typing suite starts
+    // missing a presence frame.
+    maxWorkers: 2,
+    //
+    // Each of the eight is fixed where it lives. The migration race is left to the one
+    // run it can happen on.
   },
 });
