@@ -7,6 +7,7 @@ import { createGatewayLimits } from "./limits.js";
 import { createMembership } from "./membership.js";
 import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
+import { createConnections } from "./connections.js";
 import { createTyping } from "./typing.js";
 
 // The gateway — SAD §4.1: terminates WebSockets and never writes to the
@@ -63,6 +64,7 @@ export function createServer(logger?: Logger) {
   // from. `fanout.ts:33` states why they cannot be one client: a subscribed
   // connection cannot issue ordinary commands, and PUBLISH is one.
   const typing = createTyping({ logger: log });
+  const connections = createConnections({ logger: log });
   // Chapter 3.11. THE FIRST SECRET THIS SERVICE HAS EVER HELD, and it is not a
   // signing secret: chapter 3.2's claim that "the gateway holds no signing
   // secret" is untouched, because this one verifies nothing and signs nothing.
@@ -103,6 +105,18 @@ export function createServer(logger?: Logger) {
     // a silent no-op. **The feature was inert in the product and green in every
     // test**, because every test injects this option directly.
     typing,
+    // CHAPTER 3.22, T042. **THIS LINE IS THE ONE CHAPTER 3.21 FORGOT.** That
+    // chapter built its module, awaited its `close()` in `shutdown()` — so lint
+    // saw a used variable — and never passed it here. The feature was inert in
+    // the product while 1,174 coverage tests and 174 gateway integration tests
+    // were green, and `**/main.ts` is excluded from the ratchet so no number
+    // could have shown it. `packages/outsider/src/integrate.itest.ts` is what
+    // found it, and it is the only instrument that boots the shipped binary.
+    //
+    // Registering `close()` below is the OTHER half and neither substitutes for
+    // the other: without this line the cap does nothing, without that one every
+    // gateway leaks a Redis client.
+    connections,
     // Overridable so `meter.itest.ts` can drive a spawned gateway without
     // waiting a real minute per assertion. The two tests there are the ones an
     // in-process gateway cannot run — a signal has to arrive at a process — and
@@ -128,6 +142,7 @@ export function createServer(logger?: Logger) {
     await presence.close();
     await membership.close();
     await typing.close();
+    await connections.close();
   }
   return Object.assign(server, { shutdown });
 }

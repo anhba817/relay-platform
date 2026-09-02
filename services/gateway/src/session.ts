@@ -20,6 +20,11 @@ import { WebSocketServer, type WebSocket } from "ws";
 
 import { ApiError, type ApiClient } from "./api-client.js";
 import { authenticate, type Identity } from "./auth.js";
+import {
+  DEFAULT_HEARTBEAT_MS,
+  MAX_CONNECTIONS_PER_USER,
+  type Connections,
+} from "./connections.js";
 import type { Fanout } from "./fanout.js";
 import type { Decision, GatewayLimits } from "./limits.js";
 import { createMeter, METER_INTERVAL_MS, type Meter } from "./meter.js";
@@ -235,6 +240,26 @@ export interface SessionServerOptions {
    * headroom in the whole budget. That chapter's itest builds with 40 to test a
    * sixty-second backstop; this one builds with 40 and with 0. */
   renewalIntervalMs?: number;
+  /** Chapter 3.22, FR-RTM-09's five-connection cap.
+   *
+   * **OPTIONAL, LIKE THE OTHER FIVE, AND THAT IS A DECISION RATHER THAN A
+   * DEFAULT.** For a typing indicator "optional" means no typing; for a cap it
+   * means NO CAP. Optional is also what let chapter 3.21's module go unpassed
+   * from `main.ts` and still compile, leaving the feature inert while 1,174
+   * coverage tests were green.
+   *
+   * Required would make that impossible — the compiler would catch a fixture
+   * that forgot — and it would break three fixtures, two of them fenced by
+   * earlier chapters, for a cap those fixtures do not test. The bet is that
+   * `main.ts`'s two edits and the sealed outsider test are enough, and it is
+   * named here so the next chapter to add a module can decide otherwise and pay
+   * the fixture edits once. */
+  connections?: Connections;
+  /** Injectable for the reason `meterIntervalMs` and `renewalIntervalMs` are: a
+   * test that waits out a real minute pays it in the package that paces the lane.
+   * Defaults to `DEFAULT_HEARTBEAT_MS`, and the tests assert the RATIO to the
+   * bound rather than either value. */
+  heartbeatMs?: number;
 }
 
 // THE FOUR PRESENCE TIMINGS ARE NOT HERE, and an earlier draft of this chapter put
@@ -262,12 +287,32 @@ export function attachSessions({
   membership,
   typing,
   renewalIntervalMs = DEFAULT_RENEWAL_INTERVAL_MS,
+  connections,
+  heartbeatMs = DEFAULT_HEARTBEAT_MS,
 }: SessionServerOptions): {
   registry: Registry;
   meter: Meter;
   close: () => Promise<void>;
 } {
   const registry = new Registry();
+  /** CHAPTER 3.22, FR-011a. What this instance holds, so a shutdown can free it
+   * all at once.
+   *
+   * A MAP IN THE CLOSURE RATHER THAN A FIELD ON `Connection`. Chapter 3.21 put
+   * one on the connection and corrected it to this; the shared type in
+   * `registry.ts` belongs to every chapter and this is one chapter's concern.
+   *
+   * WITHOUT THIS A DEPLOY HOLDS FIVE SLOTS FOR A FULL BOUND. `sessions.close()`
+   * calls `wss.close()`, which stops the server accepting connections and does
+   * NOT close established sockets — so whether each connection's own close
+   * handler runs is a race with process exit. NFR-REL-03 allows a deployment no
+   * more than one reconnection cycle, and a bound's worth of refusals after every
+   * deploy is more than one. Found by building `traceability.md` during planning:
+   * the release was implemented and untested. */
+  const heldPlaces = new Map<
+    string,
+    { environmentId: string; user: string; connectionId: string; slot: number }
+  >();
   // Chapter 3.11. A second timer beside the heartbeat, not a second job for it.
   const meter: Meter = createMeter({
     api,
@@ -676,7 +721,74 @@ export function attachSessions({
           return;
         }
       }
+      // CHAPTER 3.22, T037. THE CAP IS CHECKED HERE, after `authenticate` and
+      // after the establishment limiter, and both orderings are reasons rather
+      // than habits. After authenticate because the environment and the user are
+      // not known before it — the comment above says the same of the rate limit.
+      // After the limiter because a client hammering the door should meet the
+      // cheaper check first; the limiter is one INCR and this is a walk of up to
+      // five.
+      //
+      // CLAIMED BEFORE THE HANDSHAKE AND REFUSED INSIDE IT (T039). Only a
+      // connection that is going to be accepted claims a place, so a bad token
+      // — already known here — leaks nothing. But the REFUSAL completes the
+      // handshake in order to close it, which is the shape `:715` below
+      // established for the quota: a browser cannot read the body of a FAILED
+      // upgrade, so refusing at the seam gives it a bare connection failure with
+      // no code and no message.
+      let claimed: number | undefined;
+      let capFull = false;
+      let pendingId: string | undefined;
+      if (result.outcome === "ok" && connections !== undefined) {
+        const outcome = await connections.claim(
+          result.identity.environmentId,
+          result.identity.userExternalId,
+          // The id the connection will carry. Minted here rather than below so
+          // the claim and the connection agree on it, which FR-011 requires: a
+          // connection occupies exactly one place for its lifetime.
+          (pendingId = randomUUID()),
+        );
+        if (outcome.kind === "claimed") claimed = outcome.slot;
+        else if (outcome.kind === "full") capFull = true;
+        else {
+          // FR-016 and FR-016a. The connection is accepted with the cap
+          // UNENFORCED, and this line is the only externally visible evidence of
+          // that — from outside, an accepted connection looks identical whether
+          // the cap was checked and satisfied or not checked at all. Chapter
+          // 3.18's lesson: the assertion that carries the requirement is the log
+          // line.
+          logger.log("error", "connection.cap_unenforced", {
+            environment_id: result.identity.environmentId,
+            user: result.identity.userExternalId,
+          });
+        }
+      }
       wss.handleUpgrade(req, socket, head, (ws) => {
+        if (capFull) {
+          // T038. An error frame first, because a close reason is a short string
+          // and what a client needs is the limit and the count. Then close 4004,
+          // whose correct handling is the only one in the set that is not a retry
+          // of some kind: close one of the connections you already hold.
+          sendError(
+            ws,
+            "connection_limit_reached",
+            `already holding ${String(MAX_CONNECTIONS_PER_USER)} of ${String(
+              MAX_CONNECTIONS_PER_USER,
+            )} connections; close one and reconnect`,
+          );
+          ws.close(4004, CLOSE_CODES[4004]);
+          // FR-015. The user, the environment and the observed count — and NOT the
+          // credential presented, which is how a live secret reaches a support
+          // ticket (NFR-SEC-06).
+          logger.log("info", "connection.rejected", {
+            reason: "connection_limit_reached",
+            environment_id:
+              result.outcome === "ok" ? result.identity.environmentId : undefined,
+            user: result.outcome === "ok" ? result.identity.userExternalId : undefined,
+            held: MAX_CONNECTIONS_PER_USER,
+          });
+          return;
+        }
         if (result.outcome === "refused") {
           // 4001: "invalid or expired token" (EIR-WS-05). The close code is
           // the protocol package's, not a number invented here.
@@ -738,6 +850,8 @@ export function attachSessions({
           result.channelIds,
           req.url ?? "/",
           result.limits.send,
+          pendingId,
+          claimed,
         );
       });
     })();
@@ -749,12 +863,18 @@ export function attachSessions({
     channelIds: string[],
     url: string,
     sendLimit: number,
+    /** Chapter 3.22. The id the cap claimed a place with, so the connection and
+     * its slot agree — FR-011's "exactly one place for its lifetime". Absent when
+     * no `connections` module is wired, which is every fixture that does not opt
+     * in and the reason the cap is not enforced there. */
+    claimedId?: string,
+    claimedSlot?: number,
   ): Promise<void> {
     // Cursors are read BEFORE anything else, because their presence decides
     // whether this connection is born buffering or born live.
     const presented = parseCursors(url);
     const connection: Connection = {
-      id: randomUUID(),
+      id: claimedId ?? randomUUID(),
       identity,
       socket,
       // Chapter 3.2: memberships arrived with the identity, from the session
@@ -844,6 +964,88 @@ export function attachSessions({
       connection.missedPings = 0;
     });
     socket.on("message", (raw) => void handle(connection, raw.toString()));
+    // CHAPTER 3.22, T040 and T040a. ONE RENEWAL TIMER PER CONNECTION, and it is
+    // cleared on close below — an interval that outlives its connection refreshes
+    // a place nobody holds, which the `IFEQ` guard cannot fix on its own because
+    // the value would still be this connection's id.
+    //
+    // FR-011b's THREE BRANCHES, and the first is the common one. A brief Redis
+    // outage expires the slot while nothing else takes it, so the re-claim
+    // succeeds on a possibly different slot number and the connection carries on:
+    // closing here would cost a user their place for the registry's downtime. All
+    // five held by other connections means the cap is genuinely exceeded and this
+    // connection is the one that must go — the alternative is six open against a
+    // count of five. An unreachable registry is FR-016 again: keep it, log it.
+    //
+    // FR-005 IS NOT IN TENSION WITH THIS, and a reader who finds them adjacent
+    // needs the sentence. FR-005 governs a REFUSAL — opening a sixth must not cost
+    // the five. Here the connection has already lost its place to a competitor,
+    // and the choice is between closing it and running over the cap.
+    let slot = claimedSlot;
+    if (slot !== undefined) {
+      heldPlaces.set(connection.id, {
+        environmentId: identity.environmentId,
+        user: identity.userExternalId,
+        connectionId: connection.id,
+        slot,
+      });
+    }
+    const renewal =
+      connections === undefined || slot === undefined
+        ? undefined
+        : setInterval(() => {
+            void (async () => {
+              if (slot === undefined) return;
+              const outcome = await connections.renew(
+                identity.environmentId,
+                identity.userExternalId,
+                connection.id,
+                slot,
+              );
+              if (outcome.kind === "renewed") return;
+              if (outcome.kind === "reclaimed") {
+                slot = outcome.slot;
+                heldPlaces.set(connection.id, {
+                  environmentId: identity.environmentId,
+                  user: identity.userExternalId,
+                  connectionId: connection.id,
+                  slot: outcome.slot,
+                });
+                logger.log("info", "connection.reclaimed", {
+                  connection_id: connection.id,
+                  slot: outcome.slot,
+                });
+                return;
+              }
+              if (outcome.kind === "unenforced") {
+                logger.log("error", "connection.cap_unenforced", {
+                  environment_id: identity.environmentId,
+                  user: identity.userExternalId,
+                });
+                return;
+              }
+              // `full`: the place is gone and there is no other. Same code and
+              // message a refused sixth connection gets, because that is what it
+              // means.
+              slot = undefined;
+              sendError(
+                connection.socket,
+                "connection_limit_reached",
+                `already holding ${String(MAX_CONNECTIONS_PER_USER)} of ${String(
+                  MAX_CONNECTIONS_PER_USER,
+                )} connections; close one and reconnect`,
+              );
+              connection.socket.close(4004, CLOSE_CODES[4004]);
+              logger.log("info", "connection.rejected", {
+                reason: "connection_limit_reached",
+                environment_id: identity.environmentId,
+                user: identity.userExternalId,
+                held: MAX_CONNECTIONS_PER_USER,
+              });
+            })();
+          }, heartbeatMs);
+    if (renewal !== undefined) renewal.unref();
+
     socket.on("close", (code) => {
       // Chapter 3.11, and the ORDER MATTERS. The meter is told first, because
       // the line below removes this connection from the registry the meter walks
@@ -854,6 +1056,23 @@ export function attachSessions({
       // Handing over totals rather than reporting them. This handler is already
       // documented as the last place that should throw, and a mass disconnect
       // would turn one event into a burst of HTTP requests.
+      // CHAPTER 3.22, T041. The timer first, then the place. An interval that
+      // outlives its connection renews a slot nobody holds.
+      //
+      // NO 4009 DRAIN PATH IS ADDED HERE, and that is deliberate:
+      // `session.test.ts:965` says "4009 IS STILL EMITTED BY NOTHING" and `:982`
+      // asserts the gateway never sends it. The deploy case is `releaseAll` in
+      // this module's `close`, not a close code.
+      if (renewal !== undefined) clearInterval(renewal);
+      heldPlaces.delete(connection.id);
+      if (connections !== undefined && slot !== undefined) {
+        void connections.release(
+          identity.environmentId,
+          identity.userExternalId,
+          connection.id,
+          slot,
+        );
+      }
       meter?.closed(connection, new Date());
       registry.remove(connection.id);
       // Chapter 3.19, AND THIS HANDLER NOW CARRIES THREE ORDERING CONSTRAINTS, not
@@ -1352,6 +1571,15 @@ export function attachSessions({
       clearInterval(heartbeat);
       meter.stop();
       await meter.reportOnce(new Date());
+      // CHAPTER 3.22, FR-011a. Before `wss.close()`, because that call does not
+      // close established sockets — so their own close handlers may never run and
+      // this is the last chance to free their places. SC-013: after a deployment a
+      // user whose connections were on the replaced instance reconnects
+      // immediately rather than waiting out the bound.
+      if (connections !== undefined && heldPlaces.size > 0) {
+        await connections.releaseAll([...heldPlaces.values()]);
+        heldPlaces.clear();
+      }
       wss.close();
     },
   };

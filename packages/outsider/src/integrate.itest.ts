@@ -385,6 +385,62 @@ describe("integrating with Relay from the outside", () => {
    * `docs/08-error-reference.md` tells a customer *"send `message.send` … Do not
    * send events; receive them."* **Nothing had ever checked what happens when they
    * do.** This is that correction in bytes rather than in prose. */
+  it("holds five connections and is refused a sixth with 4004 (FR-RTM-09 (3.22))", async () => {
+    // CHAPTER 3.22, T048. **THE ONLY INSTRUMENT THAT BOOTS THE SHIPPED BINARY**,
+    // and the reason this task is a plan requirement rather than a polish item.
+    //
+    // Chapter 3.21 built a module, awaited its `close()` so lint saw a used
+    // variable, and never passed it to `attachSessions`. The feature was inert in
+    // the product while 1,174 coverage tests and 174 gateway integration tests
+    // were green — `**/main.ts` is excluded from the ratchet, so no number could
+    // have shown it — and this file is what found it. A chapter that adds an
+    // argument to `attachSessions` owes a test here.
+    //
+    // Nothing in this file is stubbed: the api and the gateway are the built
+    // artifacts, the token came from the real dev-token endpoint, and the socket
+    // is a browser `WebSocket`.
+    const sockets: WebSocket[] = [];
+    const openOne = async (): Promise<WebSocket> => {
+      const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
+      sockets.push(socket);
+      socket.addEventListener("error", () => undefined);
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve());
+        socket.addEventListener("close", (event) =>
+          reject(new Error(`closed ${(event as CloseEvent).code}`)),
+        );
+        setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
+      });
+      return socket;
+    };
+
+    try {
+      for (let i = 0; i < 5; i += 1) await openOne();
+
+      const sixth = new WebSocket(`${ws}/v1/ws?token=${token}`);
+      sockets.push(sixth);
+      const frames: { type: string; payload?: { code?: string } }[] = [];
+      sixth.addEventListener("message", (event) => {
+        frames.push(JSON.parse(String(event.data)) as { type: string });
+      });
+      sixth.addEventListener("error", () => undefined);
+      const code = await new Promise<number>((resolve, reject) => {
+        sixth.addEventListener("close", (event) =>
+          resolve((event as CloseEvent).code),
+        );
+        setTimeout(() => reject(new Error("the sixth was not closed within 10s")), 10_000);
+      });
+
+      // The code a client branches on, and the frame that carries the detail.
+      expect(code).toBe(4004);
+      expect(frames.find((f) => f.type === "error")?.payload?.code).toBe(
+        "connection_limit_reached",
+      );
+    } finally {
+      for (const socket of sockets) socket.close();
+    }
+  }, 60_000);
+
   it("is refused with unknown_frame_type for a frame only the server may send", async () => {
     const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
     const frames: { type: string; payload?: { code?: string } }[] = [];

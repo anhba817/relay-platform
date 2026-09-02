@@ -728,6 +728,17 @@ describe("presence: the grace period (FR-RTM-06)", () => {
   // T045, and FR-RTM-09's five is enforced NOWHERE — `policy.ts:13` mentions it in a
   // comment and nothing counts — so the reference count is unbounded and two is the
   // easy case. Five connections, closed one at a time: nothing until the last.
+  //
+  // CHAPTER 3.22 BUILT THE CAP AND THE SENTENCE ABOVE IS STILL TRUE HERE, which is a
+  // decision rather than an oversight. Every gateway module is an optional parameter
+  // and this fixture passes no `connections`, so nothing counts in THIS file after
+  // that chapter either. The cap lives where a fixture asks for it: the new
+  // `connections.itest.ts` and `session.itest.ts`'s "cap at the door" describe.
+  //
+  // The five below is therefore still free, and it is also now exactly the cap. A
+  // future edit adding a sixth connection to this test would be fine here and
+  // refused in either of those two files — worth knowing before somebody copies the
+  // pattern.
   it("publishes nothing until the fifth of five connections closes", async () => {
     const who = takeSubject();
     const watcher = await arrive("linh");

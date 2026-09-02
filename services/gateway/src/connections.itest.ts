@@ -5,11 +5,12 @@ import type { AddressInfo } from "node:net";
 import { docsUrl, subjectForChannelMembership } from "@relay/protocol";
 import { serve } from "@relay/service-kit";
 import { Redis } from "ioredis";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 
 import type { ApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
+import { createConnections, MAX_CONNECTIONS_PER_USER, type Connections } from "./connections.js";
 import { createMembership } from "./membership.js";
 import { attachSessions } from "./session.js";
 
@@ -43,9 +44,25 @@ interface Instance {
 async function boot(options: {
   user: string;
   channels: string[];
+  /** Chapter 3.22. Passed in so a test can share one registry across two
+   * instances, or leave it out and enforce nothing — which is what US3's tests
+   * do, deliberately. */
+  connections?: Connections;
+  /** FR-015's log line is the assertion that carries the requirement, so a test
+   * needs the lines. Chapter 3.18: a publisher that does nothing satisfies "the
+   * send returned 201". */
+  lines?: Record<string, unknown>[];
 }): Promise<Instance> {
   const fanout = createFanout({ url: REDIS, logger: silent });
   const membership = createMembership({ url: REDIS, logger: silent });
+  const logger =
+    options.lines === undefined
+      ? silent
+      : {
+          log: (_level: string, msg: string, fields?: Record<string, unknown>) => {
+            options.lines?.push({ msg, ...fields });
+          },
+        };
   const server: Server = serve({
     service: "gateway",
     health: () => ({}),
@@ -70,9 +87,12 @@ async function boot(options: {
   const sessions = attachSessions({
     server,
     api,
-    logger: silent,
+    logger,
     fanout,
     membership,
+    ...(options.connections === undefined
+      ? {}
+      : { connections: options.connections }),
   });
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
@@ -138,6 +158,16 @@ const count = (r: Recorded, type: string): number =>
 describe("every connection a person holds is a first-class recipient (US3)", () => {
   const open: Instance[] = [];
   const sockets: WebSocket[] = [];
+  const registries: Connections[] = [];
+
+  /** A FRESH USER PER TEST, and the first version of this file had one per FILE.
+   * Slot keys are `conn:{env}:{user}:{slot}`, so tests sharing a user share five
+   * places — and the cap tests fill all five. Two of them failed at 5 s with the
+   * previous test's slots still held, because a release is fire-and-forget from a
+   * close handler and the registry client had already been quit inside the test
+   * body. Per-test users make the leak impossible; closing registries in
+   * `afterEach` makes the release possible. */
+  let user: string;
 
   const connect = (instance: Instance): Recorded => {
     const socket = new WebSocket(`${instance.url}?token=any`);
@@ -145,17 +175,136 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
     return record(socket);
   };
 
+  beforeEach(() => {
+    user = `u-${randomUUID()}`;
+  });
+
   afterEach(async () => {
     // Sockets before servers. `afterEach` runs in reverse registration order and
     // a teardown that closed servers first cost chapter 3.20 seven tests and
     // eighty-three seconds, every failure naming a hook.
     for (const socket of sockets.splice(0)) socket.close();
+    // A beat for each close handler to run its release before the client goes.
+    await new Promise((resolve) => setTimeout(resolve, 150));
     for (const instance of open.splice(0)) await instance.close();
+    for (const registry of registries.splice(0)) await registry.close();
   });
+
+  it("accepts five and refuses the sixth with 4004 (FR-001 (3.22), FR-003, SC-002)", async () => {
+    const channel = randomUUID();
+    const registry = createConnections({ url: REDIS, logger: silent });
+    registries.push(registry);
+    const instance = await boot({
+      user,
+      channels: [channel],
+      connections: registry,
+    });
+    open.push(instance);
+
+    const five: Recorded[] = [];
+    for (let i = 0; i < MAX_CONNECTIONS_PER_USER; i += 1) {
+      const r = connect(instance);
+      await untilAcked(r);
+      five.push(r);
+    }
+    expect(five).toHaveLength(5);
+
+    // THE CLOSE CODE AND THE ERROR CODE, NOT THE FACT OF CLOSING. A socket that
+    // closes for the wrong reason is identical from outside, which is what
+    // `contracts/refusal.md` is about — every reuse of the five existing codes
+    // sends a client to the wrong remedy.
+    const sixth = connect(instance);
+    const code = await new Promise<number>((resolve) => {
+      sixth.socket.on("close", (c) => resolve(c));
+    });
+    expect(code).toBe(4004);
+    const error = sixth.frames.find((f) => f.type === "error");
+    expect(error?.payload["code"]).toBe("connection_limit_reached");
+    expect(String(error?.payload["message"])).toContain("close one and reconnect");
+
+    // FR-005 and SC-012: the five are undisturbed. A message published now
+    // reaches all of them — the refusal cost them nothing.
+    const fanout = createFanout({ url: REDIS, logger: silent });
+    await fanout.publish({
+      id: randomUUID(),
+      channel,
+      seq: 3,
+      user,
+      text: `after the refusal ${randomUUID()}`,
+      created_at: new Date(0).toISOString(),
+    });
+    for (const [i, r] of five.entries()) {
+      await untilCount(r, "message.created", 1);
+      expect(count(r, "message.created"), `on ${String(i)}`).toBe(1);
+    }
+    await fanout.close();
+  }, 40_000);
+
+  it("frees a slot on close, reusable with NO waiting period (FR-010 (3.22), SC-003)", async () => {
+    const channel = randomUUID();
+    const registry = createConnections({ url: REDIS, logger: silent });
+    registries.push(registry);
+    const instance = await boot({
+      user,
+      channels: [channel],
+      connections: registry,
+    });
+    open.push(instance);
+
+    const five: Recorded[] = [];
+    for (let i = 0; i < MAX_CONNECTIONS_PER_USER; i += 1) {
+      const r = connect(instance);
+      await untilAcked(r);
+      five.push(r);
+    }
+    // Close one and take its place. **No clock is involved** — that is the
+    // observable difference between this refusal and a rate limit, whose remedy
+    // is to wait.
+    five[0]?.socket.close();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const replacement = connect(instance);
+    await untilAcked(replacement);
+    expect(count(replacement, "connection.ack")).toBe(1);
+  }, 40_000);
+
+  it("logs the refusal with the user, the environment and the count, and no credential (FR-015 (3.22), SC-008)", async () => {
+    const channel = randomUUID();
+    const registry = createConnections({ url: REDIS, logger: silent });
+    registries.push(registry);
+    const lines: Record<string, unknown>[] = [];
+    const instance = await boot({
+      user,
+      channels: [channel],
+      connections: registry,
+      lines,
+    });
+    open.push(instance);
+
+    for (let i = 0; i < MAX_CONNECTIONS_PER_USER; i += 1) {
+      await untilAcked(connect(instance));
+    }
+    const sixth = connect(instance);
+    await new Promise<number>((resolve) => {
+      sixth.socket.on("close", (c) => resolve(c));
+    });
+
+    const rejected = lines.find(
+      (l) => l["msg"] === "connection.rejected" && l["reason"] === "connection_limit_reached",
+    );
+    expect(rejected, "connection.rejected was not logged").toBeTruthy();
+    expect(rejected?.["user"]).toBe(user);
+    expect(rejected?.["environment_id"]).toBe(ENVIRONMENT);
+    expect(rejected?.["held"]).toBe(5);
+    // NFR-SEC-06. "the key rk_dev_abc… is invalid" is how a live secret reaches a
+    // support ticket, so the whole line is checked rather than one field.
+    expect(JSON.stringify(rejected)).not.toContain("token");
+    expect(JSON.stringify(rejected)).not.toContain("rk_");
+  }, 40_000);
 
   it("delivers a message to both of one user's connections, each exactly once (FR-014 (3.22), SC-001)", async () => {
     const channel = randomUUID();
-    const instance = await boot({ user: "tuan", channels: [channel] });
+    const instance = await boot({ user, channels: [channel] });
     open.push(instance);
 
     const a = connect(instance);
@@ -169,7 +318,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
       id: randomUUID(),
       channel,
       seq: 1,
-      user: "tuan",
+      user,
       text,
       created_at: new Date(0).toISOString(),
     });
@@ -191,7 +340,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
 
   it("delivers a membership change to both of one user's connections (FR-014 (3.22))", async () => {
     const channel = randomUUID();
-    const instance = await boot({ user: "tuan", channels: [channel] });
+    const instance = await boot({ user, channels: [channel] });
     open.push(instance);
 
     const a = connect(instance);
@@ -214,7 +363,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
       JSON.stringify({
         environment: ENVIRONMENT,
         channel,
-        user: "tuan",
+        user,
         change: "added",
       }),
     );
@@ -226,7 +375,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
 
   it("keeps delivering to a live connection when an EARLIER one is gone (FR-014 (3.22))", async () => {
     const channel = randomUUID();
-    const instance = await boot({ user: "tuan", channels: [channel] });
+    const instance = await boot({ user, channels: [channel] });
     open.push(instance);
 
     const a = connect(instance);
@@ -264,7 +413,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
       id: randomUUID(),
       channel,
       seq: 2,
-      user: "tuan",
+      user,
       text: `after b is gone ${randomUUID()}`,
       created_at: new Date(0).toISOString(),
     });
