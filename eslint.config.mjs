@@ -114,6 +114,14 @@ const DRIVER_EXEMPT_TESTS = [
   // chapter's own module would be satisfied by a module that does nothing —
   // chapter 3.18's warning, in a new place.
   "services/gateway/src/typing.itest.ts",
+  // Chapter 3.22, and NOT for the reason the four above give. This file needs no
+  // raw client to assert a publish — its subject is delivery, and it asserts on
+  // the sockets. It needs one to CAUSE a membership change: `Membership` exposes
+  // `onChange`, `subscribeChannel` and `watch` and no `publish`, because the api
+  // publishes and the gateway only ever subscribes. So the raw client is the
+  // stimulus rather than the oracle, which is a fifth reason this rule cannot
+  // express and the reason it is listed here explicitly.
+  "services/gateway/src/connections.itest.ts",
 ];
 
 
