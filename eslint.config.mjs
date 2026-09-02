@@ -293,6 +293,18 @@ export default tseslint.config(
       // silently overrode it. The typing suite's exemption lives in
       // `DRIVER_EXEMPT_TESTS` instead, which is the list that governs test files.
       "services/gateway/src/typing.ts",
+      // Chapter 3.22's connection registry, and its keys are the strongest case on
+      // this list rather than the weakest. `conn:{env}:{user}:{slot}` puts the
+      // environment FIRST, so Principle I is structural in the key itself: a
+      // cross-tenant read would need a caller to hand this module another
+      // environment's id, which the session layer takes from the api's verified
+      // identity and never from a payload.
+      //
+      // The `.itest.ts` file is NOT listed here, for the reason the typing note
+      // above gives: the later `**/*.itest.ts` block would silently override it.
+      // Its exemption is in `DRIVER_EXEMPT_TESTS`, and so is `connections.test.ts`'s
+      // — a unit test, but one that reads the module's own source from disk.
+      "services/gateway/src/connections.ts",
       // The test harness IS data access — its whole job is to plant rows the
       // repository layer must never plant and to hold a connection carrying an
       // exemption no product code may carry (feature 030). Restricting it from
