@@ -197,6 +197,10 @@ async function boot(options: {
 interface Recorded {
   socket: WebSocket;
   frames: { type: string; payload: Record<string, unknown> }[];
+  /** The close code once it arrives, captured by `record` rather than by whoever
+   * happens to be waiting. A listener attached later can miss a close that has
+   * already happened, which is how "no ack within 5s" hid a 4004 for two hours. */
+  closed?: number;
 }
 
 /** Every frame kept, not just the first matching one. **That distinction is the
@@ -205,20 +209,37 @@ interface Recorded {
  * DUPLICATE passes it unnoticed. Story 3 scenario 1 says "both receive it, and
  * each receives it once", and only a count can say the second half. */
 function record(socket: WebSocket): Recorded {
-  const frames: Recorded["frames"] = [];
+  const r: Recorded = { socket, frames: [] };
   socket.on("message", (raw) => {
-    frames.push(JSON.parse(String(raw)) as Recorded["frames"][number]);
+    r.frames.push(JSON.parse(String(raw)) as Recorded["frames"][number]);
   });
-  return { socket, frames };
+  socket.on("close", (code: number) => {
+    r.closed = code;
+  });
+  return r;
 }
 
+/** **THE FAILURE CARRIES WHAT THE SOCKET ACTUALLY GOT**, and the first version of
+ * this message did not. `no connection.ack within 5s` was true of a socket that
+ * had been refused 4004 half a second earlier, and it took a falsification run and
+ * six repeats to find that out — chapter 3.21's rule one level down: a check that
+ * throws away the evidence costs more than the defect. */
 async function untilAcked(r: Recorded): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     if (r.frames.some((f) => f.type === "connection.ack")) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error("no connection.ack within 5s");
+  const seen = r.frames.map((f) => f.type).join(", ") || "nothing";
+  const codes = r.frames
+    .filter((f) => f.type === "error")
+    .map((f) => String(f.payload["code"]))
+    .join(", ");
+  throw new Error(
+    `no connection.ack within 5s — frames: ${seen}${
+      codes === "" ? "" : ` (${codes})`
+    }; close: ${r.closed === undefined ? "still open" : String(r.closed)}`,
+  );
 }
 
 /** Polls rather than waits on a single frame. A connection is acked before its
@@ -517,12 +538,8 @@ describe("the count survives the gateway it was counted on (US2)", () => {
    * against a lane with eleven seconds of headroom. */
   const untilClosed = async (r: Recorded): Promise<number> => {
     const deadline = Date.now() + 5_000;
-    let closed: number | undefined;
-    r.socket.on("close", (code) => {
-      closed = code;
-    });
     while (Date.now() < deadline) {
-      if (closed !== undefined) return closed;
+      if (r.closed !== undefined) return r.closed;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw new Error("the socket was still open after 5s");
@@ -546,15 +563,11 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     // POLLED RATHER THAN `Promise.race`d. `untilAcked` rejects at its own deadline,
     // and a rejection nobody is waiting on any more is an unhandled rejection —
     // which in this package takes the process down.
-    let closed: number | undefined;
-    r.socket.on("close", (code) => {
-      closed = code;
-    });
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline) {
-      if (closed !== undefined) {
+      if (r.closed !== undefined) {
         const frame = r.frames.find((f) => f.type === "error");
-        return { code: closed, error: frame?.payload["code"] as string | undefined };
+        return { code: r.closed, error: frame?.payload["code"] as string | undefined };
       }
       if (r.frames.some((f) => f.type === "connection.ack")) {
         return { code: -1, error: "accepted" };
@@ -703,6 +716,8 @@ describe("the count survives the gateway it was counted on (US2)", () => {
       error: "connection_limit_reached",
     });
 
+    // RECONNECTED WITH NO WAIT AT ALL, which is what found the tombstone defect:
+    // a 20 ms sleep here made this test pass every time and hid it.
     await replaced.shutdown();
     const reconnected = connect(successor);
     await untilAcked(reconnected);
@@ -879,6 +894,58 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     expect(live.socket.readyState).toBe(WebSocket.OPEN);
     expect(live.frames.filter((f) => f.type === "error")).toEqual([]);
     await fanout.close();
+  }, 40_000);
+
+  it("never admits a sixth under many simultaneous claims (FR-013 (3.22))", async () => {
+    // **THE RACE IS OBSERVABLE, AND T058'S FIRST ANSWER WAS THAT IT WAS NOT.**
+    // Replacing `SET NX` with a `GET` followed by a `SET` — check-then-act, which
+    // is exclusive when the calls are sequential and racy in the window between the
+    // two commands — left every one of the sixteen existing tests green. Under this
+    // test it admits **all twelve**, six runs out of six, because every attempt
+    // reads slot 0 as free before any of them writes it.
+    //
+    // So "nothing went red, therefore the ordering is unobservable" was a statement
+    // about the suite and not about the system, and T058's own instruction to read
+    // it that way would have been wrong. The difference is only observable to a
+    // test that puts several claims in flight at once, and that test did not exist
+    // until it was written to find out.
+    //
+    // TWO INSTANCES, because `Promise.all` of twelve connects against one gateway
+    // is not a race — they reach Redis through one client on one socket and the
+    // commands serialise there. Two modules are two clients on two sockets, which
+    // the server is free to interleave.
+    const channel = randomUUID();
+    const a = await boot({ user, channels: [channel], cap: {} });
+    const b = await boot({ user, channels: [channel], cap: {} });
+    open.push(a, b);
+
+    const ATTEMPTS = 12;
+    const tried = Array.from({ length: ATTEMPTS }, (_, i) =>
+      connect(i % 2 === 0 ? a : b),
+    );
+    const acked = (r: Recorded): boolean =>
+      r.frames.some((f) => f.type === "connection.ack");
+    const settled = (r: Recorded): boolean => r.closed !== undefined || acked(r);
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && !tried.every(settled)) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(
+      tried.filter((r) => !settled(r)),
+      "an attempt neither acked nor closed",
+    ).toHaveLength(0);
+
+    // FIVE IN, SEVEN OUT, AND THE KEYS AGREE. The count of accepted sockets and
+    // the count of live keys are two different oracles and both are checked: a
+    // registry that hands the same slot to two connections satisfies the second
+    // and fails the first.
+    expect(tried.filter(acked)).toHaveLength(MAX_CONNECTIONS_PER_USER);
+    expect(tried.filter((r) => r.closed === 4004)).toHaveLength(
+      ATTEMPTS - MAX_CONNECTIONS_PER_USER,
+    );
+    expect(await raw.keys(`conn:${ENVIRONMENT}:${user}:*`)).toHaveLength(
+      MAX_CONNECTIONS_PER_USER,
+    );
   }, 40_000);
 
   it("closes the connection when the cap is genuinely full at renewal (FR-011b (3.22), SC-014)", async () => {

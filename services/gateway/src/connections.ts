@@ -30,8 +30,17 @@ export const DEFAULT_BOUND_MS = 60_000;
 export const DEFAULT_HEARTBEAT_MS = 20_000;
 
 /** Written into a slot key to retire it. Any value that cannot be a connection id
- * does, and `randomUUID` never produces this one. */
+ * does, and `randomUUID` never produces this one.
+ *
+ * **IT MEANS FREE, NOT BUSY**, and reading it the other way was a defect. See
+ * `walk` below: a claim takes a tombstoned slot rather than stepping over it. */
 const TOMBSTONE = "-";
+
+/** How long a tombstone lingers. One millisecond is enough to be a conditional
+ * delete and short enough to be invisible — but the number is named and injectable
+ * because **a test that has to fit inside one millisecond is a test that races**,
+ * and the arithmetic below only worked by accident when it was a literal. */
+export const DEFAULT_TOMBSTONE_MS = 1;
 
 /** What a claim attempt resolved to. `held` is for FR-015's log line and is
  * discovered by the walk rather than read: five keys have no cheap `ZCARD`, and
@@ -87,6 +96,9 @@ export interface ConnectionsOptions {
   url?: string;
   logger: Logger;
   boundMs?: number;
+  /** Widened by one test, to hold the window open long enough to assert what
+   * happens inside it. */
+  tombstoneMs?: number;
 }
 
 /** `conn:{env}:{user}:{slot}`, one key per place, and the shape is an argument
@@ -107,6 +119,7 @@ export function createConnections({
   url = process.env["RELAY_REDIS_URL"] ?? DEFAULT_REDIS_URL,
   logger,
   boundMs = DEFAULT_BOUND_MS,
+  tombstoneMs = DEFAULT_TOMBSTONE_MS,
 }: ConnectionsOptions): Connections {
   // THE SAME THREE OPTIONS `limits.ts:95` AND `presence.ts:133` USE, and the cap
   // needs them more than either. With ioredis' defaults an unreachable Redis does
@@ -194,19 +207,44 @@ export function createConnections({
    * connections racing for one slot cannot both win it: the loser's `NX` returns
    * nil and it walks to the next. When all five are held both correctly refuse.
    * The race is settled by the command rather than by a check-then-act, which is
-   * why no Lua is needed here. */
+   * why no Lua is needed here.
+   *
+   * **TWO COMMANDS PER CONTESTED SLOT, AND THE SECOND ONE IS A BUG FIX.** A
+   * tombstone means the previous holder let the place go, so it is free — and the
+   * first version of this walk stepped over it, because `NX` refuses any key that
+   * exists. One slot briefly skipped is harmless and the release's comment said so.
+   * `releaseAll` tombstones ALL FIVE AT ONCE, and then the walk found nothing free
+   * and refused a connection with `connection_limit_reached` — a close code whose
+   * documented remedy is "close one of the connections you already hold", which a
+   * client reconnecting after a deploy cannot do: they went with the old instance.
+   *
+   * Found as a 2-in-6 flake in the clean-shutdown test, whose first message —
+   * `no connection.ack within 5s` — was true of a socket that had been refused 4004
+   * half a second earlier. Widening the tombstone to 500 ms turns it from a flake
+   * into a test.
+   *
+   * `IFEQ TOMBSTONE` keeps the race settled inside the command: two connections
+   * both finding the tombstone both attempt it, the first wins, the second's
+   * comparison now fails against the winner's id and it walks on. No connection id
+   * can equal `-`, so this can never take a live place. */
   async function walk(
     environmentId: string,
     user: string,
     connectionId: string,
   ): Promise<ClaimOutcome> {
     for (let slot = 0; slot < MAX_CONNECTIONS_PER_USER; slot += 1) {
-      const asked = await failable("claim", () =>
-        client.set(key(environmentId, user, slot), connectionId, "PX", boundMs, "NX"),
+      const k = key(environmentId, user, slot);
+      const free = await failable("claim", () =>
+        client.set(k, connectionId, "PX", boundMs, "NX"),
       );
-      if (!asked.asked) return { kind: "unenforced" };
+      if (!free.asked) return { kind: "unenforced" };
       // `null` HERE MEANS THE SLOT IS TAKEN, which is arm 1 and not arm 5.
-      if (asked.reply === "OK") return { kind: "claimed", slot, held: slot };
+      if (free.reply === "OK") return { kind: "claimed", slot, held: slot };
+      const released = await failable("claim", () =>
+        setIfEq(k, connectionId, TOMBSTONE, boundMs),
+      );
+      if (!released.asked) return { kind: "unenforced" };
+      if (released.reply === "OK") return { kind: "claimed", slot, held: slot };
     }
     return { kind: "full", held: MAX_CONNECTIONS_PER_USER };
   }
@@ -245,13 +283,16 @@ export function createConnections({
      * and was re-claimed would `DEL` the new owner's key and free a place that is
      * in use. `SET key - IFEQ id PX 1` refuses that.
      *
-     * The millisecond fails in the safe direction: a claim arriving inside it finds
-     * the key present, its `NX` fails, and it walks to the next slot. One slot
-     * briefly skipped, never an over-admit. `GETDEL` exists and is unconditional,
-     * so it is no use here. */
+     * THIS COMMENT USED TO SAY the millisecond fails in the safe direction — a
+     * claim arriving inside it finds the key present, its `NX` fails, and it walks
+     * to the next slot; one slot briefly skipped, never an over-admit. True of one
+     * slot and false of five, which is what `releaseAll` writes. The walk above now
+     * claims a tombstoned slot instead of stepping over it, so the window is not a
+     * window any more. `GETDEL` exists and is unconditional, so it is no use
+     * here. */
     release: async (environmentId, user, connectionId, slot) => {
       await failable("release", () =>
-        setIfEq(key(environmentId, user, slot), TOMBSTONE, connectionId, 1),
+        setIfEq(key(environmentId, user, slot), TOMBSTONE, connectionId, tombstoneMs),
       );
     },
 
@@ -262,7 +303,7 @@ export function createConnections({
             key(one.environmentId, one.user, one.slot),
             TOMBSTONE,
             one.connectionId,
-            1,
+            tombstoneMs,
           ),
         );
       }

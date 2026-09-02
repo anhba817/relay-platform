@@ -144,11 +144,65 @@ describe("the slot registry", () => {
     const claimed = await registry.claim(ENV, user, id);
     if (claimed.kind !== "claimed") throw new Error("expected a slot");
     await registry.release(ENV, user, id, claimed.slot);
-    // The tombstone carries a one-millisecond expiry, so a claim may find it and
-    // walk to the next slot. Either outcome is correct and neither over-admits;
-    // what must not happen is a refusal.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect((await registry.claim(ENV, user, randomUUID())).kind).toBe("claimed");
+    // THE SAME SLOT, WITH NO WAIT. This assertion used to sleep 20 ms and accept
+    // any slot, and its comment said either outcome was correct because "the
+    // tombstone carries a one-millisecond expiry, so a claim may find it and walk
+    // to the next slot". The walk now takes the tombstoned slot, so the outcome is
+    // determinate — and the sleep was hiding the case below.
+    expect(await registry.claim(ENV, user, randomUUID())).toEqual({
+      kind: "claimed",
+      slot: 0,
+      held: 0,
+    });
+  });
+
+  it("claims a slot whose tombstone has NOT expired (FR-010 (3.22))", async () => {
+    // A HALF-SECOND TOMBSTONE, so the window is a window rather than a coin flip.
+    // With the shipped one-millisecond value this test would pass against the
+    // broken walk about half the time, which is how the defect survived: two of six
+    // runs of the clean-shutdown test, reported as `no connection.ack within 5s`.
+    const slow = createConnections({
+      url: REDIS,
+      logger: silent,
+      tombstoneMs: 500,
+    });
+    const id = randomUUID();
+    const claimed = await slow.claim(ENV, user, id);
+    if (claimed.kind !== "claimed") throw new Error("expected a slot");
+    await slow.release(ENV, user, id, claimed.slot);
+    expect(await slow.claim(ENV, user, randomUUID())).toEqual({
+      kind: "claimed",
+      slot: 0,
+      held: 0,
+    });
+    await slow.close();
+  });
+
+  it("accepts a claim immediately after releaseAll frees all five (FR-011a (3.22))", async () => {
+    // THE CASE THAT WAS ACTUALLY BROKEN, and it is a deploy. One slot tombstoned is
+    // one slot skipped; five tombstoned is a walk that finds nothing free and
+    // reports `full` — so a client reconnecting to the new instance is refused with
+    // `connection_limit_reached`, and the remedy that close code names is to close
+    // one of the connections it already holds. Those went with the old instance.
+    const slow = createConnections({
+      url: REDIS,
+      logger: silent,
+      tombstoneMs: 500,
+    });
+    const held = [];
+    for (let i = 0; i < MAX_CONNECTIONS_PER_USER; i += 1) {
+      const id = randomUUID();
+      const claimed = await slow.claim(ENV, user, id);
+      if (claimed.kind !== "claimed") throw new Error("expected a slot");
+      held.push({ environmentId: ENV, user, connectionId: id, slot: claimed.slot });
+    }
+    await slow.releaseAll(held);
+    expect(await slow.claim(ENV, user, randomUUID())).toEqual({
+      kind: "claimed",
+      slot: 0,
+      held: 0,
+    });
+    await slow.close();
   });
 
   it("does NOT free a slot another connection now holds (FR-010 (3.22))", async () => {
