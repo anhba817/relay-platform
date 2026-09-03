@@ -56,7 +56,7 @@ export type ClaimOutcome =
 export type RenewOutcome =
   | { readonly kind: "renewed" }
   | { readonly kind: "reclaimed"; readonly slot: number }
-  | { readonly kind: "full" }
+  | { readonly kind: "full"; readonly held: number }
   | { readonly kind: "unenforced" };
 
 export interface Connections {
@@ -193,10 +193,12 @@ export function createConnections({
     try {
       return { asked: true, reply: await work() };
     } catch (error) {
-      logger.log("error", "connections.failed", {
-        op,
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      // `String(error)` RATHER THAN A TERNARY ON `instanceof Error`, which is what
+      // `presence.ts:241` does and what the coverage ratchet asked for: the
+      // non-Error arm is unreachable from any test and a branch nothing can take is
+      // a branch to delete. `String` on an Error yields "Error: …", one word longer
+      // than `.message` and never absent.
+      logger.log("error", "connections.failed", { op, detail: String(error) });
       return { asked: false };
     }
   }
@@ -234,17 +236,19 @@ export function createConnections({
   ): Promise<ClaimOutcome> {
     for (let slot = 0; slot < MAX_CONNECTIONS_PER_USER; slot += 1) {
       const k = key(environmentId, user, slot);
-      const free = await failable("claim", () =>
-        client.set(k, connectionId, "PX", boundMs, "NX"),
-      );
-      if (!free.asked) return { kind: "unenforced" };
-      // `null` HERE MEANS THE SLOT IS TAKEN, which is arm 1 and not arm 5.
-      if (free.reply === "OK") return { kind: "claimed", slot, held: slot };
-      const released = await failable("claim", () =>
-        setIfEq(k, connectionId, TOMBSTONE, boundMs),
-      );
-      if (!released.asked) return { kind: "unenforced" };
-      if (released.reply === "OK") return { kind: "claimed", slot, held: slot };
+      // BOTH COMMANDS UNDER ONE `failable`, and that is the coverage ratchet's
+      // doing. Two wrappers meant two "could not ask" arms, and the second was
+      // unreachable: for it to fire, Redis would have to die between a command that
+      // answered and the next one. One wrapper has one failure path, and the arm
+      // that nothing could take is gone rather than covered.
+      const got = await failable("claim", async () => {
+        const free = await client.set(k, connectionId, "PX", boundMs, "NX");
+        // `null` HERE MEANS THE SLOT IS TAKEN, which is arm 1 and not arm 5.
+        if (free === "OK") return free;
+        return await setIfEq(k, connectionId, TOMBSTONE, boundMs);
+      });
+      if (!got.asked) return { kind: "unenforced" };
+      if (got.reply === "OK") return { kind: "claimed", slot, held: slot };
     }
     return { kind: "full", held: MAX_CONNECTIONS_PER_USER };
   }
@@ -272,8 +276,12 @@ export function createConnections({
       // downtime.
       const again = await walk(environmentId, user, connectionId);
       if (again.kind === "claimed") return { kind: "reclaimed", slot: again.slot };
-      if (again.kind === "full") return { kind: "full" };
-      return { kind: "unenforced" };
+      // RETURNED WHOLE, because `full` and `unenforced` mean here exactly what they
+      // mean there. Re-wrapping them cost two branches and one of them was
+      // unreachable — the walk can only answer `unenforced` if Redis stopped
+      // answering between this renewal and it. `full` now carries `held` for the
+      // same reason a claim's does: the caller logs the number.
+      return again;
     },
 
     /** A one-millisecond tombstone, written only if the slot is still ours.
