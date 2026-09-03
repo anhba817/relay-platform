@@ -160,3 +160,18 @@ describe("the refusal this chapter's cap adds", () => {
     expect(ERROR_CODES.rate_limited).toContain("retry");
   });
 });
+
+describe("the refusal this chapter's edit path adds", () => {
+  // NAMED, NOT COUNTED, for the reason the blocks above give.
+  //
+  // FR-022. The registry's own rule is that a specific code beats the generic one
+  // where the remedy differs, and here it differs absolutely: `forbidden`'s published
+  // remedy is a change of credential or of permission, and **neither makes a message
+  // yours**. A client told `forbidden` asks an administrator for a role; a client told
+  // `not_message_author` stops asking.
+  it("names the non-author refusal separately from the generic 403", () => {
+    expect(ERROR_CODES).toHaveProperty("not_message_author");
+    expect(ERROR_CODES.not_message_author).not.toBe(ERROR_CODES.forbidden);
+    expect(ERROR_CODES.not_message_author).toMatch(/author/);
+  });
+});
