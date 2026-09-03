@@ -12,4 +12,5 @@ export * from "./internal.js";
 export * from "./fanout.js";
 export * from "./presence.js";
 export * from "./membership.js";
+export * from "./revision.js";
 export * from "./typing.js";

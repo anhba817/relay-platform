@@ -539,6 +539,7 @@ describe("the fan-out publish when it fails", () => {
     // them apart. Only the log line can.
     const noop: MessagePublisher = {
       publish: async () => {},
+      publishRevision: async () => {},
       close: async () => {},
     };
     const { app, url: base } = await bootWith(noop);
