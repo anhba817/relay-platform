@@ -200,6 +200,156 @@ describe("POST /internal/backfill", () => {
     expect(page.messages.map((m) => m.seq)).not.toContain(anonymous.seq);
   });
 
+  // ══ WHAT A CLIENT THAT WAS AWAY CAN AND CANNOT LEARN (chapter 3.23, US4) ══
+  //
+  // **THESE TESTS MOVED HERE FROM `services/gateway/src/resume.itest.ts`**, which the
+  // task list named. That file boots the gateway against a **stubbed** api: its
+  // `environment_id: "env-1"` and `user: "tuan"` are stub return values and there is no
+  // database behind it, so nothing in it can edit or delete a message. What FR-016 and
+  // FR-016a are ABOUT is what the backfill returns, and that is this file's subject —
+  // a real repository, real rows, and the mapping in `backfill.controller.ts`.
+  //
+  // The gateway's half is that it replays what it was handed, which `resume.itest.ts`
+  // does test, with a stub that says so.
+
+  it("T058: a message ABOVE the cursor, edited while away, replays with its CURRENT text (FR-016)", async () => {
+    // THE BACKFILL READS ROWS, IT DOES NOT REPLAY A LOG. That is the whole of FR-016's
+    // answer and it is a property of the query rather than a feature anybody built: the
+    // superseded text lives in `message_edits`, which no read path on this route
+    // touches, so a client that was away sees what the message says NOW.
+    const channel = (await repo.createChannel("resume-edited", "public")).id;
+    await repo.addMember(channel, tuan.id);
+    const sent = await say(channel, "the frist draft");
+    await repo.editMessage(channel, sent.id, { text: "the first draft", userId: tuan.id });
+
+    const page = (await parsed(await ask({ [channel]: 0 }))).channels[channel]!;
+    expect(page.messages.map((m) => m.seq)).toEqual([sent.seq]);
+    expect(page.messages[0]!.text).toBe("the first draft");
+    // AND NOT THE SUPERSEDED TEXT, asserted separately — a page that contained both
+    // would satisfy the assertion above.
+    expect(page.messages.map((m) => m.text)).not.toContain("the frist draft");
+  });
+
+  it("T059: a message DELETED while away is not replayed at all (FR-016)", async () => {
+    // `backfill.controller.ts`'s `toFrame` already drops a null-text row and its comment
+    // says why: a tombstone is not a creation, and there is no truthful `text` to
+    // invent. **This is the first test with a real writer behind that line** — the
+    // senderless test above plants its row by hand precisely because nothing could
+    // write one.
+    const channel = (await repo.createChannel("resume-deleted", "public")).id;
+    await repo.addMember(channel, tuan.id);
+    const kept = await say(channel, "still here");
+    const gone = await say(channel, "not for long");
+    await repo.deleteMessage(channel, gone.id, { userId: tuan.id });
+
+    const page = (await parsed(await ask({ [channel]: 0 }))).channels[channel]!;
+    expect(page.messages.map((m) => m.seq)).toEqual([kept.seq]);
+    // THE CONTENT IS THE ASSERTION, not the count: a page that carried the tombstone
+    // with a null text would be a `message.created` frame the contract forbids, and a
+    // page that carried the OLD text would be the deletion undone.
+    expect(page.messages.map((m) => m.text)).not.toContain("not for long");
+    // The client sees a gap at `gone.seq` and repairs it through history, which is the
+    // safety net `toFrame`'s comment names.
+    expect(page.messages.map((m) => m.seq)).not.toContain(gone.seq);
+  });
+
+  it("T059a: truncation is reported as the READ found it, tombstones and all", async () => {
+    // `backfill.controller.ts:64` decided this and says why — *"dropping an unrenderable
+    // row does not mean the client should go page history, and hiding a real cap
+    // would"* — and `repository.ts` computes it as `rows.length > limit`. **The decision
+    // is not this chapter's and the exercise is**: until now no writer could produce a
+    // tombstone, so a truncated page containing one had never happened.
+    //
+    // A FULL PAGE PLUS ONE, WITH ONE ROW DELETED. The page must report fewer frames
+    // than the limit AND still say it was truncated.
+    const channel = (await repo.createChannel("resume-truncated", "public")).id;
+    await repo.addMember(channel, tuan.id);
+    const sent = [];
+    for (let i = 0; i < BACKFILL_LIMIT + 1; i++) sent.push(await say(channel, `m${i}`));
+    // Delete one INSIDE the page the read will return — the oldest, which the cap keeps.
+    await repo.deleteMessage(channel, sent[0]!.id, { userId: tuan.id });
+
+    const page = (await parsed(await ask({ [channel]: 0 }))).channels[channel]!;
+    expect(page.truncated).toBe(true);
+    // FEWER FRAMES THAN ROWS READ, which is the half that would break if `truncated`
+    // were computed after the mapping.
+    expect(page.messages.length).toBe(BACKFILL_LIMIT - 1);
+  }, 120_000);
+
+  it("T060: a message BELOW the cursor, edited while away, produces no frame and no gap (FR-016a)", async () => {
+    // THE SOFT EDGE IN THE CONTRACT, demonstrated rather than asserted. Resume is
+    // ordered by the channel sequence alone: a message older than the cursor is not in
+    // the page whatever happened to it, so an edit below the cursor is invisible.
+    //
+    // **BOTH HALVES.** No frame is the obvious one. The one that matters is NO GAP: the
+    // sequence numbers above the cursor are contiguous, so the SDK's gap detector — the
+    // mechanism every other missed frame is repaired by — sees nothing to repair. That
+    // is why FR-016b asks for the bound to be documented as a property of a cursor.
+    const channel = (await repo.createChannel("resume-below", "public")).id;
+    await repo.addMember(channel, tuan.id);
+    const below = await say(channel, "said long ago");
+    const cursor = below.seq;
+    const above = await say(channel, "said since");
+    await repo.editMessage(channel, below.id, {
+      text: "said long ago, corrected",
+      userId: tuan.id,
+    });
+
+    const page = (await parsed(await ask({ [channel]: cursor }))).channels[channel]!;
+    expect(page.messages.map((m) => m.seq)).toEqual([above.seq]);
+    expect(page.messages.map((m) => m.text)).not.toContain("said long ago, corrected");
+    // NO GAP: the page starts at cursor + 1 and every step is 1.
+    const seqs = page.messages.map((m) => m.seq);
+    expect(seqs[0]).toBe(cursor + 1);
+    for (let i = 1; i < seqs.length; i += 1) expect(seqs[i]! - seqs[i - 1]!).toBe(1);
+  });
+
+  it("T061: re-reading the range through history repairs it (SC-006)", async () => {
+    // THE DOCUMENTED REPAIR, end to end. A client away across an edit below its cursor
+    // and a deletion above it re-reads the range and ends with what a client that never
+    // left is holding: the current text for the edit, and a tombstone for the deletion.
+    //
+    // `listMessages` IS THE HISTORY ROUTE'S READ, so this is the repair the SDK
+    // performs rather than a second implementation of it.
+    const channel = (await repo.createChannel("resume-repair", "public")).id;
+    await repo.addMember(channel, tuan.id);
+    const below = await say(channel, "before the cursor");
+    const cursor = below.seq;
+    const above = await say(channel, "after the cursor");
+    const doomed = await say(channel, "about to go");
+    await repo.editMessage(channel, below.id, {
+      text: "before the cursor, corrected",
+      userId: tuan.id,
+    });
+    await repo.deleteMessage(channel, doomed.id, { userId: tuan.id });
+
+    // What resume alone hands the client: one frame, and a gap at `doomed.seq`.
+    const page = (await parsed(await ask({ [channel]: cursor }))).channels[channel]!;
+    expect(page.messages.map((m) => m.seq)).toEqual([above.seq]);
+
+    // What the repair adds. Read from the start, the way a client that distrusts its
+    // cache does.
+    const repaired = await repo.listMessages(channel, {
+      userId: tuan.id,
+      limit: 50,
+      afterSeq: 0,
+    });
+    const bySeq = new Map(repaired.map((m) => [m.seq, m]));
+    expect(bySeq.get(below.seq)!.text).toBe("before the cursor, corrected");
+    expect(bySeq.get(above.seq)!.text).toBe("after the cursor");
+    // THE TOMBSTONE IS PRESENT AND EMPTY, which is what closes the gap resume left —
+    // the client learns the sequence is accounted for rather than missing.
+    expect(bySeq.has(doomed.seq)).toBe(true);
+    expect(bySeq.get(doomed.seq)!.text).toBeNull();
+    // And every sequence in the range is accounted for, which is the property SC-006
+    // asks for: the same view as a client that stayed connected.
+    expect([...bySeq.keys()].sort((a, b) => a - b)).toEqual([
+      below.seq,
+      above.seq,
+      doomed.seq,
+    ]);
+  });
+
   it("refuses a cursor map big enough to turn one connect into a scan storm", async () => {
     const cursors: Record<string, number> = {};
     for (let i = 0; i <= MAX_RESUME_CHANNELS; i++) {

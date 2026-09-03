@@ -80,9 +80,24 @@ export class BackfillController {
  *   - **No sender.** Every row written through the socket before 2.6's fix
  *     has `user_id` NULL. There is no truthful value to invent, and the
  *     wire contract requires one.
- *   - **No text.** A tombstone (FR-MSG-08) is not a creation. When deletes
- *     arrive in Part 4 they get `message.deleted`, and resume will carry
- *     that frame instead.
+ *   - **No text.** A tombstone (FR-MSG-08) is not a creation. Deletes arrived in
+ *     chapter 3.23 and they do get `message.deleted` — **and resume does NOT carry
+ *     that frame.** This sentence promised it would, and it was written before the
+ *     decision existed.
+ *
+ *     FR-016a (3.23) settled it the other way: resume stays ordered by the channel
+ *     sequence alone, so a client receiving a message for the first time is not also
+ *     told that something it has never seen has changed. A tombstone above the cursor
+ *     is DROPPED, exactly as this function has always dropped it, and the client
+ *     learns the sequence is accounted for by re-reading history — where the row is
+ *     present with a null text.
+ *
+ *     **This is what Slack does.** `conversations.history` returns current state and
+ *     replays no event stream; Matrix takes the other shape, an append-only timeline
+ *     where a redaction is an event of its own, and IMAP's CONDSTOOR/QRESYNC puts a
+ *     `MODSEQ` beside the sequence so a client can ask "what changed since". This
+ *     platform is already the first shape, and FR-016b (3.23) asks for that to be
+ *     documented as a property of a cursor rather than a limitation.
  *
  * The client is not left guessing: sequence numbers are contiguous per
  * channel, so a skipped row shows up as a gap the SDK detects and repairs

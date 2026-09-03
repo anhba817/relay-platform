@@ -418,16 +418,26 @@ describe("the listing's keyset survives a shared last_activity_at (chapter 3.15)
 
 // ── THE TOMBSTONE, AND THE CLAMP (chapter 3.15, FR-016, FR-019) ───────────────
 //
-// BOTH STATES ARE UNREACHABLE THROUGH THE API, for different reasons, and both are
-// constructed here because this suite may hold raw SQL.
+// THE TOMBSTONES BELOW ARE STILL PLANTED BY HAND, and that is now a choice rather than a
+// necessity. These tests were written in chapter 3.15 against a state the platform could
+// not produce: FR-MSG-08 was unimplemented, `messages.deleted_at` and a null `text` were
+// in the schema, `backfill.controller` passed `text` straight through so a null already
+// reached the wire, and **nothing in the platform wrote either**. The comment here said
+// so, in the present tense.
 //
-// FR-MSG-08 — "deleting a message shall replace its content with a tombstone retaining
-// sequence number, author, timestamps" — IS NOT IMPLEMENTED. `messages.deleted_at` and a
-// null `text` are in the schema, `backfill.controller` passes `text` straight through so
-// a null already reaches the wire, and NOTHING IN THE PLATFORM WRITES EITHER. The
-// tombstone is a live reader with no writer, which is the reverse of the dead columns
-// this feature is otherwise about. The listing's rule for it is implemented and tested
-// now so the day FR-MSG-08's chapter ships, the count and the preview already agree.
+// **CHAPTER 3.23 BUILT THE WRITER** (`repository.deleteMessage`, FR-006 (3.23)), so the
+// sentence stopped being true — the class of decay this repository keeps paying for, and
+// the reason `specs/041-chapter-3-23/check-prose.py` fails on the old wording. What that
+// chapter did NOT do is rewrite these tests to use the writer: a hand-planted fixture and
+// a written one are two different subjects, and 3.23's own `deleteMessage` tests assert
+// that the two agree column for column. Changing these would have moved both halves of
+// the pair and left nothing comparing them.
+//
+// The clamp's fixture below is still genuinely unreachable through the API.
+//
+// The listing's rule was implemented and tested here before its writer existed, which
+// 3.15 said was so that "the day FR-MSG-08's chapter ships, the count and the preview
+// already agree." They did.
 describe("the listing's tombstone rule and its clamp (chapter 3.15)", () => {
   it("reports a tombstoned last message with a null text, and still counts it", async () => {
     const user = await repoA.createUser("tomb-reader", "Tomb Reader");

@@ -338,6 +338,65 @@ describe("resume across a real fabric", () => {
     socket.close();
   });
 
+  /** CHAPTER 3.23, FR-016 — THE GATEWAY'S HALF, AND ONLY THE GATEWAY'S HALF.
+   *
+   * **The task list put four tests here and they could not be written.** This file boots
+   * the gateway against a STUBBED api: `environment_id: "env-1"` and `user: "tuan"` are
+   * stub return values, there is no database behind it, and nothing in it can edit or
+   * delete a message. FR-016 and FR-016a are about what the BACKFILL returns, which is
+   * `services/api/src/internal/backfill.itest.ts` — real rows, a real repository, and
+   * the mapping in `backfill.controller.ts`. T058 to T061 live there.
+   *
+   * What remains here is worth one test: the gateway replays what it was handed,
+   * verbatim, as `message.created`. That is the seam ADR-24 did NOT change — a revision
+   * frame arriving on the fabric mid-resume is dropped for a buffering connection
+   * (`session.ts`'s `deliverRevision`), and the backfill's rows are the current state,
+   * so an edit made during the absence reaches the client as a creation carrying the
+   * new text and no `message.updated` at all.
+   *
+   * **THE ABSENCE IS THE ASSERTION.** A resume that carried `message.updated` for a
+   * message the client is receiving for the first time would be telling it that
+   * something it has never seen has changed. */
+  it("chapter 3.23: replays an edited message as message.created with its current text, and no message.updated", async () => {
+    harness = await boot({
+      session: async () => ({
+        environment_id: "env-1",
+        user: "tuan",
+        banned: false,
+        channel_ids: [CHANNEL],
+        limits: { connect: 3_000, send: 600 },
+      }),
+      // The api's backfill returns ROWS AS THEY ARE NOW — which for an edited message
+      // is the corrected text under its original sequence. The stub says exactly that,
+      // and `backfill.itest.ts` proves the real one does.
+      backfill: async () => ({
+        [CHANNEL]: {
+          messages: [{ ...frame(42), text: "m42, corrected" }],
+          truncated: false,
+        },
+      }),
+      sendMessage: async () => {
+        throw new Error("not used");
+      },
+      memberships: async () => [CHANNEL],
+    });
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await settle(400);
+
+    expect(created(frames)).toEqual([42]);
+    const replayed = frames.find((f) => f.type === "message.created") as {
+      payload: Message;
+    };
+    expect(replayed.payload.text).toBe("m42, corrected");
+    // NO REVISION FRAME, which is FR-016a's decision showing on the wire.
+    expect(frames.filter((f) => f.type === "message.updated")).toEqual([]);
+    expect(frames.filter((f) => f.type === "message.deleted")).toEqual([]);
+    socket.close();
+  });
+
   it("suppresses nothing when the resume degraded", async () => {
     // A degraded resume tells the client to page history for every channel, so the
     // backfill it received is a fragment or nothing at all. A mark taken from it
