@@ -1,4 +1,9 @@
-import { subjectForChannel, type Message } from "@relay/protocol";
+import {
+  subjectForChannel,
+  subjectForChannelRevision,
+  type Message,
+  type RevisionFabric,
+} from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
 // A NAMED import: ioredis is CommonJS and this service is ESM.
 import { Redis } from "ioredis";
@@ -45,6 +50,11 @@ export interface MessagePublisher {
    * delivery is allowed to fail, because the row is already durable and 2.7's
    * resume will find it (ADR-07, constitution IV). */
   publish(message: Message, context: PublishContext): Promise<void>;
+  /** Chapter 3.23, ADR-24. Publish an edit or a deletion to its channel's revision
+   * subject. Same contract as `publish`: NEVER REJECTS, because the row is already
+   * committed and a client that misses the frame repairs by re-reading history — which is
+   * the bound FR-016a states rather than a gap. */
+  publishRevision(revision: RevisionFabric, context: PublishContext): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -109,6 +119,29 @@ export function createMessagePublisher({
   let downUntil = 0;
 
   return {
+    async publishRevision(revision, context) {
+      // THE SAME DOWN-WINDOW AS `publish` BELOW, and the same `downUntil` variable, because
+      // a Redis that is down is down for both subjects. Two windows would have the second
+      // subject retry on the request path while the first had already given up.
+      if (now() < downUntil) return;
+      try {
+        await redis.publish(
+          subjectForChannelRevision(revision.message.channel),
+          JSON.stringify(revision),
+        );
+        downUntil = 0;
+      } catch (error) {
+        downUntil = now() + DOWN_WINDOW_MS;
+        logger.log("error", "fanout.publish_failed", {
+          channel: revision.message.channel,
+          message_id: revision.message.id,
+          kind: revision.kind,
+          request_id: context.requestId,
+          environment_id: context.environmentId,
+          error: String(error),
+        });
+      }
+    },
     async publish(message, context) {
       // A known-down store is not retried on the request path. The first
       // failure opens a window; while it is open every call returns

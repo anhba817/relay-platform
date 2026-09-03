@@ -1,6 +1,10 @@
 import {
   messageCreatedSchema,
   subjectForChannel,
+  subjectForChannelRevision,
+  isChannelRevisionSubject,
+  revisionFabricSchema,
+  type RevisionFabric,
   type Message,
 } from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
@@ -45,6 +49,18 @@ export interface Fanout {
   /** Publish a committed message to its channel's subject. A failure here
    * costs delivery latency, never durability. */
   publish(message: Message): Promise<void>;
+  /** Chapter 3.23, ADR-24. Register the revision callback — an edit or a deletion of a
+   * message that already exists.
+   *
+   * A SECOND CALLBACK ON THE SAME MODULE, not a second module. The revision subject's
+   * subscription lifetime is IDENTICAL to the message subject's: the same channels, the
+   * same reference counts, subscribed and dropped at the same moments. A module of its own
+   * would duplicate that counting and add two more Redis clients to a service chapter 3.21
+   * took to eight. */
+  onRevision(handler: (channelId: string, revision: RevisionFabric) => void): void;
+  /** Publish an edit or a deletion to its channel's revision subject. Same failure
+   * contract as `publish`: delivery latency, never durability. */
+  publishRevision(revision: RevisionFabric): Promise<void>;
   subscribe(channelId: string): Promise<void>;
   unsubscribe(channelId: string): Promise<void>;
   close(): Promise<void>;
@@ -60,6 +76,7 @@ export function createFanout({
   logger,
 }: FanoutOptions): Fanout {
   let deliver: (channelId: string, message: Message) => void = () => {};
+  let deliverRevision: (channelId: string, revision: RevisionFabric) => void = () => {};
   const publisher = new Redis(url);
   const subscriber = new Redis(url);
   // Reference-counted, because two users of the same channel on one
@@ -72,6 +89,18 @@ export function createFanout({
       parsed = JSON.parse(raw);
     } catch {
       logger.log("error", "fanout.unparsable", { subject });
+      return;
+    }
+    // CHAPTER 3.23. TWO SUBJECTS ON ONE SUBSCRIBER, told apart by the prefix rather than
+    // by guessing at the payload. Parsing against both schemas and taking whichever
+    // succeeded would make a malformed revision look like a message.
+    if (isChannelRevisionSubject(subject)) {
+      const revision = revisionFabricSchema.safeParse(parsed);
+      if (!revision.success) {
+        logger.log("error", "fanout.invalid_payload", { subject });
+        return;
+      }
+      deliverRevision(revision.data.message.channel, revision.data);
       return;
     }
     // The fabric is inside the trust boundary, and frames are STILL
@@ -88,6 +117,25 @@ export function createFanout({
   return {
     onDelivery(handler) {
       deliver = handler;
+    },
+    onRevision(handler) {
+      deliverRevision = handler;
+    },
+    async publishRevision(revision) {
+      try {
+        await publisher.publish(
+          subjectForChannelRevision(revision.message.channel),
+          JSON.stringify(revision),
+        );
+      } catch (error) {
+        // Same contract as `publish` above: the edit or the tombstone is already
+        // committed, and a client that missed the frame repairs by re-reading history —
+        // which is what chapter 3.23's resume decision rests on.
+        logger.log("error", "fanout.publish_failed", {
+          channel: revision.message.channel,
+          error: String(error),
+        });
+      }
     },
     async publish(message) {
       try {
@@ -107,13 +155,25 @@ export function createFanout({
     async subscribe(channelId) {
       const next = (counts.get(channelId) ?? 0) + 1;
       counts.set(channelId, next);
-      if (next === 1) await subscriber.subscribe(subjectForChannel(channelId));
+      if (next === 1) {
+        // BOTH SUBJECTS, one reference count. They are co-extensive by construction: a
+        // gateway that holds a socket for this channel wants its messages and its
+        // revisions, and dropping one without the other would leave edits arriving for a
+        // channel nobody is listening to — or worse, the reverse.
+        await subscriber.subscribe(
+          subjectForChannel(channelId),
+          subjectForChannelRevision(channelId),
+        );
+      }
     },
     async unsubscribe(channelId) {
       const next = (counts.get(channelId) ?? 1) - 1;
       if (next <= 0) {
         counts.delete(channelId);
-        await subscriber.unsubscribe(subjectForChannel(channelId));
+        await subscriber.unsubscribe(
+          subjectForChannel(channelId),
+          subjectForChannelRevision(channelId),
+        );
       } else {
         counts.set(channelId, next);
       }

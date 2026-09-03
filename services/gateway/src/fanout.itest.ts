@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createLogger } from "@relay/service-kit";
-import type { Message } from "@relay/protocol";
+import type { Message, RevisionFabric } from "@relay/protocol";
 
 import { createFanout, type Fanout } from "./fanout.js";
 
@@ -62,14 +62,44 @@ function nextDelivery(
   });
 }
 
+/** The revision fabric's equivalent (chapter 3.23). Separate queue, separate deadline,
+ * because the finding these tests exist to catch is a revision arriving on the OTHER
+ * callback — and a helper that watched both could not tell them apart. */
+function nextRevision(
+  instance: { revisions: Array<[string, RevisionFabric]> },
+  timeoutMs = 2000,
+): Promise<[string, RevisionFabric]> {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const tick = setInterval(() => {
+      const revision = instance.revisions.shift();
+      if (revision) {
+        clearInterval(tick);
+        resolve(revision);
+      } else if (Date.now() - started > timeoutMs) {
+        clearInterval(tick);
+        reject(new Error("no revision within the deadline"));
+      }
+    }, 10);
+  });
+}
+
 /** One gateway instance's worth of fabric, with its deliveries recorded. */
-function instance(): { fanout: Fanout; deliveries: Array<[string, Message]> } {
+function instance(): {
+  fanout: Fanout;
+  deliveries: Array<[string, Message]>;
+  revisions: Array<[string, RevisionFabric]>;
+} {
   const deliveries: Array<[string, Message]> = [];
+  const revisions: Array<[string, RevisionFabric]> = [];
   const fanout = createFanout({ url, logger });
   fanout.onDelivery((channelId, message) =>
     deliveries.push([channelId, message]),
   );
-  return { fanout, deliveries };
+  fanout.onRevision((channelId, revision) =>
+    revisions.push([channelId, revision]),
+  );
+  return { fanout, deliveries, revisions };
 }
 
 describe("fan-out across instances", () => {
@@ -144,6 +174,96 @@ describe("fan-out across instances", () => {
     });
     await expect(nextDelivery(g2, 300)).rejects.toThrow("deadline");
     await raw.fanout.close();
+  });
+
+  it("T018h: delivers an edit on the revision subject and NOT on the message one", async () => {
+    // Chapter 3.23, ADR-24. The `updated` arm's payload is a `Message`, which is exactly
+    // why this test names both callbacks. Route on the wrong one and an edit is shown to
+    // every member as a brand new message — and nothing about its shape would say so.
+    await g2.fanout.subscribe(CHANNEL);
+    g2.deliveries.length = 0;
+    await g1.fanout.publishRevision({
+      kind: "updated",
+      message: { ...messageOn(CHANNEL, 8), text: "corrected" },
+    });
+
+    const [channelId, revision] = await nextRevision(g2);
+    expect(channelId).toBe(CHANNEL);
+    expect(revision.kind).toBe("updated");
+    expect(revision.kind === "updated" && revision.message.text).toBe("corrected");
+    // THE HALF THAT FALSIFIES: no creation was delivered.
+    expect(g2.deliveries).toEqual([]);
+    await g2.fanout.unsubscribe(CHANNEL);
+  });
+
+  it("T018h: delivers a deletion, which cannot be a message at all", async () => {
+    await g2.fanout.subscribe(CHANNEL);
+    g2.deliveries.length = 0;
+    await g1.fanout.publishRevision({
+      kind: "deleted",
+      message: {
+        id: "00000000-0000-0000-0000-000000000009",
+        channel: CHANNEL,
+        seq: 9,
+        user: "linh",
+        deleted_at: new Date().toISOString(),
+      },
+    });
+
+    const [, revision] = await nextRevision(g2);
+    expect(revision.kind).toBe("deleted");
+    expect(revision.message.seq).toBe(9);
+    expect(g2.deliveries).toEqual([]);
+    await g2.fanout.unsubscribe(CHANNEL);
+  });
+
+  it("T018h: one subscribe covers both subjects, and one unsubscribe drops both", async () => {
+    // The reference count is shared by construction. The test that carries it is the
+    // NEGATIVE one: after the last holder leaves, a revision must go nowhere. Two counts
+    // would leave the revision subject subscribed after the message one closed.
+    // ITS OWN CHANNEL, because this is the one test in the file that asserts a subject is
+    // CLOSED — and `CHANNEL`'s reference count is whatever the tests above left it at.
+    // The first draft used `CHANNEL` and would have gone green on a held count.
+    const own = randomUUID();
+    await g2.fanout.subscribe(own);
+    await g1.fanout.publishRevision({ kind: "updated", message: messageOn(own, 10) });
+    const [, revision] = await nextRevision(g2);
+    expect(revision.message.seq).toBe(10);
+
+    await g2.fanout.unsubscribe(own);
+    await g1.fanout.publishRevision({ kind: "updated", message: messageOn(own, 11) });
+    await expect(nextRevision(g2, 300)).rejects.toThrow("deadline");
+    // …and the message subject is gone too, which is what makes them one count.
+    await g1.fanout.publish(messageOn(own, 12));
+    await expect(nextDelivery(g2, 300)).rejects.toThrow("deadline");
+  });
+
+  it("T018h: drops a revision the contract does not allow", async () => {
+    // A deletion carrying a text is the malformed case that matters: it is what a producer
+    // reaching for `messageSchema` would emit, and `strictObject` is what refuses it.
+    await g2.fanout.subscribe(CHANNEL);
+    const raw = instance();
+    await raw.fanout.publishRevision({
+      kind: "deleted",
+      message: {
+        id: "00000000-0000-0000-0000-000000000013",
+        channel: CHANNEL,
+        seq: 13,
+        user: "linh",
+        deleted_at: new Date().toISOString(),
+        // @ts-expect-error the point of the test: a key the schema forbids
+        text: "",
+      },
+    });
+    await expect(nextRevision(g2, 300)).rejects.toThrow("deadline");
+
+    // …and a well-formed one on the same subject still arrives, so the silence above was
+    // the schema and not a dead subscription.
+    await raw.fanout.publishRevision({ kind: "updated", message: messageOn(CHANNEL, 14) });
+    const [, good] = await nextRevision(g2);
+    expect(good.message.seq).toBe(14);
+    await raw.fanout.close();
+    await g2.fanout.unsubscribe(CHANNEL);
   });
 
   // THE SUBJECT GRAMMAR'S TEST MOVED IN CHAPTER 3.18, to

@@ -10,6 +10,7 @@ import {
   type ErrorCode,
   type Frame,
   type Message,
+  type RevisionFabric,
   type TypingFabric,
   isErrorCode,
   type MembershipFabric,
@@ -348,6 +349,38 @@ export function attachSessions({
     }
   }
   fanout?.onDelivery(deliver);
+
+  /** An edit or a deletion arriving from the revision fabric (chapter 3.23, ADR-24).
+   *
+   * **THE KIND COMES FROM THE PAYLOAD, NOT FROM THIS CALL SITE**, and that is the change
+   * ADR-24 exists for. `deliver` above stamps `message.created` because everything on
+   * `chan:{channel_id}` IS a creation — the subject's payload is a `Message` and the kind
+   * was never on the fabric. An edit is also a `Message`, so on that subject it would have
+   * been indistinguishable from a creation; a deletion is not a `Message` at all.
+   *
+   * **NO `suppressed` CHECK, AND NO BUFFERING, unlike `deliver`.** Both of those exist to
+   * stop a resume delivering a message twice — they compare a frame against what the
+   * backfill already sent, keyed on the sequence number. A revision carries the sequence of
+   * a message the client may already hold, so the same test would suppress every edit to a
+   * message below the cursor. That is not a gap: a client that misses a revision repairs by
+   * re-reading history, which is the bound FR-016a states and the reason resume does not
+   * carry these frames at all.
+   *
+   * **A BUFFERING CONNECTION IS SENT NOTHING**, for the same reason: it is about to receive
+   * the current state of every message above its cursor from the backfill, so an edit
+   * arriving mid-resume is already in what it is being sent. */
+  function deliverRevision(channelId: string, revision: RevisionFabric): void {
+    for (const connection of registry.subscribersOf(channelId)) {
+      if (connection.phase === "buffering") continue;
+      send(
+        connection.socket,
+        revision.kind === "updated"
+          ? { type: "message.updated", payload: revision.message }
+          : { type: "message.deleted", payload: revision.message },
+      );
+    }
+  }
+  fanout?.onRevision(deliverRevision);
 
   /** A typing signal arriving from its own fabric (chapter 3.21, T043).
    *

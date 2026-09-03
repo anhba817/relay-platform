@@ -1,5 +1,10 @@
 import { createLogger, type Logger } from "@relay/service-kit";
-import { messageSchema, subjectForChannel } from "@relay/protocol";
+import {
+  messageSchema,
+  revisionFabricSchema,
+  subjectForChannel,
+  subjectForChannelRevision,
+} from "@relay/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createMessagePublisher } from "./publisher";
@@ -38,6 +43,14 @@ const message = {
   created_at: "2026-08-27T00:00:00.000Z",
 };
 const context = { requestId: "req-1", environmentId: "env-1" };
+
+const tombstone = {
+  id: "m1",
+  channel: "c1",
+  seq: 1,
+  user: "outside-bot",
+  deleted_at: "2026-09-03T00:00:00.000Z",
+};
 
 function sink(): { lines: Record<string, unknown>[]; logger: Logger } {
   const lines: Record<string, unknown>[] = [];
@@ -124,6 +137,61 @@ describe("the api's fan-out publisher", () => {
     clock += 2; // 5_001 ms after the failure — the window has closed
     await p.publish(message, context);
     expect(lines).toHaveLength(2);
+  });
+
+  it("publishes a revision to the revision subject, not the channel's", async () => {
+    // T018h, chapter 3.23. THE SUBJECT IS THE ASSERTION. A `publishRevision` that reached
+    // for `subjectForChannel` would deliver an edit to a subscriber that parses arrivals
+    // as `Message` — and the `updated` arm IS a `Message`, so it would be accepted and
+    // shown to every member as a brand new message.
+    const { logger } = sink();
+    await createMessagePublisher({ logger }).publishRevision(
+      { kind: "updated", message },
+      context,
+    );
+    expect(publishes).toHaveLength(1);
+    expect(publishes[0]![0]).toBe(subjectForChannelRevision("c1"));
+    expect(publishes[0]![0]).not.toBe(subjectForChannel("c1"));
+  });
+
+  it("publishes revision payloads the delivery side will accept", async () => {
+    // The same test `publish` has above, and for the same reason: this side serialises and
+    // the gateway parses, and nothing in the type system connects the two. Both arms,
+    // because the deleted one is the one that cannot be a `Message`.
+    const { logger } = sink();
+    const p = createMessagePublisher({ logger });
+    await p.publishRevision({ kind: "updated", message }, context);
+    await p.publishRevision({ kind: "deleted", message: tombstone }, context);
+
+    const parsedEdit = revisionFabricSchema.safeParse(JSON.parse(publishes[0]![1]));
+    expect(parsedEdit.success).toBe(true);
+    const parsedDeletion = revisionFabricSchema.safeParse(JSON.parse(publishes[1]![1]));
+    expect(parsedDeletion.success).toBe(true);
+    expect(parsedDeletion.success && parsedDeletion.data.kind).toBe("deleted");
+  });
+
+  it("shares one down-window with `publish`, because one Redis is down for both", async () => {
+    // The falsifiable half of the down-window decision. Two windows — one per method —
+    // would let a failed `publish` be followed immediately by a `publishRevision` that
+    // pays the connect timeout on the request path, which is the cost the window exists to
+    // avoid. The assertion is that the client is NOT called: it resolves either way.
+    throwing = true;
+    const { lines, logger } = sink();
+    let clock = 1_000;
+    const p = createMessagePublisher({ logger, now: () => clock });
+
+    await p.publish(message, context);
+    expect(lines).toHaveLength(1); // `publish` opened the window
+
+    await p.publishRevision({ kind: "updated", message }, context);
+    expect(lines).toHaveLength(1); // the revision saw it and made no attempt
+
+    clock += 5_001; // the window has closed for both
+    await p.publishRevision({ kind: "deleted", message: tombstone }, context);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]!["msg"]).toBe("fanout.publish_failed");
+    expect(lines[1]!["kind"]).toBe("deleted");
+    expect(lines[1]!["message_id"]).toBe("m1");
   });
 
   it("survives an ioredis `error` event instead of dying on it", () => {

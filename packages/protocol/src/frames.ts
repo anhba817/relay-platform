@@ -87,18 +87,23 @@ export const messageUpdatedSchema = z.strictObject({
  * NO `text` FIELD AT ALL, not an empty string. An empty message and a deleted one would be
  * indistinguishable on the wire, and the platform would be asserting something false rather
  * than declining to say it. */
+/** NAMED SEPARATELY so the fabric can import it instead of reaching into
+ * `messageDeletedSchema.shape.payload`. Chapter 3.23's fifth subject grammar carries this
+ * exact shape, and one declaration is what stops the two drifting. */
+export const messageDeletedPayloadSchema = z.strictObject({
+  id: z.string().min(1),
+  channel: z.string().min(1),
+  seq: z.number().int().positive(),
+  /** The AUTHOR, which the tombstone keeps (FR-MSG-08). Not whoever deleted it — a tenant
+   * key may delete anybody's message, so the remover is a different fact and lives in
+   * `messages.metadata` rather than on the wire. */
+  user: z.string().min(1),
+  deleted_at: z.iso.datetime(),
+});
+
 export const messageDeletedSchema = z.strictObject({
   type: z.literal("message.deleted"),
-  payload: z.strictObject({
-    id: z.string().min(1),
-    channel: z.string().min(1),
-    seq: z.number().int().positive(),
-    /** The AUTHOR, which the tombstone keeps (FR-MSG-08). Not whoever deleted it — a
-     * tenant key may delete anybody's message, so the remover is a different fact and
-     * lives in `messages.metadata` rather than on the wire. */
-    user: z.string().min(1),
-    deleted_at: z.iso.datetime(),
-  }),
+  payload: messageDeletedPayloadSchema,
 });
 
 export const membershipChangedSchema = z.strictObject({
@@ -199,7 +204,7 @@ export type Message = z.infer<typeof messageSchema>;
 /** Chapter 3.23. The deleted frame's payload is the one that is NOT a `Message`, so it
  * needs a name of its own — otherwise every producer re-declares the shape inline and the
  * schema stops being the single statement of it. */
-export type MessageDeleted = z.infer<typeof messageDeletedSchema>["payload"];
+export type MessageDeleted = z.infer<typeof messageDeletedPayloadSchema>;
 export type ConnectionAck = z.infer<typeof connectionAckSchema>;
 export type MessageSend = z.infer<typeof messageSendSchema>;
 export type MessageAck = z.infer<typeof messageAckSchema>;

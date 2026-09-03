@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 
 import { createLogger, type Logger } from "@relay/service-kit";
 import { serve } from "@relay/service-kit";
-import { CLOSE_CODES, type Frame,
+import { CLOSE_CODES, type Frame, type RevisionFabric,
   docsUrl,
 } from "@relay/protocol";
 
@@ -123,10 +123,17 @@ function stubFanout(): Fanout & {
    * the api stub calls it from inside the backfill, so "a message published
    * during the backfill window" is a line of code, not a stress loop. */
   emit: (message: Message) => void;
+  /** Chapter 3.23. The same injection for a revision: an edit or a deletion arriving from
+   * another instance at a moment the test chooses. */
+  emitRevision: (revision: RevisionFabric) => void;
 } {
   const published: unknown[] = [];
   const subjects: string[] = [];
   let deliver: (channelId: string, message: Message) => void = () => {};
+  // CHAPTER 3.23. The stub gained these because the interface did, and the typecheck is
+  // what said so: widening `Fanout` broke every fake that did not implement it, which is
+  // the compile-time half of chapter 3.21's lesson about a module built and never passed.
+  let deliverRevision: (channelId: string, revision: RevisionFabric) => void = () => {};
   return {
     published,
     subjects,
@@ -139,8 +146,21 @@ function stubFanout(): Fanout & {
     onDelivery: (handler) => {
       deliver = handler;
     },
+    onRevision: (handler) => {
+      deliverRevision = handler;
+    },
     publish: async (message) => {
       published.push(message);
+    },
+    publishRevision: async (revision) => {
+      published.push(revision);
+    },
+    // The same rule the message emitter honours: a revision published to a subject this
+    // instance has not subscribed to does not arrive.
+    emitRevision: (revision: RevisionFabric) => {
+      if (subjects.includes(revision.message.channel)) {
+        deliverRevision(revision.message.channel, revision);
+      }
     },
     subscribe: async (channelId) => {
       subjects.push(channelId);
@@ -606,6 +626,101 @@ describe("the socket (chapter 2.5)", () => {
     await nextFrame(socket, "connection.ack");
     await settle();
     expect(created(frames)).toEqual([42, 43]);
+    socket.close();
+  });
+
+  // ── chapter 3.23: the revision fabric reaches a socket ─────────────────
+  //
+  // ADR-24's whole point, tested at the seam where it would be invisible: the KIND now
+  // comes from the payload. Before this chapter `session.ts` stamped `message.created` at
+  // the call site, and the `updated` arm's payload IS a `Message` — so an edit routed to
+  // the old path would arrive looking exactly like a new message.
+
+  const tombstone = (seq: number, channel = CHANNEL) => ({
+    id: `id-${seq}`,
+    channel,
+    seq,
+    user: "dispatcher",
+    deleted_at: "2026-09-03T00:00:00.000Z",
+  });
+
+  it("chapter 3.23: an edit on the fabric arrives as message.updated, not message.created", async () => {
+    const fanout = stubFanout();
+    harness = await boot(stubApi({}), undefined, fanout);
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+
+    fanout.emitRevision({ kind: "updated", message: { ...frame(42), text: "corrected" } });
+    await settle();
+
+    const revisions = frames.filter((f) => f.type === "message.updated");
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]).toMatchObject({ payload: { seq: 42, text: "corrected" } });
+    // THE FALSIFYING HALF. `created` reads `message.created`, and a call site that still
+    // decided the kind would put the edit there instead.
+    expect(created(frames)).toEqual([]);
+    socket.close();
+  });
+
+  it("chapter 3.23: a deletion arrives as message.deleted, with no text on it", async () => {
+    const fanout = stubFanout();
+    harness = await boot(stubApi({}), undefined, fanout);
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+
+    fanout.emitRevision({ kind: "deleted", message: tombstone(43) });
+    await settle();
+
+    const deletions = frames.filter((f) => f.type === "message.deleted");
+    expect(deletions).toHaveLength(1);
+    expect(Object.keys((deletions[0] as { payload: object }).payload).sort()).toEqual([
+      "channel",
+      "deleted_at",
+      "id",
+      "seq",
+      "user",
+    ]);
+    expect(created(frames)).toEqual([]);
+    socket.close();
+  });
+
+  it("chapter 3.23: a buffering connection is sent no revision at all", async () => {
+    // Not an oversight — FR-016a. A resuming connection is about to be handed the CURRENT
+    // state of every message above its cursor, so an edit arriving mid-resume is already
+    // inside what it is being sent. Delivering it as well would show an update to a
+    // message the client has not yet received.
+    //
+    // Staged the way the chapter 2.7 tests above stage it: the api stub emits from INSIDE
+    // the backfill, which is the only moment `phase === "buffering"` is true.
+    const fanout = stubFanout();
+    harness = await boot(
+      stubApi({
+        backfill: async () => {
+          fanout.emitRevision({
+            kind: "updated",
+            message: { ...frame(42), text: "edited mid-resume" },
+          });
+          return { [CHANNEL]: { messages: [frame(42)], truncated: false } };
+        },
+      }),
+      undefined,
+      fanout,
+    );
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+
+    expect(frames.filter((f) => f.type === "message.updated")).toEqual([]);
+    // …and the backfill itself still landed, so the silence was the phase check and not a
+    // connection that never came up.
+    expect(created(frames)).toEqual([42]);
     socket.close();
   });
 
