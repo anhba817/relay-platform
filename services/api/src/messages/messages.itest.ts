@@ -463,6 +463,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
   let foreignChannelId: string;
   let privateChannelId: string;
   let repo: Repository;
+  let outboxDb: ReturnType<typeof createDb>;
   let tokenFor: (user: string) => Promise<string>;
 
   beforeAll(async () => {
@@ -470,6 +471,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     // channel between tests that archive it and remove members from it; an edit test
     // leaning on that would fail for a reason it does not name.
     const db = createDb(createPool());
+    outboxDb = db;
     env = await createEnvironment(db, { name: "edit-itest" });
     repo = new Repository(db, env.id);
     channelId = (await repo.createChannel("general", "public")).id;
@@ -752,6 +754,142 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     // ONE ROW, AND ITS `prior_text` EQUALS THE CURRENT TEXT. That is what "treated as
     // an edit rather than detected and skipped" looks like in the table.
     expect(body.edits.map((e) => e.prior_text)).toEqual(["unchanged"]);
+  });
+
+  /** How many events of one type this outbox holds for one message.
+   *
+   * READ FROM THE TABLE, NOT FROM A SPY. FR-009's requirement is that a second deletion
+   * emits no second event, and the only place that is observable is the row the
+   * transaction wrote — a mock publisher would show what the code intended to do rather
+   * than what committed. `outbox.itest.ts` reads it the same way.
+   *
+   * The api under test runs IN PROCESS here, against the same database this `db` handle
+   * holds, so there is no relay draining it: the suite's fixture leaves
+   * `RELAY_OUTBOX_RELAY` alone and nothing publishes. Rows stay put to be counted. */
+  const outboxCount = async (messageId: string, type: string): Promise<number> => {
+    // A PLAIN STRING AND NOT drizzle's `sql` TEMPLATE, because the lint rule forbids
+    // importing `drizzle-orm` outside `db/` — constitution I, and chapter 3.23's T069a
+    // restored the ban for integration tests after a second flat-config block had been
+    // replacing the rule instead of merging with it. `outbox.itest.ts` reads the table
+    // the same way for the same reason. The interpolated values are a uuid this test
+    // generated and a literal from this file.
+    const res = (await outboxDb.execute(
+      `SELECT count(*)::int AS n FROM outbox
+         WHERE payload->>'type' = '${type}'
+           AND payload->'data'->>'id' = '${messageId}'`,
+    )) as unknown as { rows: Array<{ n: number }> };
+    return res.rows[0]?.n ?? 0;
+  };
+
+  const remove = (messageId: string, auth: string, channel = channelId) =>
+    fetch(`${url}/v1/channels/${channel}/messages/${messageId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${auth}` },
+    });
+
+  it("T038: the author deletes their message and the row becomes a tombstone (FR-006)", async () => {
+    const sent = await sendAsAuthor("regrettable");
+    const res = await remove(sent.id, await tokenFor("author"));
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+
+    // FR-011: history keeps it, in its original position, with a null text.
+    const rows = (await history()).messages.filter((m) => m["id"] === sent.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!["text"]).toBeNull();
+    expect(rows[0]!["seq"]).toBe(sent.seq);
+    // THE AUTHOR SURVIVES, which is half of what FR-MSG-08 asks the tombstone to keep.
+    expect(rows[0]!["user"]).toBe("author");
+  });
+
+  it("T038: a tenant API key deletes anybody's message (FR-012)", async () => {
+    // FR-MOD-02 grants a key deletion of any message irrespective of author, and this
+    // route is the one place in the chapter where the class-level
+    // `@Accepts("application", "user")` is CORRECT rather than inherited by accident.
+    const sent = await sendAsAuthor("moderated");
+    expect((await remove(sent.id, credential)).status).toBe(204);
+    const rows = (await history()).messages.filter((m) => m["id"] === sent.id);
+    expect(rows[0]!["text"]).toBeNull();
+  });
+
+  it("T038: an end user may not delete somebody else's message (FR-013)", async () => {
+    const sent = await sendAsAuthor("not yours to remove");
+    const res = await remove(sent.id, await tokenFor("bystander"));
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { code: string }).code).toBe("not_message_author");
+    // …and it is still there, unchanged. A 403 with the write already done is what
+    // this half exists to catch.
+    const rows = (await history()).messages.filter((m) => m["id"] === sent.id);
+    expect(rows[0]!["text"]).toBe("not yours to remove");
+  });
+
+  it("T043: deleting twice answers 204 twice, changes nothing, and emits ONE event (FR-009, SC-007)", async () => {
+    // TWO 204s PROVE NOTHING — idempotence is about what the second call DID, and the
+    // answer is the same either way. The event count is the assertion that carries the
+    // requirement, read straight out of the outbox: a second `message.deleted` there
+    // means every subscribed webhook fires twice for one deletion.
+    const sent = await sendAsAuthor("said once, deleted twice");
+    const token = await tokenFor("author");
+    expect((await remove(sent.id, token)).status).toBe(204);
+    const first = (await history()).messages.find((m) => m["id"] === sent.id)!;
+
+    expect((await remove(sent.id, token)).status).toBe(204);
+    const second = (await history()).messages.find((m) => m["id"] === sent.id)!;
+
+    // NOTHING CHANGED, including the deletion timestamp — a second `now()` written
+    // here would move it, and a client that had already read the tombstone would see
+    // it change for no reason.
+    expect(second).toEqual(first);
+
+    const events = await outboxCount(sent.id, "message.deleted");
+    expect(events).toBe(1);
+  });
+
+  it("T044: editing a tombstone is refused with message_deleted, and a stranger is refused first (FR-010)", async () => {
+    const sent = await sendAsAuthor("about to go");
+    const token = await tokenFor("author");
+    expect((await remove(sent.id, token)).status).toBe(204);
+
+    const asAuthor = await patch(sent.id, { text: "back please" }, token);
+    expect(asAuthor.status).toBe(403);
+    expect(((await asAuthor.json()) as { code: string }).code).toBe("message_deleted");
+
+    // THE ORDER IS THE DISCLOSURE CONTROL. A stranger gets the authorship answer, not
+    // the tombstone one, so `message_deleted` never tells anybody that a message they
+    // could not otherwise reach exists.
+    const asStranger = await patch(sent.id, { text: "back please" }, await tokenFor("bystander"));
+    expect(asStranger.status).toBe(403);
+    expect(((await asStranger.json()) as { code: string }).code).toBe("not_message_author");
+  });
+
+  it("T038: deleting a message of a channel this tenant cannot see is a 404 (FR-014)", async () => {
+    const token = await tokenFor("author");
+    const foreign = await remove(randomUUID(), token, foreignChannelId);
+    const missing = await remove(randomUUID(), token, randomUUID());
+    expect(foreign.status).toBe(404);
+    expect(missing.status).toBe(404);
+    expect(withoutRequestId(await foreign.json())).toEqual(
+      withoutRequestId(await missing.json()),
+    );
+  });
+
+  it("T038: a non-member of a private channel gets the not-found envelope on DELETE too (FR-014)", async () => {
+    // The same leak the edit route's test covers, on the other verb — and worth its own
+    // test because the two routes resolve visibility separately.
+    const authorToken = await tokenFor("author");
+    const posted = await fetch(`${url}/v1/channels/${privateChannelId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${authorToken}` },
+      body: JSON.stringify({ text: "members only, briefly" }),
+    });
+    expect(posted.status).toBe(201);
+    const inside = (await posted.json()) as { id: string };
+
+    const refused = await remove(inside.id, await tokenFor("bystander"), privateChannelId);
+    expect(refused.status).toBe(404);
+    // AND THE TENANT KEY, WHICH MAY DELETE ANYTHING, still can — otherwise the 404
+    // above could be a private channel refusing every deletion.
+    expect((await remove(inside.id, credential, privateChannelId)).status).toBe(204);
   });
 
   it("T024: an empty text is a 400 through the protocol envelope (FR-001)", async () => {

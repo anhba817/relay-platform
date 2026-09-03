@@ -1103,6 +1103,55 @@ describe("the socket's limits (chapter 3.8)", () => {
     expect(CLOSE_CODES[4008]).toBeDefined();
     expect(CLOSE_CODES[4009]).toBeDefined();
   });
+
+  /** T049a, SC-008 (chapter 3.23) — FR-RTM-05's SIX KINDS ALL HAVE A PRODUCER.
+   *
+   * *"The system shall emit real-time events for message creation, edit, deletion,
+   * membership change, presence change, and typing."* Six, and until this chapter two
+   * of them had no producer anywhere in the platform.
+   *
+   * **READ AS TEXT, because nothing else can see a producer.** A zod union knows its
+   * members and knows nothing about what emits them; coverage sees a line execute and
+   * cannot see a line that was never written. `main.test.ts` established this shape in
+   * chapter 3.22 — it parses `main.ts` and asserts every module it builds is closed —
+   * and CLAUDE.md records why it had to: the defect that chapter shipped was an
+   * ARGUMENT THAT WAS NOT THERE, and every line around it executed.
+   *
+   * **THE FIRST DRAFT PUT THIS IN `packages/protocol/src/frames.test.ts`**, where it
+   * cannot be written: that file tests schemas, and `grep` for "producer" in it returns
+   * nothing. Analysis pass 2 created the task and pass 3 found it unimplementable.
+   *
+   * THE SIX ARE WRITTEN OUT AND AN UNKNOWN MEMBER FAILS. A loop over some derived list
+   * would pass on a list that had quietly lost a member, which is the failure mode this
+   * repository has paid for five times — a pattern matching the examples in front of it
+   * rather than the set the rule names. */
+  it("T049a: sends every one of FR-RTM-05's six event kinds from this service", async () => {
+    const source = await readFile(new URL("session.ts", import.meta.url), "utf8");
+
+    // FR-RTM-05's six, in its own order, mapped to the frame type this service sends.
+    const PRODUCERS: ReadonlyArray<readonly [string, string]> = [
+      ["message creation", "message.created"],
+      ["message edit", "message.updated"],
+      ["message deletion", "message.deleted"],
+      ["membership change", "membership.changed"],
+      ["presence change", "presence.changed"],
+      ["typing", "typing"],
+    ];
+    expect(PRODUCERS).toHaveLength(6);
+
+    for (const [clause, type] of PRODUCERS) {
+      // `type: "x"` as a literal in a send position. A mention in a comment does not
+      // count, which is why the pattern demands the `type:` key.
+      expect(source, `${clause} has no producer: no \`type: "${type}"\` in session.ts`).toMatch(
+        new RegExp(`type:\\s*"${type.replace(".", "\\.")}"`),
+      );
+    }
+
+    // AND THE CHECK CAN FAIL, which a grep that only ever passes cannot show. A frame
+    // type this service does NOT send must not match — `connection.ack` does send, so
+    // the negative case has to be a real frame nothing here emits.
+    expect(source).not.toMatch(/type:\s*"message.forged"/);
+  });
 });
 
 // T038. THE INBOUND SET, ASSERTED BY SIZE AND BY MEMBERSHIP.

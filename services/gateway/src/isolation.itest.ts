@@ -761,8 +761,27 @@ function sample(type: string, channel: string, user: string): unknown {
       return { type, payload: { seq: 1 } };
     case "message.created":
     case "message.updated":
-    case "message.deleted":
       return { type, payload: message };
+    // CHAPTER 3.23 SPLIT THIS CASE OFF. `message.deleted` shared the `Message` above
+    // until this chapter gave the frame a payload with no text and a `deleted_at`. The
+    // forged frame then failed the SHAPE check and the refusal came back
+    // `invalid_frame` instead of `unknown_frame_type`.
+    //
+    // It was red for the right reason: this suite's claim is that a WELL-FORMED
+    // outbound frame is refused for its DIRECTION. A malformed one is refused a phase
+    // earlier and says nothing about direction — the same finding, in the second of the
+    // two files that build a forged frame this way, and `session.itest.ts` is the other.
+    case "message.deleted":
+      return {
+        type,
+        payload: {
+          id: message.id,
+          channel,
+          seq: 1,
+          user,
+          deleted_at: new Date().toISOString(),
+        },
+      };
     case "membership.changed":
       return { type, payload: { channel, user, change: "added" } };
     case "presence.changed":

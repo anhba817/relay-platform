@@ -22,6 +22,26 @@ export interface MessageCreatedData {
   created_at: string;
 }
 
+/** A DELETION as a consumer receives it (chapter 3.23, FR-019, FR-020).
+ *
+ * NO `text`, AND NO `text: null` EITHER. The frame `packages/protocol/src/frames.ts`
+ * publishes made the same choice for the same reason: a deletion whose payload has a
+ * text field is a payload that can carry the words somebody asked to have removed, and
+ * `null` is a value somebody can forget to set. FR-020 says the event must not carry
+ * it, and the way to guarantee that is for the type not to have the key.
+ *
+ * `user` IS THE AUTHOR, NOT THE DELETER, and nullable for the reason `MessageCreatedData`
+ * gives: a message can have no sender. Who removed it lives on the row, as
+ * `metadata.deleted_by` (FR-006a), and is deliberately not on this envelope — a
+ * customer's webhook subscription is about what happened to the message. */
+export interface MessageDeletedData {
+  id: string;
+  channel_id: string;
+  seq: number;
+  user: string | null;
+  deleted_at: string;
+}
+
 /** A membership change as a CONSUMER receives it (chapter 3.20, FR-WHK-02).
  *
  * `user` IS THE EXTERNAL ID and the type says so, because the repository methods
@@ -54,6 +74,18 @@ export interface MembershipChangedData {
  * line and buys that. */
 export const OUTBOX_EVENT_TYPES = [
   "message.created",
+  // CHAPTER 3.23's TWO, spelled as FR-WHK-02 spells them because a customer's
+  // subscription filters on these exact strings.
+  //
+  // BROUGHT FORWARD FROM PHASE 9, and the reason is ADR-06 rather than convenience.
+  // `repository.deleteMessage` writes its event INSIDE the transaction that writes the
+  // tombstone — publishing after the commit leaves a window where the row changed and
+  // the event never existed — so the envelope cannot arrive three phases after the
+  // transaction that has to build it. FR-009's "no second event" is also unassertable
+  // without it: two 204s prove nothing, and the outbox row is what carries the
+  // requirement. `baseline.txt` records the ordering defect.
+  "message.updated",
+  "message.deleted",
   "channel.member_added",
   "channel.member_removed",
 ] as const;
@@ -69,7 +101,7 @@ export interface OutboxEvent {
   /** When the state change happened — the message's own timestamp, not the
    * moment this object was constructed. */
   occurred_at: string;
-  data: MessageCreatedData | MembershipChangedData;
+  data: MessageCreatedData | MessageDeletedData | MembershipChangedData;
 }
 
 export interface PendingEvent {
@@ -103,6 +135,76 @@ export function messageCreatedEvent({
       type: "message.created",
       environment_id: environmentId,
       occurred_at: message.created_at,
+      data: message,
+    },
+  };
+}
+
+/** An edit, built inside the transaction that wrote it (chapter 3.23, FR-019).
+ *
+ * THE SAME `MessageCreatedData` PAYLOAD, which is FR-008a as code: *"The message payload
+ * used by creation and edit events MUST be left unchanged."* An edited message is a
+ * message — same fields, `text` now saying something else — and a consumer that already
+ * handles `message.created` needs no new shape to handle this, only a new type to switch
+ * on.
+ *
+ * `occurred_at` IS THE EDIT'S INSTANT, not the message's `created_at`. That is the one
+ * place this diverges from the creation event, and it has to: an event whose
+ * `occurred_at` predates the previous event about the same message is unorderable by a
+ * consumer. It arrives from the caller like every other clock reading in this file. */
+export function messageUpdatedEvent({
+  eventId,
+  environmentId,
+  occurredAt,
+  message,
+}: {
+  eventId: string;
+  environmentId: string;
+  occurredAt: string;
+  message: MessageCreatedData;
+}): PendingEvent {
+  if (!eventId) throw new Error("an event id is required");
+  if (!environmentId) throw new Error("an environment id is required");
+
+  return {
+    subject: subjectFor("message.updated", environmentId),
+    payload: {
+      id: eventId,
+      type: "message.updated",
+      environment_id: environmentId,
+      occurred_at: occurredAt,
+      data: message,
+    },
+  };
+}
+
+/** A deletion, built inside the transaction that wrote the tombstone (chapter 3.23,
+ * FR-019, FR-020).
+ *
+ * ITS OWN PAYLOAD TYPE, and `MessageDeletedData`'s docstring argues why the text is
+ * absent rather than null. This function cannot put a text on the wire because it has
+ * nowhere to put one, which is a stronger guarantee than a reviewer remembering. */
+export function messageDeletedEvent({
+  eventId,
+  environmentId,
+  occurredAt,
+  message,
+}: {
+  eventId: string;
+  environmentId: string;
+  occurredAt: string;
+  message: MessageDeletedData;
+}): PendingEvent {
+  if (!eventId) throw new Error("an event id is required");
+  if (!environmentId) throw new Error("an environment id is required");
+
+  return {
+    subject: subjectFor("message.deleted", environmentId),
+    payload: {
+      id: eventId,
+      type: "message.deleted",
+      environment_id: environmentId,
+      occurred_at: occurredAt,
       data: message,
     },
   };
@@ -199,6 +301,41 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
       user: z.string().nullable(),
       text: z.string().nullable(),
       created_at: z.iso.datetime(),
+    }),
+  }),
+  // CHAPTER 3.23. The union is exhaustive over `OUTBOX_EVENT_TYPES`, and this file's own
+  // comment above says why that matters: `consumer/runtime.ts:163` answers a failed
+  // parse with `message.term()`, which stops redelivery for good. A type added to the
+  // array with no branch here is a row DESTROYED at the consumer, and the lane cannot
+  // see it — it runs `RELAY_EVENT_CONSUMER=off`.
+  z.strictObject({
+    ...envelope,
+    type: z.literal("message.updated"),
+    // THE SAME SHAPE AS `message.created` (FR-008a). Restated rather than shared,
+    // because a `strictObject` spread from one variable would let a change to the
+    // creation's shape silently change the edit's — and FR-008a is the requirement
+    // that they NOT drift, which is only meaningful if a change to one is visible.
+    data: z.strictObject({
+      id: z.string().min(1),
+      channel_id: z.string().min(1),
+      seq: z.number().int().positive(),
+      user: z.string().nullable(),
+      text: z.string().nullable(),
+      created_at: z.iso.datetime(),
+    }),
+  }),
+  z.strictObject({
+    ...envelope,
+    type: z.literal("message.deleted"),
+    // NO `text` KEY AT ALL, and `strictObject` makes that enforceable in both
+    // directions: a producer that adds one fails here, which is FR-020 with a test
+    // rather than a promise.
+    data: z.strictObject({
+      id: z.string().min(1),
+      channel_id: z.string().min(1),
+      seq: z.number().int().positive(),
+      user: z.string().nullable(),
+      deleted_at: z.iso.datetime(),
     }),
   }),
   z.strictObject({

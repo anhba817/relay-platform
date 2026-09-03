@@ -209,6 +209,15 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // from `contracts/edit-and-delete.md` would match no target — the note at the join
   // route above records the same trap being paid for once already.
   { method: "PATCH", path: "/v1/channels/:channelId/messages/:messageId", accepts: "user", shape: "write" },
+  // CHAPTER 3.23's DELETION (T041a, FR-006, FR-012, FR-013). `accepts: "either"` — an
+  // existing value, used by the read-position route above — because the author OR a
+  // tenant key may delete (FR-MOD-02), which is the class-level declaration this route
+  // correctly inherits rather than overrides.
+  //
+  // **THIS ENTRY IS WHERE AN INHERITED DECLARATION BECOMES VISIBLE.** In the controller
+  // an inherited `@Accepts` and a forgotten one read identically; here the intent is
+  // written down, so a later reader can tell that both classes are meant.
+  { method: "DELETE", path: "/v1/channels/:channelId/messages/:messageId", accepts: "either", shape: "write" },
   // Chapter 3.12's two new routes, and the order they were added in is the point.
   // The derivation found them first: `targets.itest.ts` went from 22 to 24 and
   // named them as unclassified, on the build that registered the module and

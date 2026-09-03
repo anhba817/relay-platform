@@ -246,6 +246,62 @@ export class MessagesService {
     }
   }
 
+  /** Turn a message into a tombstone (chapter 3.23, FR-006, FR-009, FR-012, FR-013).
+   *
+   * `userId` OPTIONAL, UNLIKE `edit`'s, and the asymmetry is FR-013a. FR-MOD-02 grants a
+   * tenant key deletion of any message and is silent on editing; silence is read as
+   * absence of permission. So this method's caller may be either credential class — the
+   * class-level `@Accepts("application", "user")` this route correctly inherits — and
+   * `undefined` means the tenant, the convention every other read and write here uses.
+   *
+   * THE RETURN CARRIES `alreadyDeleted` RATHER THAN A STATUS. FR-009 makes the second
+   * deletion answer 204 like the first, so the controller cannot tell from the status
+   * whether to publish — and publishing twice puts a second `message.deleted` on every
+   * connected member's socket for one deletion.
+   *
+   * NO `MessageDeletedError` ARM, because a tombstone is not an error here. It is the
+   * requested state, which is the whole of FR-009's idempotence — the edit route
+   * refuses one and this route agrees with one. */
+  async remove(
+    channelId: string,
+    messageId: string,
+    { userId, userExternalId }: { userId?: string; userExternalId?: string },
+  ): Promise<{
+    deleted: MessageWithSender & { deleted_at: string };
+    alreadyDeleted: boolean;
+  }> {
+    if (!(await this.repo.channelVisibleTo(channelId, userId))) {
+      throw new NotFoundException("channel not found");
+    }
+    try {
+      return await this.repo.deleteMessage(channelId, messageId, {
+        ...(userId !== undefined && { userId }),
+        ...(userExternalId !== undefined && { userExternalId }),
+      });
+    } catch (error) {
+      if (error instanceof MessageNotFoundError) {
+        throw new NotFoundException("message not found");
+      }
+      if (error instanceof NotMessageAuthorError) {
+        // THE SAME CODE THE EDIT USES, and FR-013 is one requirement covering both
+        // verbs: *"An end user MUST NOT be permitted to edit or delete a message they
+        // did not author."* A second code for the deletion would be a distinction with
+        // no different action behind it — `codes.ts:10`'s test, applied by not adding
+        // one.
+        //
+        // A TENANT KEY REACHES THIS ONLY THROUGH FR-018, because `deleteMessage` skips
+        // the authorship comparison when there is no user. The message is written for
+        // the end-user case and is true of both: nobody wrote a senderless row.
+        throw protocolError(
+          "not_message_author",
+          "only the author of a message may delete it",
+          HttpStatus.FORBIDDEN,
+        );
+      }
+      throw error;
+    }
+  }
+
   /** A page of history (chapter 2.4). The cursor is opaque coming in and
    * going out; the service is the only place that knows it encodes a
    * sequence. A cursor we did not mint is a 400, never a silent reset to

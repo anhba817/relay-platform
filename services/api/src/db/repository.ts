@@ -39,7 +39,11 @@ import {
   webhookDisableNotifications,
   webhookEndpoints,
 } from "./schema";
-import { membershipEvent, messageCreatedEvent } from "../outbox/event";
+import {
+  membershipEvent,
+  messageCreatedEvent,
+  messageDeletedEvent,
+} from "../outbox/event";
 import { capsFor, type Caps } from "../quotas/config";
 import { thresholdsCrossed } from "../quotas/policy";
 import { creditFor, highWaterMark } from "../quotas/credit";
@@ -4505,6 +4509,198 @@ export class Repository {
         created_at: toIso(row.createdAt),
         edited_at: toIso(editedAt),
         prior_text: row.text,
+      };
+    });
+  }
+
+  /** Turn a message into a tombstone (chapter 3.23, FR-006, FR-006a, FR-009).
+   *
+   * THE COLUMNS ARE `docs/05-sad.md:342`'s, verbatim: `text = NULL`,
+   * `attachments = NULL`, `deleted_at = now()`. Everything else is untouched, and
+   * `sequence` in particular — a tombstone that gave up its place would leave a gap in
+   * every client's ordering and break every cursor keyed on it (FR-011).
+   *
+   * IDEMPOTENT BY A GUARD, NOT BY THE UPDATE (FR-009). Writing the three columns again
+   * would be harmless for two of them and wrong for the third: `deleted_at = now()`
+   * moves, and a client that had already read the tombstone would see its timestamp
+   * change for no reason. So a row that is already a tombstone returns early — no write,
+   * and no second outbox event, which is the half a pair of 204s cannot show.
+   *
+   * WHAT `alreadyDeleted` IS FOR. The caller has to know, because the controller must
+   * not publish a second `message.deleted` to every connected member of the channel.
+   * The status code is 204 either way; the fan-out is not.
+   *
+   * NO AUDIT LOG ROW, though SAD §342's diagram shows one beside the outbox insert.
+   * There is no `audit_log` table in §6.1 or in `schema.ts`, and inventing one is a
+   * feature with a retention policy rather than a line in this method. Chapter 3.23's
+   * `gaps.md` item 2 draws that boundary: `metadata.deleted_by` records WHAT KIND of
+   * principal deleted the message, and which credential it presented is the audit
+   * log's question. */
+  async deleteMessage(
+    channelId: string,
+    messageId: string,
+    {
+      /** Who is deleting, or `undefined` for an application credential (FR-012).
+       *
+       * OPTIONAL HERE AND REQUIRED ON THE EDIT, and the asymmetry is the requirement
+       * rather than an inconsistency. FR-MOD-02 grants a tenant key deletion of any
+       * message and is silent on editing; the spec reads silence as absence of
+       * permission (FR-013a). So this route accepts both credential classes and the
+       * edit accepts one.
+       *
+       * `undefined` MEANS THE TENANT, the convention `sendMessage` and `listMessages`
+       * already use — and here it also skips the authorship check, which is what
+       * FR-012 asks for. */
+      userId,
+      /** The deleter as a CUSTOMER sees them, for `metadata.deleted_by` (FR-006a).
+       * Threaded rather than looked up, exactly as `sendMessage` threads its sender:
+       * a SELECT inside the write transaction is a query every deletion would pay to
+       * learn something the controller already holds. */
+      userExternalId,
+    }: { userId?: string; userExternalId?: string },
+  ): Promise<{
+    deleted: MessageWithSender & { deleted_at: string };
+    alreadyDeleted: boolean;
+  }> {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({
+          id: messages.id,
+          userId: messages.userId,
+          text: messages.text,
+          seq: messages.sequence,
+          createdAt: messages.createdAt,
+          deletedAt: messages.deletedAt,
+          metadata: messages.metadata,
+          author: users.externalId,
+        })
+        .from(messages)
+        .innerJoin(channels, eq(channels.id, messages.channelId))
+        // LEFT, like `listMessages`: an unattributed row must still be READ, or the
+        // 121,250 senderless rows in the lane would be invisible to this method and a
+        // deletion of one would look like a message that does not exist. FR-018 refuses
+        // them below, deliberately and by name.
+        .leftJoin(users, eq(users.id, messages.userId))
+        .where(
+          and(
+            eq(messages.id, messageId),
+            eq(messages.channelId, channelId),
+            eq(channels.environmentId, this.environmentId),
+          ),
+        )
+        .limit(1);
+      if (!row) throw new MessageNotFoundError(messageId);
+
+      // AUTHORSHIP, AND ONLY FOR A USER (FR-012, FR-013). `userId === undefined` is a
+      // tenant key, which may delete anybody's message. A user may delete their own.
+      //
+      // FR-018 IS THE `row.userId === null` HALF and it applies to BOTH principals.
+      // A row nobody wrote cannot be authorised against, and the requirement says
+      // "an edit or deletion" — the deletion being the half a tenant key can reach,
+      // which is why it is checked before the `userId === undefined` shortcut rather
+      // than inside the user branch.
+      if (row.userId === null) throw new NotMessageAuthorError(messageId);
+      if (userId !== undefined && row.userId !== userId) {
+        throw new NotMessageAuthorError(messageId);
+      }
+
+      // ALREADY A TOMBSTONE: nothing to do, and nothing to announce.
+      //
+      // `text === null` IS THE TEST, not `deletedAt !== null`. Both are set together by
+      // this method, but the lane holds rows where only `text` is null — system
+      // messages have had no text since chapter 2.1 — and `text` is the column every
+      // read path already branches on. Chapter 3.15's planted tombstone sets both.
+      if (row.text === null) {
+        return {
+          deleted: {
+            id: row.id,
+            channel_id: channelId,
+            seq: row.seq,
+            text: null,
+            created_at: toIso(row.createdAt),
+            user: row.author,
+            // THE INSTANT ALREADY ON THE ROW, not a fresh reading. FR-009 says a
+            // repeated deletion changes nothing, and the timestamp is the column that
+            // would otherwise move.
+            //
+            // `?? toIso(row.createdAt)` COVERS A ROW THE LANE ACTUALLY HOLDS: a system
+            // message with a null text and no `deleted_at`, which has existed since
+            // chapter 2.1. The branch above turns on `text`, deliberately, so such a
+            // row reaches here — and it is already textless, so reporting its creation
+            // instant is the honest answer rather than inventing a deletion time.
+            deleted_at: row.deletedAt === null ? toIso(row.createdAt) : toIso(row.deletedAt),
+          },
+          alreadyDeleted: true,
+        };
+      }
+
+      // WHO REMOVED IT (FR-006a). Merged into the existing metadata rather than
+      // replacing it: the column is `jsonb NOT NULL DEFAULT '{}'` and this chapter is
+      // its first writer anywhere in the platform, so every row carries `{}` today —
+      // but a later chapter's key must not be erased by a deletion.
+      //
+      // TWO SHAPES, ONE KEY. `{ kind: "user", user }` or `{ kind: "application" }`,
+      // because an application principal has no user of its own. The kind is always
+      // recorded; the identifier exists only when there is one.
+      const existing = (row.metadata ?? {}) as Record<string, unknown>;
+      const deletedBy =
+        userExternalId === undefined
+          ? { kind: "application" as const }
+          : { kind: "user" as const, user: userExternalId };
+
+      const [updated] = await tx
+        .update(messages)
+        .set({
+          text: null,
+          attachments: null,
+          deletedAt: sql`now()`,
+          metadata: { ...existing, deleted_by: deletedBy },
+        })
+        .where(eq(messages.id, messageId))
+        .returning({ deletedAt: messages.deletedAt });
+      // Read back rather than recomputed: the row carries the instant the database
+      // assigned, and the event and the frame must both quote that one.
+      const deletedAt = toIso(updated!.deletedAt!);
+
+      // THE EVENT COMMITS WITH THE TOMBSTONE (ADR-06), on the send path's argument at
+      // its own outbox insert: publishing after the commit leaves a gap where the row
+      // changed and the event never existed, silently, with nothing to reconcile.
+      //
+      // ON THIS BRANCH ONLY, which is FR-009's second half. A repeated deletion
+      // returned above without writing, so it emits nothing — otherwise a client
+      // retrying a 204 fires every subscribed webhook a second time.
+      const event = messageDeletedEvent({
+        eventId: randomUUID(),
+        environmentId: this.environmentId,
+        occurredAt: deletedAt,
+        message: {
+          id: row.id,
+          channel_id: channelId,
+          seq: row.seq,
+          user: row.author,
+          deleted_at: deletedAt,
+        },
+      });
+      await tx.insert(outbox).values({
+        subject: event.subject,
+        payload: event.payload,
+      });
+
+      return {
+        deleted: {
+          id: row.id,
+          channel_id: channelId,
+          seq: row.seq,
+          text: null,
+          created_at: toIso(row.createdAt),
+          user: row.author,
+          // THE COMMITTED INSTANT, read back from the UPDATE. The outbox event above
+          // quotes this same value, so a consumer and a socket client comparing the
+          // event with the frame see one timestamp rather than two readings of one
+          // clock a few milliseconds apart.
+          deleted_at: deletedAt,
+        },
+        alreadyDeleted: false,
       };
     });
   }

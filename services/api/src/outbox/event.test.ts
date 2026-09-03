@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   membershipEvent,
   messageCreatedEvent,
+  messageDeletedEvent,
+  messageUpdatedEvent,
   OUTBOX_EVENT_TYPES,
   outboxEventSchema,
   subjectFor,
@@ -135,18 +137,34 @@ const MEMBERSHIP = {
   user: "tuan",
 };
 
+/** A tombstone as a consumer receives it (chapter 3.23). No `text` key — that is
+ * FR-020, and `strictObject` refuses one. */
+const DELETED = {
+  id: MESSAGE.id,
+  channel_id: MESSAGE.channel_id,
+  seq: MESSAGE.seq,
+  user: MESSAGE.user,
+  deleted_at: "2026-09-03T09:15:00.000Z",
+};
+
 describe("the outbox event type set", () => {
   // ASSERTED AS A SET AND AS A COUNT, which is chapter 3.19's `codes.test.ts`
   // precedent: either alone lets a fourth type arrive unnoticed. FR-WHK-02 names
-  // eight and three exist; the other five arrive with the features that can
-  // produce them.
-  it("is exactly the three types that have producers", () => {
+  // eight and FIVE exist since chapter 3.23; the other three arrive with the features
+  // that can produce them.
+  //
+  // THE ORDER IS THE ARRAY'S, and the two new names sit beside `message.created`
+  // rather than at the end — they are the same domain, and `toEqual` on an array is
+  // order-sensitive, so this assertion is also a claim about how the source reads.
+  it("is exactly the five types that have producers", () => {
     expect([...OUTBOX_EVENT_TYPES]).toEqual([
       "message.created",
+      "message.updated",
+      "message.deleted",
       "channel.member_added",
       "channel.member_removed",
     ]);
-    expect(OUTBOX_EVENT_TYPES).toHaveLength(3);
+    expect(OUTBOX_EVENT_TYPES).toHaveLength(5);
   });
 
   it("gives every type a subject without a mapping entry", () => {
@@ -160,6 +178,92 @@ describe("the outbox event type set", () => {
     expect(subjectFor("channel.member_removed", ENV)).toBe(
       `events.channel.member_removed.${ENV}`,
     );
+  });
+});
+
+describe("messageUpdatedEvent and messageDeletedEvent (chapter 3.23)", () => {
+  const updated = () =>
+    messageUpdatedEvent({
+      eventId: "9c26f1a2-0000-4000-8000-000000000003",
+      environmentId: ENV,
+      occurredAt: "2026-09-03T09:15:00.000Z",
+      message: MESSAGE,
+    });
+  const deleted = () =>
+    messageDeletedEvent({
+      eventId: "9c26f1a2-0000-4000-8000-000000000004",
+      environmentId: ENV,
+      occurredAt: "2026-09-03T09:15:00.000Z",
+      message: DELETED,
+    });
+
+  it("spells both types as FR-WHK-02 spells them", () => {
+    expect(updated().payload.type).toBe("message.updated");
+    expect(deleted().payload.type).toBe("message.deleted");
+    expect(updated().subject).toBe(`events.msg.updated.${ENV}`);
+    expect(deleted().subject).toBe(`events.msg.deleted.${ENV}`);
+  });
+
+  it("leaves the edit's payload identical to a creation's (FR-008a)", () => {
+    // FR-008a in one assertion: *"The message payload used by creation and edit events
+    // MUST be left unchanged."* Compared as SETS, so a field added to one and not the
+    // other fails here rather than in a customer's consumer.
+    expect(Object.keys(updated().payload.data).sort()).toEqual([
+      "channel_id",
+      "created_at",
+      "id",
+      "seq",
+      "text",
+      "user",
+    ]);
+  });
+
+  it("gives the deletion NO text key at all (FR-020)", () => {
+    // NOT `text: null` — a key that can hold the words somebody asked to have removed
+    // is a key somebody can forget to null. The exact set is the assertion.
+    const keys = Object.keys(deleted().payload.data).sort();
+    expect(keys).toEqual(["channel_id", "deleted_at", "id", "seq", "user"]);
+    expect(keys).not.toContain("text");
+  });
+
+  it("carries the edit's own instant, not the message's created_at", () => {
+    // The one place the edit event diverges from the creation event, and it has to: an
+    // event whose `occurred_at` predates the previous event about the same message
+    // cannot be ordered by a consumer.
+    expect(updated().payload.occurred_at).toBe("2026-09-03T09:15:00.000Z");
+    expect(updated().payload.occurred_at).not.toBe(MESSAGE.created_at);
+  });
+
+  it("refuses an event with no id and an event with no environment", () => {
+    // Refused rather than defaulted, like every other builder here: an event with no
+    // deduplication key looks deliverable and cannot be deduplicated.
+    for (const build of [messageUpdatedEvent, messageDeletedEvent]) {
+      expect(() =>
+        // @ts-expect-error the point of the test
+        build({ eventId: "", environmentId: ENV, occurredAt: "x", message: MESSAGE }),
+      ).toThrow("event id");
+      expect(() =>
+        // @ts-expect-error the point of the test
+        build({ eventId: "id", environmentId: "", occurredAt: "x", message: MESSAGE }),
+      ).toThrow("environment id");
+    }
+  });
+
+  it("round-trips both through the consumer's schema", () => {
+    // The producer and the consumer are two shapes of one contract. Without this, the
+    // union branches added in this chapter would be checked only against fixtures this
+    // file writes — and `consumer/runtime.ts` answers a failed parse with
+    // `message.term()`, which stops redelivery for good.
+    expect(outboxEventSchema.safeParse(updated().payload).success).toBe(true);
+    expect(outboxEventSchema.safeParse(deleted().payload).success).toBe(true);
+  });
+
+  it("refuses a deletion that carries a text, through the consumer's schema", () => {
+    const withText = {
+      ...deleted().payload,
+      data: { ...DELETED, text: "should not be here" },
+    };
+    expect(outboxEventSchema.safeParse(withText).success).toBe(false);
   });
 });
 
@@ -252,12 +356,24 @@ describe("outboxEventSchema — what a CONSUMER will accept", () => {
   // `message.term()` — redelivery stopped for good. Every membership event would
   // have been destroyed there, in a lane that runs the consumer switched off.
   it("accepts every type the producer can build", () => {
+    // A LOOKUP RATHER THAN A TERNARY, because chapter 3.23 made the shapes three: a
+    // creation and an edit carry a `Message` (FR-008a), a deletion carries an identity
+    // with no text (FR-020), and a membership change carries neither. The ternary's
+    // `else` branch would have handed the membership shape to `message.deleted` and
+    // reported a schema failure as though the schema were wrong.
+    const dataFor: Record<(typeof OUTBOX_EVENT_TYPES)[number], unknown> = {
+      "message.created": MESSAGE,
+      "message.updated": MESSAGE,
+      "message.deleted": DELETED,
+      "channel.member_added": { channel_id: MEMBERSHIP.channel_id, user: MEMBERSHIP.user },
+      "channel.member_removed": { channel_id: MEMBERSHIP.channel_id, user: MEMBERSHIP.user },
+    };
     for (const type of OUTBOX_EVENT_TYPES) {
-      const data =
-        type === "message.created"
-          ? MESSAGE
-          : { channel_id: MEMBERSHIP.channel_id, user: MEMBERSHIP.user };
-      const result = outboxEventSchema.safeParse({ ...envelope, type, data });
+      const result = outboxEventSchema.safeParse({
+        ...envelope,
+        type,
+        data: dataFor[type],
+      });
       expect(result.success, `${type} must parse`).toBe(true);
     }
   });

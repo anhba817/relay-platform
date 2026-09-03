@@ -864,3 +864,239 @@ describe("editMessage (chapter 3.23)", () => {
     expect(await repoB.listMessageEdits(channel.id, sent.id)).toEqual([]);
   });
 });
+
+
+// ══ DELETING A MESSAGE (chapter 3.23, US2) ══════════════════════════════════
+describe("deleteMessage (chapter 3.23)", () => {
+  /** The columns as the database holds them, read raw. Every assertion below is about
+   * what COMMITTED rather than what the method returned — a method that returned the
+   * right object and wrote something else would pass a return-value test. */
+  const rowOf = async (id: string) => {
+    const res = (await db.execute<{
+      text: string | null;
+      attachments: unknown;
+      deleted_at: Date | null;
+      sequence: string;
+      user_id: string | null;
+      created_at: Date;
+      metadata: Record<string, unknown>;
+    }>(
+      sql`SELECT text, attachments, deleted_at, sequence, user_id, created_at, metadata
+            FROM messages WHERE id = ${id}`,
+    )).rows;
+    return res[0]!;
+  };
+
+  it("T040: keeps the sequence, author and created_at; drops text and attachments (FR-006)", async () => {
+    // THE COLUMNS ARE `docs/05-sad.md:342`'s, and this is the first tombstone the
+    // PLATFORM writes. Chapter 3.15's suite plants one by hand a few describes above,
+    // and the two agree column for column — which is what makes that chapter's reader
+    // tests evidence about this chapter's writer.
+    const author = await repoA.createUser("t040-author", "Author");
+    const channel = await repoA.createChannel("t040", "public");
+    await repoA.addMember(channel.id, author.id);
+    const sent = await repoA.sendMessage(channel.id, {
+      text: "regrettable",
+      userId: author.id,
+      userExternalId: "t040-author",
+    });
+    const before = await rowOf(sent.id);
+
+    const { deleted, alreadyDeleted } = await repoA.deleteMessage(channel.id, sent.id, {
+      userId: author.id,
+      userExternalId: "t040-author",
+    });
+    expect(alreadyDeleted).toBe(false);
+    expect(deleted.text).toBeNull();
+
+    const after = await rowOf(sent.id);
+    expect(after.text).toBeNull();
+    expect(after.attachments).toBeNull();
+    expect(after.deleted_at).not.toBeNull();
+    // UNTOUCHED, and asserted as values rather than as the absence of an assignment.
+    expect(after.sequence).toBe(before.sequence);
+    expect(after.user_id).toBe(author.id);
+    expect(new Date(after.created_at).toISOString()).toBe(
+      new Date(before.created_at).toISOString(),
+    );
+  });
+
+  it("T040: records WHO deleted it, in two shapes (FR-006a)", async () => {
+    // **THIS CHAPTER IS `messages.metadata`'S FIRST WRITER ANYWHERE.** Every row in the
+    // platform carries the `'{}'` default today, which is why the merge below matters:
+    // a later chapter's key must survive a deletion.
+    const author = await repoA.createUser("t040b-author", "Author");
+    const channel = await repoA.createChannel("t040b", "public");
+    await repoA.addMember(channel.id, author.id);
+
+    const byAuthor = await repoA.sendMessage(channel.id, {
+      text: "mine to remove",
+      userId: author.id,
+      userExternalId: "t040b-author",
+      metadata: { source: "a key a later chapter writes" },
+    });
+    await repoA.deleteMessage(channel.id, byAuthor.id, {
+      userId: author.id,
+      userExternalId: "t040b-author",
+    });
+    const asUser = await rowOf(byAuthor.id);
+    expect(asUser.metadata["deleted_by"]).toEqual({
+      kind: "user",
+      user: "t040b-author",
+    });
+    // MERGED, NOT REPLACED. The pre-existing key is still there.
+    expect(asUser.metadata["source"]).toBe("a key a later chapter writes");
+
+    // A TENANT KEY: the kind is recorded and there is no user, because an application
+    // principal has no user of its own. WHICH credential it presented is an audit log's
+    // question — chapter 3.23's `gaps.md` item 2 draws that line.
+    const byKey = await repoA.sendMessage(channel.id, {
+      text: "moderated away",
+      userId: author.id,
+      userExternalId: "t040b-author",
+    });
+    await repoA.deleteMessage(channel.id, byKey.id, {});
+    expect((await rowOf(byKey.id)).metadata["deleted_by"]).toEqual({
+      kind: "application",
+    });
+  });
+
+  it("T042: a second deletion changes nothing and writes no second event (FR-009)", async () => {
+    const author = await repoA.createUser("t042-author", "Author");
+    const channel = await repoA.createChannel("t042", "public");
+    await repoA.addMember(channel.id, author.id);
+    const sent = await repoA.sendMessage(channel.id, {
+      text: "twice",
+      userId: author.id,
+      userExternalId: "t042-author",
+    });
+
+    const first = await repoA.deleteMessage(channel.id, sent.id, {
+      userId: author.id,
+      userExternalId: "t042-author",
+    });
+    const afterFirst = await rowOf(sent.id);
+
+    const second = await repoA.deleteMessage(channel.id, sent.id, {
+      userId: author.id,
+      userExternalId: "t042-author",
+    });
+    const afterSecond = await rowOf(sent.id);
+
+    expect(first.alreadyDeleted).toBe(false);
+    expect(second.alreadyDeleted).toBe(true);
+    // THE TIMESTAMP IS THE COLUMN THAT WOULD MOVE, and a client that had already read
+    // the tombstone would see it change for no reason.
+    expect(afterSecond.deleted_at).toEqual(afterFirst.deleted_at);
+    expect(second.deleted.deleted_at).toBe(first.deleted.deleted_at);
+
+    // ONE EVENT. Two 204s prove nothing; this is the assertion that carries FR-009,
+    // because a second row here fires every subscribed webhook a second time.
+    const events = (await db.execute<{ n: number }>(
+      sql`SELECT count(*)::int AS n FROM outbox
+            WHERE payload->>'type' = 'message.deleted'
+              AND payload->'data'->>'id' = ${sent.id}`,
+    )).rows;
+    expect(events[0]!.n).toBe(1);
+  });
+
+  it("T042a: a deletion of a row with no author is refused (FR-018)", async () => {
+    // FR-018 says "an edit OR deletion" and the first draft of the task list tested only
+    // the edit. **The deletion is the half a tenant API key can reach** — FR-012 lets a
+    // key delete anybody's message — so it is the more exposed one, and it is checked
+    // before the tenant shortcut rather than inside the user branch.
+    const author = await repoA.createUser("t042a-author", "Author");
+    const channel = await repoA.createChannel("t042a", "public");
+    const sent = await repoA.sendMessage(channel.id, { text: "orphan", userId: author.id });
+    await db.execute(sql`UPDATE messages SET user_id = NULL WHERE id = ${sent.id}`);
+
+    // Neither principal can delete it: not the user…
+    await expect(
+      repoA.deleteMessage(channel.id, sent.id, {
+        userId: author.id,
+        userExternalId: "t042a-author",
+      }),
+    ).rejects.toThrow(NotMessageAuthorError);
+    // …and not the tenant key, which is the half FR-012 would otherwise wave through.
+    await expect(repoA.deleteMessage(channel.id, sent.id, {})).rejects.toThrow(
+      NotMessageAuthorError,
+    );
+    expect((await rowOf(sent.id)).text).toBe("orphan");
+  });
+
+  it("T048: a deleted message still counts as one unread", async () => {
+    // Chapter 3.15 decided this against a planted tombstone and stated the
+    // approximation: unread is `last_sequence - read_position`, so a tombstone keeps its
+    // sequence and therefore its place in the arithmetic. Counting rows instead would
+    // make a deleted message stop being unread, at 10x the cost on the query a client
+    // runs to render its first screen. **Same assertion, real writer.**
+    const user = await repoA.createUser("t048-user", "User");
+    const channel = await repoA.createChannel("t048", "public");
+    await repoA.addMember(channel.id, user.id);
+    await repoA.sendMessage(channel.id, { text: "one", userId: user.id });
+    const second = await repoA.sendMessage(channel.id, { text: "two", userId: user.id });
+    await repoA.deleteMessage(channel.id, second.id, { userId: user.id });
+
+    const { rows } = await repoA.listChannelsForUser(user.id, { limit: 50 });
+    const row = rows.find((c) => c.id === channel.id)!;
+    expect(row.unread).toBe(2);
+  });
+
+  it("T049: deleting the NEWEST message leaves the preview at that sequence with a null text", async () => {
+    // Not "the message before it". The listing's preview is the channel's last message
+    // and a tombstone is still the last message — reporting the previous one would make
+    // a deletion look like the conversation had rewound.
+    const user = await repoA.createUser("t049-user", "User");
+    const channel = await repoA.createChannel("t049", "public");
+    await repoA.addMember(channel.id, user.id);
+    await repoA.sendMessage(channel.id, { text: "older", userId: user.id });
+    const newest = await repoA.sendMessage(channel.id, { text: "newest", userId: user.id });
+    await repoA.deleteMessage(channel.id, newest.id, { userId: user.id });
+
+    const { rows } = await repoA.listChannelsForUser(user.id, { limit: 50 });
+    const row = rows.find((c) => c.id === channel.id)!;
+    expect(row.last_message?.sequence).toBe(newest.seq);
+    expect(row.last_message?.text).toBeNull();
+    expect(row.last_message?.user).not.toBeNull();
+  });
+
+  it("T047: history returns the tombstone in its original position, with a real writer behind it", async () => {
+    // The twin of T009's test a few describes above, which proved the READER against a
+    // hand-planted tombstone. This proves the reader and the WRITER agree — the thing
+    // that would break is a writer whose columns differ from what that test planted.
+    const user = await repoA.createUser("t047-user", "User");
+    const channel = await repoA.createChannel("t047", "public");
+    await repoA.addMember(channel.id, user.id);
+    const first = await repoA.sendMessage(channel.id, { text: "one", userId: user.id });
+    const middle = await repoA.sendMessage(channel.id, { text: "two", userId: user.id });
+    const last = await repoA.sendMessage(channel.id, { text: "three", userId: user.id });
+    await repoA.deleteMessage(channel.id, middle.id, { userId: user.id });
+
+    for (const [label, page] of [
+      ["backward", await repoA.listMessages(channel.id, { userId: user.id, limit: 10 })],
+      [
+        "forward",
+        await repoA.listMessages(channel.id, { userId: user.id, limit: 10, afterSeq: 0 }),
+      ],
+    ] as const) {
+      const seqs = page.map((m) => m.seq).sort((a, b) => a - b);
+      expect(seqs, label).toEqual([first.seq, middle.seq, last.seq]);
+      const tomb = page.find((m) => m.seq === middle.seq)!;
+      expect(tomb.text, label).toBeNull();
+      expect(tomb.user, label).not.toBeNull();
+    }
+  });
+
+  it("refuses a message of another TENANT and one from another channel", async () => {
+    const author = await repoA.createUser("t039-author", "Author");
+    const here = await repoA.createChannel("t039-here", "public");
+    const there = await repoA.createChannel("t039-there", "public");
+    const sent = await repoA.sendMessage(there.id, { text: "over there", userId: author.id });
+    await expect(
+      repoA.deleteMessage(here.id, sent.id, { userId: author.id }),
+    ).rejects.toThrow(MessageNotFoundError);
+    await expect(
+      repoB.deleteMessage(there.id, sent.id, { userId: author.id }),
+    ).rejects.toThrow(MessageNotFoundError);
+  });
+});

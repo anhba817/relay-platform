@@ -2,7 +2,9 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Inject,
   NotFoundException,
   Param,
@@ -343,6 +345,97 @@ export class MessagesController {
       edited_at: edited.edited_at,
       user: actingExternalId,
     };
+  }
+
+  /** Remove what a message says (chapter 3.23, FR-006, FR-007, FR-009, FR-012).
+   *
+   * NO METHOD-LEVEL `@Accepts`, AND THAT IS THE DECLARATION. This is the one route in
+   * the chapter where the class's `("application", "user")` at :64 is what the
+   * requirement asks for: FR-MOD-02 grants a tenant key deletion of any message
+   * irrespective of author (FR-012), and an end user may delete their own (FR-013).
+   *
+   * **An inherited declaration and an absent one look identical in the source**, which
+   * is the thing `credential.guard.ts:31` argues about and chapter 3.12 paid for. So
+   * `targets.ts` carries `accepts: "either"` for this path — an existing value, used by
+   * the read-position route — and the entry is where a reader can see that both classes
+   * are intended here rather than merely tolerated.
+   *
+   * 204, AND THE SAME 204 TWICE (FR-009). Nest would answer 200 for a DELETE with a
+   * body; there is no body, and idempotence means the second call is
+   * indistinguishable from the first on the wire. What differs is the fan-out, and
+   * `alreadyDeleted` is how this handler knows. */
+  @Delete(":messageId")
+  @HttpCode(204)
+  async remove(
+    @Param("channelId") channelId: string,
+    @Param("messageId") messageId: string,
+    @Req() req: RequestWithPrincipal,
+  ): Promise<void> {
+    // THE DELETER, PER CREDENTIAL CLASS. A user token names its subject; an application
+    // credential names nobody, and unlike the send path it does not have to — FR-006a
+    // records the KIND of principal, and `{ kind: "application" }` is a complete
+    // answer. There is no body on a DELETE to name a `user` in, and inventing one
+    // would let a key delete "as" somebody, which is the thing FR-013a refuses for the
+    // edit.
+    const actingExternalId = actingUser(req);
+    let userId: string | undefined;
+    if (actingExternalId !== undefined) {
+      const user = await this.repo.getUserByExternalId(actingExternalId);
+      if (!user) {
+        throw new BadRequestException({
+          code: "invalid_request",
+          message: "the caller named in this token is not a user of this environment",
+          field: "user",
+        });
+      }
+      userId = user.id;
+    }
+
+    const { deleted, alreadyDeleted } = await this.messages.remove(
+      channelId,
+      messageId,
+      {
+        ...(userId !== undefined && { userId }),
+        ...(actingExternalId !== undefined && { userExternalId: actingExternalId }),
+      },
+    );
+
+    // ── the live fan-out (chapter 3.23, FR-007, FR-009, ADR-24) ──────────────
+    //
+    // GUARDED ON `alreadyDeleted`, which is this route's version of the send path's
+    // `!duplicate`. Both exist for the same failure: a client retrying on a flaky link
+    // would otherwise put the same frame on every member's screen twice. The status is
+    // 204 either way, so the guard is the only thing that can tell them apart.
+    if (!alreadyDeleted) {
+      await this.fanout.publishRevision(
+        {
+          kind: "deleted",
+          message: {
+            id: deleted.id,
+            channel: deleted.channel_id,
+            seq: deleted.seq,
+            // THE AUTHOR, NOT THE DELETER (FR-008). The frame identifies the message,
+            // and who removed it is `metadata.deleted_by` on the row — a tenant key may
+            // delete anybody's message, so the two are different facts and the wire
+            // carries the one every client already has beside the message.
+            //
+            // `?? "unknown"` NEVER FIRES, and it is here because the compiler cannot
+            // know that: `deleteMessage` refuses a senderless row with
+            // `NotMessageAuthorError` (FR-018) before this line can be reached, so a
+            // null author is unrepresentable here and the type is still nullable.
+            user: deleted.user ?? "unknown",
+            // THE ROW'S INSTANT, not a reading taken here. The outbox event built
+            // inside the transaction quotes the same value, so a consumer comparing
+            // its webhook against a client's frame sees one timestamp.
+            deleted_at: deleted.deleted_at,
+          },
+        },
+        {
+          requestId: req.requestId ?? "unknown",
+          environmentId: req.principal?.environmentId ?? "unknown",
+        },
+      );
+    }
   }
 
   /** What a message used to say (chapter 3.23, FR-023, FR-023a).

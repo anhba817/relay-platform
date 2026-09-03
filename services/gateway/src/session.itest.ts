@@ -796,6 +796,72 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     expect(second.filter((f) => f.type === "message.created")).toHaveLength(1);
   });
 
+  it("T046: a deletion over REST reaches a member's socket with NO text field at all (FR-007)", async () => {
+    const frames = record(connect(await mintToken("watcher")));
+    await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
+
+    // Sent by the editor and deleted by the TENANT KEY, which FR-012 permits
+    // irrespective of author — the path a moderator takes, exercised here because the
+    // frame must be identical either way.
+    const editorToken = await mintToken("editor");
+    const text = `to be removed ${randomUUID()}`;
+    const posted = await fetch(`${api.url}/v1/channels/${api.channelId}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${editorToken}`,
+      },
+      body: JSON.stringify({ text }),
+    });
+    expect(posted.status, await posted.clone().text()).toBe(201);
+    const sent = (await posted.json()) as { id: string; seq: number };
+    await waitFor(frames, (f) => f.type === "message.created", "the creation");
+
+    const removed = await fetch(
+      `${api.url}/v1/channels/${api.channelId}/messages/${sent.id}`,
+      { method: "DELETE", headers: { authorization: `Bearer ${api.credential}` } },
+    );
+    expect(removed.status, await removed.clone().text()).toBe(204);
+
+    const frame = (await waitFor(
+      frames,
+      (f) => f.type === "message.deleted",
+      "message.deleted",
+    )) as { payload: Record<string, unknown> };
+    // THE EXACT KEY SET, which is the assertion FR-020's sibling requirement needs:
+    // "no text" as `Object.keys` rather than as `payload.text === undefined`, because
+    // an absent key and a null one read the same through a property access.
+    expect(Object.keys(frame.payload).sort()).toEqual([
+      "channel",
+      "deleted_at",
+      "id",
+      "seq",
+      "user",
+    ]);
+    expect(frame.payload).not.toHaveProperty("text");
+    // Identity and position (FR-008), and the sequence is the one it had — a tombstone
+    // that gave up its place would leave a gap in every client's ordering.
+    expect(frame.payload["id"]).toBe(sent.id);
+    expect(frame.payload["seq"]).toBe(sent.seq);
+    // THE AUTHOR, NOT THE DELETER. A tenant key removed it; the frame names who wrote
+    // it, which is the fact every client already holds beside the message.
+    expect(frame.payload["user"]).toBe("editor");
+
+    // AND NO SECOND FRAME FOR A SECOND DELETION (FR-009, SC-007). The status is 204
+    // either way, so this count is the only thing that can tell the two apart on the
+    // wire.
+    expect(
+      (
+        await fetch(`${api.url}/v1/channels/${api.channelId}/messages/${sent.id}`, {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${api.credential}` },
+        })
+      ).status,
+    ).toBe(204);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(frames.filter((f) => f.type === "message.deleted")).toHaveLength(1);
+  });
+
   it("stops delivering to a member who was REMOVED while connected (FR-RTM-10)", async () => {
     // INVERTED IN CHAPTER 3.20, AND THE TITLE WITH IT. This test read "keeps
     // delivering" and asserted the violation on purpose from chapter 3.18 until
