@@ -20,9 +20,27 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 //   4310-4370  dispatcher/dispatcher.itest.ts   api
 //   4400-4600  gateway/session.itest.ts         api
 //   4610-4670  gateway/meter.itest.ts           gateway
+//   4700-4900  gateway/presence.itest.ts        api  ** CONTAINS the line below **
 //   4710-4770  gateway/meter.itest.ts           api
 //   4900-5100  gateway/isolation.itest.ts       api (TWO children, see below)
 //   5200-5400  gateway/public-surface.itest.ts  api
+//   5400-5600  gateway/membership.itest.ts      api
+//
+// THE MAP WAS NOT 78% COMPLETE, IT WAS WRONG. Chapter 3.21's `gaps.md` item 4 put
+// the two missing entries at two-of-nine and called the map incomplete. Adding them
+// shows something a completeness figure cannot: `presence.itest.ts` takes
+// `4700 + %200` and `meter.itest.ts`'s api takes `4710 + %60`, so **one
+// unregistered range strictly contains a registered one** and the gateway's
+// integration config sets no `fileParallelism` — both files run at once.
+//
+// Chapter 3.20 eliminated "a port collision" as a cause of that battery's failures
+// because *"the failing ports are in each file's own range"*. That test cannot see
+// this: the colliding port IS in each file's own range. P = 1/200 per run against an
+// observed 2.5-5% for those two files, so it is a contributor and not the cause —
+// and it is the first hypothesis in that item with a number attached.
+//
+// Left as it is rather than fixed here, because moving a range is another chapter's
+// change to another chapter's file and the number belongs in `gaps.md` first.
 
 import { createApiClient } from "./api-client.js";
 import { createGatewayLimits, type GatewayLimits } from "./limits.js";
