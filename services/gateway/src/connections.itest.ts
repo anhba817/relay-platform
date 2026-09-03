@@ -108,7 +108,7 @@ async function boot(options: {
    * Absent means the cap is not enforced at all, which is what US3's tests want:
    * every gateway module is an optional `attachSessions` parameter, so a fixture
    * opts in. */
-  cap?: { boundMs?: number; heartbeatMs?: number };
+  cap?: { boundMs?: number; heartbeatMs?: number; url?: string };
   /** FR-015's log line is the assertion that carries the requirement, so a test
    * needs the lines. Chapter 3.18: a publisher that does nothing satisfies "the
    * send returned 201". */
@@ -151,7 +151,7 @@ async function boot(options: {
     options.cap === undefined
       ? undefined
       : createConnections({
-          url: REDIS,
+          url: options.cap.url ?? REDIS,
           logger,
           ...(options.cap.boundMs === undefined ? {} : { boundMs: options.cap.boundMs }),
         });
@@ -986,4 +986,126 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     expect(rejected).toHaveLength(1);
     expect(rejected[0]?.["held"]).toBe(5);
   }, 40_000);
+});
+
+// ---------------------------------------------------------------------------
+// PHASE 8 — failing open, where the log line is the only evidence.
+//
+// FR-016 chooses availability over the cap: a registry the gateway cannot reach
+// must not stop people connecting. The whole difficulty is that this decision is
+// INVISIBLE. An accepted connection is an accepted connection; nothing a client
+// sees says whether five was checked. Chapter 3.18 found the general case — the
+// fan-out's `publish` swallows its errors and resolves, so "the send returned 201
+// while Redis was down" is equally true of a publisher that does nothing at all.
+// The assertion that carries the requirement is the log line.
+// ---------------------------------------------------------------------------
+
+const UNREACHABLE = "redis://127.0.0.1:6399";
+
+describe("the cap fails open, and says so (US4)", () => {
+  const open: Instance[] = [];
+  const sockets: WebSocket[] = [];
+  let user: string;
+
+  const connect = (instance: Instance): Recorded => {
+    const socket = new WebSocket(`${instance.url}?token=any`);
+    sockets.push(socket);
+    return record(socket);
+  };
+
+  beforeEach(() => {
+    user = `u-${randomUUID()}`;
+  });
+
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    for (const instance of open.splice(0)) await instance.close();
+  });
+
+  it("logs that the cap was not enforced when the registry is unreachable (FR-016 (3.22), SC-011)", async () => {
+    // THE LOG LINE, NOT THE ACCEPTANCE. `expect(acked).toBe(true)` here would pass
+    // against a build with no cap at all, against one whose claim always succeeds,
+    // and against this one. It says nothing.
+    const channel = randomUUID();
+    const lines: Record<string, unknown>[] = [];
+    const instance = await boot({
+      user,
+      channels: [channel],
+      cap: { url: UNREACHABLE },
+      lines,
+    });
+    open.push(instance);
+
+    const r = connect(instance);
+    await untilAcked(r);
+
+    const unenforced = lines.filter((l) => l["msg"] === "connection.cap_unenforced");
+    expect(unenforced, "nothing said the cap went unchecked").toHaveLength(1);
+    expect(unenforced[0]?.["user"]).toBe(user);
+    expect(unenforced[0]?.["environment_id"]).toBe(ENVIRONMENT);
+    // The id the claim was attempted with, so the line joins to the accept line
+    // below rather than floating free among however many connections are in flight.
+    const opened = lines.find((l) => l["msg"] === "connection.opened");
+    expect(unenforced[0]?.["connection_id"]).toBe(opened?.["connection_id"]);
+    // NFR-SEC-06, the same check the refusal gets: a failure surface is where a
+    // credential ends up in a support ticket.
+    expect(JSON.stringify(unenforced[0])).not.toContain("rk_");
+  }, 40_000);
+
+  it("tells 'not enforced' apart from 'enforced and under the limit' (FR-016a (3.22), SC-014)", async () => {
+    // BOTH DIRECTIONS, because one alone is satisfied by a line that always says
+    // the same thing. A single "accepted" satisfies neither.
+    const channel = randomUUID();
+    const blind: Record<string, unknown>[] = [];
+    const seeing: Record<string, unknown>[] = [];
+    const withoutRegistry = await boot({
+      user,
+      channels: [channel],
+      cap: { url: UNREACHABLE },
+      lines: blind,
+    });
+    const withRegistry = await boot({
+      user,
+      channels: [channel],
+      cap: {},
+      lines: seeing,
+    });
+    open.push(withoutRegistry, withRegistry);
+
+    await untilAcked(connect(withoutRegistry));
+    await untilAcked(connect(withRegistry));
+
+    const openedBlind = blind.find((l) => l["msg"] === "connection.opened");
+    const openedSeeing = seeing.find((l) => l["msg"] === "connection.opened");
+    expect(openedBlind?.["cap_enforced"]).toBe(false);
+    expect(openedSeeing?.["cap_enforced"]).toBe(true);
+    // And the error-level line exists on one side only, which is what an alert
+    // would be built on.
+    expect(blind.some((l) => l["msg"] === "connection.cap_unenforced")).toBe(true);
+    expect(seeing.some((l) => l["msg"] === "connection.cap_unenforced")).toBe(false);
+  }, 40_000);
+
+  it("does NOT fall back to counting this instance's own connections (FR-016b (3.22))", async () => {
+    // THE SPEC'S Q2, REJECTED EXPLICITLY. Falling back to
+    // `registry.connectionsFor(user)` looks like defence and is not: five per
+    // instance across four gateways is an effective cap of twenty wearing the
+    // label five. A wrong number that looks right is worse than a stated absence,
+    // and the stated absence is the log line the two tests above assert.
+    //
+    // SIX, not five, and the sixth is the assertion. A local fallback refuses it.
+    const channel = randomUUID();
+    const instance = await boot({
+      user,
+      channels: [channel],
+      cap: { url: UNREACHABLE },
+    });
+    open.push(instance);
+
+    for (let i = 0; i < MAX_CONNECTIONS_PER_USER + 1; i += 1) {
+      const r = connect(instance);
+      await untilAcked(r);
+      expect(r.closed, `attempt ${String(i)} was closed`).toBeUndefined();
+    }
+  }, 60_000);
 });

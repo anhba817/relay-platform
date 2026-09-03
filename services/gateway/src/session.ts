@@ -758,6 +758,7 @@ export function attachSessions({
           // 3.18's lesson: the assertion that carries the requirement is the log
           // line.
           logger.log("error", "connection.cap_unenforced", {
+            connection_id: pendingId,
             environment_id: result.identity.environmentId,
             user: result.identity.userExternalId,
           });
@@ -948,11 +949,22 @@ export function attachSessions({
       identity.userExternalId,
       connection.channelIds,
     );
+    // FR-016a, AND IT IS A POSITIVE STATEMENT RATHER THAN AN ABSENCE. An accepted
+    // connection looks identical from outside whether the cap was checked and
+    // satisfied or could not be checked at all; the requirement is that the two be
+    // told apart from the logs. Reading `connection.cap_unenforced` and inferring
+    // the other case from its absence needs both lines and a connection id to join
+    // them on — so the accept line carries the fact itself.
+    //
+    // ABSENT, NOT `true`, WHEN NO MODULE IS WIRED. Every gateway module is an
+    // optional parameter and most fixtures pass none; saying `cap_enforced: true`
+    // there would claim a check that never happened.
     logger.log("info", "connection.opened", {
       connection_id: connection.id,
       user: identity.userExternalId,
       channels: connection.channelIds.size,
       resuming: presented !== undefined,
+      ...(connections === undefined ? {} : { cap_enforced: claimedSlot !== undefined }),
     });
 
     // Listeners go on BEFORE the resume, not after the ack. A resume takes
@@ -1019,6 +1031,7 @@ export function attachSessions({
               }
               if (outcome.kind === "unenforced") {
                 logger.log("error", "connection.cap_unenforced", {
+                  connection_id: connection.id,
                   environment_id: identity.environmentId,
                   user: identity.userExternalId,
                 });
