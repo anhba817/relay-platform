@@ -892,6 +892,72 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect((await remove(inside.id, credential, privateChannelId)).status).toBe(204);
   });
 
+  it("T052: a key's tombstone is the SAME tombstone an author's deletion produces (FR-012, SC-004)", async () => {
+    // NOT "both are null". Two messages, one deleted by its author and one by the
+    // tenant key, compared field by field through the read path — because FR-012 grants
+    // a key deletion of any message and SC-004 asks that the content be gone from every
+    // path a reader can reach it by. A moderated message that read differently from a
+    // self-deleted one would be a way to tell, from the outside, which happened.
+    const mine = await sendAsAuthor("deleted by me");
+    const theirs = await sendAsAuthor("deleted by the operator");
+    expect((await remove(mine.id, await tokenFor("author"))).status).toBe(204);
+    expect((await remove(theirs.id, credential)).status).toBe(204);
+
+    const rows = (await history()).messages;
+    const a = rows.find((m) => m["id"] === mine.id)!;
+    const b = rows.find((m) => m["id"] === theirs.id)!;
+    // The fields that must agree, named rather than compared wholesale: `id`, `seq` and
+    // `created_at` differ by construction and say nothing about the deleter.
+    for (const key of ["text", "edited_at", "user"]) {
+      expect(b[key], `${key} differs between an author's tombstone and a key's`).toEqual(
+        a[key],
+      );
+    }
+    expect(a["text"]).toBeNull();
+    // AND THE AUTHOR IS STILL THE AUTHOR ON BOTH. A key deleted one of them and the
+    // row says who WROTE it — who removed it is `metadata.deleted_by`, which no read
+    // path exposes (chapter 3.23's `gaps.md` item 2).
+    expect(a["user"]).toBe("author");
+    expect(b["user"]).toBe("author");
+  });
+
+  it("T054: an end user who is not the author is refused on BOTH routes (FR-013)", async () => {
+    // ONE TEST FOR THE PAIR, because FR-013 is one requirement covering both verbs and
+    // the two paths reach the refusal through different methods. Same code, same status,
+    // and nothing written either way.
+    const sent = await sendAsAuthor("neither yours to change nor to remove");
+    const stranger = await tokenFor("bystander");
+
+    const edited = await patch(sent.id, { text: "rewritten" }, stranger);
+    const removed = await remove(sent.id, stranger);
+    expect([edited.status, removed.status]).toEqual([403, 403]);
+    expect(((await edited.json()) as { code: string }).code).toBe("not_message_author");
+    expect(((await removed.json()) as { code: string }).code).toBe("not_message_author");
+
+    const rows = (await history()).messages.filter((m) => m["id"] === sent.id);
+    expect(rows[0]!["text"]).toBe("neither yours to change nor to remove");
+    expect(rows[0]!["edited_at"]).toBeNull();
+  });
+
+  it("T055: another environment's message is 404 on both routes, never 403 (FR-014)", async () => {
+    // 403 WOULD BE THE LEAK. A permission refusal on a foreign id says the id is real;
+    // chapter 2.8 made a foreign channel a 404 for exactly this, and the pair below is
+    // the assertion the isolation oracle makes everywhere else in this file.
+    const token = await tokenFor("author");
+    for (const [verb, call] of [
+      ["PATCH", (id: string, ch: string) => patch(id, { text: "x" }, token, ch)],
+      ["DELETE", (id: string, ch: string) => remove(id, token, ch)],
+    ] as const) {
+      const foreign = await call(randomUUID(), foreignChannelId);
+      const missing = await call(randomUUID(), randomUUID());
+      expect(foreign.status, verb).toBe(404);
+      expect(missing.status, verb).toBe(404);
+      expect(withoutRequestId(await foreign.json())).toEqual(
+        withoutRequestId(await missing.json()),
+      );
+    }
+  });
+
   it("T024: an empty text is a 400 through the protocol envelope (FR-001)", async () => {
     const sent = await sendAsAuthor("something");
     const res = await patch(sent.id, { text: "" }, await tokenFor("author"));
