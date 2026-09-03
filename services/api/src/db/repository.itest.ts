@@ -1,9 +1,18 @@
+import { randomUUID } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 
 import { createDb, createPool, DEFAULT_DATABASE_URL, type Db } from "./client";
 import { migrate } from "./migrate";
-import { createEnvironment, Repository, type Environment } from "./repository";
+import {
+  createEnvironment,
+  MessageDeletedError,
+  MessageNotFoundError,
+  NotMessageAuthorError,
+  Repository,
+  type Environment,
+} from "./repository";
 
 // The isolation suite: attack the repository with FOREIGN tenant ids and
 // prove the leak inexpressible (FR-TEN-05, NFR-SEC-09, constitution I).
@@ -645,5 +654,213 @@ describe("the repository's own refusals (chapter 3.15)", () => {
     const row = rows.find((r) => r.external_id === "arm-unattributed")!;
     expect(row.last_message?.text).toBe("from the tenant, not a user");
     expect(row.last_message?.user).toBeNull();
+  });
+});
+
+
+// ══ EDITING A MESSAGE (chapter 3.23, US1) ═══════════════════════════════════
+describe("editMessage (chapter 3.23)", () => {
+  it("T027: keeps the sequence, the channel, the author and the creation time (FR-002)", async () => {
+    // A THING NOT DONE LEAVES NO TRACE TO ASSERT ON, so this asserts the VALUES rather
+    // than the absence of an assignment. `editMessage`'s `SET` list is the guarantee —
+    // `sequence`, `channelId`, `userId` and `createdAt` are not in it — and this is
+    // what would notice if one arrived.
+    const author = await repoA.createUser("t027-author", "Author");
+    const channel = await repoA.createChannel("t027", "public");
+    await repoA.addMember(channel.id, author.id);
+    const before = await repoA.sendMessage(channel.id, {
+      text: "frist",
+      userId: author.id,
+      userExternalId: "t027-author",
+    });
+
+    const after = await repoA.editMessage(channel.id, before.id, {
+      text: "first",
+      userId: author.id,
+    });
+
+    expect(after.text).toBe("first");
+    expect(after.seq).toBe(before.seq);
+    expect(after.channel_id).toBe(before.channel_id);
+    expect(after.created_at).toBe(before.created_at);
+    expect(after.prior_text).toBe("frist");
+    // AND FROM THE DATABASE, not only from the return value. A method that returned
+    // the right object while writing something else would pass everything above.
+    const [row] = (
+      await db.execute<{ sequence: string; user_id: string; created_at: Date }>(
+        sql`SELECT sequence, user_id, created_at FROM messages WHERE id = ${before.id}`,
+      )
+    ).rows;
+    expect(Number(row!.sequence)).toBe(before.seq);
+    expect(row!.user_id).toBe(author.id);
+    expect(new Date(row!.created_at).toISOString()).toBe(before.created_at);
+  });
+
+  it("T027: records edited_at, and it was null before (FR-003)", async () => {
+    const author = await repoA.createUser("t027b-author", "Author");
+    const channel = await repoA.createChannel("t027b", "public");
+    await repoA.addMember(channel.id, author.id);
+    const sent = await repoA.sendMessage(channel.id, { text: "x", userId: author.id });
+
+    const [pre] = (
+      await db.execute<{ edited_at: Date | null }>(
+        sql`SELECT edited_at FROM messages WHERE id = ${sent.id}`,
+      )
+    ).rows;
+    expect(pre!.edited_at).toBeNull();
+
+    const edited = await repoA.editMessage(channel.id, sent.id, {
+      text: "y",
+      userId: author.id,
+    });
+    expect(Date.parse(edited.edited_at)).toBeGreaterThan(0);
+    // DISTINGUISHABLE FROM `created_at`, which is what FR-003 asks for. Two columns
+    // holding one instant would satisfy "records when it happened" and answer nothing.
+    expect(edited.edited_at).not.toBe(edited.created_at);
+  });
+
+  it("T028: three edits leave three history rows, oldest first, none overwritten (FR-004)", async () => {
+    const author = await repoA.createUser("t028-author", "Author");
+    const channel = await repoA.createChannel("t028", "public");
+    await repoA.addMember(channel.id, author.id);
+    const sent = await repoA.sendMessage(channel.id, { text: "one", userId: author.id });
+
+    for (const text of ["two", "three", "four"]) {
+      await repoA.editMessage(channel.id, sent.id, { text, userId: author.id });
+    }
+
+    const edits = await repoA.listMessageEdits(channel.id, sent.id);
+    // THE SUPERSEDED TEXTS, NOT THE CURRENT ONES. Three edits from "one" leave
+    // "one", "two", "three" behind and the message says "four".
+    expect(edits.map((e) => e.prior_text)).toEqual(["one", "two", "three"]);
+    // OLDEST FIRST, asserted as monotonic timestamps rather than trusting the order
+    // the array arrived in — `orderBy` is the claim under test.
+    for (let i = 1; i < edits.length; i += 1) {
+      expect(Date.parse(edits[i]!.edited_at)).toBeGreaterThanOrEqual(
+        Date.parse(edits[i - 1]!.edited_at),
+      );
+    }
+    const [{ text }] = (
+      await db.execute<{ text: string }>(
+        sql`SELECT text FROM messages WHERE id = ${sent.id}`,
+      )
+    ).rows as [{ text: string }];
+    expect(text).toBe("four");
+  });
+
+  it("T034: an edit does not move the channel in the activity ordering (FR-015)", async () => {
+    // Two channels, one edited afterwards. The listing orders by most recent activity
+    // and FR-014 (3.15) decided what that means: a message. Correcting a typo is not a
+    // new message, so the order must not change.
+    const user = await repoA.createUser("t034-user", "User");
+    const older = await repoA.createChannel("t034-older", "public");
+    const newer = await repoA.createChannel("t034-newer", "public");
+    await repoA.addMember(older.id, user.id);
+    await repoA.addMember(newer.id, user.id);
+    const inOlder = await repoA.sendMessage(older.id, { text: "first", userId: user.id });
+    await repoA.sendMessage(newer.id, { text: "second", userId: user.id });
+
+    const listing = async () =>
+      (await repoA.listChannelsForUser(user.id, { limit: 50 })).rows.map((c) => c.id);
+    const orderBefore = await listing();
+    expect(orderBefore.indexOf(newer.id)).toBeLessThan(orderBefore.indexOf(older.id));
+
+    await repoA.editMessage(older.id, inOlder.id, { text: "corrected", userId: user.id });
+
+    const orderAfter = await listing();
+    expect(orderAfter).toEqual(orderBefore);
+  });
+
+  it("T036: an edit on a row with no author is refused (FR-018)", async () => {
+    // PLANTED WITH RAW SQL, because no write path can produce one any more — chapter
+    // 3.17 made `userId` required — and 121,250 of them exist in the lane, written
+    // before chapter 2.6 recorded a sender.
+    const author = await repoA.createUser("t036-author", "Author");
+    const channel = await repoA.createChannel("t036", "public");
+    await repoA.addMember(channel.id, author.id);
+    const sent = await repoA.sendMessage(channel.id, { text: "orphan", userId: author.id });
+    await db.execute(sql`UPDATE messages SET user_id = NULL WHERE id = ${sent.id}`);
+
+    await expect(
+      repoA.editMessage(channel.id, sent.id, { text: "adopted", userId: author.id }),
+    ).rejects.toThrow(NotMessageAuthorError);
+    // NOBODY CAN EDIT IT, which is the requirement — not "the wrong person cannot".
+    // There is no caller for whom the authorship comparison passes.
+    const [{ text }] = (
+      await db.execute<{ text: string }>(
+        sql`SELECT text FROM messages WHERE id = ${sent.id}`,
+      )
+    ).rows as [{ text: string }];
+    expect(text).toBe("orphan");
+  });
+
+  it("refuses a message id that belongs to another channel of the same tenant", async () => {
+    const author = await repoA.createUser("t026-cross", "Author");
+    const here = await repoA.createChannel("t026-here", "public");
+    const there = await repoA.createChannel("t026-there", "public");
+    const sent = await repoA.sendMessage(there.id, { text: "over there", userId: author.id });
+    await expect(
+      repoA.editMessage(here.id, sent.id, { text: "moved", userId: author.id }),
+    ).rejects.toThrow(MessageNotFoundError);
+  });
+
+  it("refuses a message of another TENANT, through the same error", async () => {
+    // Constitution I. The repository scopes by construction, so this is a
+    // MessageNotFoundError and not a leak with a different name.
+    const author = await repoA.createUser("t026-mine", "Author");
+    const mine = await repoA.createChannel("t026-mine", "public");
+    const sent = await repoA.sendMessage(mine.id, { text: "mine", userId: author.id });
+    await expect(
+      repoB.editMessage(mine.id, sent.id, { text: "theirs", userId: author.id }),
+    ).rejects.toThrow(MessageNotFoundError);
+  });
+
+  it("refuses an edit on a tombstone (FR-010), and the guard is what stops a 500", async () => {
+    // THE IMPLEMENTATION SHIPS IN PHASE 5 THOUGH T044 OWNS THE ROUTE TEST, because
+    // `prior_text TEXT NOT NULL` makes the alternative a constraint violation: without
+    // this check the insert writes a null and the caller gets a 500 it cannot act on.
+    const author = await repoA.createUser("t026-tomb", "Author");
+    const channel = await repoA.createChannel("t026-tomb", "public");
+    const sent = await repoA.sendMessage(channel.id, { text: "gone", userId: author.id });
+    await db.execute(
+      sql`UPDATE messages SET text = NULL, deleted_at = now() WHERE id = ${sent.id}`,
+    );
+    await expect(
+      repoA.editMessage(channel.id, sent.id, { text: "back", userId: author.id }),
+    ).rejects.toThrow(MessageDeletedError);
+    // AND NO HISTORY ROW WAS WRITTEN. A refusal that had already inserted would leave
+    // the table holding an entry for an edit that never happened.
+    expect(await repoA.listMessageEdits(channel.id, sent.id)).toEqual([]);
+  });
+
+  it("T036b: the history survives its channel being archived and its author deleted", async () => {
+    const author = await repoA.createUser("t036b-author", "Author");
+    const channel = await repoA.createChannel("t036b", "public");
+    await repoA.addMember(channel.id, author.id);
+    const sent = await repoA.sendMessage(channel.id, { text: "before", userId: author.id });
+    await repoA.editMessage(channel.id, sent.id, { text: "after", userId: author.id });
+
+    await repoA.archiveChannel(channel.id);
+    await repoA.deleteUser(author.id);
+
+    // `message_edits` references the MESSAGE, and both of those operations keep their
+    // rows — the archive sets a timestamp (FR-020 (3.15)) and a user deletion is a
+    // tombstone too (FR-USR-05). A cascade on either would take the history with it.
+    const edits = await repoA.listMessageEdits(channel.id, sent.id);
+    expect(edits.map((e) => e.prior_text)).toEqual(["before"]);
+  });
+
+  it("lists no edits for a message that has never been edited, and for one that does not exist", async () => {
+    // TWO FACTS, ONE VALUE, which is why the route asks `messageExistsIn` separately.
+    const author = await repoA.createUser("t033f-author", "Author");
+    const channel = await repoA.createChannel("t033f", "public");
+    const sent = await repoA.sendMessage(channel.id, { text: "untouched", userId: author.id });
+    expect(await repoA.listMessageEdits(channel.id, sent.id)).toEqual([]);
+    expect(await repoA.listMessageEdits(channel.id, randomUUID())).toEqual([]);
+    expect(await repoA.messageExistsIn(channel.id, sent.id)).toBe(true);
+    expect(await repoA.messageExistsIn(channel.id, randomUUID())).toBe(false);
+    // AND THE TENANT SCOPE IS ON BOTH READS.
+    expect(await repoB.messageExistsIn(channel.id, sent.id)).toBe(false);
+    expect(await repoB.listMessageEdits(channel.id, sent.id)).toEqual([]);
   });
 });

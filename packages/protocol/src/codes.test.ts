@@ -72,11 +72,12 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
     // third time this line has turned a new code into a decision instead of an
     // accident. Chapter 3.11's close-code set did the same for 4003.
     //
-    // Eighteen until chapter 3.23 added `not_message_author`, the fourth time. **One
-    // pinned place, not the four chapter 3.22's close code moved** — that chapter's
-    // task predicted two and found four, so this one counted before editing: this
-    // assertion is the only place in the file that names a total.
-    expect(Object.keys(ERROR_CODES)).toHaveLength(19);
+    // Eighteen until chapter 3.23 added `not_message_author`, the fourth time, and then
+    // `message_deleted` during that chapter's implementation — TWO in one chapter, which
+    // its plan did not expect. **One pinned place, not the four chapter 3.22's close code
+    // moved** — that chapter's task predicted two and found four, so this one counted
+    // before editing: this assertion is the only place in the file that names a total.
+    expect(Object.keys(ERROR_CODES)).toHaveLength(20);
   });
 
   it("names the non-author refusal separately from the generic 403 (chapter 3.23)", () => {

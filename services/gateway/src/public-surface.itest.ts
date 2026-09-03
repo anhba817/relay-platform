@@ -31,6 +31,14 @@ import { attachSessions } from "./session.js";
 // /v1/channels/:id/members`, `POST /auth/dev-token`, `POST
 // /v1/channels/:id/messages`, and `ws://…/v1/ws`.
 //
+// THAT LIST IS WHAT THIS TEST CALLS, NOT AN INVENTORY OF THE PUBLIC SURFACE, and the
+// distinction is worth a line because chapter 3.23 read it the other way. A task in
+// that chapter said three new routes made the sentence untrue and scheduled an edit
+// here; the sentence is about the path this file walks, which those routes are not
+// part of, so it was true before and after. The inventory of the surface lives in
+// `services/api/src/isolation/targets.ts`, where a check DERIVES it from the running
+// application rather than restating it in prose.
+//
 // `packages/outsider` will make the stronger version of this claim in Phase 10 —
 // a package mechanically forbidden from importing workspace code at all. This one
 // runs where the coverage lane can see it.

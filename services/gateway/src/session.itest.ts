@@ -162,8 +162,21 @@ async function startApi(
     kind: "bot",
     description: "sends over REST so a socket can receive it",
   });
+  // CHAPTER 3.23: two PEOPLE in the channel, because FR-005's property is "every
+  // connected member" and one socket cannot show it. ADDITIVE, on chapter 3.18's
+  // precedent recorded just above — the tests that assert on "tuan" are unaffected by
+  // two more members of a public channel, and T033 is the only test that names these.
+  //
+  // BOTH ARE MEMBERS, and that is what the first run of T033 got wrong: `mintToken`
+  // mints a token for any identifier, so two sockets opened fine and neither was
+  // delivered to. The failure read "no the creation; saw connection.ack" — a
+  // membership problem wearing a delivery problem's message.
+  const editor = await repo.createUser("editor", "The Editor");
+  const watcher = await repo.createUser("watcher", "The Watcher");
   const channel = await repo.createChannel("fleet", "public");
   await repo.addMember(channel.id, user.id);
+  await repo.addMember(channel.id, editor.id);
+  await repo.addMember(channel.id, watcher.id);
   const key = await seeder.createApiKey(db, {
     environmentId: environment.id,
   });
@@ -711,6 +724,78 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     expect(delivered.payload.seq).toBeGreaterThan(0);
   });
 
+  it("T033: an edit over REST reaches every member's socket as message.updated exactly once (FR-005, SC-001)", async () => {
+    // TWO SOCKETS, TWO DIFFERENT PEOPLE, and a count rather than a first match.
+    // `waitFor` resolves on the first frame that matches, so it cannot see a duplicate;
+    // FR-005 is one property with two halves — everybody gets it, and nobody gets it
+    // twice — and only counting after a settle covers the second.
+    const first = record(connect(await mintToken("editor")));
+    const second = record(connect(await mintToken("watcher")));
+    await waitFor(first, (f) => f.type === "connection.ack", "connection.ack (editor)");
+    await waitFor(second, (f) => f.type === "connection.ack", "connection.ack (watcher)");
+
+    // SENT BY THE EDITOR'S OWN TOKEN. Only an author may edit (FR-013) and the edit
+    // route takes no application credential at all (FR-013a), so the send has to be
+    // attributed to the same person — which a user token does by itself, and which is
+    // why this body names no `user`.
+    const editorToken = await mintToken("editor");
+    const before = `to be corrected ${randomUUID()}`;
+    const posted = await fetch(`${api.url}/v1/channels/${api.channelId}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${editorToken}`,
+      },
+      body: JSON.stringify({ text: before }),
+    });
+    expect(posted.status, await posted.clone().text()).toBe(201);
+    const sent = (await posted.json()) as { id: string; seq: number };
+    await waitFor(second, (f) => f.type === "message.created", "the creation");
+
+    const after = `${before} (corrected)`;
+    const edited = await fetch(
+      `${api.url}/v1/channels/${api.channelId}/messages/${sent.id}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${editorToken}`,
+        },
+        body: JSON.stringify({ text: after }),
+      },
+    );
+    expect(edited.status, await edited.clone().text()).toBe(200);
+
+    for (const [who, frames] of [
+      ["editor", first],
+      ["watcher", second],
+    ] as const) {
+      const updated = (await waitFor(
+        frames,
+        (f) => f.type === "message.updated",
+        `message.updated (${who})`,
+      )) as { payload: { text: string; seq: number; id: string } };
+      expect(updated.payload.text, who).toBe(after);
+      // THE SEQUENCE IT ALREADY HAD (FR-002), on the wire. A new number here would
+      // put the edit at the end of every client's list and break every cursor.
+      expect(updated.payload.seq, who).toBe(sent.seq);
+      expect(updated.payload.id, who).toBe(sent.id);
+    }
+
+    // AND EXACTLY ONCE EACH, after a settle long enough for a second copy to have
+    // arrived. Both counts, because the two sockets take different paths through the
+    // registry — the editor's connection and the watcher's are separate entries and a
+    // per-connection duplicate would show on one of them.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(first.filter((f) => f.type === "message.updated")).toHaveLength(1);
+    expect(second.filter((f) => f.type === "message.updated")).toHaveLength(1);
+    // …AND NO SECOND CREATION, which is what ADR-24 is for. Routed to the old callback
+    // the edit arrives as `message.created` and no shape check can see it, because the
+    // `updated` arm's payload IS a `Message`.
+    expect(first.filter((f) => f.type === "message.created")).toHaveLength(1);
+    expect(second.filter((f) => f.type === "message.created")).toHaveLength(1);
+  });
+
   it("stops delivering to a member who was REMOVED while connected (FR-RTM-10)", async () => {
     // INVERTED IN CHAPTER 3.20, AND THE TITLE WITH IT. This test read "keeps
     // delivering" and asserted the violation on purpose from chapter 3.18 until
@@ -868,8 +953,28 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
         return { type, payload: { seq: 1 } };
       case "message.created":
       case "message.updated":
-      case "message.deleted":
         return { type, payload: message };
+      // CHAPTER 3.23 SPLIT THIS CASE OFF, and the failure that forced it is the point
+      // of the test. `message.deleted` shared `message` — a `Message` with a `text` —
+      // until 3.23 gave the frame a payload of its own with no text and a
+      // `deleted_at`. The forged frame then failed the SHAPE check and came back
+      // `invalid_frame`, so the test asserting `unknown_frame_type` went red.
+      //
+      // It was red for the right reason: this test's whole claim is that a WELL-FORMED
+      // outbound frame is refused for its DIRECTION. A malformed one is refused a
+      // phase earlier and proves nothing about direction at all — which is what it
+      // would have been quietly asserting had the payload merely been tolerated.
+      case "message.deleted":
+        return {
+          type,
+          payload: {
+            id: message.id,
+            channel,
+            seq: 1,
+            user: "tuan",
+            deleted_at: new Date().toISOString(),
+          },
+        };
       case "membership.changed":
         return { type, payload: { channel, user: "tuan", change: "added" } };
       case "presence.changed":

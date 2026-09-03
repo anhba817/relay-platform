@@ -27,6 +27,32 @@ export const sendMessageBodySchema = z.strictObject({
 
 export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
 
+/** The edit body (chapter 3.23, FR-001).
+ *
+ * THE SAME BOUNDS AS THE SEND BODY'S `text`, and the same reason: FR-MSG-01 fixes them
+ * for a message and an edited message is still a message. Written as a reference to that
+ * shape rather than as a second `z.string().min(1).max(8000)`, so the two cannot drift
+ * when FR-EMJ-02's code-point counting replaces the character bound.
+ *
+ * ONE FIELD, AND THE ABSENCES ARE DECISIONS:
+ *
+ *   no `user`             the send body takes one because an application credential
+ *                         carries no user of its own. This route accepts only a user
+ *                         token (FR-013a), so the caller is already named — and naming
+ *                         somebody else is what `not_message_author` refuses.
+ *   no `metadata`         FR-001 is about what a message SAYS. Editing metadata is a
+ *                         separate capability nothing has asked for, and `strictObject`
+ *                         makes adding it a decision rather than an accident.
+ *   no `idempotency_key`  a retried edit sets the same text twice and appends a second
+ *                         history row. FR-021 already says the platform does not compare
+ *                         texts, so there is nothing here for a key to deduplicate that
+ *                         the customer has not asked to happen. */
+export const editMessageBodySchema = z.strictObject({
+  text: sendMessageBodySchema.shape.text,
+});
+
+export type EditMessageBody = z.infer<typeof editMessageBodySchema>;
+
 // The history query (chapter 2.4, FR-MSG-09): an opaque cursor, a
 // direction, and a page size capped at 200. `limit` CLAMPS rather than
 // rejects — a client asking for 500 gets 200 and a next_cursor, because

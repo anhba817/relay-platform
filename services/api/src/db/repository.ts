@@ -23,6 +23,7 @@ import {
   environments,
   humans,
   members,
+  messageEdits,
   readPositions,
   memberships,
   messages,
@@ -2250,10 +2251,31 @@ export interface MessageRow {
   seq: number;
   text: string | null;
   created_at: string;
+  /** When it was last edited, or `null` (chapter 3.23, FR-003). Optional on this
+   * interface rather than required, because the WRITE paths build a row that has never
+   * been edited and would each have to spell `edited_at: null`. The read paths fill it
+   * in; `EditedMessageRow` narrows it to a string. */
+  edited_at?: string | null;
   /** Chapter 2.3 (FR-MSG-04): true when a retry was recognised by the
    * idempotency index and the ORIGINAL message was returned instead of
    * a new insert. The service layer uses this to decide response shape. */
   duplicate?: boolean;
+}
+
+/** An edited message, as the edit path returns it (chapter 3.23, FR-001, FR-003).
+ *
+ * `edited_at` IS NOT OPTIONAL HERE. Every row this shape describes has just been edited,
+ * so a `string | null` would be a type saying the impossible is possible. `MessageRow`'s
+ * read shape carries the nullable version, because a message that was never edited is
+ * the common case there. */
+export interface EditedMessageRow extends MessageRow {
+  edited_at: string;
+  /** What it said before, returned so the caller does not have to read it back to know
+   * the history row landed. Never on the public wire: `not_message_author` exists
+   * because rewriting somebody's words is not the same as removing them, and echoing the
+   * superseded text to whoever asked would make the edit-history route (FR-023a) a
+   * formality. `messages.controller.ts` spells its response fields out one by one. */
+  prior_text: string;
 }
 
 /** A message as the READ paths return it (chapter 2.7). The sender is the
@@ -2308,6 +2330,55 @@ export class SenderNotPermittedError extends Error {
   constructor(readonly userId: string) {
     super("an application credential may send only as a bot user");
     this.name = "SenderNotPermittedError";
+  }
+}
+
+/** The message id does not name a message of this channel (chapter 3.23, FR-014).
+ *
+ * ITS OWN CLASS, SEPARATE FROM `ChannelNotFoundError`, and the separation is not about
+ * the wire — both become a bare 404. It is about what the repository can say honestly. A
+ * visible channel and an unknown message id inside it is a different fact from a channel
+ * this tenant cannot see, and a layer that threw the channel error for both would be
+ * telling the service something untrue in order to produce an answer that happens to
+ * match. The indistinguishability FR-014 requires is a property of the two RESPONSES,
+ * which `messages.service.ts` produces, not of the two causes. */
+export class MessageNotFoundError extends Error {
+  constructor(public readonly messageId: string) {
+    super(`message not found: ${messageId}`);
+    this.name = "MessageNotFoundError";
+  }
+}
+
+/** The caller did not write this message (chapter 3.23, FR-013, FR-018, FR-022).
+ *
+ * ALSO THROWN WHEN THE MESSAGE HAS NO AUTHOR, which is FR-018 and is the arm worth
+ * naming: 121,250 rows in the test lane carry a null `user_id`, written before chapter
+ * 2.6 recorded a sender, and none of them can be edited by anybody. "Nobody wrote this"
+ * and "somebody else wrote this" are the same refusal — there is no caller for whom the
+ * authorship check can pass — and collapsing them means the answer cannot depend on
+ * which kind of unauthored row was asked about.
+ *
+ * A DELETED MESSAGE IS NOT THIS ERROR. A tombstone keeps its `user_id`, so its author
+ * still passes the authorship check and is refused by `MessageDeletedError` below for a
+ * reason they can act on. */
+export class NotMessageAuthorError extends Error {
+  constructor(public readonly messageId: string) {
+    super(`the caller did not write message ${messageId}`);
+    this.name = "NotMessageAuthorError";
+  }
+}
+
+/** An edit was asked for on a tombstone (chapter 3.23, FR-010).
+ *
+ * REFUSED RATHER THAN DEFINED, and `prior_text TEXT NOT NULL` is why the alternative is
+ * not available: a tombstone has no text to preserve, so an edit of one would have to
+ * either write a null into a NOT NULL column — a 500 the caller cannot act on — or
+ * invent a value for what the message used to say. SAD §6.1 published the constraint
+ * and this is the behaviour that follows from it. */
+export class MessageDeletedError extends Error {
+  constructor(public readonly messageId: string) {
+    super(`message deleted: ${messageId}`);
+    this.name = "MessageDeletedError";
   }
 }
 
@@ -3996,8 +4067,9 @@ export class Repository {
       //
       // And that gate is only honest because chapter 3.15 made the public route
       // supply a user. It called `messages.send(channelId, body)` with none, and
-      // `MessagesController` declares no `@Accepts` — so the guard falls back to
-      // `EITHER` and a user token was accepted there. A check gated on a parameter
+      // `MessagesController` declared no `@Accepts` at the time — so the guard fell
+      // back to `EITHER` and a user token was accepted there. Chapter 3.17 declared it;
+      // the third of three copies of this sentence, all corrected in 3.23. A check gated on a parameter
       // no caller fills in is a check that never fires, and this one did not, on
       // the only send path a customer's own client uses.
       //
@@ -4325,6 +4397,174 @@ export class Repository {
         created_at: createdAt,
       };
     });
+  }
+
+  /** Change what a message says (chapter 3.23, FR-001, FR-002, FR-003, FR-004).
+   *
+   * ONE TRANSACTION, AND THE HISTORY ROW IS WHY. FR-004 wants the superseded text
+   * appended for every edit; a row updated in one statement and a history appended in
+   * another can crash between them, and the surviving state is a message whose old text
+   * nobody has. The pair commits or neither does.
+   *
+   * WHAT IS NOT IN THE `SET` LIST, and this is FR-002 stated as code rather than as a
+   * comment: `sequence`, `channelId`, `userId` and `createdAt` are absent. A test can
+   * only assert the values are unchanged (T027) — a thing not done leaves no trace to
+   * assert on — so the guarantee lives in the shape of this statement.
+   *
+   * AND `lastActivityAt` IS ABSENT TOO (FR-015). `sendMessage` moves it in the same
+   * breath as the sequence, deliberately; an edit must not, because the listing orders
+   * by "most recent activity" and FR-014's answer to what that means is a message.
+   * Correcting a typo is not a new message. T035 falsifies it by adding the assignment
+   * and watching T034 go red.
+   *
+   * THE ENVIRONMENT SCOPE IS HERE AND NOT ONLY IN THE SERVICE. `messages.service.ts`
+   * asks `channelVisibleTo` first, the way `history` does, and that is the check that
+   * produces FR-014's 404. This join carries `environmentId` anyway (constitution I): a
+   * repository method that trusts its caller's check is one refactor from a leak, and
+   * the two costs nothing to hold together because the read is on the primary key. */
+  async editMessage(
+    channelId: string,
+    messageId: string,
+    {
+      text,
+      /** WHO IS EDITING, and it is required (FR-013, FR-018). There is no
+       * "the tenant is editing" convention here, unlike `sendMessage`'s optional
+       * `userId`: FR-013a refuses an application credential outright, so an edit with
+       * no user is not a case this method has to have an answer for. Required means the
+       * compiler says so rather than a test having to remember. */
+      userId,
+    }: { text: string; userId: string },
+  ): Promise<EditedMessageRow> {
+    return this.db.transaction(async (tx) => {
+      // THE ROW AND ITS CHANNEL IN ONE READ, joined so the tenant scope and the
+      // channel-membership of the message are the same question. `messageId` alone
+      // would edit a message of any channel of any tenant that guessed a uuid.
+      const [row] = await tx
+        .select({
+          id: messages.id,
+          userId: messages.userId,
+          text: messages.text,
+          seq: messages.sequence,
+          createdAt: messages.createdAt,
+        })
+        .from(messages)
+        .innerJoin(channels, eq(channels.id, messages.channelId))
+        .where(
+          and(
+            eq(messages.id, messageId),
+            eq(messages.channelId, channelId),
+            eq(channels.environmentId, this.environmentId),
+          ),
+        )
+        .limit(1);
+      if (!row) throw new MessageNotFoundError(messageId);
+
+      // AUTHORSHIP BEFORE THE TOMBSTONE CHECK, and the order is a disclosure decision
+      // of the same family as FR-021a's. A stranger asking to edit a deleted message
+      // must not learn from `message_deleted` that the message was ever there — they
+      // are refused for not being the author, which is true of every message they did
+      // not write, deleted or not. The author of a tombstone gets the specific answer.
+      //
+      // A NULL `userId` FAILS THIS, which is FR-018. `row.userId === null` cannot equal
+      // any caller, so the comparison refuses it without a special case — and a special
+      // case is what would let a future edit to this condition get it wrong.
+      if (row.userId !== userId) throw new NotMessageAuthorError(messageId);
+      if (row.text === null) throw new MessageDeletedError(messageId);
+
+      // ONE CLOCK READING FOR BOTH WRITES. `edited_at` on the message and `edited_at`
+      // on the history row are the same instant by construction; two `now()` calls
+      // would be two instants, and the history row's own primary key is
+      // (message_id, edited_at), so a caller reading the history could not match an
+      // entry to the message state it produced.
+      const [updated] = await tx
+        .update(messages)
+        .set({ text, editedAt: sql`now()` })
+        .where(eq(messages.id, messageId))
+        .returning({ editedAt: messages.editedAt });
+      const editedAt = updated!.editedAt!;
+
+      // FR-004. The row carries what the message said BEFORE this edit — `row.text`,
+      // read above and narrowed to a string by the tombstone check.
+      //
+      // NO `onConflictDoNothing`. The primary key is (message_id, edited_at), so two
+      // edits inside one microsecond collide, and a conflict clause here would silently
+      // drop the second one's history while its text change committed. A loud failure
+      // is the right answer to a state this table cannot represent — SAD §6.1 published
+      // the key and `baseline.txt` records what it costs.
+      await tx.insert(messageEdits).values({
+        messageId,
+        editedAt,
+        priorText: row.text,
+      });
+
+      return {
+        id: row.id,
+        channel_id: channelId,
+        seq: row.seq,
+        text,
+        created_at: toIso(row.createdAt),
+        edited_at: toIso(editedAt),
+        prior_text: row.text,
+      };
+    });
+  }
+
+  /** A message's edit history, oldest first (chapter 3.23, FR-023).
+   *
+   * SCOPED THE SAME WAY `editMessage` IS, through the join rather than through the
+   * caller's promise. This read answers for a tenant API key (FR-023a refuses an end
+   * user at the route), and a key is not a user — so there is no membership to check
+   * and no `userId` parameter. What there IS is an environment, and it is on the join.
+   *
+   * `asc(editedAt)` AND NOT AN `id`. The table has no surrogate key, so insertion order
+   * is not available to order by; `edited_at` is the ordering FR-023 asks for and the
+   * primary key already indexes it. */
+  async listMessageEdits(
+    channelId: string,
+    messageId: string,
+  ): Promise<Array<{ prior_text: string; edited_at: string }>> {
+    const rows = await this.db
+      .select({
+        priorText: messageEdits.priorText,
+        editedAt: messageEdits.editedAt,
+      })
+      .from(messageEdits)
+      .innerJoin(messages, eq(messages.id, messageEdits.messageId))
+      .innerJoin(channels, eq(channels.id, messages.channelId))
+      .where(
+        and(
+          eq(messageEdits.messageId, messageId),
+          eq(messages.channelId, channelId),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      )
+      .orderBy(asc(messageEdits.editedAt));
+    return rows.map((r) => ({
+      prior_text: r.priorText,
+      edited_at: toIso(r.editedAt),
+    }));
+  }
+
+  /** Does this message exist in this channel of this tenant (chapter 3.23)?
+   *
+   * THE EDIT-HISTORY ROUTE NEEDS IT and `listMessageEdits` cannot supply it: an empty
+   * list is the correct answer for a message with no edits (FR-023's 200-with-nothing)
+   * and also what a message id that does not exist returns. Two facts, one value — so
+   * the route asks this separately rather than reading a 404 out of an empty array. */
+  async messageExistsIn(channelId: string, messageId: string): Promise<boolean> {
+    const rows = await this.db
+      .select({ id: messages.id })
+      .from(messages)
+      .innerJoin(channels, eq(channels.id, messages.channelId))
+      .where(
+        and(
+          eq(messages.id, messageId),
+          eq(messages.channelId, channelId),
+          eq(channels.environmentId, this.environmentId),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
   }
 
   /** Refuse the send if a hard cap is already met (chapter 3.10, FR-RTL-08).
@@ -4744,6 +4984,19 @@ export class Repository {
       user: users.externalId,
       text: messages.text,
       created_at: messages.createdAt,
+      // WHEN IT WAS LAST EDITED, OR NULL (chapter 3.23, FR-003). Null for every
+      // message that has never been edited, which is the common case and the reason
+      // the read shape's version is nullable while `EditedMessageRow`'s is not.
+      //
+      // ON THE READ PATH BECAUSE A CLIENT CANNOT OTHERWISE TELL. An edit keeps the
+      // sequence number (FR-002), so nothing about a re-read row says it changed —
+      // a client comparing what it holds against a page of history would have to
+      // diff the text to notice, and FR-021 says the platform does not compare texts.
+      //
+      // WHAT THIS IS *NOT*: the superseded text. That is `message_edits`, readable
+      // only by a tenant key (FR-023a), and this column says an edit happened without
+      // saying what it replaced.
+      edited_at: messages.editedAt,
     };
     const scoped = (extra?: SQL) =>
       and(
@@ -4780,7 +5033,14 @@ export class Repository {
           .where(scoped(gt(messages.sequence, afterSeq)))
           .orderBy(asc(messages.sequence))
           .limit(limit));
-    return rows.map((row) => ({ ...row, created_at: toIso(row.created_at) }));
+    return rows.map((row) => ({
+      ...row,
+      created_at: toIso(row.created_at),
+      // `null`, NOT `undefined`, and the difference is what a test can see. An absent
+      // key and a null one are the same value through `??` — the control test for this
+      // field was green before the field existed because its first draft used `??`.
+      edited_at: row.edited_at === null ? null : toIso(row.edited_at),
+    }));
   }
 
   /** Resume backfill (chapter 2.7, FR-RTM-03): for each cursor, everything

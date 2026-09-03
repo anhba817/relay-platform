@@ -473,6 +473,116 @@ describe("integrating with Relay from the outside", () => {
     expect(await closed).toBe(4002);
   });
 
+  /** CHAPTER 3.23 — an edit, over the shipped binary, seen on somebody else's socket.
+   *
+   * **WRITTEN BECAUSE THIS FILE IS THE ONLY THING THAT BOOTS THE PRODUCT.** CLAUDE.md
+   * records what that bought: chapter 3.21 built a module, awaited its `close()`, never
+   * passed it to `attachSessions`, and shipped it inert past 1,174 coverage tests and
+   * 174 gateway integration tests. This file found it. The rule it left behind — a
+   * chapter that adds an argument to `attachSessions` owes an outsider test — applies
+   * here for the same reason one level out: 3.23 adds a second Redis subject, a second
+   * callback on the fan-out and a second frame kind, and every in-workspace test of
+   * that path uses a stub fan-out or the `ws` package this file refuses to import.
+   *
+   * **NO TASK CREATED THIS TEST.** T090 lists this file among "eleven files this
+   * chapter adds tests to" and nothing in the plan added one; the audit task was
+   * scheduled over work no task did. `baseline.txt` records it.
+   *
+   * What it proves that nothing else does: the api's `publishRevision` reaches a real
+   * Redis, on the subject ADR-24 took, and a real gateway process routes it by prefix
+   * to a real socket as `message.updated` — not as `message.created`, which is the
+   * failure the whole ADR exists to prevent and which no shape check can see, because
+   * the updated arm's payload IS a `Message`. */
+  it("edits a message over REST, and a member's socket hears message.updated", async () => {
+    const minted = await post(
+      "/auth/dev-token",
+      { user: "watcher", ttl_seconds: 3600 },
+      credential,
+    );
+    expect(minted.status).toBe(200);
+    const token = minted.body["token"] as string;
+    // The watcher has to be a member to be delivered to — the channel is public, so
+    // this is about subscription rather than permission.
+    const joined = await post(
+      `/v1/channels/${channelId}/members`,
+      // `user_ids`, and it takes a LIST. The first draft posted `{ user: "watcher" }`
+      // and got a 400 — `addMembersBodySchema` is a `strictObject` over
+      // `user_ids: [...]`, and the entry may be a bare identifier or an object with a
+      // role. An outsider test guessing a body shape is the whole reason this file
+      // exists; two earlier tests in it were written twice for the same reason.
+      { user_ids: ["watcher"] },
+      credential,
+    );
+    expect([200, 201]).toContain(joined.status);
+
+    const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
+    const frames: Array<{ type: string; payload?: Record<string, unknown> }> = [];
+    socket.addEventListener("message", (event) => {
+      frames.push(JSON.parse(String(event.data)) as { type: string });
+    });
+    socket.addEventListener("error", () => undefined);
+    const waitFor = async (
+      predicate: (f: { type: string; payload?: Record<string, unknown> }) => boolean,
+      what: string,
+    ) => {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const found = frames.find(predicate);
+        if (found) return found;
+        if (Date.now() > deadline) {
+          throw new Error(
+            `no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`,
+          );
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    };
+    await waitFor((f) => f.type === "connection.ack", "connection.ack");
+
+    // SENT BY THE WATCHER'S OWN TOKEN, because only an author may edit (FR-013) and
+    // the edit route accepts no application credential at all (FR-013a). So the send
+    // uses the token too — a POST with a user token is attributed to its subject and
+    // must not name a `user` in the body.
+    const before = `outsider edit ${Date.now()}`;
+    const posted = await fetch(`${api}/v1/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text: before }),
+    });
+    expect(posted.status).toBe(201);
+    const sent = (await posted.json()) as { id: string; seq: number };
+    await waitFor(
+      (f) => f.type === "message.created" && f.payload?.["text"] === before,
+      "message.created for the text just sent",
+    );
+
+    const after = `${before} (corrected)`;
+    const edited = await fetch(
+      `${api}/v1/channels/${channelId}/messages/${sent.id}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text: after }),
+      },
+    );
+    expect(edited.status).toBe(200);
+
+    const frame = await waitFor(
+      (f) => f.type === "message.updated" && f.payload?.["text"] === after,
+      "message.updated for the corrected text",
+    );
+    // THE SEQUENCE IS THE ONE IT HAD (FR-002), on the wire and not only in the row.
+    expect(frame.payload?.["seq"]).toBe(sent.seq);
+    expect(frame.payload?.["id"]).toBe(sent.id);
+    // AND NO SECOND CREATION. This is the assertion ADR-24 is for: route the revision
+    // to the old callback and the edit arrives as `message.created`, indistinguishable
+    // from a new message to every client. Counting is what sees it — a `waitFor` that
+    // resolves on the first match cannot.
+    expect(frames.filter((f) => f.type === "message.created")).toHaveLength(1);
+    expect(frames.filter((f) => f.type === "message.updated")).toHaveLength(1);
+    socket.close();
+  });
+
   it("cannot see another tenant's channel, and cannot tell it apart from an absent one", async () => {
     // The documented isolation property, exercised the only way an outsider can:
     // with an id that is well formed and is not theirs. The reference says both

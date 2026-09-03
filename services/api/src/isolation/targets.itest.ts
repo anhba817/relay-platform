@@ -123,11 +123,17 @@ describe("the gauntlet's target list derives from the running application", () =
   // in the repository on the strength of five previous occasions; this is the
   // sixth, and the first where the route being added was a REVIVAL of one the
   // classification list had never carried.
+  //
+  // **AND AGAIN IN 3.23, IN BOTH DIRECTIONS AT ONCE.** That chapter declared its two
+  // routes in `targets.ts` before writing the second one, so one run named
+  // `GET …/:messageId/edits` as an entry matching no derived target — the direction
+  // that catches a rename — while the counts named the one that did exist. Two routes
+  // in this phase, and the deletion's arrives in the next.
   it("has grown from chapter 3.12's 24 by exactly the routes since", () => {
     // This assertion moves ONE line per phase, which is the point: a phase that
     // adds a route and forgets to classify it fails the test above, and a phase
     // that adds a route nobody planned fails this one.
-    const BUILT_SO_FAR = 15;
+    const BUILT_SO_FAR = 17;
     expect(derived.length).toBe(24 + BUILT_SO_FAR);
   });
 

@@ -4,7 +4,9 @@ import {
   Controller,
   Get,
   Inject,
+  NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -18,12 +20,16 @@ import {
   MESSAGE_PUBLISHER,
   type MessagePublisher,
 } from "../fanout/publisher";
-import { historyQuerySchema, sendMessageBodySchema } from "./messages.schema";
+import {
+  editMessageBodySchema,
+  historyQuerySchema,
+  sendMessageBodySchema,
+} from "./messages.schema";
 // `import type` is required, not stylistic: with isolatedModules and
 // emitDecoratorMetadata on (ADR-15's trade-off, chapter 1.4), a type used
 // in a decorated signature must be imported as a type or TS1272 refuses
 // to compile it.
-import type { HistoryQuery, SendMessageBody } from "./messages.schema";
+import type { EditMessageBody, HistoryQuery, SendMessageBody } from "./messages.schema";
 import type { RequestWithPrincipal } from "../auth/principal";
 import { ZodValidationPipe } from "./zod-validation.pipe";
 
@@ -86,8 +92,14 @@ export class MessagesController {
     // This route called `this.messages.send(channelId, body)` with no user for
     // twenty-three chapters, and the membership check in `sendMessage` is gated on
     // `userId` being present — so the check could not fire on the only send path a
-    // customer's own client calls. `MessagesController` declares no `@Accepts`, so
-    // the guard falls back to `EITHER` and a user token is accepted here.
+    // customer's own client calls. `MessagesController` declared no `@Accepts` at the
+    // time, so the guard fell back to `EITHER` and a user token was accepted here.
+    //
+    // PAST TENSE SINCE CHAPTER 3.17, and it took until 3.23 to say so. That chapter
+    // added `@Accepts("application", "user")` at :64 — twenty-five lines above this
+    // sentence — and left three copies of the sentence describing its absence, here, in
+    // `messages.itest.ts:161` and in `repository.ts:3999`. Nothing compares a comment
+    // with the decorator it describes, and the chapter's own task named one of the three.
     //
     // A LOOKUP PER SEND, and it is the same one the internal route already pays.
     // `sendMessage`'s own comment explains why the id is threaded rather than
@@ -227,6 +239,146 @@ export class MessagesController {
       // fields and left the caller to assume.
       user: actingExternalId,
     };
+  }
+
+  /** Change what a message says (chapter 3.23, FR-001, FR-005, FR-013, FR-013a).
+   *
+   * `@Accepts("user")` ON THE METHOD, AND THE CLASS DECLARES BOTH (:64). A route added
+   * here without a declaration INHERITS `("application", "user")` — the guard reads
+   * `getAllAndOverride`, so the method-level one wins and its absence is not neutral.
+   * An application credential reaching this handler would carry no user to compare the
+   * author against, and the honest options at that point are to refuse it inside the
+   * handler or to let a tenant key rewrite anybody's words as them. FR-013a chooses
+   * neither: the credential class is refused at the guard, by declaration.
+   *
+   * FR-MOD-02 GRANTS A KEY DELETION OF ANY MESSAGE AND IS SILENT ON EDITING, and the
+   * spec reads silence as absence of permission. Removing somebody's words and
+   * rewriting them as them are different acts, and only the second leaves a message
+   * saying something its author never wrote with nothing on the wire to say so.
+   *
+   * `dev-token.controller.ts:51` is the precedent for a method-level narrowing, and
+   * `credential.guard.ts:31` argues why the class is DECLARED while the authorship is
+   * CHECKED: authorship cannot be declared, because it is a fact about a row. */
+  @Patch(":messageId")
+  @Accepts("user")
+  async edit(
+    @Param("channelId") channelId: string,
+    @Param("messageId") messageId: string,
+    @Body(new ZodValidationPipe(editMessageBodySchema)) body: EditMessageBody,
+    @Req() req: RequestWithPrincipal,
+  ) {
+    // THE GUARD ALREADY REFUSED ANYTHING BUT A USER TOKEN, so `actingUser` cannot be
+    // undefined here — and the narrowing is a throw rather than a `!`, on
+    // `messages.service.ts`'s precedent for the same shape. A `!` would put the
+    // assumption in a place a later change to the decorator cannot invalidate.
+    const actingExternalId = actingUser(req);
+    if (actingExternalId === undefined) {
+      throw new Error("a user token is required to edit (FR-013a, @Accepts on this route)");
+    }
+    const user = await this.repo.getUserByExternalId(actingExternalId);
+    if (!user) {
+      // The same refusal the send path gives for a token minted for an identifier with
+      // no row: a user who is a member of nothing wrote nothing.
+      throw new BadRequestException({
+        code: "invalid_request",
+        message: "the caller named in this token is not a user of this environment",
+        field: "user",
+      });
+    }
+    const edited = await this.messages.edit(channelId, messageId, body, user.id);
+
+    // ── the live fan-out (chapter 3.23, FR-005, ADR-24) ──────────────────────
+    //
+    // AFTER THE COMMIT, BEFORE THE RESPONSE, for the reason the send path states at
+    // :199: a request handler has one channel and the response IS the ack, so anything
+    // awaited here precedes it. The row is durable before anyone hears about it.
+    //
+    // NO `duplicate` GUARD, AND THAT IS A DECISION rather than an omission (research
+    // R8). The send path carries two guards because a recognised idempotent retry
+    // wrote no row and must not be delivered twice. An edit has one entry path and no
+    // idempotency key — the edit body takes none, deliberately — so there is no retry
+    // for a guard to recognise. Copying the send path's `if` here would have added a
+    // condition that is always true and read as though it were protecting something.
+    //
+    // NO `text !== null` GUARD EITHER, for a stronger reason: `editMessage` refuses a
+    // tombstone (FR-010), so a null text cannot reach this line at all. The send
+    // path's check exists because an idempotency key can recover one.
+    //
+    // `publishRevision`, NOT `publish` — the kind rides the payload now, and the
+    // subject is the one ADR-24 took. A `publish` here would deliver the edit as a
+    // creation to every member, because the `updated` arm's payload IS a `Message`.
+    await this.fanout.publishRevision(
+      {
+        kind: "updated",
+        message: {
+          id: edited.id,
+          // `channel`, not `channel_id`: the frame's field is `channel` and
+          // `messageSchema` is a `z.strictObject`, so the wrong name delivers NOTHING
+          // while this route answers 200. The send path records the same trap.
+          channel: edited.channel_id,
+          seq: edited.seq,
+          user: actingExternalId,
+          text: edited.text!,
+          created_at: edited.created_at,
+        },
+      },
+      {
+        requestId: req.requestId ?? "unknown",
+        environmentId: req.principal?.environmentId ?? "unknown",
+      },
+    );
+
+    // THE FIELD LIST IS SPELLED OUT, like the send path's, so a new column joins the
+    // public response only when somebody decides it should. `prior_text` is on the
+    // repository's return and is NOT here: `not_message_author` exists because
+    // rewriting somebody's words differs from removing them, and echoing the superseded
+    // text to whoever asked would make the edit-history route's refusal (FR-023a) a
+    // formality.
+    return {
+      id: edited.id,
+      channel_id: edited.channel_id,
+      seq: edited.seq,
+      text: edited.text,
+      created_at: edited.created_at,
+      edited_at: edited.edited_at,
+      user: actingExternalId,
+    };
+  }
+
+  /** What a message used to say (chapter 3.23, FR-023, FR-023a).
+   *
+   * `@Accepts("application")` ON THE METHOD, AND WITHOUT IT A USER TOKEN READS THIS.
+   * The class declares `("application", "user")` at :64 and the guard reads
+   * `getAllAndOverride`, so an undeclared route here would hand every end user the
+   * superseded text of every message in every channel they can see — the one thing
+   * FR-023a exists to forbid. T033g falsifies it by removing the line and watching the
+   * refusal test go red.
+   *
+   * **INCLUDING THE AUTHOR'S OWN MESSAGES.** That a message was edited is public — the
+   * read path carries `edited_at` — and what it used to say is not. FR-MOD-01 names the
+   * audience for a moderation surface and nothing in the SRS asks for an end-user one.
+   *
+   * 200 WITH AN EMPTY LIST, NOT 404, for a message that has never been edited. The
+   * absence of edits is a fact about the message rather than the absence of a resource,
+   * and the two are distinguishable here because `messageExistsIn` answers the second
+   * question separately — `listMessageEdits` returning `[]` cannot tell them apart. */
+  @Get(":messageId/edits")
+  @Accepts("application")
+  async edits(
+    @Param("channelId") channelId: string,
+    @Param("messageId") messageId: string,
+  ): Promise<{ edits: Array<{ prior_text: string; edited_at: string }> }> {
+    // NO `userId`, AND THAT IS THE DECLARATION SPEAKING. Only an application credential
+    // reaches this handler, so there is no member to resolve and no membership to
+    // check; `channelVisibleTo(channelId, undefined)` is the tenant reading, which sees
+    // everything it owns. Passing a user here would be inventing a caller.
+    if (!(await this.repo.channelVisibleTo(channelId))) {
+      throw new NotFoundException("channel not found");
+    }
+    if (!(await this.repo.messageExistsIn(channelId, messageId))) {
+      throw new NotFoundException("message not found");
+    }
+    return { edits: await this.repo.listMessageEdits(channelId, messageId) };
   }
 
   @Get()

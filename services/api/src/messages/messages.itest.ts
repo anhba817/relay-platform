@@ -158,8 +158,9 @@ describe("POST /v1/channels/:channelId/messages", () => {
   // being present. `repository.itest.ts` proves the check EXISTS by driving that
   // function directly with a user id. Only these tests prove it FIRES, because for
   // twenty-three chapters this controller called `messages.send(channelId, body)`
-  // with no user at all — and `MessagesController` declares no `@Accepts`, so the
-  // guard falls back to `EITHER` and a user token is accepted here.
+  // with no user at all — and `MessagesController` declared no `@Accepts` at the time,
+  // so the guard fell back to `EITHER` and a user token was accepted here. Chapter 3.17
+  // declared it; this sentence went on describing its absence until 3.23.
   //
   // So the repository test passed while the route it protects was open. A repository
   // test proves a check exists; only a route test proves it fires.
@@ -443,5 +444,322 @@ describe("POST /v1/channels/:channelId/messages", () => {
       const refused = await sendAs(token, privateChannelId);
       expect(refused.status).toBe(400);
     });
+  });
+});
+
+
+// ══ EDITING A MESSAGE (chapter 3.23, US1) ═══════════════════════════════════
+//
+// T024 WROTE THESE RED, and the route answering 404 is what "red for the right reason"
+// means here: `PATCH` on a path Nest has no handler for is a 404 from the router, not
+// from the visibility predicate, and the two are indistinguishable from outside. Every
+// test below therefore asserts something a 404 cannot satisfy.
+describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () => {
+  let app: INestApplication;
+  let url: string;
+  let env: { id: string };
+  let credential: string;
+  let channelId: string;
+  let foreignChannelId: string;
+  let privateChannelId: string;
+  let repo: Repository;
+  let tokenFor: (user: string) => Promise<string>;
+
+  beforeAll(async () => {
+    // ITS OWN ENVIRONMENT, like every describe in this file. The suite above shares a
+    // channel between tests that archive it and remove members from it; an edit test
+    // leaning on that would fail for a reason it does not name.
+    const db = createDb(createPool());
+    env = await createEnvironment(db, { name: "edit-itest" });
+    repo = new Repository(db, env.id);
+    channelId = (await repo.createChannel("general", "public")).id;
+    privateChannelId = (await repo.createChannel("members-only", "private")).id;
+    credential = (await createApiKey(db, { environmentId: env.id })).credential;
+    const other = await createEnvironment(db, { name: "edit-itest-other" });
+    foreignChannelId = (
+      await new Repository(db, other.id).createChannel("theirs", "public")
+    ).id;
+    const author = await repo.createUser("author", "The Author");
+    await repo.createUser("bystander", "A Bystander");
+    // THE AUTHOR IS A MEMBER OF THE PRIVATE CHANNEL and the bystander is not. The pair
+    // is what makes the visibility check observable — see the test that needs it.
+    await repo.addMember(privateChannelId, author.id);
+    await repo.upsertUser("courier", {
+      display_name: "Courier",
+      kind: "bot",
+      description: "delivers build results into the channel",
+    });
+    const signingSecret = (await environmentSigningSecret(db, env.id))!.signingSecret;
+    tokenFor = async (subject: string) =>
+      (
+        await mintUserToken(signingSecret, {
+          user: subject,
+          environmentId: env.id,
+          ttlSeconds: 3600,
+        })
+      ).token;
+    app = (
+      await Test.createTestingModule({ imports: [AppModule] }).compile()
+    ).createNestApplication({ logger: false });
+    await app.listen(0);
+    url = await app.getUrl();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  /** A message by `author`, sent with their own token so the row carries them. */
+  const sendAsAuthor = async (text: string, channel = channelId) => {
+    const token = await tokenFor("author");
+    const res = await fetch(`${url}/v1/channels/${channel}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text }),
+    });
+    expect(res.status).toBe(201);
+    return (await res.json()) as { id: string; seq: number; created_at: string };
+  };
+
+  const patch = (
+    messageId: string,
+    body: unknown,
+    auth: string,
+    channel = channelId,
+  ) =>
+    fetch(`${url}/v1/channels/${channel}/messages/${messageId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: `Bearer ${auth}` },
+      body: JSON.stringify(body),
+    });
+
+  const history = async (channel = channelId) => {
+    const res = await fetch(`${url}/v1/channels/${channel}/messages?limit=50`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    return (await res.json()) as { messages: Array<Record<string, unknown>> };
+  };
+
+  it("T024: the author edits their message and the text changes (FR-001, FR-003)", async () => {
+    const sent = await sendAsAuthor("frist");
+    const res = await patch(sent.id, { text: "first" }, await tokenFor("author"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["text"]).toBe("first");
+    // THE SEQUENCE IS THE SAME NUMBER (FR-002). Not "a number" — the one it had.
+    expect(body["seq"]).toBe(sent.seq);
+    expect(body["id"]).toBe(sent.id);
+    expect(typeof body["edited_at"]).toBe("string");
+    // …and the read path agrees, which a response body alone does not prove.
+    const rows = (await history()).messages.filter((m) => m["id"] === sent.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!["text"]).toBe("first");
+  });
+
+  it("T024: an unedited message reports no edited_at (FR-003)", async () => {
+    // The control for the assertion above. `edited_at` being a string after an edit
+    // means nothing unless it is absent before one — a column defaulting to `now()`
+    // would pass the test above and fail this.
+    const sent = await sendAsAuthor("untouched");
+    const rows = (await history()).messages.filter((m) => m["id"] === sent.id);
+    // `toHaveProperty(…, null)` AND NOT `?? null`. The first draft read
+    // `rows[0]!["edited_at"] ?? null` and was green before the route existed, because
+    // an ABSENT key and a null one are the same value through `??` — so it would have
+    // stayed green if the read path never carried the field at all.
+    expect(rows[0]!).toHaveProperty("edited_at", null);
+  });
+
+  it("T024: somebody else's message is refused with not_message_author (FR-013)", async () => {
+    const sent = await sendAsAuthor("mine");
+    const res = await patch(sent.id, { text: "yours now" }, await tokenFor("bystander"));
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["code"]).toBe("not_message_author");
+    // AND THE TEXT DID NOT CHANGE. A 403 with the write already done is the failure
+    // this half exists to catch.
+    const rows = (await history()).messages.filter((m) => m["id"] === sent.id);
+    expect(rows[0]!["text"]).toBe("mine");
+  });
+
+  it("T024: a tenant API key may not edit at all (FR-013a)", async () => {
+    // The decision the spec records: a key deletes anything and edits nothing. An
+    // application credential has no author to compare against, so `@Accepts("user")`
+    // on the method is what answers — and the class declares BOTH classes, so a route
+    // added without a declaration would accept the key and then have nothing to check.
+    const sent = await sendAsAuthor("not yours to fix");
+    const res = await patch(sent.id, { text: "fixed" }, credential);
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { code: string }).code).toBe("wrong_credential_type");
+  });
+
+  it("T024: a message in a channel this tenant cannot see is a 404 (FR-014)", async () => {
+    // Indistinguishable from a message id that does not exist, which is the pair the
+    // isolation oracle asserts everywhere else in this file.
+    const token = await tokenFor("author");
+    const foreign = await patch(randomUUID(), { text: "x" }, token, foreignChannelId);
+    const missing = await patch(randomUUID(), { text: "x" }, token, randomUUID());
+    expect(foreign.status).toBe(404);
+    expect(missing.status).toBe(404);
+    expect(withoutRequestId(await foreign.json())).toEqual(
+      withoutRequestId(await missing.json()),
+    );
+  });
+
+  it("T024: a message id that is not in this channel is a 404 (FR-014)", async () => {
+    // The pair above shares a tenant boundary. This one does not: both channels belong
+    // to this environment and the message belongs to the other one, so the only thing
+    // that can refuse it is the route checking the message against the channel in the
+    // path rather than trusting the id.
+    const elsewhere = (await repo.createChannel("elsewhere", "public")).id;
+    const sent = await sendAsAuthor("over here", elsewhere);
+    const res = await patch(sent.id, { text: "moved" }, await tokenFor("author"));
+    expect(res.status).toBe(404);
+  });
+
+  it("T024: a non-member of a private channel gets the not-found envelope, not a 403 (FR-014)", async () => {
+    // WRITTEN BECAUSE THE FALSIFICATION CAME BACK GREEN. Removing `channelVisibleTo`
+    // from `messages.service.edit` broke nothing: `editMessage`'s join already carries
+    // the environment, so a FOREIGN channel refuses either way, and the foreign/missing
+    // pair above compares two bodies that both read "message not found" whichever check
+    // produced them. The one case only the visibility predicate answers is a private
+    // channel of THIS tenant that the caller cannot see — and without it the caller
+    // learns the message is there from a 403 naming its authorship.
+    const token = await tokenFor("bystander");
+    const inside = await (async () => {
+      const authorToken = await tokenFor("author");
+      const res = await fetch(`${url}/v1/channels/${privateChannelId}/messages`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${authorToken}`,
+        },
+        body: JSON.stringify({ text: "members only" }),
+      });
+      expect(res.status).toBe(201);
+      return (await res.json()) as { id: string };
+    })();
+
+    const refused = await patch(inside.id, { text: "seen it" }, token, privateChannelId);
+    const absent = await patch(randomUUID(), { text: "seen it" }, token, randomUUID());
+    expect(refused.status).toBe(404);
+    expect(absent.status).toBe(404);
+    // BYTE-IDENTICAL, which is the half a 403 fails. Without the predicate this is a
+    // 403 `not_message_author` and the bystander has learned that a channel they cannot
+    // read holds a message somebody else wrote.
+    expect(withoutRequestId(await refused.json())).toEqual(
+      withoutRequestId(await absent.json()),
+    );
+
+    // The control: the author, who IS a member, can still edit it. Otherwise the 404
+    // above could be a private channel refusing everybody.
+    const allowed = await patch(
+      inside.id,
+      { text: "members only, corrected" },
+      await tokenFor("author"),
+      privateChannelId,
+    );
+    expect(allowed.status).toBe(200);
+  });
+
+  const edits = (messageId: string, auth: string, channel = channelId) =>
+    fetch(`${url}/v1/channels/${channel}/messages/${messageId}/edits`, {
+      headers: { authorization: `Bearer ${auth}` },
+    });
+
+  it("T033d: the edit history reads back oldest first, through the route (SC-002)", async () => {
+    // THROUGH THE ROUTE AND NOT THE DATABASE. `repository.itest.ts` proves the rows
+    // exist; only this proves anybody can retrieve them — the distinction CLAUDE.md
+    // records as "a repository test proves a check exists; only a route test proves it
+    // fires", pointed the other way.
+    const sent = await sendAsAuthor("one");
+    const token = await tokenFor("author");
+    for (const text of ["two", "three", "four"]) {
+      expect((await patch(sent.id, { text }, token)).status).toBe(200);
+    }
+
+    const res = await edits(sent.id, credential);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      edits: Array<{ prior_text: string; edited_at: string }>;
+    };
+    expect(body.edits.map((e) => e.prior_text)).toEqual(["one", "two", "three"]);
+    for (const entry of body.edits) expect(typeof entry.edited_at).toBe("string");
+  });
+
+  it("T033e: an end user is refused, including the message's author (FR-023a, SC-002a)", async () => {
+    // THE AUTHOR IS THE CASE THAT MATTERS. A refusal that let the author through would
+    // look reasonable and would still be the leak: an end user who can see a channel
+    // can see every message in it, so "only your own" is not a narrowing at all once a
+    // token can be minted for any identifier.
+    const sent = await sendAsAuthor("before");
+    const token = await tokenFor("author");
+    expect((await patch(sent.id, { text: "after" }, token)).status).toBe(200);
+
+    const asAuthor = await edits(sent.id, token);
+    expect(asAuthor.status).toBe(403);
+    expect(((await asAuthor.json()) as { code: string }).code).toBe("wrong_credential_type");
+
+    const asStranger = await edits(sent.id, await tokenFor("bystander"));
+    expect(asStranger.status).toBe(403);
+
+    // THE CONTROL: the tenant key still reads it. Otherwise the 403s above could be a
+    // route that refuses everybody.
+    const asKey = await edits(sent.id, credential);
+    expect(asKey.status).toBe(200);
+    expect(
+      ((await asKey.json()) as { edits: Array<{ prior_text: string }> }).edits.map(
+        (e) => e.prior_text,
+      ),
+    ).toEqual(["before"]);
+  });
+
+  it("T033f: a message with no edits answers 200 and an empty list, not 404", async () => {
+    // The absence of edits is a fact about the message, not the absence of a resource.
+    const sent = await sendAsAuthor("never edited");
+    const res = await edits(sent.id, credential);
+    expect(res.status).toBe(200);
+    expect((await res.json()) as unknown).toEqual({ edits: [] });
+  });
+
+  it("T033f: a message id that does not exist IS a 404, which is the other half", async () => {
+    // Without this, `{ edits: [] }` would be the answer for a message that was never
+    // there — and the route would be unable to tell a caller which of the two it got.
+    // `listMessageEdits` returning `[]` cannot distinguish them; `messageExistsIn` is
+    // the second question the handler asks for exactly this reason.
+    const res = await edits(randomUUID(), credential);
+    expect(res.status).toBe(404);
+  });
+
+  it("T033f: the edit history of a foreign channel's message is a 404", async () => {
+    const res = await edits(randomUUID(), credential, foreignChannelId);
+    expect(res.status).toBe(404);
+  });
+
+  it("T036a: editing a message to the text it already has is still an edit (FR-021)", async () => {
+    // THE PLATFORM DOES NOT COMPARE TEXTS, and the spec says why: every definition of
+    // equality — whitespace, case, unicode normalisation, an invisible character — is a
+    // decision a customer would have to be told about. So an identical edit records an
+    // edit time and appends a history row like any other.
+    const sent = await sendAsAuthor("unchanged");
+    const token = await tokenFor("author");
+    const res = await patch(sent.id, { text: "unchanged" }, token);
+    expect(res.status).toBe(200);
+    expect((await res.json())["edited_at"]).toBeTruthy();
+
+    const body = (await (await edits(sent.id, credential)).json()) as {
+      edits: Array<{ prior_text: string }>;
+    };
+    // ONE ROW, AND ITS `prior_text` EQUALS THE CURRENT TEXT. That is what "treated as
+    // an edit rather than detected and skipped" looks like in the table.
+    expect(body.edits.map((e) => e.prior_text)).toEqual(["unchanged"]);
+  });
+
+  it("T024: an empty text is a 400 through the protocol envelope (FR-001)", async () => {
+    const sent = await sendAsAuthor("something");
+    const res = await patch(sent.id, { text: "" }, await tokenFor("author"));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["code"]).toBe("invalid_request");
+    expect(typeof body["docs_url"]).toBe("string");
   });
 });

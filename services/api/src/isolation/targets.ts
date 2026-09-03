@@ -180,9 +180,35 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     accepts: "application",
     shape: "read",
   },
+  // CHAPTER 3.23's EDIT HISTORY (T033h, FR-023, FR-023a). `accepts: "application"`
+  // because the route carries a method-level `@Accepts("application")` that narrows the
+  // controller's class-level `("application", "user")` — FR-MOD-01 names the audience,
+  // and nothing in the SRS asks for an end-user surface on what a message used to say.
+  //
+  // THE TWO VALUES MUST AGREE AND NOTHING COMPARES THEM. This entry and the decorator
+  // are the same authorisation fact written twice; chapter 3.23's `gaps.md` item 4 owns
+  // that. What a wrong value here costs is not a leak — the guard decides, this list
+  // only tells the gauntlet which credential to attack with — but a `"user"` here would
+  // send the gauntlet at this route with a token the guard refuses at the door, and the
+  // route would then be recorded as isolated without its handler ever running.
+  {
+    method: "GET",
+    path: "/v1/channels/:channelId/messages/:messageId/edits",
+    accepts: "application",
+    shape: "read",
+  },
 
   // ── write, public ───────────────────────────────────────────────────────────
   { method: "POST", path: "/v1/channels/:channelId/messages", accepts: "application", shape: "write" },
+  // CHAPTER 3.23's EDIT (T030a, FR-001, FR-013a). `accepts: "user"` because the method
+  // declares `@Accepts("user")`: FR-MOD-02 grants a tenant key deletion of any message
+  // and is silent on editing, and silence is read as absence of permission.
+  //
+  // THE CONTROLLER'S PARAMETER NAME, NOT THE CONTRACT'S. `:messageId` is what the
+  // router registers; the derivation compares literal path strings, so an entry copied
+  // from `contracts/edit-and-delete.md` would match no target — the note at the join
+  // route above records the same trap being paid for once already.
+  { method: "PATCH", path: "/v1/channels/:channelId/messages/:messageId", accepts: "user", shape: "write" },
   // Chapter 3.12's two new routes, and the order they were added in is the point.
   // The derivation found them first: `targets.itest.ts` went from 22 to 24 and
   // named them as unclassified, on the build that registered the module and

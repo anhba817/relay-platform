@@ -11,6 +11,10 @@ import {
   ChannelArchivedError,
   UserBannedError,
   ChannelNotFoundError,
+  type EditedMessageRow,
+  MessageDeletedError,
+  MessageNotFoundError,
+  NotMessageAuthorError,
   Repository,
   type MessageRow,
   type MessageWithSender,
@@ -18,7 +22,7 @@ import {
 } from "../db/repository";
 import { QuotaExceededError } from "../quotas/quota.error";
 import { decodeCursor, encodeCursor } from "./cursor";
-import type { HistoryQuery, SendMessageBody } from "./messages.schema";
+import type { EditMessageBody, HistoryQuery, SendMessageBody } from "./messages.schema";
 
 // The thin layer between HTTP and the repository (chapters 2.2 + 2.3). It
 // owns two things: turning the layer's domain error into the wire's 404,
@@ -163,6 +167,79 @@ export class MessagesService {
           "quota_exceeded",
           error.publicMessage(),
           HttpStatus.PAYMENT_REQUIRED,
+        );
+      }
+      throw error;
+    }
+  }
+
+  /** Change what a message says (chapter 3.23, FR-001, FR-013, FR-014).
+   *
+   * THE VISIBILITY CHECK FIRST, AND IT IS THE SAME ONE `history` MAKES. `channelVisibleTo`
+   * is the predicate chapter 3.15 built after finding `channelExists` answering only half
+   * the question — an absent channel gave 404 while a private channel a non-member read
+   * gave 200 and an empty page. An edit route reaching for `channelExists` would rebuild
+   * that leak in a new verb.
+   *
+   * WHY IT IS HERE AND NOT ONLY IN THE REPOSITORY. `editMessage`'s join carries the
+   * environment, so a foreign channel already refuses. What it cannot do alone is refuse a
+   * PRIVATE channel of this tenant that the caller is not a member of: the message is
+   * there, the tenant owns it, and the join finds it. Two checks, and the second is the
+   * one FR-014 needs.
+   *
+   * FOUR REFUSALS, THREE STATUSES, and the mapping is where they stop being
+   * distinguishable in the ways FR-014 forbids:
+   *
+   *   channel invisible          404, "channel not found"    — the same body as a channel
+   *                                                            that was never there
+   *   message not in the channel 404, "message not found"    — the channel IS visible, so
+   *                                                            this reveals nothing
+   *   not the author, or none    403 `not_message_author`
+   *   the message is a tombstone 403 `message_deleted` */
+  async edit(
+    channelId: string,
+    messageId: string,
+    { text }: EditMessageBody,
+    /** REQUIRED, unlike `send`'s and `history`'s. `@Accepts("user")` on the route means
+     * the only credential class that reaches this method carries a subject, so there is
+     * no "the tenant is editing" case to have a convention for (FR-013a). */
+    userId: string,
+  ): Promise<EditedMessageRow> {
+    if (!(await this.repo.channelVisibleTo(channelId, userId))) {
+      throw new NotFoundException("channel not found");
+    }
+    try {
+      return await this.repo.editMessage(channelId, messageId, { text, userId });
+    } catch (error) {
+      if (error instanceof MessageNotFoundError) {
+        // A CONSTANT MESSAGE, like the channel's. The id is already in the caller's own
+        // path, so echoing it back reveals nothing — but a body that varies is a body a
+        // future comparison has to normalise, and `withoutRequestId` is the only
+        // normalisation the isolation oracle does.
+        throw new NotFoundException("message not found");
+      }
+      if (error instanceof NotMessageAuthorError) {
+        // `not_message_author`, AND NOT `forbidden` (FR-022). `ProtocolErrorFilter` maps
+        // a bare 403 to `forbidden`, whose published remedy is *"a change of credential
+        // or of permission"* — advice nobody can act on, because no credential grants
+        // authorship and no permission change makes a message yours. `codes.ts` argues
+        // it at the entry; this is the thrower that names it.
+        throw protocolError(
+          "not_message_author",
+          "only the author of a message may change what it says",
+          HttpStatus.FORBIDDEN,
+        );
+      }
+      if (error instanceof MessageDeletedError) {
+        // ITS OWN CODE, on `channel_archived`'s precedent: a client that cannot tell
+        // "you did not write this" from "this no longer says anything" retries the wrong
+        // one for ever. Only the author reaches this refusal — a stranger is refused for
+        // authorship first, so this answer never tells anybody a message exists that
+        // they could not already see.
+        throw protocolError(
+          "message_deleted",
+          "this message has been deleted; its text cannot be changed",
+          HttpStatus.FORBIDDEN,
         );
       }
       throw error;

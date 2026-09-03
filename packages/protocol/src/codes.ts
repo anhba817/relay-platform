@@ -191,6 +191,36 @@ export const ERROR_CODES = {
   // pass 3 caught the task whose condition nobody had evaluated.
   not_message_author:
     "the caller did not write this message; only its author may change what it says",
+  // CHAPTER 3.23, AND A SECOND NEW CODE IN ONE CHAPTER — which is one more than the
+  // plan expected, so it gets the test at the top of this file applied out loud: *"a
+  // client that cannot tell them apart retries the wrong one for ever."*
+  //
+  // Against the four codes it could have reused:
+  //
+  //   forbidden            the same objection `not_message_author` above answers. Its
+  //                        published remedy is a change of credential or of permission,
+  //                        and neither un-deletes a message.
+  //   not_message_author   false. The author of a tombstone IS its author, and telling
+  //                        them otherwise sends them to look for a permission problem.
+  //   not_found            a lie with a witness. FR-011 (3.23) keeps deleted messages in
+  //                        history in their original position, so a client would be
+  //                        holding the message while being told it does not exist.
+  //   a bare 409           `ProtocolErrorFilter` derives a code from the status for 400,
+  //                        401, 403 and 404 only; everything else becomes
+  //                        `internal_error`. An unnamed 409 ships a body calling itself
+  //                        an internal error, which is the lie chapter 2.2 fixed for 400
+  //                        and 3.2 for 403.
+  //
+  // WHAT A CLIENT DOES DIFFERENTLY, which is the whole test: on this code it stops
+  // offering an edit control for that message and re-reads history; on
+  // `not_message_author` it should never have offered one. Two states, two actions.
+  //
+  // ONLY THE AUTHOR EVER SEES IT. `editMessage` checks authorship first, so a stranger
+  // is refused for not having written the message whether or not it still says
+  // anything — this code cannot tell anybody that a message they could not otherwise
+  // see exists.
+  message_deleted:
+    "this message has been deleted; its text cannot be changed, and its history is unaffected",
   not_found:
     "no such resource for this tenant — and DELIBERATELY the same answer as for a resource in another tenant (FR-TEN-05)",
   internal_error:
