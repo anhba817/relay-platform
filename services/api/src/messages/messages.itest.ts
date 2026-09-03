@@ -958,6 +958,30 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     }
   });
 
+  it("T069: an edit writes exactly one message.updated event, and a second edit writes a second (FR-019)", async () => {
+    // THE COUNTERPART TO T043, AND THE OPPOSITE ANSWER. A repeated deletion writes no
+    // second event because the row did not change (FR-009); a repeated edit writes one
+    // every time, because FR-021 says the platform does not compare texts and every
+    // edit is an edit. Two requirements that look symmetrical and are not.
+    const sent = await sendAsAuthor("first go");
+    const token = await tokenFor("author");
+    expect((await patch(sent.id, { text: "second go" }, token)).status).toBe(200);
+    expect(await outboxCount(sent.id, "message.updated")).toBe(1);
+
+    expect((await patch(sent.id, { text: "third go" }, token)).status).toBe(200);
+    expect(await outboxCount(sent.id, "message.updated")).toBe(2);
+
+    // AND NO CREATION EVENT WAS ADDED. The send wrote one; the two edits wrote none.
+    expect(await outboxCount(sent.id, "message.created")).toBe(1);
+
+    // A REFUSED EDIT WRITES NOTHING. The transaction that would have written the event
+    // never commits, which is what putting the insert inside it buys.
+    expect(
+      (await patch(sent.id, { text: "not mine" }, await tokenFor("bystander"))).status,
+    ).toBe(403);
+    expect(await outboxCount(sent.id, "message.updated")).toBe(2);
+  });
+
   it("T024: an empty text is a 400 through the protocol envelope (FR-001)", async () => {
     const sent = await sendAsAuthor("something");
     const res = await patch(sent.id, { text: "" }, await tokenFor("author"));

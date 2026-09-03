@@ -43,6 +43,7 @@ import {
   membershipEvent,
   messageCreatedEvent,
   messageDeletedEvent,
+  messageUpdatedEvent,
 } from "../outbox/event";
 import { capsFor, type Caps } from "../quotas/config";
 import { thresholdsCrossed } from "../quotas/policy";
@@ -4450,9 +4451,17 @@ export class Repository {
           text: messages.text,
           seq: messages.sequence,
           createdAt: messages.createdAt,
+          // The author as a CONSUMER sees them, for the outbox event below. Joined
+          // here rather than looked up after the write: this transaction already
+          // reads the row, and `MessageCreatedData`'s boundary is that `user_id` does
+          // not cross it.
+          author: users.externalId,
         })
         .from(messages)
         .innerJoin(channels, eq(channels.id, messages.channelId))
+        // LEFT, like every other read of this table: a senderless row must still be
+        // READ so FR-018 can refuse it by name rather than by looking absent.
+        .leftJoin(users, eq(users.id, messages.userId))
         .where(
           and(
             eq(messages.id, messageId),
@@ -4499,6 +4508,38 @@ export class Repository {
         messageId,
         editedAt,
         priorText: row.text,
+      });
+
+      // THE EVENT COMMITS WITH THE EDIT (chapter 3.23, FR-019, ADR-06). Same argument
+      // as the send path's and the deletion's: publishing after the commit leaves a
+      // window where the row changed and the event never existed, silently, with
+      // nothing to reconcile against.
+      //
+      // `occurred_at` IS THE EDIT'S INSTANT, not the message's `created_at` — an event
+      // whose timestamp predates the previous event about the same message cannot be
+      // ordered by a consumer. Read back from the UPDATE, so the event, the history
+      // row's primary key and the wire frame all quote one instant.
+      //
+      // THE AUTHOR, FROM THE ROW. `editMessage`'s caller is the author by FR-013, so
+      // `userExternalId` would be the same person — but reading it from the row is what
+      // makes that a fact rather than an assumption, and `sendMessage` already threads
+      // the same value for the creation event.
+      const event = messageUpdatedEvent({
+        eventId: randomUUID(),
+        environmentId: this.environmentId,
+        occurredAt: toIso(editedAt),
+        message: {
+          id: row.id,
+          channel_id: channelId,
+          seq: row.seq,
+          user: row.author,
+          text,
+          created_at: toIso(row.createdAt),
+        },
+      });
+      await tx.insert(outbox).values({
+        subject: event.subject,
+        payload: event.payload,
       });
 
       return {
