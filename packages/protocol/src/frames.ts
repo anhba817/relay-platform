@@ -69,9 +69,36 @@ export const messageUpdatedSchema = z.strictObject({
   payload: messageSchema,
 });
 
+/** THE ONE FRAME THAT DOES NOT CARRY A MESSAGE, and chapter 3.23 is where that became
+ * unavoidable rather than tidy.
+ *
+ * `messageSchema.text` is `z.string()`. A deleted message has no text — FR-MSG-08 replaces
+ * it with a tombstone — so this frame's payload could never be filled. Two places in the
+ * api already refused to try and said so: `messages.controller.ts` declines to publish a
+ * recovered tombstone because *"`messageSchema.text` is `z.string()`, not nullable"*, and
+ * `backfill.controller.ts` drops one from a resume because *"a tombstone is not a
+ * creation"*. Both were waiting for this.
+ *
+ * **`messageSchema` IS NOT WIDENED, and that is the decision.** Making `text` nullable
+ * would let a CREATION carry a null text — which the send path deliberately refuses — and
+ * would edit a contract published since chapter 1.3 that every client in the series parses.
+ * The event that has no message is the one that stops carrying one.
+ *
+ * NO `text` FIELD AT ALL, not an empty string. An empty message and a deleted one would be
+ * indistinguishable on the wire, and the platform would be asserting something false rather
+ * than declining to say it. */
 export const messageDeletedSchema = z.strictObject({
   type: z.literal("message.deleted"),
-  payload: messageSchema,
+  payload: z.strictObject({
+    id: z.string().min(1),
+    channel: z.string().min(1),
+    seq: z.number().int().positive(),
+    /** The AUTHOR, which the tombstone keeps (FR-MSG-08). Not whoever deleted it — a
+     * tenant key may delete anybody's message, so the remover is a different fact and
+     * lives in `messages.metadata` rather than on the wire. */
+    user: z.string().min(1),
+    deleted_at: z.iso.datetime(),
+  }),
 });
 
 export const membershipChangedSchema = z.strictObject({
@@ -169,6 +196,10 @@ export const frameSchema = z.discriminatedUnion("type", [
 // The static types ARE the schemas — z.infer, never a hand-written twin.
 export type Cursor = z.infer<typeof cursorSchema>;
 export type Message = z.infer<typeof messageSchema>;
+/** Chapter 3.23. The deleted frame's payload is the one that is NOT a `Message`, so it
+ * needs a name of its own — otherwise every producer re-declares the shape inline and the
+ * schema stops being the single statement of it. */
+export type MessageDeleted = z.infer<typeof messageDeletedSchema>["payload"];
 export type ConnectionAck = z.infer<typeof connectionAckSchema>;
 export type MessageSend = z.infer<typeof messageSendSchema>;
 export type MessageAck = z.infer<typeof messageAckSchema>;

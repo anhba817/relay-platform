@@ -71,7 +71,22 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
     // failed on the build that added it** — "expected 16 but got 17", which is the
     // third time this line has turned a new code into a decision instead of an
     // accident. Chapter 3.11's close-code set did the same for 4003.
-    expect(Object.keys(ERROR_CODES)).toHaveLength(18);
+    //
+    // Eighteen until chapter 3.23 added `not_message_author`, the fourth time. **One
+    // pinned place, not the four chapter 3.22's close code moved** — that chapter's
+    // task predicted two and found four, so this one counted before editing: this
+    // assertion is the only place in the file that names a total.
+    expect(Object.keys(ERROR_CODES)).toHaveLength(19);
+  });
+
+  it("names the non-author refusal separately from the generic 403 (chapter 3.23)", () => {
+    // FR-022 (3.23). The registry's own rule is that a specific code beats the generic
+    // one where the remedy differs, and here it differs absolutely: `forbidden`'s
+    // published remedy is a change of credential or of permission, and neither makes a
+    // message yours.
+    expect(ERROR_CODES).toHaveProperty("not_message_author");
+    expect(ERROR_CODES.not_message_author).not.toBe(ERROR_CODES.forbidden);
+    expect(ERROR_CODES.not_message_author).toMatch(/author/);
   });
 
   it("contains the five the status ladder emits", () => {

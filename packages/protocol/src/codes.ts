@@ -170,6 +170,27 @@ export const ERROR_CODES = {
   invalid_request:
     "the request body, query or path failed validation; `field` names the first offending key",
   forbidden: "the credential is valid and is not permitted to do this",
+  // CHAPTER 3.23, AND **NOT** `forbidden` — the third time this file has made that
+  // argument, after `wrong_credential_type` and `wrong_credential_service`, and the
+  // first time the reason is not about credentials at all.
+  //
+  // `docs/08-error-reference.md`'s entry for `forbidden` rules itself out twice. It
+  // calls itself *"the generic case: where a more specific code exists … that one is
+  // sent instead"*, and its client action is *"nothing the client can retry. This is a
+  // change of credential or of permission."* **Authorship is neither.** No credential
+  // grants it and no permission change makes a message yours, so the published remedy
+  // is advice nobody can act on.
+  //
+  // ONE CODE FOR BOTH REFUSALS. An end user editing somebody else's message and a
+  // tenant key editing anybody's have the same cause — the caller did not write it —
+  // and the same answer. A tenant key may still DELETE anything (FR-MOD-02); that is a
+  // different route and not a refusal.
+  //
+  // Left undecided, the default was `forbidden`, because `ProtocolErrorFilter` maps a
+  // bare 403 to it. That is how a protocol decision gets made by omission, and analysis
+  // pass 3 caught the task whose condition nobody had evaluated.
+  not_message_author:
+    "the caller did not write this message; only its author may change what it says",
   not_found:
     "no such resource for this tenant — and DELIBERATELY the same answer as for a resource in another tenant (FR-TEN-05)",
   internal_error:

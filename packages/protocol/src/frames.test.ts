@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { frameSchema, parseFrame } from "./frames.js";
+import { frameSchema, messageDeletedSchema, messageSchema, parseFrame } from "./frames.js";
 
 // The contract must bite: for every frame, one specimen that parses and a
 // table of malformed near-misses that MUST reject. A schema that accepts
@@ -27,7 +27,20 @@ const valid: Record<string, unknown> = {
   "message.ack": { type: "message.ack", payload: { seq: 43 } },
   "message.created": { type: "message.created", payload: message },
   "message.updated": { type: "message.updated", payload: message },
-  "message.deleted": { type: "message.deleted", payload: message },
+  // T015 (chapter 3.23). THE ONE PINNED PLACE A PAYLOAD CHANGE MOVES in this file, and
+  // the count and set assertions below do NOT move — the union's membership is unchanged,
+  // so `toHaveLength(11)` and the inbound-set test stay green. Analysis pass 3 predicted
+  // exactly this and pass 8's count confirmed it: one place, not three.
+  "message.deleted": {
+    type: "message.deleted",
+    payload: {
+      id: message.id,
+      channel: message.channel,
+      seq: message.seq,
+      user: message.user,
+      deleted_at: message.created_at,
+    },
+  },
   "membership.changed": {
     type: "membership.changed",
     payload: { channel: "c1", user: "u2", change: "added" },
@@ -143,6 +156,56 @@ describe("malformed frames reject", () => {
 // an exact count makes a new member a decision rather than an accident, and an
 // exact set makes it the RIGHT decision. The count alone would pass if somebody
 // swapped one member for another.
+// T015 and T016 (chapter 3.23). THE EXACT KEY SET, on `codes.test.ts`'s precedent: an
+// exact set is what makes a payload change a decision rather than an accident, and the
+// only field that must NOT be there is the one this frame exists because it cannot fill.
+describe("the deleted frame carries an identity and no text (chapter 3.23)", () => {
+  const tombstone = {
+    id: message.id,
+    channel: message.channel,
+    seq: message.seq,
+    user: message.user,
+    deleted_at: message.created_at,
+  };
+
+  it("names exactly id, channel, seq, user and deleted_at", () => {
+    const parsed = messageDeletedSchema.parse({
+      type: "message.deleted",
+      payload: tombstone,
+    });
+    expect(Object.keys(parsed.payload).sort()).toEqual([
+      "channel",
+      "deleted_at",
+      "id",
+      "seq",
+      "user",
+    ]);
+  });
+
+  it("refuses a text field, because a deleted message has none", () => {
+    // `z.strictObject`, so an extra key is an error rather than a silent drop. An empty
+    // string would be worse than an error: a client could not tell a deleted message from
+    // one somebody sent blank.
+    const withText = messageDeletedSchema.safeParse({
+      type: "message.deleted",
+      payload: { ...tombstone, text: "" },
+    });
+    expect(withText.success).toBe(false);
+  });
+
+  // T016. QUICKSTART P2 AS AN ASSERTION, and the reason the payload changed at all.
+  it("takes the same row `messageSchema` refuses for having no text", () => {
+    const row = { ...message, text: null };
+    expect(messageSchema.safeParse(row).success).toBe(false);
+    expect(
+      messageDeletedSchema.safeParse({
+        type: "message.deleted",
+        payload: tombstone,
+      }).success,
+    ).toBe(true);
+  });
+});
+
 describe("the frame union's membership (chapter 3.21)", () => {
   const members = frameSchema.options.map((o) => o.shape.type.value);
 
