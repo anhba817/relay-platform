@@ -449,6 +449,72 @@ describe("the listing's tombstone rule and its clamp (chapter 3.15)", () => {
     expect(row.unread).toBe(2);
   });
 
+  // ── T009 (chapter 3.23): THE READER, TESTED BEFORE THE WRITER EXISTS ────────
+  //
+  // FR-011 (3.23) and SC-003 (3.23). The history read must return a tombstone in its
+  // original position so a client sees no gap in the ordering.
+  //
+  // **THIS PASSES AGAINST UNCHANGED CODE, AND THAT IS THE POINT.** `listMessages` has
+  // never had a predicate on `messages.text` — its three `.where` clauses are the
+  // channel-visibility predicate and the sequence bounds — and `messages.service`
+  // maps the rows through unmodified. So the repair path chapter 3.23's resume
+  // decision depends on already works, and nothing had ever said so.
+  //
+  // Chapter 3.15 wrote the same test for the channel LISTING and said why: *"so the
+  // day FR-MSG-08's chapter ships, the count and the preview already agree."* History
+  // never got one. A test written after the writer proves the writer; this one proves
+  // the reader was already right.
+  it("returns a tombstone in its original position, with the run unbroken (FR-011 (3.23), SC-003 (3.23))", async () => {
+    const user = await repoA.createUser("hist-tomb", "History Tombstone");
+    const channel = await repoA.createChannel("hist-tombstoned", "public");
+    await repoA.addMember(channel.id, user.id);
+    const first = await repoA.sendMessage(channel.id, { text: "one", userId: user.id });
+    const middle = await repoA.sendMessage(channel.id, { text: "two", userId: user.id });
+    const last = await repoA.sendMessage(channel.id, { text: "three", userId: user.id });
+
+    // What FR-MSG-08's chapter will do when it exists — planted by hand because this
+    // suite may hold raw SQL and nothing in the platform writes either column yet.
+    await db.execute(
+      sql`UPDATE messages SET text = NULL, deleted_at = now() WHERE id = ${middle.id}`,
+    );
+
+    // BOTH DIRECTIONS, AND THE FALSIFICATION IS WHY. `listMessages` is a ternary over
+    // two entirely separate queries — one ordered `desc` for a backward page, one `asc`
+    // for a forward one — and the first version of this test called it with no cursor,
+    // which takes the backward branch alone. Adding `isNotNull(messages.text)` to the
+    // FORWARD branch then left it green. **A test that covers one of two query branches
+    // passes with half its subject applied**, which is chapter 3.17's T047c in a
+    // different file.
+    const backward = await repoA.listMessages(channel.id, { userId: user.id, limit: 10 });
+    const forward = await repoA.listMessages(channel.id, {
+      userId: user.id,
+      limit: 10,
+      afterSeq: 0,
+    });
+
+    for (const [label, page] of [
+      ["backward", backward],
+      ["forward", forward],
+    ] as const) {
+      const seqs = page.map((m) => m.seq).sort((a, b) => a - b);
+
+      // THREE ROWS, NOT TWO. A read that filtered the tombstone would return two and
+      // leave a hole at `middle.seq` that no client could explain.
+      expect(seqs, label).toEqual([first.seq, middle.seq, last.seq]);
+
+      const tomb = page.find((m) => m.seq === middle.seq)!;
+      expect(tomb.text, label).toBeNull();
+      // The author survives, which is half of what FR-MSG-08 asks the tombstone to keep.
+      expect(tomb.user, label).not.toBeNull();
+
+      // AND THE RUN IS CONTIGUOUS, asserted rather than eyeballed: consecutive sequence
+      // numbers with no step, which is what "without gaps in ordering" means.
+      for (let i = 1; i < seqs.length; i += 1) {
+        expect(seqs[i]! - seqs[i - 1]!, label).toBe(1);
+      }
+    }
+  });
+
   it("reports null for a channel that has never had a message", async () => {
     const user = await repoA.createUser("empty-reader", "Empty Reader");
     const channel = await repoA.createChannel("never-used", "public");
