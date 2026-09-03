@@ -93,6 +93,13 @@ describe("every table has a path to one tenant", () => {
     // `users`. The rule is existence, not uniqueness; an earlier draft of
     // data-model.md said "exactly one foreign key", which would have classified
     // neither and failed totality on both.
+    //
+    // CHAPTER 3.23 MADE THE REACH TRANSITIVE and this assertion is why the
+    // change is safe to make: `via` holds the DIRECT tables a chain arrives at,
+    // never the intermediate ones, so `message_edits` reads `channels, users`
+    // through `messages` rather than reading `messages`. Falsified twice
+    // against a live database — an orphan table and a table whose only chain
+    // leads into the spine both still fail totality (baseline.txt).
     const hops = tables.filter((t) => t.path === "hop");
     for (const hop of hops) {
       expect(hop.via.length, `${hop.table} is a hop with no target`).toBeGreaterThan(0);

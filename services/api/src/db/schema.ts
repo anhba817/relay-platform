@@ -23,9 +23,10 @@ import {
 // definitions, and the generated SQL is reviewed against §6.1 before the
 // runner applies it. The four tenant-bearing tables reproduce §6.1
 // column-for-column, constraints and DR citations included. Deliberately
-// absent, with named arrivals: message_edits (edit chapter), emoji/media
-// tables (their parts), messages partitioning (SAD growth note -> retention
-// chapter). The outbox arrived in 3.3 and is at the bottom of this file.
+// absent, with named arrivals: emoji/media tables (their parts), messages
+// partitioning (SAD growth note -> retention chapter). The outbox arrived in
+// 3.3 and is at the bottom of this file. `message_edits` ARRIVED IN 3.23 and
+// is below `messages` — the list above said "edit chapter" and this is it.
 
 // The tenancy hierarchy (chapter 3.1). Everything from here to `members`
 // below sits ABOVE the environment boundary: these rows say who owns a
@@ -394,6 +395,47 @@ export const messages = pgTable(
     // it backward for newest-first pages. Chapter 2.4 measured it and
     // migration 0001 dropped the redundant twin (SAD §6.3, amended).
   ],
+);
+
+// WHAT A MESSAGE USED TO SAY (chapter 3.23, FR-MSG-07). Published in SAD §6.1
+// since the SAD was written and built here — the absence note above named this
+// chapter as its arrival.
+//
+// REPRODUCED FROM §6.1 COLUMN FOR COLUMN, which is worth saying because the
+// first draft of this chapter's data model gave the table a surrogate
+// `id UUID PRIMARY KEY` and stated that it was quoting the SAD. It was not.
+// Three columns and a composite key:
+//
+//     PRIMARY KEY (message_id, edited_at)
+//
+// The key is a constraint with a cost the SAD does not spell out: two edits to
+// one message at the same timestamp collide rather than both being kept.
+// Postgres holds microseconds, so that needs two edits inside one microsecond
+// on one message. A surrogate id would take both rows and leave a history with
+// two entries claiming the same instant, which is a silent wrong answer where
+// this is a loud refusal. The published constraint stands (Constitution VII).
+//
+// APPEND ONLY (FR-004, chapter 3.23). Nothing updates or deletes a row here. A
+// second edit appends a second row; the current text lives on `messages`.
+//
+// NO `environment_id`, exactly like `messages` above. The tenant is reached
+// through `message_id -> messages -> channels`, which is how every read below
+// the boundary already scopes (constitution I).
+export const messageEdits = pgTable(
+  "message_edits",
+  {
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id),
+    editedAt: timestamp("edited_at", { withTimezone: true }).notNull(),
+    // FR-MSG-07: what the message said before this edit. NOT NULL, and that
+    // has a consequence the chapter meets rather than works around: a deletion
+    // writes no row here, because a tombstone has no text to preserve. FR-010
+    // refuses an edit on a tombstone instead of defining what its history
+    // would say.
+    priorText: text("prior_text").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.editedAt] })],
 );
 
 // DECISION (chapter 2.1): the docs/07 row and SAD §6.3's hot-path index

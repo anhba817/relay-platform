@@ -20,14 +20,18 @@ import type { Db } from "./client";
 // catalogue query written inline in the test would need an exemption for as long
 // as it lived.
 
-/** How a row in this table is traced back to one environment. */
+/** How a row in this table is traced back to one environment. `hop` means
+ * reached through a CHAIN of foreign keys, of any length — see the reachability
+ * note in the query below for why the length matters and what it cost. */
 export type TenantPath = "direct" | "hop" | "spine";
 
 export interface TableClassification {
   table: string;
   /** `null` means the table matches none of the three, which fails the check. */
   path: TenantPath | null;
-  /** For `hop`: the `direct` tables its foreign keys reach. */
+  /** For `hop`: the `direct` tables its foreign keys reach, following CHAINS of
+   * keys and not only single links (chapter 3.23). Every name here is itself a
+   * `direct` table, which is the invariant `tenant-scope.itest.ts` asserts. */
   via: string[];
   /** For `spine`: why it has no tenant column. */
   reason?: string;
@@ -114,7 +118,7 @@ export interface CatalogueRow extends Record<string, unknown> {
 export async function classifyTables(db: Db): Promise<TableClassification[]> {
   const rows = (
     await db.execute<CatalogueRow>(sql`
-      WITH base AS (
+      WITH RECURSIVE base AS (
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
@@ -123,6 +127,52 @@ export async function classifyTables(db: Db): Promise<TableClassification[]> {
         SELECT table_name
         FROM information_schema.columns
         WHERE table_schema = 'public' AND column_name = 'environment_id'
+      ),
+      -- EVERY FOREIGN KEY IN public, AS AN EDGE LIST. Split out of the
+      -- correlated subquery it used to live in, because reachability needs to
+      -- walk it more than once.
+      fk AS (
+        SELECT DISTINCT tc.table_name::text AS src, ccu.table_name::text AS dst
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.constraint_column_usage ccu
+          ON ccu.constraint_name = tc.constraint_name
+         AND ccu.table_schema = tc.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema = 'public'
+          AND tc.table_name <> ccu.table_name
+      ),
+      -- REACHABILITY, NOT ADJACENCY (chapter 3.23). The rule this check states
+      -- is that every table has A PATH back to one environment, and the query
+      -- used to accept only a path of length ONE: a foreign key landing
+      -- directly on a table that carries environment_id. That covered every
+      -- table there was, which is why nothing noticed.
+      --
+      -- message_edits is the first table two links away. It references
+      -- messages, which references channels, which carries the column, and the
+      -- one-hop query classified it as having no tenant at all. The check's own
+      -- failure message offered three remedies and all three were wrong for it:
+      -- denormalising a column the SAD does not publish, adding a second
+      -- foreign key for the same reason, or calling a table of message text
+      -- part of the spine.
+      --
+      -- So the query now matches the rule instead of the tables that happened
+      -- to exist. This is not a weakening: it reports the DIRECT tables the
+      -- chain arrives at, so the invariant tenant-scope.itest.ts asserts, that
+      -- every entry in via is itself direct, holds exactly as before. A table
+      -- that reaches nothing still classifies as null and still fails.
+      --
+      -- WITH RECURSIVE is required by the self-reference below, and it belongs
+      -- on the FIRST cte in the chain even though base and direct are not
+      -- recursive. Postgres reads the keyword once per WITH clause.
+      --
+      -- The walk is over table names in a schema of a few dozen, and UNION
+      -- rather than UNION ALL terminates it on a cycle.
+      reach AS (
+        SELECT src, dst FROM fk
+        UNION
+        SELECT r.src, f.dst
+        FROM reach r
+        JOIN fk f ON f.src = r.dst
       )
       SELECT
         b.table_name,
@@ -133,15 +183,10 @@ export async function classifyTables(db: Db): Promise<TableClassification[]> {
           -- the row arrives as the literal string {channels,users} and
           -- iterating it yields a brace, which is how this was found.
           -- (No backticks in here: this is inside a template literal.)
-          SELECT array_agg(DISTINCT ccu.table_name::text)
-          FROM information_schema.table_constraints tc
-          JOIN information_schema.constraint_column_usage ccu
-            ON ccu.constraint_name = tc.constraint_name
-           AND ccu.table_schema = tc.table_schema
-          WHERE tc.constraint_type = 'FOREIGN KEY'
-            AND tc.table_schema = 'public'
-            AND tc.table_name = b.table_name
-            AND ccu.table_name IN (SELECT table_name FROM direct)
+          SELECT array_agg(DISTINCT r.dst)
+          FROM reach r
+          WHERE r.src = b.table_name
+            AND r.dst IN (SELECT table_name FROM direct)
         ) AS fk_targets
       FROM base b
       ORDER BY b.table_name
