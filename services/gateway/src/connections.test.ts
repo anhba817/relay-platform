@@ -133,6 +133,7 @@ describe("the slot registry", () => {
     }
     expect(await brief.renew(ENV, user, mine, claimed.slot)).toEqual({
       kind: "full",
+      held: 5,
     });
     await brief.close();
   });
@@ -144,16 +145,27 @@ describe("the slot registry", () => {
     const claimed = await registry.claim(ENV, user, id);
     if (claimed.kind !== "claimed") throw new Error("expected a slot");
     await registry.release(ENV, user, id, claimed.slot);
-    // THE SAME SLOT, WITH NO WAIT. This assertion used to sleep 20 ms and accept
-    // any slot, and its comment said either outcome was correct because "the
-    // tombstone carries a one-millisecond expiry, so a claim may find it and walk
-    // to the next slot". The walk now takes the tombstoned slot, so the outcome is
-    // determinate — and the sleep was hiding the case below.
-    expect(await registry.claim(ENV, user, randomUUID())).toEqual({
-      kind: "claimed",
-      slot: 0,
-      held: 0,
-    });
+    // NO WAIT, AND THE SLOT IS NOT PINNED — because at the default one-millisecond
+    // tombstone there are THREE outcomes, not two, and the coverage lane found the
+    // third by failing here with `slot: 1` where this assertion had demanded 0.
+    //
+    //   the tombstone is still there   `SET NX` fails, `SET IFEQ -` takes it -> 0
+    //   it expired before the walk     `SET NX` succeeds                     -> 0
+    //   it expires BETWEEN the two     both fail, the walk moves on          -> 1
+    //
+    // The third is a millisecond wide and harmless: a slot is skipped, never
+    // over-admitted, and the connection is accepted. What must not happen is a
+    // refusal, and that is what this asserts. The determinate version lives in the
+    // test below, where the window is held open at 500 ms so it cannot race.
+    //
+    // This test's FIRST version slept 20 ms and accepted any slot; the sleep is
+    // what hid the `releaseAll` defect for two phases. Removing the sleep was
+    // right and pinning the slot with it was not — the two changes arrived
+    // together and only one of them was justified.
+    const again = await registry.claim(ENV, user, randomUUID());
+    expect(again.kind).toBe("claimed");
+    if (again.kind !== "claimed") throw new Error("unreachable");
+    expect(again.slot, "a released slot cost more than one place").toBeLessThanOrEqual(1);
   });
 
   it("claims a slot whose tombstone has NOT expired (FR-010 (3.22))", async () => {
@@ -226,8 +238,15 @@ describe("the slot registry", () => {
     await brief.close();
   });
 
-  it("is a no-op for a slot the connection never held", async () => {
-    // ARM 7. Nothing to free, nothing to break, and no error.
+  it("does not throw for a slot the connection never held", async () => {
+    // ARM 7, AND THE TITLE SAYS ONLY WHAT THE ASSERTION PROVES. It used to read
+    // "is a no-op", which claims more: a no-op is a statement about the key, and
+    // `resolves.toBeUndefined()` is a statement about the promise. The stronger
+    // property is not observable through this module's own surface — a claim walks
+    // from slot 0, so whatever an unconditional release did to slot 3 cannot be
+    // seen from here — and the ownership half of it is the test below. Chapter
+    // 3.20's rule: a claim about an observable difference needs falsifying before
+    // the test is written.
     await expect(
       registry.release(ENV, user, randomUUID(), 3),
     ).resolves.toBeUndefined();
@@ -249,9 +268,10 @@ describe("the slot registry", () => {
     }
   });
 
-  it("releases nothing when it holds nothing", async () => {
+  it("does not throw when it holds nothing", async () => {
     // ARM 8: the empty loop, which is the shutdown path of an instance that never
-    // had a connection.
+    // had a connection. Renamed for the same reason as the test above — "releases
+    // nothing" describes the keys and the assertion describes the promise.
     await expect(registry.releaseAll([])).resolves.toBeUndefined();
   });
 
@@ -293,6 +313,35 @@ describe("the slot registry", () => {
     expect(DEFAULT_BOUND_MS / DEFAULT_HEARTBEAT_MS).toBeGreaterThanOrEqual(3);
     // And it is NOT the protocol keepalive, which chapter 3.19 paid for conflating.
     expect(DEFAULT_HEARTBEAT_MS).not.toBe(30_000);
+  });
+
+  it("builds without a url, from the environment or from the default", async () => {
+    // TWO BRANCHES IN ONE LINE, and the ratchet wanted both: the default parameter
+    // — which every test above steps over by passing `url` — and the `??` inside
+    // it, whose right-hand side the lane can never reach because it always sets
+    // `RELAY_REDIS_URL`. `codes.test.ts:128` established the swap-and-restore
+    // shape for exactly this; the `finally` is what keeps a failure here from
+    // silently pointing every later suite at a different Redis.
+    const defaulted = createConnections({ logger: silent });
+    const outcome = await defaulted.claim(ENV, `u-${randomUUID()}`, randomUUID());
+    expect(outcome.kind).toBe("claimed");
+    await defaulted.close();
+
+    const before = process.env["RELAY_REDIS_URL"];
+    try {
+      delete process.env["RELAY_REDIS_URL"];
+      // `DEFAULT_REDIS_URL` is localhost:6379, which is where the lane's Redis is,
+      // so this claims a place rather than failing open — and the assertion is that
+      // it reached A Redis, not that it reached a particular one.
+      const fallback = createConnections({ logger: silent });
+      expect((await fallback.claim(ENV, `u-${randomUUID()}`, randomUUID())).kind).toBe(
+        "claimed",
+      );
+      await fallback.close();
+    } finally {
+      if (before === undefined) delete process.env["RELAY_REDIS_URL"];
+      else process.env["RELAY_REDIS_URL"] = before;
+    }
   });
 
   it("states the maximum in exactly one place (FR-002 (3.22))", async () => {

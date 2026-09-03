@@ -85,7 +85,7 @@ describe("gateway skeleton", () => {
   // seven Redis clients is not something a unit test can observe without seven
   // servers. What it CAN observe is that every module the file builds is also
   // closed, which is the property that breaks when somebody adds an eighth.
-  it("closes every module it builds (T042b (3.22))", () => {
+  it("closes every module it builds (chapter 3.22)", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const source = readFileSync(join(here, "main.ts"), "utf8");
     const built = [...source.matchAll(/^ {2}const (\w+) = create(\w+)\(/gm)].map(
