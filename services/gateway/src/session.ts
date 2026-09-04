@@ -1542,10 +1542,13 @@ export function attachSessions({
           seq: committed.seq,
           user: committed.user,
           text: committed.text,
-          // `[]` UNTIL PHASE 5, when this carries `committed.attachments`. The api's
-          // response schema requires the field from this phase, so the value exists —
-          // what does not exist yet is a send that can put anything in it.
-          attachments: [],
+          /** FR-008 and FR-022, AND THE GATEWAY BUILDS THIS ONE ITSELF.
+           *
+           * The api constructs the fan-out payload for a REST send and the gateway
+           * constructs it for a socket send — two builders for one frame, and this is
+           * the second. `internalSendResponseSchema` requires the field, so
+           * `committed.attachments` is always an array by the time it reaches here. */
+          attachments: committed.attachments,
           created_at: committed.created_at,
         });
       }

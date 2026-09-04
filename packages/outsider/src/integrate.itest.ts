@@ -308,6 +308,74 @@ describe("integrating with Relay from the outside", () => {
     socket.close();
   });
 
+  /** T033 (chapter 3.24). ATTACHMENTS THROUGH THE SHIPPED BINARY.
+   *
+   * This file is the only instrument in the repository that boots what customers run and
+   * drives it the way they do — Node's global `WebSocket`, no workspace import, the REST
+   * credential a customer's server holds. Chapter 3.23's plan scheduled a title audit
+   * over this file and no task wrote to it; this chapter writes.
+   *
+   * TWO ATTACHMENTS AND THE ORDER, for the reason every other test in this chapter gives:
+   * one cannot show an order, and FR-006 says order holds on every path that returns a
+   * message. */
+  it("delivers two attachments to a socket, in order, sent over REST", async () => {
+    const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
+    const frames: { type: string; payload?: { text?: string; attachments?: { url?: string }[] } }[] =
+      [];
+    socket.addEventListener("message", (event) => {
+      frames.push(JSON.parse(String(event.data)) as { type: string });
+    });
+    socket.addEventListener("error", () => undefined);
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve());
+      socket.addEventListener("close", (event) =>
+        reject(new Error(`closed ${(event as CloseEvent).code}`)),
+      );
+      setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
+    });
+
+    const waitFor = async (predicate: (f: { type: string }) => boolean, what: string) => {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const found = frames.find(predicate);
+        if (found) return found;
+        if (Date.now() > deadline) {
+          throw new Error(`no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`);
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    };
+    await waitFor((f) => f.type === "connection.ack", "connection.ack");
+
+    const text = `with pictures ${Date.now()}`;
+    const posted = await post(
+      `/v1/channels/${channelId}/messages`,
+      {
+        text,
+        user: "outside-bot",
+        idempotency_key: randomUUID(),
+        attachments: [
+          { type: "url", kind: "image", url: "https://example.test/outside-first.png" },
+          { type: "url", kind: "video", url: "https://example.test/outside-second.mp4" },
+        ],
+      },
+      credential,
+    );
+    expect(posted.status).toBe(201);
+
+    const delivered = (await waitFor(
+      (f) =>
+        f.type === "message.created" &&
+        (f as { payload?: { text?: string } }).payload?.text === text,
+      "message.created carrying the attachments",
+    )) as { payload: { attachments: { url?: string }[] } };
+    expect(delivered.payload.attachments.map((a) => a.url)).toEqual([
+      "https://example.test/outside-first.png",
+      "https://example.test/outside-second.mp4",
+    ]);
+    socket.close();
+  });
+
   /** CHAPTER 3.21, T100a — **the first `socket.send` in this file's history.**
    *
    * `grep -c "\.send(" packages/outsider/src/integrate.itest.ts` read **0** across

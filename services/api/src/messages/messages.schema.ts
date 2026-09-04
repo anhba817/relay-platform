@@ -71,8 +71,20 @@ export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
  *                         history row. FR-021 already says the platform does not compare
  *                         texts, so there is nothing here for a key to deduplicate that
  *                         the customer has not asked to happen. */
+/** The edit body (chapter 3.23, FR-001). ITS OWN BOUND, AND NO LONGER THE SEND'S.
+ *
+ * This read `sendMessageBodySchema.shape.text` until chapter 3.24, which was correct
+ * while the two agreed. Then FR-019 removed `.min(1)` from the send so an
+ * attachments-only message could carry no caption — and the edit inherited the
+ * relaxation through this reference. **An edit has no attachments field**, so the pair
+ * rule that restores the send's floor cannot restore this one: `PATCH` with `text: ""`
+ * became a 200 and chapter 3.23's own test caught it.
+ *
+ * Spelled out rather than derived. Two schemas that happen to agree are a defect this
+ * chapter has already recorded twice; two schemas that must DIFFER cannot share a
+ * reference at all. */
 export const editMessageBodySchema = z.strictObject({
-  text: sendMessageBodySchema.shape.text,
+  text: z.string().min(1).max(8000),
 });
 
 export type EditMessageBody = z.infer<typeof editMessageBodySchema>;

@@ -4428,9 +4428,14 @@ export class Repository {
         channel_id: channel.id,
         seq,
         text,
-        // `[]` UNTIL PHASE 4 WRITES THE INSERT. True today rather than a placeholder:
-        // no send body accepts attachments yet, so there is nothing to carry.
-        attachments: [],
+        /** WHAT WAS SENT, AND THE INSERT IS NOT ENOUGH ON ITS OWN.
+         *
+         * T022 wrote the column and this line is a separate change: analysis pass 9
+         * found that nothing in the plan made this return carry the field, and the 201
+         * response and both fan-out payloads read it from here. `?? []` because the
+         * parameter is optional and FR-007 says a message with none is RETURNED with an
+         * empty list. */
+        attachments: attachments ?? [],
         created_at: createdAt,
       };
     });
@@ -5287,6 +5292,10 @@ export class Repository {
       id: messages.id,
       channel_id: messages.channelId,
       seq: messages.sequence,
+      /** Chapter 3.24 (FR-009). A CAST AND NOT A CHECK: `messages.attachments` is a bare
+       * `jsonb()` with no `.$type<>()`, so drizzle infers `unknown` and this names it.
+       * Postgres enforces no shape on the column. */
+      attachments: sql<Attachment[] | null>`${messages.attachments}`,
       // The sender joins the read path in 2.7 (the IOU 2.6 wrote): resume
       // must emit frames identical to live ones, and a reader that gets a
       // different shape depending on which door it came through is a client
@@ -5345,9 +5354,14 @@ export class Repository {
           .limit(limit));
     return rows.map((row) => ({
       ...row,
-      // `[]` UNTIL PHASE 5 ADDS THE COLUMN TO THE SELECT ABOVE. The shape is required
-      // from this phase and the value arrives with T028.
-      attachments: [],
+      /** FR-007's `?? []`, IN THE MAP AND NOT IN THE CALLER.
+       *
+       * A message with no attachments stores NULL and is RETURNED with an empty list, so
+       * a reader needs no special case. Putting the conversion in each caller would give
+       * the platform as many answers as it has callers — and chapter 3.23 shipped a
+       * control test that was green before its field existed, because `?? null` cannot
+       * tell an absent key from a null one. This is the one place that decides. */
+      attachments: row.attachments ?? [],
       created_at: toIso(row.created_at),
       // `null`, NOT `undefined`, and the difference is what a test can see. An absent
       // key and a null one are the same value through `??` — the control test for this

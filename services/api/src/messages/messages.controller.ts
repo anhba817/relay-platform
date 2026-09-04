@@ -242,9 +242,10 @@ export class MessagesController {
           seq: message.seq,
           user: actingExternalId,
           text: message.text,
-          // `[]` UNTIL PHASE 5. True today: the send body does not accept
-          // attachments until phase 4, so no message here has any.
-          attachments: [],
+          /** FR-008 and FR-022. ALWAYS AN ARRAY — `sendMessage` returns `[]` for a
+           * message with none, so nothing here needs a fallback and a fallback would
+           * hide the day that stops being true. */
+          attachments: message.attachments,
           created_at: message.created_at,
         },
         publishContext(req),
@@ -256,6 +257,10 @@ export class MessagesController {
       channel_id: message.channel_id,
       seq: message.seq,
       text: message.text,
+      /** Chapter 3.24 (FR-001), and SPELLED rather than spread for the reason this
+       * response has always been spelled: a new column joins the public surface when
+       * somebody decides it should, not when it appears on a row. */
+      attachments: message.attachments,
       created_at: message.created_at,
       // THE SENDER IT USED (chapter 3.17, FR-009a). A caller now required to name one
       // gets told which was recorded — and for a user token, which it inferred. The

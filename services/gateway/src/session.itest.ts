@@ -783,6 +783,89 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     }
   });
 
+  // T028b, T030 and T029a (chapter 3.24). THE TWO DELIVERY DOORS AND THE ACK.
+  const twoAttachments = [
+    { type: "url", kind: "image", url: "https://example.test/deliver-first.png" },
+    { type: "url", kind: "audio", url: "https://example.test/deliver-second.mp3" },
+  ];
+  const urlsOf = (payload: { attachments: Array<{ url?: string }> }) =>
+    payload.attachments.map((a) => a.url);
+
+  it("delivers attachments SOCKET to SOCKET, in order (T028b, FR-008 (3.24), SC-001 (3.24))", async () => {
+    // ONE MEMBER SENDS OVER ITS SOCKET AND ANOTHER RECEIVES. The REST delivery test below
+    // cannot see this path: the api builds the fan-out payload for a REST send and the
+    // GATEWAY builds it for a socket send, so they are two constructions of one frame.
+    // BOTH MUST BE MEMBERS, and `mintToken` mints a token for any identifier — so two
+    // sockets open fine and neither is delivered to. This file already records that trap
+    // 630 lines above, written for T033, and this test hit it anyway: the failure reads
+    // "no message.created on the watcher; saw connection.ack", which is a membership
+    // problem wearing a delivery problem's message.
+    const added = await fetch(`${api.url}/v1/channels/${api.channelId}/members`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({ user_ids: ["linh"] }),
+    });
+    expect([200, 201, 409]).toContain(added.status);
+
+    const senderSocket = connect(await mintToken("tuan"));
+    const sender = record(senderSocket);
+    const watcher = record(connect(await mintToken("linh")));
+    await waitFor(sender, (f) => f.type === "connection.ack", "ack on sender");
+    await waitFor(watcher, (f) => f.type === "connection.ack", "ack on watcher");
+
+    const text = `socket to socket ${randomUUID()}`;
+    senderSocket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelId,
+          text,
+          attachments: twoAttachments,
+        },
+      }),
+    );
+
+    const delivered = (await waitFor(
+      watcher,
+      (f) => f.type === "message.created" && (f as { payload: { text: string } }).payload.text === text,
+      "message.created on the watcher",
+    )) as { payload: { attachments: Array<{ url?: string }> } };
+    expect(urlsOf(delivered.payload)).toEqual([
+      "https://example.test/deliver-first.png",
+      "https://example.test/deliver-second.mp3",
+    ]);
+  }, 20_000);
+
+  it("carries only `seq` on the sender's ack (T029a, FR-008 (3.24))", async () => {
+    // THE ACK HAS NEVER CARRIED A MESSAGE AND THIS CHAPTER DOES NOT WIDEN IT. A sender
+    // learns its attachments landed from the `message.created` frame the fan-out returns
+    // to it, not from the ack — so the ack's exact key set is the assertion.
+    const ackSocket = connect(await mintToken("tuan"));
+    const sender = record(ackSocket);
+    await waitFor(sender, (f) => f.type === "connection.ack", "ack on sender");
+    ackSocket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelId,
+          text: `ack only ${randomUUID()}`,
+          attachments: twoAttachments,
+        },
+      }),
+    );
+    const ack = (await waitFor(
+      sender,
+      (f) => f.type === "message.ack",
+      "message.ack",
+    )) as { payload: Record<string, unknown> };
+    expect(Object.keys(ack.payload).sort()).toEqual(["seq"]);
+  }, 20_000);
+
   it("delivers a message SENT OVER REST to an open socket (SC-001, FR-004)", async () => {
     // THE CHAPTER, END TO END, in the integration lane. A real api spawned from
     // dist/main.js, a real gateway, a real socket opened before the send, and a
@@ -808,6 +891,8 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
           text,
           user: "delivery-bot",
           idempotency_key: randomUUID(),
+          // T030 (chapter 3.24). TWO, because one cannot show an order.
+          attachments: twoAttachments,
         }),
       },
     );
@@ -817,7 +902,31 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
       frames,
       (f) => f.type === "message.created",
       "message.created for a REST send",
-    )) as { payload: { text: string; user: string; seq: number } };
+    )) as {
+      payload: {
+        text: string;
+        user: string;
+        seq: number;
+        attachments: Array<{ url?: string }>;
+      };
+    };
+    // SC-001 IS A CLAIM THAT TWO READERS AGREE, so this compares the frame's list against
+    // what the history route returns for the same message rather than asserting each
+    // alone. The api builds this payload; the socket-to-socket test above covers the
+    // gateway's own construction of the same frame.
+    expect(urlsOf(delivered.payload)).toEqual([
+      "https://example.test/deliver-first.png",
+      "https://example.test/deliver-second.mp3",
+    ]);
+    const history = await fetch(
+      `${api.url}/v1/channels/${api.channelId}/messages?limit=10`,
+      { headers: { authorization: `Bearer ${api.credential}` } },
+    );
+    const page = (await history.json()) as {
+      messages: Array<{ seq: number; attachments: Array<{ url?: string }> }>;
+    };
+    const read = page.messages.find((m) => m.seq === delivered.payload.seq)!;
+    expect(urlsOf(read)).toEqual(urlsOf(delivered.payload));
     expect(delivered.payload.text).toBe(text);
     expect(delivered.payload.user).toBe("delivery-bot");
     // The sequence the api committed, not one the gateway invented.

@@ -1319,3 +1319,59 @@ describe("an attachments-only message is written and is not a tombstone (T024, F
     expect(gone[0]!["attachments"]).toBeNull();
   });
 });
+
+// T030a (chapter 3.24). BOTH BRANCHES OF `listMessages`, WHICH IS A TERNARY.
+//
+// `listMessages` is not one query with a direction flag — it is a conditional over two
+// separate builder chains, one ordered `desc` for a backward page and one `asc` for a
+// forward one, and `attachments` had to be added to the column list they share. A
+// single-direction test covers one branch and reports on both.
+describe("listMessages returns attachments on BOTH branches (T030a, FR-009 (3.24))", () => {
+  it("carries them in order through the backward page and the forward one", async () => {
+    const user = await repoA.createUser("t030a-user", "User");
+    const channel = await repoA.createChannel("t030a", "public");
+    await repoA.addMember(channel.id, user.id);
+    const sent = await repoA.sendMessage(channel.id, {
+      text: "two pictures",
+      userId: user.id,
+      attachments: [
+        { type: "url", kind: "image", url: "https://example.test/a.png" },
+        { type: "url", kind: "audio", url: "https://example.test/b.mp3" },
+      ],
+    });
+
+    for (const [label, page] of [
+      ["backward", await repoA.listMessages(channel.id, { userId: user.id, limit: 10 })],
+      [
+        "forward",
+        await repoA.listMessages(channel.id, { userId: user.id, limit: 10, afterSeq: 0 }),
+      ],
+    ] as const) {
+      const read = page.find((m) => m.id === sent.id)!;
+      expect(
+        read.attachments.map((a) => (a.type === "url" ? a.url : "media")),
+        label,
+      ).toEqual(["https://example.test/a.png", "https://example.test/b.mp3"]);
+    }
+  });
+
+  it("returns [] and not null on both branches for a message with none (FR-007 (3.24))", async () => {
+    const user = await repoA.createUser("t030a-none", "None");
+    const channel = await repoA.createChannel("t030a-none", "public");
+    await repoA.addMember(channel.id, user.id);
+    const sent = await repoA.sendMessage(channel.id, { text: "no pictures", userId: user.id });
+    for (const [label, page] of [
+      ["backward", await repoA.listMessages(channel.id, { userId: user.id, limit: 10 })],
+      [
+        "forward",
+        await repoA.listMessages(channel.id, { userId: user.id, limit: 10, afterSeq: 0 }),
+      ],
+    ] as const) {
+      const read = page.find((m) => m.id === sent.id)!;
+      // `toHaveProperty` rather than `toEqual([])`: an absent key satisfies the latter
+      // when the value is undefined, which is how a control test passes before its field
+      // exists.
+      expect(read, label).toHaveProperty("attachments", []);
+    }
+  });
+});

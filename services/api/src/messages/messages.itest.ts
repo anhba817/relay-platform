@@ -120,6 +120,100 @@ describe("POST /v1/channels/:channelId/messages", () => {
     expect(typeof body.docs_url).toBe("string");
   });
 
+  // T029, T031 and T032a (chapter 3.24). THE REST DOOR, END TO END.
+  describe("attachments through the send and history routes (T029, SC-001 (3.24))", () => {
+    const png = (n: string) => ({
+      type: "url",
+      kind: "image",
+      url: `https://example.test/${n}.png`,
+    });
+
+    it("returns two attachments from history in the order they were sent", async () => {
+      const posted = await send({
+        text: "two pictures",
+        user: "courier",
+        attachments: [png("one"), { ...png("two"), kind: "video", url: "https://example.test/two.mp4" }],
+      });
+      expect(posted.status).toBe(201);
+      const created = (await posted.json()) as {
+        seq: number;
+        attachments: Array<{ kind: string; url: string }>;
+      };
+      // T026's half: the 201 carries them too, because the response spells its fields and
+      // a caller should not have to read history to learn what it just sent.
+      expect(created.attachments.map((a) => a.url)).toEqual([
+        "https://example.test/one.png",
+        "https://example.test/two.mp4",
+      ]);
+
+      const res = await fetch(`${url}/v1/channels/${channelId}/messages?limit=10`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+      const page = (await res.json()) as {
+        messages: Array<{ seq: number; attachments: Array<{ kind: string; url: string }> }>;
+      };
+      const read = page.messages.find((m) => m.seq === created.seq)!;
+      // BOTH KINDS AND BOTH URLS, IN ORDER. A single attachment cannot show an order, and
+      // FR-006 says order holds on every path that returns a message.
+      expect(read.attachments).toEqual([
+        { type: "url", kind: "image", url: "https://example.test/one.png" },
+        { type: "url", kind: "video", url: "https://example.test/two.mp4" },
+      ]);
+    });
+
+    it("reads back an empty list, not an absent field (T031, FR-007 (3.24))", async () => {
+      const posted = await send({ text: "no pictures", user: "courier" });
+      const created = (await posted.json()) as { seq: number };
+      const res = await fetch(`${url}/v1/channels/${channelId}/messages?limit=10`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+      const page = (await res.json()) as { messages: Array<Record<string, unknown>> };
+      const read = page.messages.find((m) => m["seq"] === created.seq)!;
+      // `toHaveProperty` AND NOT `toEqual([])`. An ABSENT key and a `[]` both satisfy
+      // `expect(read.attachments).toEqual([])` when the value is undefined — chapter
+      // 3.23 shipped a control test that was green before its field existed for exactly
+      // this reason. This assertion fails on an absent key.
+      expect(read).toHaveProperty("attachments", []);
+    });
+
+    it("shows a non-member nothing, and therefore no attachment (T032a, FR-014 (3.24))", async () => {
+      // WHAT THIS DOES NOT PROVE, said here rather than left to be assumed: the attachment
+      // adds no second surface BY CONSTRUCTION, not by this assertion. `channelVisibleTo`
+      // runs as a gate before the read, so a non-member's answer contains no message and
+      // therefore no attachment whatever the read path does with the column. Chapter
+      // 3.23's falsification proved this shape of test stays green when the predicate is
+      // removed. T032b runs it again here and expects green.
+      // THE PRIVATE CHANNEL OF THE SAME TENANT, which the suite already mints — and it is
+      // the only case chapter 3.15's `channelVisibleTo` alone answers, per chapter 3.23's
+      // falsification. A foreign tenant is refused by the tenant scope one layer earlier.
+      await send(
+        { text: "members only", user: "courier", attachments: [png("secret")] },
+        privateChannelId,
+      );
+
+      const outsiderKey = await tokenFor("t032a-outsider");
+      const hidden = await fetch(`${url}/v1/channels/${privateChannelId}/messages?limit=10`, {
+        headers: { authorization: `Bearer ${outsiderKey}` },
+      });
+      const missing = await fetch(
+        `${url}/v1/channels/${crypto.randomUUID()}/messages?limit=10`,
+        { headers: { authorization: `Bearer ${outsiderKey}` } },
+      );
+      expect(hidden.status).toBe(missing.status);
+      // BYTE-IDENTICAL BUT FOR `request_id`, the same strip chapter 3.12's oracle uses
+      // and the same one at :435 above: it names the request rather than the resource, so
+      // it differs by construction. Comparing raw bodies makes every such test fail for a
+      // reason that is not the finding — which is how this one failed first.
+      const strip = (b: Record<string, unknown>) => {
+        delete b["request_id"];
+        return b;
+      };
+      expect(strip((await hidden.json()) as Record<string, unknown>)).toEqual(
+        strip((await missing.json()) as Record<string, unknown>),
+      );
+    });
+  });
+
   // T020b (chapter 3.24). THE REFUSAL'S `field`, NOT ONLY ITS CODE.
   //
   // The three sibling refusals measured together, so they cannot drift apart. The api's
