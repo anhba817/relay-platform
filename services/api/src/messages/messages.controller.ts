@@ -52,6 +52,28 @@ function actingUser(req: RequestWithPrincipal): string | undefined {
   return req.principal?.kind === "user" ? req.principal.userExternalId : undefined;
 }
 
+/** The two fields every publish here has to carry (NFR-OBS-01, NFR-OBS-06).
+ *
+ * ONE FUNCTION AND NOT THREE COPIES, and the coverage ratchet is what asked. Chapter
+ * 3.23 added two more publish sites to this file, each with its own
+ * `req.requestId ?? "unknown"` and `req.principal?.environmentId ?? "unknown"` — six
+ * uncovered branch arms where there had been two, all of them the same two arms written
+ * three times. Collapsing them does not make the arms reachable; it stops the count
+ * growing every time a route publishes.
+ *
+ * THE FALLBACKS STAY. `requestId` is set by middleware and `principal` by the guard, so
+ * neither is absent on any path a request can take — but a log line that says `unknown`
+ * is findable, and one that says `undefined` reads like a bug in the logger. */
+function publishContext(req: RequestWithPrincipal): {
+  requestId: string;
+  environmentId: string;
+} {
+  return {
+    requestId: req.requestId ?? "unknown",
+    environmentId: req.principal?.environmentId ?? "unknown",
+  };
+}
+
 // The api's first product endpoint (chapter 2.2). Validation is zod at the
 // boundary — the same schema family as @relay/protocol, so the REST body
 // and the WebSocket frame payload cannot drift (1.3's payoff, again).
@@ -222,10 +244,7 @@ export class MessagesController {
           text: message.text,
           created_at: message.created_at,
         },
-        {
-          requestId: req.requestId ?? "unknown",
-          environmentId: req.principal?.environmentId ?? "unknown",
-        },
+        publishContext(req),
       );
     }
 
@@ -324,10 +343,7 @@ export class MessagesController {
           created_at: edited.created_at,
         },
       },
-      {
-        requestId: req.requestId ?? "unknown",
-        environmentId: req.principal?.environmentId ?? "unknown",
-      },
+      publishContext(req),
     );
 
     // THE FIELD LIST IS SPELLED OUT, like the send path's, so a new column joins the
@@ -419,21 +435,20 @@ export class MessagesController {
             // delete anybody's message, so the two are different facts and the wire
             // carries the one every client already has beside the message.
             //
-            // `?? "unknown"` NEVER FIRES, and it is here because the compiler cannot
-            // know that: `deleteMessage` refuses a senderless row with
-            // `NotMessageAuthorError` (FR-018) before this line can be reached, so a
-            // null author is unrepresentable here and the type is still nullable.
-            user: deleted.user ?? "unknown",
+            // A STRING, NOT A `?? "unknown"`. The first draft had one, and it was both
+            // an uncovered arm and a lie: `deleteMessage` refuses a senderless row with
+            // `NotMessageAuthorError` (FR-018) before it can return, so the value can
+            // never be missing — and if it somehow were, putting the word "unknown" on
+            // the wire as somebody's name is worse than the crash. The narrowing lives
+            // in the repository now, where the argument for it lives too.
+            user: deleted.user,
             // THE ROW'S INSTANT, not a reading taken here. The outbox event built
             // inside the transaction quotes the same value, so a consumer comparing
             // its webhook against a client's frame sees one timestamp.
             deleted_at: deleted.deleted_at,
           },
         },
-        {
-          requestId: req.requestId ?? "unknown",
-          environmentId: req.principal?.environmentId ?? "unknown",
-        },
+        publishContext(req),
       );
     }
   }

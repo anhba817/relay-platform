@@ -267,7 +267,9 @@ export class MessagesService {
     messageId: string,
     { userId, userExternalId }: { userId?: string; userExternalId?: string },
   ): Promise<{
-    deleted: MessageWithSender & { deleted_at: string };
+    /** `user` narrowed to a string by the repository — FR-018 refuses a row with no
+     * author before `deleteMessage` can return, so a tombstone it produced has one. */
+    deleted: MessageWithSender & { user: string; deleted_at: string };
     alreadyDeleted: boolean;
   }> {
     if (!(await this.repo.channelVisibleTo(channelId, userId))) {

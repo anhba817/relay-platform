@@ -542,7 +542,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     return (await res.json()) as { messages: Array<Record<string, unknown>> };
   };
 
-  it("T024: the author edits their message and the text changes (FR-001, FR-003)", async () => {
+  it("the author edits their message and the text changes (FR-001, FR-003)", async () => {
     const sent = await sendAsAuthor("frist");
     const res = await patch(sent.id, { text: "first" }, await tokenFor("author"));
     expect(res.status).toBe(200);
@@ -558,7 +558,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(rows[0]!["text"]).toBe("first");
   });
 
-  it("T024: an unedited message reports no edited_at (FR-003)", async () => {
+  it("an unedited message reports edited_at as null, with the key present (FR-003)", async () => {
     // The control for the assertion above. `edited_at` being a string after an edit
     // means nothing unless it is absent before one — a column defaulting to `now()`
     // would pass the test above and fail this.
@@ -571,7 +571,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(rows[0]!).toHaveProperty("edited_at", null);
   });
 
-  it("T024: somebody else's message is refused with not_message_author (FR-013)", async () => {
+  it("somebody else's message is refused with not_message_author (FR-013)", async () => {
     const sent = await sendAsAuthor("mine");
     const res = await patch(sent.id, { text: "yours now" }, await tokenFor("bystander"));
     expect(res.status).toBe(403);
@@ -583,7 +583,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(rows[0]!["text"]).toBe("mine");
   });
 
-  it("T024: a tenant API key may not edit at all (FR-013a)", async () => {
+  it("a tenant API key may not edit at all (FR-013a)", async () => {
     // The decision the spec records: a key deletes anything and edits nothing. An
     // application credential has no author to compare against, so `@Accepts("user")`
     // on the method is what answers — and the class declares BOTH classes, so a route
@@ -594,7 +594,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(((await res.json()) as { code: string }).code).toBe("wrong_credential_type");
   });
 
-  it("T024: a message in a channel this tenant cannot see is a 404 (FR-014)", async () => {
+  it("a message in a channel this tenant cannot see is a 404 (FR-014)", async () => {
     // Indistinguishable from a message id that does not exist, which is the pair the
     // isolation oracle asserts everywhere else in this file.
     const token = await tokenFor("author");
@@ -607,7 +607,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     );
   });
 
-  it("T024: a message id that is not in this channel is a 404 (FR-014)", async () => {
+  it("a message id that is not in this channel is a 404 (FR-014)", async () => {
     // The pair above shares a tenant boundary. This one does not: both channels belong
     // to this environment and the message belongs to the other one, so the only thing
     // that can refuse it is the route checking the message against the channel in the
@@ -618,7 +618,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(res.status).toBe(404);
   });
 
-  it("T024: a non-member of a private channel gets the not-found envelope, not a 403 (FR-014)", async () => {
+  it("a non-member of a private channel gets the not-found envelope, not a 403 (FR-014)", async () => {
     // WRITTEN BECAUSE THE FALSIFICATION CAME BACK GREEN. Removing `channelVisibleTo`
     // from `messages.service.edit` broke nothing: `editMessage`'s join already carries
     // the environment, so a FOREIGN channel refuses either way, and the foreign/missing
@@ -668,7 +668,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
       headers: { authorization: `Bearer ${auth}` },
     });
 
-  it("T033d: the edit history reads back oldest first, through the route (SC-002)", async () => {
+  it("the edit history reads back oldest first, through the route (SC-002)", async () => {
     // THROUGH THE ROUTE AND NOT THE DATABASE. `repository.itest.ts` proves the rows
     // exist; only this proves anybody can retrieve them — the distinction CLAUDE.md
     // records as "a repository test proves a check exists; only a route test proves it
@@ -688,7 +688,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     for (const entry of body.edits) expect(typeof entry.edited_at).toBe("string");
   });
 
-  it("T033e: an end user is refused, including the message's author (FR-023a, SC-002a)", async () => {
+  it("an end user is refused, including the message's author (FR-023a, SC-002a)", async () => {
     // THE AUTHOR IS THE CASE THAT MATTERS. A refusal that let the author through would
     // look reasonable and would still be the leak: an end user who can see a channel
     // can see every message in it, so "only your own" is not a narrowing at all once a
@@ -715,7 +715,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     ).toEqual(["before"]);
   });
 
-  it("T033f: a message with no edits answers 200 and an empty list, not 404", async () => {
+  it("a message with no edits answers 200 and an empty list, not 404", async () => {
     // The absence of edits is a fact about the message, not the absence of a resource.
     const sent = await sendAsAuthor("never edited");
     const res = await edits(sent.id, credential);
@@ -723,7 +723,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect((await res.json()) as unknown).toEqual({ edits: [] });
   });
 
-  it("T033f: a message id that does not exist IS a 404, which is the other half", async () => {
+  it("a message id that does not exist IS a 404, which is the other half", async () => {
     // Without this, `{ edits: [] }` would be the answer for a message that was never
     // there — and the route would be unable to tell a caller which of the two it got.
     // `listMessageEdits` returning `[]` cannot distinguish them; `messageExistsIn` is
@@ -732,12 +732,12 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(res.status).toBe(404);
   });
 
-  it("T033f: the edit history of a foreign channel's message is a 404", async () => {
+  it("the edit history of a foreign channel's message is a 404", async () => {
     const res = await edits(randomUUID(), credential, foreignChannelId);
     expect(res.status).toBe(404);
   });
 
-  it("T036a: editing a message to the text it already has is still an edit (FR-021)", async () => {
+  it("editing a message to the text it already has is still an edit (FR-021)", async () => {
     // THE PLATFORM DOES NOT COMPARE TEXTS, and the spec says why: every definition of
     // equality — whitespace, case, unicode normalisation, an invisible character — is a
     // decision a customer would have to be told about. So an identical edit records an
@@ -787,7 +787,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
       headers: { authorization: `Bearer ${auth}` },
     });
 
-  it("T038: the author deletes their message and the row becomes a tombstone (FR-006)", async () => {
+  it("the author deletes their message and the row becomes a tombstone (FR-006)", async () => {
     const sent = await sendAsAuthor("regrettable");
     const res = await remove(sent.id, await tokenFor("author"));
     expect(res.status).toBe(204);
@@ -802,7 +802,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(rows[0]!["user"]).toBe("author");
   });
 
-  it("T038: a tenant API key deletes anybody's message (FR-012)", async () => {
+  it("a tenant API key deletes anybody's message (FR-012)", async () => {
     // FR-MOD-02 grants a key deletion of any message irrespective of author, and this
     // route is the one place in the chapter where the class-level
     // `@Accepts("application", "user")` is CORRECT rather than inherited by accident.
@@ -812,7 +812,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(rows[0]!["text"]).toBeNull();
   });
 
-  it("T038: an end user may not delete somebody else's message (FR-013)", async () => {
+  it("an end user may not delete somebody else's message (FR-013)", async () => {
     const sent = await sendAsAuthor("not yours to remove");
     const res = await remove(sent.id, await tokenFor("bystander"));
     expect(res.status).toBe(403);
@@ -823,7 +823,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(rows[0]!["text"]).toBe("not yours to remove");
   });
 
-  it("T043: deleting twice answers 204 twice, changes nothing, and emits ONE event (FR-009, SC-007)", async () => {
+  it("deleting twice answers 204 twice, changes nothing, and emits ONE event (FR-009, SC-007)", async () => {
     // TWO 204s PROVE NOTHING — idempotence is about what the second call DID, and the
     // answer is the same either way. The event count is the assertion that carries the
     // requirement, read straight out of the outbox: a second `message.deleted` there
@@ -845,7 +845,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(events).toBe(1);
   });
 
-  it("T044: editing a tombstone is refused with message_deleted, and a stranger is refused first (FR-010)", async () => {
+  it("editing a tombstone is refused with message_deleted, and a stranger is refused first (FR-010)", async () => {
     const sent = await sendAsAuthor("about to go");
     const token = await tokenFor("author");
     expect((await remove(sent.id, token)).status).toBe(204);
@@ -862,7 +862,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(((await asStranger.json()) as { code: string }).code).toBe("not_message_author");
   });
 
-  it("T038: deleting a message of a channel this tenant cannot see is a 404 (FR-014)", async () => {
+  it("deleting a message of a channel this tenant cannot see is a 404 (FR-014)", async () => {
     const token = await tokenFor("author");
     const foreign = await remove(randomUUID(), token, foreignChannelId);
     const missing = await remove(randomUUID(), token, randomUUID());
@@ -873,7 +873,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     );
   });
 
-  it("T038: a non-member of a private channel gets the not-found envelope on DELETE too (FR-014)", async () => {
+  it("a non-member of a private channel gets the not-found envelope on DELETE too (FR-014)", async () => {
     // The same leak the edit route's test covers, on the other verb — and worth its own
     // test because the two routes resolve visibility separately.
     const authorToken = await tokenFor("author");
@@ -892,7 +892,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect((await remove(inside.id, credential, privateChannelId)).status).toBe(204);
   });
 
-  it("T052: a key's tombstone is the SAME tombstone an author's deletion produces (FR-012, SC-004)", async () => {
+  it("a key's tombstone is the SAME tombstone an author's deletion produces (FR-012, SC-004)", async () => {
     // NOT "both are null". Two messages, one deleted by its author and one by the
     // tenant key, compared field by field through the read path — because FR-012 grants
     // a key deletion of any message and SC-004 asks that the content be gone from every
@@ -921,7 +921,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(b["user"]).toBe("author");
   });
 
-  it("T054: an end user who is not the author is refused on BOTH routes (FR-013)", async () => {
+  it("an end user who is not the author is refused on BOTH routes (FR-013)", async () => {
     // ONE TEST FOR THE PAIR, because FR-013 is one requirement covering both verbs and
     // the two paths reach the refusal through different methods. Same code, same status,
     // and nothing written either way.
@@ -939,7 +939,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(rows[0]!["edited_at"]).toBeNull();
   });
 
-  it("T055: another environment's message is 404 on both routes, never 403 (FR-014)", async () => {
+  it("another environment's message is 404 on both routes, never 403 (FR-014)", async () => {
     // 403 WOULD BE THE LEAK. A permission refusal on a foreign id says the id is real;
     // chapter 2.8 made a foreign channel a 404 for exactly this, and the pair below is
     // the assertion the isolation oracle makes everywhere else in this file.
@@ -958,7 +958,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     }
   });
 
-  it("T069: an edit writes exactly one message.updated event, and a second edit writes a second (FR-019)", async () => {
+  it("an edit writes exactly one message.updated event, and a second edit writes a second (FR-019)", async () => {
     // THE COUNTERPART TO T043, AND THE OPPOSITE ANSWER. A repeated deletion writes no
     // second event because the row did not change (FR-009); a repeated edit writes one
     // every time, because FR-021 says the platform does not compare texts and every
@@ -982,7 +982,37 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(await outboxCount(sent.id, "message.updated")).toBe(2);
   });
 
-  it("T024: an empty text is a 400 through the protocol envelope (FR-001)", async () => {
+  it("refuses a token minted for an identifier with no user row, on all three routes", async () => {
+    // THE SAME ARM THE SEND PATH ALREADY TESTS, on the three routes this chapter adds
+    // and on the history route beside them. `mintUserToken` signs a token for any
+    // identifier; `POST /auth/dev-token` creates the row at mint time (FR-039a) and this
+    // suite does not go through it, so a subject with no row is still reachable — and it
+    // is the arm every one of these handlers has, because resolving the caller is the
+    // first thing each of them does.
+    //
+    // WRITTEN BECAUSE THE RATCHET NAMED IT. `messages.controller.ts` fell from 100% lines
+    // to 93.61% when this chapter added two more copies of that resolution, and the
+    // uncovered statements were exactly these throws.
+    const stranger = await tokenFor("never-seen-before");
+    const sent = await sendAsAuthor("something to aim at");
+
+    const edited = await patch(sent.id, { text: "x" }, stranger);
+    const removed = await remove(sent.id, stranger);
+    const read = await fetch(`${url}/v1/channels/${channelId}/messages?limit=1`, {
+      headers: { authorization: `Bearer ${stranger}` },
+    });
+
+    expect([edited.status, removed.status, read.status]).toEqual([400, 400, 400]);
+    expect(((await edited.json()) as { code: string }).code).toBe("invalid_request");
+    expect(((await removed.json()) as { code: string }).code).toBe("invalid_request");
+    // AND NOTHING WAS WRITTEN. A 400 raised after the write would pass every assertion
+    // above.
+    const rows = (await history()).messages.filter((m) => m["id"] === sent.id);
+    expect(rows[0]!["text"]).toBe("something to aim at");
+    expect(rows[0]!["edited_at"]).toBeNull();
+  });
+
+  it("an empty text is a 400 through the protocol envelope (FR-001)", async () => {
     const sent = await sendAsAuthor("something");
     const res = await patch(sent.id, { text: "" }, await tokenFor("author"));
     expect(res.status).toBe(400);

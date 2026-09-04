@@ -493,7 +493,7 @@ describe("integrating with Relay from the outside", () => {
    * to a real socket as `message.updated` — not as `message.created`, which is the
    * failure the whole ADR exists to prevent and which no shape check can see, because
    * the updated arm's payload IS a `Message`. */
-  it("edits a message over REST, and a member's socket hears message.updated", async () => {
+  it("edits a message over REST, and a member's socket hears message.updated exactly once, with no second creation", async () => {
     const minted = await post(
       "/auth/dev-token",
       { user: "watcher", ttl_seconds: 3600 },

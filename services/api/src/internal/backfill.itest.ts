@@ -212,7 +212,7 @@ describe("POST /internal/backfill", () => {
   // The gateway's half is that it replays what it was handed, which `resume.itest.ts`
   // does test, with a stub that says so.
 
-  it("T058: a message ABOVE the cursor, edited while away, replays with its CURRENT text (FR-016)", async () => {
+  it("a message ABOVE the cursor, edited while away, replays with its CURRENT text (FR-016)", async () => {
     // THE BACKFILL READS ROWS, IT DOES NOT REPLAY A LOG. That is the whole of FR-016's
     // answer and it is a property of the query rather than a feature anybody built: the
     // superseded text lives in `message_edits`, which no read path on this route
@@ -230,7 +230,7 @@ describe("POST /internal/backfill", () => {
     expect(page.messages.map((m) => m.text)).not.toContain("the frist draft");
   });
 
-  it("T059: a message DELETED while away is not replayed at all (FR-016)", async () => {
+  it("a message DELETED while away is not replayed at all (FR-016)", async () => {
     // `backfill.controller.ts`'s `toFrame` already drops a null-text row and its comment
     // says why: a tombstone is not a creation, and there is no truthful `text` to
     // invent. **This is the first test with a real writer behind that line** — the
@@ -253,7 +253,7 @@ describe("POST /internal/backfill", () => {
     expect(page.messages.map((m) => m.seq)).not.toContain(gone.seq);
   });
 
-  it("T059a: truncation is reported as the READ found it, tombstones and all", async () => {
+  it("truncation is reported as the READ found it, tombstones and all", async () => {
     // `backfill.controller.ts:64` decided this and says why — *"dropping an unrenderable
     // row does not mean the client should go page history, and hiding a real cap
     // would"* — and `repository.ts` computes it as `rows.length > limit`. **The decision
@@ -276,7 +276,7 @@ describe("POST /internal/backfill", () => {
     expect(page.messages.length).toBe(BACKFILL_LIMIT - 1);
   }, 120_000);
 
-  it("T060: a message BELOW the cursor, edited while away, produces no frame and no gap (FR-016a)", async () => {
+  it("a message BELOW the cursor, edited while away, produces no frame and no gap (FR-016a)", async () => {
     // THE SOFT EDGE IN THE CONTRACT, demonstrated rather than asserted. Resume is
     // ordered by the channel sequence alone: a message older than the cursor is not in
     // the page whatever happened to it, so an edit below the cursor is invisible.
@@ -304,7 +304,7 @@ describe("POST /internal/backfill", () => {
     for (let i = 1; i < seqs.length; i += 1) expect(seqs[i]! - seqs[i - 1]!).toBe(1);
   });
 
-  it("T061: re-reading the range through history repairs it (SC-006)", async () => {
+  it("re-reading the range through history repairs it (SC-006)", async () => {
     // THE DOCUMENTED REPAIR, end to end. A client away across an edit below its cursor
     // and a deletion above it re-reads the range and ends with what a client that never
     // left is holding: the current text for the edit, and a tombstone for the deletion.

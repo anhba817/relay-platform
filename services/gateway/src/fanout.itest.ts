@@ -176,7 +176,7 @@ describe("fan-out across instances", () => {
     await raw.fanout.close();
   });
 
-  it("T018h: delivers an edit on the revision subject and NOT on the message one", async () => {
+  it("delivers an edit on the revision subject and NOT on the message one", async () => {
     // Chapter 3.23, ADR-24. The `updated` arm's payload is a `Message`, which is exactly
     // why this test names both callbacks. Route on the wrong one and an edit is shown to
     // every member as a brand new message — and nothing about its shape would say so.
@@ -196,7 +196,7 @@ describe("fan-out across instances", () => {
     await g2.fanout.unsubscribe(CHANNEL);
   });
 
-  it("T018h: delivers a deletion, which cannot be a message at all", async () => {
+  it("delivers a deletion, which cannot be a message at all", async () => {
     await g2.fanout.subscribe(CHANNEL);
     g2.deliveries.length = 0;
     await g1.fanout.publishRevision({
@@ -217,7 +217,7 @@ describe("fan-out across instances", () => {
     await g2.fanout.unsubscribe(CHANNEL);
   });
 
-  it("T018h: one subscribe covers both subjects, and one unsubscribe drops both", async () => {
+  it("one subscribe covers both subjects, and one unsubscribe drops both", async () => {
     // The reference count is shared by construction. The test that carries it is the
     // NEGATIVE one: after the last holder leaves, a revision must go nowhere. Two counts
     // would leave the revision subject subscribed after the message one closed.
@@ -238,7 +238,7 @@ describe("fan-out across instances", () => {
     await expect(nextDelivery(g2, 300)).rejects.toThrow("deadline");
   });
 
-  it("T018h: drops a revision the contract does not allow", async () => {
+  it("drops a revision the contract does not allow", async () => {
     // A deletion carrying a text is the malformed case that matters: it is what a producer
     // reaching for `messageSchema` would emit, and `strictObject` is what refuses it.
     await g2.fanout.subscribe(CHANNEL);

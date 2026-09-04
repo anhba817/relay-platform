@@ -120,7 +120,7 @@ describe("expansion", () => {
     expect(await timesHandled(db, DISPATCHER, e.eventId)).toBe(1);
   });
 
-  it("T069: a subscriber to the two new message events is told about an edit and a deletion (FR-019, SC-011)", async () => {
+  it("a subscriber to the two new message events is told about an edit and a deletion (FR-019, SC-011)", async () => {
     // **`seedEndpoint` IS PARAMETERISED AND EVERY EXISTING CALL SITE PASSES
     // `["message.created"]`.** A test that forgot to pass the new types would seed an
     // endpoint subscribed to creations, receive nothing, and read as though the

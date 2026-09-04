@@ -4600,7 +4600,14 @@ export class Repository {
       userExternalId,
     }: { userId?: string; userExternalId?: string },
   ): Promise<{
-    deleted: MessageWithSender & { deleted_at: string };
+    /** `user` IS NARROWED TO A STRING, unlike `MessageWithSender`'s.
+     *
+     * FR-018 refuses a row with no author before this method can return either branch,
+     * so a tombstone this method produced always has one. The narrowing is here rather
+     * than at the caller because this is where that argument lives — and the caller's
+     * alternative was `deleted.user ?? "unknown"`, which is an uncovered arm and a lie
+     * in the same expression. */
+    deleted: MessageWithSender & { user: string; deleted_at: string };
     alreadyDeleted: boolean;
   }> {
     return this.db.transaction(async (tx) => {
@@ -4644,6 +4651,13 @@ export class Repository {
       if (userId !== undefined && row.userId !== userId) {
         throw new NotMessageAuthorError(messageId);
       }
+      // THE AUTHOR IS A STRING FROM HERE DOWN, and the foreign key is the argument.
+      // `messages.user_id` references `users(id)`, and the check above established it is
+      // not null — so the left join matched and `row.author` is that user's external id.
+      // Asserted rather than defaulted: a `??` here would put a placeholder on the wire
+      // as somebody's name, and the only state that could reach it is a violated
+      // constraint, which should crash rather than publish.
+      const author = row.author!;
 
       // ALREADY A TOMBSTONE: nothing to do, and nothing to announce.
       //
@@ -4659,7 +4673,7 @@ export class Repository {
             seq: row.seq,
             text: null,
             created_at: toIso(row.createdAt),
-            user: row.author,
+            user: author,
             // THE INSTANT ALREADY ON THE ROW, not a fresh reading. FR-009 says a
             // repeated deletion changes nothing, and the timestamp is the column that
             // would otherwise move.
@@ -4718,7 +4732,7 @@ export class Repository {
           id: row.id,
           channel_id: channelId,
           seq: row.seq,
-          user: row.author,
+          user: author,
           deleted_at: deletedAt,
         },
       });
@@ -4734,7 +4748,7 @@ export class Repository {
           seq: row.seq,
           text: null,
           created_at: toIso(row.createdAt),
-          user: row.author,
+          user: author,
           // THE COMMITTED INSTANT, read back from the UPDATE. The outbox event above
           // quotes this same value, so a consumer and a socket client comparing the
           // event with the frame see one timestamp rather than two readings of one

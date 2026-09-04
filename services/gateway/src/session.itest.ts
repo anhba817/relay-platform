@@ -724,7 +724,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     expect(delivered.payload.seq).toBeGreaterThan(0);
   });
 
-  it("T033: an edit over REST reaches every member's socket as message.updated exactly once (FR-005, SC-001)", async () => {
+  it("an edit over REST reaches every member's socket as message.updated exactly once (FR-005, SC-001)", async () => {
     // TWO SOCKETS, TWO DIFFERENT PEOPLE, and a count rather than a first match.
     // `waitFor` resolves on the first frame that matches, so it cannot see a duplicate;
     // FR-005 is one property with two halves — everybody gets it, and nobody gets it
@@ -796,7 +796,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     expect(second.filter((f) => f.type === "message.created")).toHaveLength(1);
   });
 
-  it("T046: a deletion over REST reaches a member's socket with NO text field at all (FR-007)", async () => {
+  it("a deletion over REST reaches a member's socket with NO text field, and a second deletion sends nothing (FR-007, FR-009)", async () => {
     const frames = record(connect(await mintToken("watcher")));
     await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
 

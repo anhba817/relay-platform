@@ -532,7 +532,7 @@ describe("the fan-out publish when it fails", () => {
     }
   });
 
-  it("T038: a publisher that does NOTHING passes the weak assertions and fails the log one", async () => {
+  it("a publisher that does NOTHING passes the weak assertions and fails the log one", async () => {
     // The proof that the test above distinguishes anything. A no-op publisher is
     // what "the publish was never written" looks like from outside, and
     // `publish` never rejects either way — so 201 and recoverability cannot tell

@@ -422,11 +422,49 @@ export default defineConfig({
         // `text` as non-nullable and a null would publish a frame the delivery side
         // drops silently. A guard against a state the type system forbids is cheap; the
         // alternative is a silent drop.
+        // CHAPTER 3.23 MOVED THIS FILE IN BOTH DIRECTIONS, and the branch number is the
+        // one worth reading. The chapter added two routes to it — an edit and a deletion,
+        // each resolving a caller, each publishing — and the first measurement after that
+        // was **91.66 / 78.84 / 100 / 93.61** against pins of 96 / 87 / 100 / 100. Three
+        // of four red.
+        //
+        // WHAT WAS TESTED, and it was the largest part: every one of those routes throws
+        // a 400 when the token's subject has no user row, and nothing exercised it. The
+        // send path had had that test since chapter 3.15; the two new routes and the
+        // history route beside them did not. One test covering all three took lines to
+        // 97.87 and branches to 84.61.
+        //
+        // WHAT WAS REMOVED RATHER THAN TESTED, which is the ratchet's preferred outcome
+        // and the fifth time it has produced one:
+        //
+        //   - `deleted.user ?? "unknown"` on the deletion frame. `deleteMessage` refuses
+        //     a senderless row (FR-018 of 3.23) before it can return, so the arm was
+        //     unreachable — AND the value it would have produced was a lie: the word
+        //     "unknown" on the wire as somebody's name. The narrowing moved to the
+        //     repository, where the foreign-key argument for it lives.
+        //   - Three copies of `req.requestId ?? "unknown"` and
+        //     `req.principal?.environmentId ?? "unknown"`, one per publish site, which is
+        //     six uncovered arms for two distinct ones. `publishContext(req)` is one
+        //     function called three times. The fallbacks stay — a log line saying
+        //     `unknown` is findable where one saying `undefined` reads like a broken
+        //     logger — but the count stops growing with every route that publishes.
+        //
+        // Branches finished at **92.85, above the 87 this chapter inherited**, so the pin
+        // goes UP to 92 — 0.85 of headroom, the same margin chapter 3.17 left on
+        // `repository.ts` at 92.59.
+        //
+        // LINES DROP FROM 100 TO 97, and the one uncovered statement is named: the
+        // narrowing throw in `edit`, which fires when a request reaches that handler with
+        // no user subject. `@Accepts("user")` on the method means the guard has already
+        // refused every credential that could produce it, so it is unreachable while that
+        // decorator is there — and it is there to be loud if somebody removes it. A `!`
+        // would restore 100% by moving the assumption somewhere a decorator change
+        // cannot invalidate, which is the trade this file declines to make.
         "services/api/src/messages/messages.controller.ts": {
-          branches: 87,
+          branches: 92,
           functions: 100,
-          lines: 100,
-          statements: 96,
+          lines: 97,
+          statements: 97,
         },
 
         "services/api/src/webhooks/disable.ts": {
