@@ -771,15 +771,24 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
   });
 
   /** A message by `author`, sent with their own token so the row carries them. */
-  const sendAsAuthor = async (text: string, channel = channelId) => {
+  const sendAsAuthor = async (
+    text: string,
+    channel = channelId,
+    attachments?: unknown[],
+  ) => {
     const token = await tokenFor("author");
     const res = await fetch(`${url}/v1/channels/${channel}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(attachments !== undefined ? { attachments } : {}) }),
     });
     expect(res.status).toBe(201);
-    return (await res.json()) as { id: string; seq: number; created_at: string };
+    return (await res.json()) as {
+      id: string;
+      seq: number;
+      created_at: string;
+      attachments: Array<{ url: string }>;
+    };
   };
 
   const patch = (
@@ -1269,6 +1278,129 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     const rows = (await history()).messages.filter((m) => m["id"] === sent.id);
     expect(rows[0]!["text"]).toBe("something to aim at");
     expect(rows[0]!["edited_at"]).toBeNull();
+  });
+
+  // T043, T045, T046b and T047 (chapter 3.24). THE TOMBSTONE AND THE EDIT.
+  describe("attachments through deletion and editing (US3)", () => {
+    const two = [
+      { type: "url", kind: "image", url: "https://example.test/keep-one.png" },
+      { type: "url", kind: "audio", url: "https://example.test/keep-two.mp3" },
+    ];
+
+    it("leaves attachments untouched through an edit, in order (T045, FR-016 (3.24))", async () => {
+      // THE FAILURE THIS CATCHES IS SILENT. An `UPDATE … SET text = ?, attachments = ?`
+      // written without care drops the photograph and answers 200 — there is no error
+      // anywhere in that sequence, which is why T046 falsifies it from the other side.
+      const sent = await sendAsAuthor("before", channelId, two);
+      expect(sent.attachments).toHaveLength(2);
+
+      const res = await patch(sent.id, { text: "after" }, await tokenFor("author"));
+      expect(res.status).toBe(200);
+      const edited = (await res.json()) as {
+        text: string;
+        attachments: Array<{ url: string }>;
+      };
+      expect(edited.text).toBe("after");
+      // THE 200 CARRIES THEM (T046a). A caller that edits and a consumer that watches
+      // must see one message, not two.
+      expect(edited.attachments.map((a) => a.url)).toEqual([
+        "https://example.test/keep-one.png",
+        "https://example.test/keep-two.mp3",
+      ]);
+
+      const page = await history();
+      const read = page.messages.find((m) => m["id"] === sent.id) as unknown as {
+        attachments: Array<{ url: string }>;
+      };
+      expect(read.attachments.map((a) => a.url)).toEqual([
+        "https://example.test/keep-one.png",
+        "https://example.test/keep-two.mp3",
+      ]);
+    });
+
+    it("reports the same two on the edit's own answers, in order (T046b, FR-015 (3.24))", async () => {
+      // T045 ASSERTS THE DATABASE KEPT THEM; THIS ASSERTS WHAT THE EDIT REPORTS. Neither
+      // implies the other — an empty array on either answer passes T045 and fails this.
+      //
+      // **THE OUTBOX HALF IS PHASE 9's, AND THAT IS AN ORDERING FACT.** `MessageCreatedData`
+      // gains its field at T055, so an assertion on the `message.updated` outbox row here
+      // fails for the NEXT phase's reason — the third time in this chapter that a test
+      // was written against something a later phase builds (T023 and T022c were the
+      // others). T057 asserts the creation and edit payloads carry attachments
+      // identically, which is FR-015's other half and where it belongs.
+      const sent = await sendAsAuthor("before the edit", channelId, two);
+      const res = await patch(sent.id, { text: "after the edit" }, await tokenFor("author"));
+      expect(res.status).toBe(200);
+
+      const expected = [
+        "https://example.test/keep-one.png",
+        "https://example.test/keep-two.mp3",
+      ];
+      const answered = (await res.json()) as { attachments: Array<{ url: string }> };
+      expect(answered.attachments.map((a) => a.url)).toEqual(expected);
+
+      // AND THE READ AGREES WITH THE ANSWER, which is what makes them one message rather
+      // than two reports of one.
+      const page = await history();
+      const read = page.messages.find((m) => m["id"] === sent.id) as unknown as {
+        attachments: Array<{ url: string }>;
+      };
+      expect(read.attachments.map((a) => a.url)).toEqual(expected);
+    });
+
+    it("says nothing about attachments in the edit history (T047, FR-016 (3.24))", async () => {
+      // `message_edits` HAS THREE COLUMNS AND THE SAD PUBLISHES THREE. Chapter 3.23 built
+      // that table to a published DDL, and an attachment column would be a fourth nobody
+      // published — so the edit history records what the text WAS and says nothing about
+      // what was attached, because nothing about that changed.
+      const sent = await sendAsAuthor("first words", channelId, two);
+      await patch(sent.id, { text: "second words" }, await tokenFor("author"));
+      const res = await fetch(
+        `${url}/v1/channels/${channelId}/messages/${sent.id}/edits`,
+        { headers: { authorization: `Bearer ${credential}` } },
+      );
+      expect(res.status).toBe(200);
+      const { edits } = (await res.json()) as {
+        edits: Array<Record<string, unknown>>;
+      };
+      expect(edits).toHaveLength(1);
+      // AN EXACT KEY SET, not `attachments === undefined`: an absent key and an
+      // undefined value are the same to a truthiness check and different to a contract.
+      expect(Object.keys(edits[0]!).sort()).toEqual(["edited_at", "prior_text"]);
+    });
+
+    it("returns a tombstone with no attachments on every read that carries them (T043, FR-012 (3.24), SC-003 (3.24))", async () => {
+      // THE SIX READ SHAPES `data-model.md` NAMES, and the assertion differs by shape
+      // because the shapes do. Two carry the field and get `[]`; four never carried it
+      // and the field stays ABSENT — which is the stronger answer, not a weaker one.
+      const sent = await sendAsAuthor("doomed", channelId, two);
+      const removed = await fetch(
+        `${url}/v1/channels/${channelId}/messages/${sent.id}`,
+        { method: "DELETE", headers: { authorization: `Bearer ${await tokenFor("author")}` } },
+      );
+      expect(removed.status).toBe(204);
+
+      // `listMessages` — the history route, and it serves resume too.
+      const page = await history();
+      const tomb = page.messages.find((m) => m["id"] === sent.id)!;
+      expect(tomb["text"]).toBeNull();
+      expect(tomb).toHaveProperty("attachments", []);
+
+      // `listChannelsForUser.last_message` — the preview. It carries no attachments
+      // column at all, and T053 asserts that from the repository side.
+      const listing = await fetch(`${url}/v1/channels?limit=50`, {
+        headers: { authorization: `Bearer ${await tokenFor("author")}` },
+      });
+      if (listing.status === 200) {
+        const { channels } = (await listing.json()) as {
+          channels: Array<{ id: string; last_message?: Record<string, unknown> }>;
+        };
+        const row = channels.find((c) => c.id === channelId);
+        if (row?.last_message !== undefined) {
+          expect(row.last_message).not.toHaveProperty("attachments");
+        }
+      }
+    });
   });
 
   it("an empty text is a 400 through the protocol envelope (FR-001)", async () => {

@@ -4488,6 +4488,14 @@ export class Repository {
           text: messages.text,
           seq: messages.sequence,
           createdAt: messages.createdAt,
+          /** Chapter 3.24 (FR-015, FR-016). THIS READ CHANGES, AND T053's LIST OF FOUR
+           * BECOMES THREE.
+           *
+           * An edit does not change attachments — T045 and T046 prove that from both
+           * sides — but the `message.updated` event and the 200 response must carry the
+           * ones the message ALREADY has, and neither can invent them. So the read that
+           * feeds both selects the column. */
+          attachments: sql<Attachment[] | null>`${messages.attachments}`,
           // The author as a CONSUMER sees them, for the outbox event below. Joined
           // here rather than looked up after the write: this transaction already
           // reads the row, and `MessageCreatedData`'s boundary is that `user_id` does
@@ -4584,12 +4592,10 @@ export class Repository {
         channel_id: channelId,
         seq: row.seq,
         text,
-        // `[]` UNTIL PHASE 7 ADDS THE COLUMN TO THIS READ. An edit does not change
-        // attachments (FR-016), and the `message.updated` event must carry the ones
-        // the message already has — so this read gains the column with T046a rather
-        // than staying as it is. **`traceability.md`'s T053 lists this read among the
-        // four that "do not change", and after phase 7 that will be three.**
-        attachments: [],
+        // WHAT THE MESSAGE ALREADY HAS. `?? []` for the same reason every read has one:
+        // the column holds NULL for a message with none and FR-007 says a reader sees an
+        // empty list.
+        attachments: row.attachments ?? [],
         created_at: toIso(row.createdAt),
         edited_at: toIso(editedAt),
         prior_text: row.text,

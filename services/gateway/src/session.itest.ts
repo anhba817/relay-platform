@@ -900,6 +900,53 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     ]);
   }, 20_000);
 
+  it("delivers a deletion with NO attachment field at all (T044, FR-013 (3.24))", async () => {
+    // AN EXACT KEY SET, NOT `payload.attachments === undefined`. An absent key and an
+    // undefined value are the same to a truthiness check and different to a contract —
+    // and the contract is the point: `message.deleted` carries no text because a payload
+    // with a text field can carry the words somebody asked to have removed, and an
+    // attachment URL is exactly as recoverable. So the absence is the assertion.
+    const watcher = record(connect(await mintToken("tuan")));
+    await waitFor(watcher, (f) => f.type === "connection.ack", "ack on watcher");
+
+    const text = `to be deleted ${randomUUID()}`;
+    const posted = await fetch(`${api.url}/v1/channels/${api.channelId}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${api.credential}`,
+      },
+      body: JSON.stringify({
+        text,
+        user: "delivery-bot",
+        idempotency_key: randomUUID(),
+        attachments: twoAttachments,
+      }),
+    });
+    expect(posted.status, await posted.clone().text()).toBe(201);
+    const created = (await posted.json()) as { id: string };
+    await waitFor(watcher, (f) => f.type === "message.created", "message.created");
+
+    const removed = await fetch(
+      `${api.url}/v1/channels/${api.channelId}/messages/${created.id}`,
+      { method: "DELETE", headers: { authorization: `Bearer ${api.credential}` } },
+    );
+    expect(removed.status, await removed.clone().text()).toBe(204);
+
+    const deleted = (await waitFor(
+      watcher,
+      (f) => f.type === "message.deleted",
+      "message.deleted",
+    )) as { payload: Record<string, unknown> };
+    expect(Object.keys(deleted.payload).sort()).toEqual([
+      "channel",
+      "deleted_at",
+      "id",
+      "seq",
+      "user",
+    ]);
+  }, 20_000);
+
   it("carries only `seq` on the sender's ack (T029a, FR-008 (3.24))", async () => {
     // THE ACK HAS NEVER CARRIED A MESSAGE AND THIS CHAPTER DOES NOT WIDEN IT. A sender
     // learns its attachments landed from the `message.created` frame the fan-out returns
