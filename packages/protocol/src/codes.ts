@@ -221,6 +221,30 @@ export const ERROR_CODES = {
   // see exists.
   message_deleted:
     "this message has been deleted; its text cannot be changed, and its history is unaffected",
+  /** MEDIA THAT DOES NOT EXIST YET, AND ITS OWN CODE (chapter 3.24, FR-003, FR-003a).
+   *
+   * FR-MSG-11 publishes two ways to attach: an external URL and a `media_id` naming
+   * something the platform hosts. This chapter builds the first. **A customer reading
+   * that clause will send the second**, and the refusal they get decides whether they
+   * conclude they made a mistake or that the feature is not here yet.
+   *
+   * `invalid_request` WOULD SAY THE WRONG THING. It means the caller sent something the
+   * contract does not allow, and `media_id` is in the published contract — so the honest
+   * answer is that the platform cannot serve it, not that the field is wrong. That is
+   * the same distinction chapter 2.8 drew between a 404 and a 403.
+   *
+   * 422 AND NOT 400. The body is well-formed and the request is understood; what cannot
+   * be done is the thing it asks for. `ProtocolErrorFilter` derives a code from the
+   * status for 400/401/403/404 and answers `internal_error` for everything else, so a
+   * 422 MUST supply this code explicitly through `protocolError` — an unnamed 422 ships
+   * a body calling itself an internal error, which is `gaps.md`'s five bare 422s in
+   * `webhooks.service.ts`, still open.
+   *
+   * §4.14 REPLACES THE ARM RATHER THAN THIS CODE. When hosted media ships, the
+   * `{ type: "media" }` arm starts accepting and this entry describes a state the
+   * platform no longer has — at which point it is deleted, not repurposed. */
+  media_not_available:
+    "hosted media is not available yet; attach an http or https url instead",
   not_found:
     "no such resource for this tenant — and DELIBERATELY the same answer as for a resource in another tenant (FR-TEN-05)",
   internal_error:

@@ -175,6 +175,15 @@ function sendError(
   code: ErrorCode,
   message: string,
   requestId: string = newRequestId(),
+  /** WHICH FIELD, on the socket door (chapter 3.24, FR-005).
+   *
+   * `errorFrameSchema` has published this key since chapter 1.3 and no gateway code path
+   * had ever set it — the same habit `zod-validation.pipe.ts` ended for the api at
+   * chapter 3.14, whose comment cites THIS schema while fixing only its own side.
+   *
+   * Omitted when there is no path, exactly as the pipe does: an empty path means the
+   * whole frame failed and there is no field to name. */
+  field?: string,
 ): void {
   send(socket, {
     type: "error",
@@ -183,6 +192,7 @@ function sendError(
       message,
       docs_url: docsUrl(code),
       request_id: requestId,
+      ...(field !== undefined && field.length > 0 ? { field } : {}),
     },
   });
 }
@@ -1445,6 +1455,10 @@ export function attachSessions({
         connection.socket,
         "invalid_frame",
         frame.error.issues[0]?.message ?? "frame failed schema validation",
+        undefined,
+        // The joined path, which is what a developer reading their own frame sees —
+        // `payload.attachments.3.kind` rather than "somewhere in this frame".
+        frame.error.issues[0]?.path.join("."),
       );
       return;
     }

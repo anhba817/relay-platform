@@ -120,6 +120,122 @@ describe("POST /v1/channels/:channelId/messages", () => {
     expect(typeof body.docs_url).toBe("string");
   });
 
+  // T035 through T040 (chapter 3.24). THE BOUND, THE KINDS, THE SCHEMES, AND THE ONE
+  // REFUSAL THAT NEEDED A CODE OF ITS OWN.
+  describe("the refusals, through the route (US2)", () => {
+    const png = (n: number) => ({
+      type: "url",
+      kind: "image",
+      url: `https://example.test/${n}.png`,
+    });
+
+    it("refuses eleven and writes no row (T035, FR-005 (3.24), SC-002 (3.24))", async () => {
+      const before = await fetch(`${url}/v1/channels/${channelId}/messages?limit=200`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+      const countBefore = ((await before.json()) as { messages: unknown[] }).messages.length;
+
+      const res = await send({
+        text: "eleven",
+        user: "courier",
+        attachments: Array.from({ length: 11 }, (_, i) => png(i)),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.code).toBe("invalid_request");
+      // THE ARRAY, NOT AN ITEM. The bound is on the list, so naming an index would send a
+      // caller to inspect a link that is perfectly fine.
+      expect(body.field).toBe("attachments");
+
+      // AND NOTHING LANDED, which is the half SC-002 actually asks for — a 400 raised
+      // after the write would pass a status assertion and leave a row behind.
+      const after = await fetch(`${url}/v1/channels/${channelId}/messages?limit=200`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+      expect(((await after.json()) as { messages: unknown[] }).messages.length).toBe(countBefore);
+    });
+
+    it("accepts exactly ten and returns all ten (T036, FR-005 (3.24))", async () => {
+      // A BOUND TESTED ONLY FROM ABOVE IS A BOUND THAT COULD BE NINE.
+      const res = await send({
+        text: "ten",
+        user: "courier",
+        attachments: Array.from({ length: 10 }, (_, i) => png(i)),
+      });
+      expect(res.status).toBe(201);
+      const created = (await res.json()) as { attachments: unknown[] };
+      expect(created.attachments).toHaveLength(10);
+    });
+
+    it("stores the same url twice, twice (T036a, FR-021 (3.24))", async () => {
+      // THE SPEC ASKED THIS AS AN OPEN QUESTION AND ANSWERED IT: two identical links are
+      // two attachments, because the platform does not compare them — the same argument
+      // chapter 3.23 made for not comparing message texts to decide whether an edit
+      // happened.
+      const res = await send({
+        text: "the same twice",
+        user: "courier",
+        attachments: [png(1), png(1)],
+      });
+      expect(res.status).toBe(201);
+      const created = (await res.json()) as { attachments: Array<{ url: string }> };
+      expect(created.attachments).toHaveLength(2);
+      expect(created.attachments[0]!.url).toBe(created.attachments[1]!.url);
+    });
+
+    it("refuses a kind outside the three (T037, FR-002 (3.24))", async () => {
+      const res = await send({
+        text: "a spreadsheet",
+        user: "courier",
+        attachments: [{ ...png(0), kind: "spreadsheet" }],
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { field: string }).field).toBe("attachments.0.kind");
+    });
+
+    it.each([
+      ["javascript:", "javascript:alert(1)"],
+      ["data:", "data:image/png;base64,iVBORw0KGgo="],
+      ["file:", "file:///etc/passwd"],
+      ["vbscript:", "vbscript:msgbox(1)"],
+    ])("refuses %s through the route (T038, FR-004 (3.24), SC-004 (3.24))", async (_label, bad) => {
+      // THROUGH THE ROUTE, NOT ONLY AT THE SCHEMA. `attachments.test.ts` proves the rule
+      // exists; this proves it FIRES on the path a caller takes — a schema nobody wired
+      // in refuses nothing. Research R7 measured `z.url()` accepting all four.
+      const res = await send({
+        text: "a bad scheme",
+        user: "courier",
+        attachments: [{ ...png(0), url: bad }],
+      });
+      expect(res.status, bad).toBe(400);
+      expect(((await res.json()) as { field: string }).field, bad).toBe("attachments.0.url");
+    });
+
+    it("answers a media_id with its own code and a 422 (T040, T039a, FR-003a (3.24))", async () => {
+      const res = await send({
+        text: "hosted media",
+        user: "courier",
+        attachments: [{ type: "media", media_id: "m_1" }],
+      });
+      // 422 AND NOT 400: the request is understood and well-formed, and what cannot be
+      // done is the thing it asks for.
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as Record<string, unknown>;
+      // THE BODY, NOT ONLY THE STATUS (T039a). `webhooks.itest.ts:90` asserts a 422 and
+      // its message text, and the five bare 422s behind it have been emitting
+      // `internal_error` for four chapters — a status assertion cannot see that.
+      expect(body.code).toBe("media_not_available");
+      expect(body.docs_url).toMatch(/#media_not_available$/);
+      expect(String(body.message)).toMatch(/hosted media is not available/i);
+      // `attachments.0` AND NOT `attachments.0.type`. The refinement refuses the ARM, so
+      // zod's path stops at the object — and that is the honest field: nothing is wrong
+      // with the `type` key, the whole attachment names a transport the platform cannot
+      // serve yet. A caller with ten links is told which one, which is what the path is
+      // for.
+      expect(body.field).toBe("attachments.0");
+    });
+  });
+
   // T029, T031 and T032a (chapter 3.24). THE REST DOOR, END TO END.
   describe("attachments through the send and history routes (T029, SC-001 (3.24))", () => {
     const png = (n: string) => ({

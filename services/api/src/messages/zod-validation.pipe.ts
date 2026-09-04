@@ -29,7 +29,36 @@ export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {
       // with dots, which is what a developer reading their own request body sees.
       // An empty path means the whole body failed (a non-object, say), and then
       // there is no field to name and the key is omitted rather than sent empty.
+      /** A SCHEMA MAY NAME ITS OWN REFUSAL (chapter 3.24, FR-003a).
+       *
+       * Everything here is `invalid_request` and 400, which is right for a body the
+       * contract does not allow. It is wrong for a field the contract DOES publish and
+       * the platform cannot serve yet — `media_id` in FR-MSG-11 — where the caller made
+       * no mistake and the honest answer is a code of its own.
+       *
+       * The alternative was a check in the controller, and it cannot work: this pipe runs
+       * before the handler, so a media arm is already refused with a 400 by the time any
+       * handler code could look. Whichever layer refuses first has to carry the code. */
+      // `params` IS ON THE ISSUE AT RUNTIME AND NOT ON ITS TYPE. Measured against the
+      // pinned zod 4.4.3: a `refine` with `params` produces an issue whose keys are
+      // `code, path, params, message`, and `$ZodIssue` declares only the first, third
+      // and fourth. Narrowed through `unknown` rather than asserted, so a zod upgrade
+      // that drops the field is a silent no-op here rather than a runtime throw.
+      const named =
+        issue !== undefined && typeof issue === "object" && "params" in issue
+          ? ((issue as { params?: unknown }).params as
+              | { protocolCode?: string; status?: number }
+              | undefined)
+          : undefined;
       const path = issue?.path.join(".");
+      if (named?.protocolCode !== undefined) {
+        throw protocolError(
+          named.protocolCode as Parameters<typeof protocolError>[0],
+          issue?.message ?? "refused",
+          named.status ?? 400,
+          ...(path !== undefined && path.length > 0 ? ([path] as const) : ([] as const)),
+        );
+      }
       throw protocolError(
         "invalid_request",
         issue?.message ?? "invalid body",

@@ -371,6 +371,66 @@ describe("the socket's credentials (chapter 3.2)", () => {
   // an error — `session.ts`'s inbound destructure, `internal.controller.ts`'s named build,
   // and `session.ts`'s outbound payload — and a message that commits without its
   // attachments is acked as though it worked.
+  it("refuses eleven at the GATEWAY, naming the field (T041, T041a, FR-005 (3.24))", async () => {
+    // NAME THE LAYER AND THE CODE. The bound is on `messageSendSchema`, so the gateway
+    // refuses the frame before the api sees it and the client gets `invalid_frame` —
+    // not the api's `invalid_request`. Two doors, two refusals, one bound, and a test
+    // asserting only "it was refused" could not tell a working bound from a socket that
+    // dropped the field entirely.
+    const socket = connect(await mintToken("tuan", 3600));
+    await firstFrame(socket, "connection.ack");
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelId,
+          text: "eleven over the socket",
+          attachments: Array.from({ length: 11 }, (_, i) => ({
+            type: "url",
+            kind: "image",
+            url: `https://example.test/${i}.png`,
+          })),
+        },
+      }),
+    );
+    const refusal = (await firstFrame(socket, "error")) as {
+      payload: { code: string; field?: string };
+    };
+    expect(refusal.payload.code).toBe("invalid_frame");
+    // T041a: the frame contract has published `field` since chapter 1.3 and the gateway
+    // had never set it. The joined path is what a developer reading their own frame sees.
+    expect(refusal.payload.field).toBe("payload.attachments");
+  }, 20_000);
+
+  it("refuses a media_id and SAYS hosted media is unavailable (T040a, FR-003a (3.24))", async () => {
+    // THE MESSAGE, BECAUSE THE CODE IS THE SAME ONE EVERY MALFORMED FRAME GETS. A one-arm
+    // union would also refuse this — with "Invalid discriminator value. Expected 'url'",
+    // which is the sentence FR-003a forbids by name. This assertion is the only thing
+    // that can tell the two-arm schema from a one-arm one on this door.
+    const socket = connect(await mintToken("tuan", 3600));
+    await firstFrame(socket, "connection.ack");
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelId,
+          text: "hosted media over the socket",
+          attachments: [{ type: "media", media_id: "m_1" }],
+        },
+      }),
+    );
+    const refusal = (await firstFrame(socket, "error")) as {
+      payload: { code: string; message: string };
+    };
+    // `invalid_frame` AND NOT `media_not_available`: `sendError` fixes its code at the
+    // call site, so the REST door answers with the code and the socket answers with the
+    // sentence. T039 records that split.
+    expect(refusal.payload.code).toBe("invalid_frame");
+    expect(refusal.payload.message).toMatch(/hosted media is not available/i);
+  }, 20_000);
+
   it("commits TWO attachments sent over the socket, in order (T022c, FR-001 (3.24), FR-006 (3.24))", async () => {
     const socket = connect(await mintToken("tuan", 3600));
     await firstFrame(socket, "connection.ack");

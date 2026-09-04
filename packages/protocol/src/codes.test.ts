@@ -77,7 +77,7 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
     // its plan did not expect. **One pinned place, not the four chapter 3.22's close code
     // moved** — that chapter's task predicted two and found four, so this one counted
     // before editing: this assertion is the only place in the file that names a total.
-    expect(Object.keys(ERROR_CODES)).toHaveLength(20);
+    expect(Object.keys(ERROR_CODES)).toHaveLength(21);
   });
 
   it("names the non-author refusal separately from the generic 403 (chapter 3.23)", () => {
@@ -85,6 +85,14 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
     // one where the remedy differs, and here it differs absolutely: `forbidden`'s
     // published remedy is a change of credential or of permission, and neither makes a
     // message yours.
+    // Chapter 3.24's one addition, and the three assertions a new code earns: it exists,
+    // it is not a synonym for the code somebody would otherwise reach for, and it says
+    // what it is about. `invalid_request` is the wrong answer for `media_id` because that
+    // field IS in the published contract.
+    expect(ERROR_CODES).toHaveProperty("media_not_available");
+    expect(ERROR_CODES.media_not_available).not.toBe(ERROR_CODES.invalid_request);
+    expect(ERROR_CODES.media_not_available).toMatch(/media/);
+
     expect(ERROR_CODES).toHaveProperty("not_message_author");
     expect(ERROR_CODES.not_message_author).not.toBe(ERROR_CODES.forbidden);
     expect(ERROR_CODES.not_message_author).toMatch(/author/);
