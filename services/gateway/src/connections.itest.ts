@@ -331,6 +331,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
       seq: 3,
       user,
       text: `after the refusal ${randomUUID()}`,
+      attachments: [],
       created_at: new Date(0).toISOString(),
     });
     for (const [i, r] of five.entries()) {
@@ -407,6 +408,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
       seq: 1,
       user,
       text,
+      attachments: [],
       created_at: new Date(0).toISOString(),
     });
 
@@ -502,6 +504,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
       seq: 2,
       user,
       text: `after b is gone ${randomUUID()}`,
+      attachments: [],
       created_at: new Date(0).toISOString(),
     });
 
@@ -888,6 +891,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
       seq: 4,
       user,
       text: `after the re-claim ${randomUUID()}`,
+      attachments: [],
       created_at: new Date(0).toISOString(),
     });
     await untilCount(live, "message.created", 1);

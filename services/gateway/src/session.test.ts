@@ -34,6 +34,7 @@ function committed(seq: number): InternalSendResponse {
     seq,
     user: "tuan",
     text: "hello",
+    attachments: [],
     created_at: new Date().toISOString(),
   };
 }
@@ -85,6 +86,7 @@ function frame(seq: number, channel = CHANNEL): Message {
     seq,
     user: "dispatcher",
     text: `m${seq}`,
+    attachments: [],
     created_at: "2026-08-04T00:00:00.000Z",
   };
 }
@@ -404,6 +406,7 @@ describe("the socket (chapter 2.5)", () => {
           idem_key: "k-0",
           channel: "11111111-1111-1111-1111-111111111111",
           text: "hello",
+          attachments: [],
         },
       }),
     );
@@ -418,6 +421,7 @@ describe("the socket (chapter 2.5)", () => {
         seq: 42,
         user: "tuan",
         text: "hello",
+        attachments: [],
         created_at: expect.any(String),
       },
     ]);
@@ -444,6 +448,7 @@ describe("the socket (chapter 2.5)", () => {
         payload: {
           channel: "11111111-1111-1111-1111-111111111111",
           text: "hello",
+          attachments: [],
           idem_key: "k-1",
         },
       }),

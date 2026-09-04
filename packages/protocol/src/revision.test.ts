@@ -21,6 +21,11 @@ const message = {
   seq: 7,
   user: "tuan",
   text: "corrected",
+  // Chapter 3.24. THE COMPILER DID NOT FIND THIS ONE: `revisionFabricSchema.parse`
+  // takes `unknown`, so a fixture handed to it is invisible to `tsc` no matter what
+  // the schema requires. T014a's instrument named 33 construction sites and this was
+  // not among them — the unit lane found it.
+  attachments: [],
   created_at: "2026-09-03T00:00:00.000Z",
 };
 
@@ -65,6 +70,7 @@ describe("the revision fabric payload (chapter 3.23)", () => {
     const parsed = revisionFabricSchema.parse({ kind: "updated", message });
     expect(parsed.kind).toBe("updated");
     expect(Object.keys(parsed.message).sort()).toEqual([
+      "attachments",
       "channel",
       "created_at",
       "id",

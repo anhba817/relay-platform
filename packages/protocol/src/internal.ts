@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+import {
+  attachmentSchema,
+  MAX_ATTACHMENTS,
+  refineTextAndAttachments,
+} from "./attachments.js";
+
 import { messageSchema } from "./frames.js";
 
 // The INTERNAL service contract (chapter 2.5) — distinct from the wire
@@ -14,11 +20,25 @@ import { messageSchema } from "./frames.js";
 // payload's shape than an external one does.
 
 /** Gateway → api: forward the payload a `message.send` frame carried. */
-export const internalSendRequestSchema = z.strictObject({
-  channel_id: z.string().uuid(),
-  text: z.string().min(1).max(8000), // FR-MSG-01
-  idempotency_key: z.string().min(1).max(255).optional(), // FR-MSG-04
-});
+export const internalSendRequestSchema = z
+  .strictObject({
+    channel_id: z.string().uuid(),
+    /** `.min(1)` REMOVED in chapter 3.24 (FR-019), not relaxed by accident.
+     *
+     * This is the door every socket send goes through. Leaving the minimum here
+     * would meet FR-019 on the REST door alone: a REST client could send a
+     * photograph with no caption and a socket client could not, with no
+     * requirement anywhere saying so. The 8,000 stays — FR-MSG-01 is untouched. */
+    text: z.string().max(8000), // FR-MSG-01
+    idempotency_key: z.string().min(1).max(255).optional(), // FR-MSG-04
+    attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional(),
+  })
+  /** AND THE FLOOR COMES WITH THE PERMISSION. Removing `.min(1)` above carries
+   * FR-019 across; without this line FR-019b — a message with no text and no
+   * attachments MUST still be refused — is enforced on the REST door only, because
+   * `messages.schema.ts` is imported by exactly one file and never by this path.
+   * One rule, one definition, two callers. */
+  .superRefine(refineTextAndAttachments);
 
 /** api → gateway: the committed message. `seq` is what the ack carries
  * (FR-MSG-05 — after the commit, never before). */
@@ -32,6 +52,22 @@ export const internalSendResponseSchema = z.strictObject({
    * 2.7's resume path reads back out of Postgres. */
   user: z.string().min(1),
   text: z.string().nullable(),
+  /** REQUIRED, because this payload carries a message and FR-022 (3.24) says every
+   * such payload has the field.
+   *
+   * THIS SCHEMA IS A `strictObject` AND `services/gateway/src/api-client.ts:248`
+   * PARSES THE API'S RESPONSE WITH IT. `internal.controller.ts:84` returns
+   * `{ ...message, user }`, a spread, so the moment `sendMessage` returns an
+   * attachments key the old schema would have refused the payload and every socket
+   * send would close 1011. Measured against zod 4.4.3, all three combinations:
+   *
+   *     schema without the field   value carries the key   refused
+   *     field REQUIRED             key absent              refused
+   *     field optional             key absent              accepted, FR-022 broken
+   *
+   * Only the required field and `sendMessage`'s return landing together is honest,
+   * which is why they are one phase. */
+  attachments: z.array(attachmentSchema),
   created_at: z.iso.datetime(),
   /** True when 2.3's idempotency index recognised a retry. The PUBLIC api
    * still hides this (a client cannot tell a retry from a first send);

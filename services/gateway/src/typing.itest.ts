@@ -957,6 +957,10 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
               seq: 9,
               user: "tuan",
               text: "backfilled",
+              // Chapter 3.24: this payload goes onto the fabric as JSON and the gateway
+              // PARSES it, so `tsc` never saw the construction — `JSON.stringify` takes
+              // anything. Required means the parse refuses it without the field.
+              attachments: [],
               created_at: new Date(0).toISOString(),
             },
           ],
@@ -1227,6 +1231,10 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
         seq: 4_242,
         user: "tuan",
         text: "one message",
+        // Chapter 3.24: this payload goes onto the fabric as JSON and the gateway
+        // PARSES it, so `tsc` never saw the construction — `JSON.stringify` takes
+        // anything. Required means the parse refuses it without the field.
+        attachments: [],
         created_at: new Date(0).toISOString(),
       }),
     );

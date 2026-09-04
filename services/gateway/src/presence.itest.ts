@@ -1316,6 +1316,7 @@ describe("presence: no durability, and the whole log vocabulary", () => {
       seq: 1,
       user: who,
       text: "not a presence payload",
+      attachments: [],
       created_at: new Date().toISOString(),
     });
     await quiet(500);

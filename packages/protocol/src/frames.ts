@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { attachmentSchema, MAX_ATTACHMENTS } from "./attachments.js";
+
 // The wire contract, one home (ADR-01). Every frame is a JSON object with a
 // `type` discriminator and a `payload` (EIR-WS-02). Schemas are the single
 // source of truth: every exported static type is inferred from its schema,
@@ -11,13 +13,25 @@ export const cursorSchema = z.record(z.string(), z.number().int().positive());
 
 /** The message on the wire — derived from the SAD §6.1 `messages` columns.
  * Wire spellings follow SAD §5.1's own frame line (`channel`, `seq`).
- * metadata/attachments/edit/tombstone fields arrive with Part 2/4. */
+ * metadata/edit/tombstone fields arrive with Part 2/4; attachments arrived
+ * with chapter 3.24, which is why this comment no longer schedules them. */
 export const messageSchema = z.strictObject({
   id: z.string().min(1),
   channel: z.string().min(1),
   seq: z.number().int().positive(),
   user: z.string().min(1),
   text: z.string(),
+  /** REQUIRED, AND NOT OPTIONAL, and that is the whole of FR-022 (3.24).
+   *
+   * An optional field parses a payload that omits it, so a construction site
+   * nobody widened delivers a message whose attachments are simply absent —
+   * green tests, silent loss. Required means the compiler names every site
+   * instead: `pnpm --filter @relay/protocol build`, then `tsc --noEmit` in the
+   * api and the gateway, lists four in production and 28 in tests.
+   *
+   * FR-007 (3.24): a message with none carries `[]` rather than an absent key,
+   * so a reader needs no special case. `?? []` at the read sites, never `?? null`. */
+  attachments: z.array(attachmentSchema),
   created_at: z.iso.datetime(), // UTC, RFC 3339 (constitution: timestamps)
 });
 
@@ -44,6 +58,12 @@ export const messageSendSchema = z.strictObject({
     idem_key: z.string().min(1).max(255),
     channel: z.string().min(1),
     text: z.string(),
+    /** OPTIONAL here and required on the outbound `messageSchema`, which is not an
+     * inconsistency: a caller may send none, and a payload the platform BUILDS must
+     * always say. The bound is imported rather than spelled — two schemas that happen
+     * to agree are what `idem_key` against `idempotency_key` looks like three chapters
+     * later. */
+    attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional(),
   }),
 });
 

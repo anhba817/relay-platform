@@ -242,6 +242,9 @@ export class MessagesController {
           seq: message.seq,
           user: actingExternalId,
           text: message.text,
+          // `[]` UNTIL PHASE 5. True today: the send body does not accept
+          // attachments until phase 4, so no message here has any.
+          attachments: [],
           created_at: message.created_at,
         },
         publishContext(req),
@@ -340,6 +343,9 @@ export class MessagesController {
           seq: edited.seq,
           user: actingExternalId,
           text: edited.text!,
+          // `[]` UNTIL PHASE 7. An edit does not change attachments (FR-016), so
+          // this becomes the message's existing list rather than a new one.
+          attachments: [],
           created_at: edited.created_at,
         },
       },

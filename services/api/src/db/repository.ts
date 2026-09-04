@@ -13,6 +13,8 @@ import {
   type SQL,
 } from "drizzle-orm";
 
+import type { Attachment } from "@relay/protocol";
+
 import { DEFAULT_LIMITS, type LimitedOperation } from "../limits/policy";
 import type { Db } from "./client";
 import {
@@ -2255,6 +2257,19 @@ export interface MessageRow {
   channel_id: string;
   seq: number;
   text: string | null;
+  /** Chapter 3.24 (FR-001, FR-007). **REQUIRED, unlike `edited_at` below**, and the
+   * contrast is the decision.
+   *
+   * `edited_at?` is optional so write paths need not spell `edited_at: null`, and that
+   * convenience is exactly what made chapter 3.24's `internalSendResponseSchema` a break
+   * waiting to happen: a field the type lets you omit is a field the gateway's strict
+   * parse refuses at runtime, with no compiler anywhere in between. Required here means
+   * every path that builds a row is named by `tsc` instead.
+   *
+   * `Attachment[]` AND NOT `Attachment[] | null`, so the null lives only in the column.
+   * FR-007: a message with none is returned with an empty list rather than an absent or
+   * null field, and the `?? []` that makes that true belongs at the read, once. */
+  attachments: Attachment[];
   created_at: string;
   /** When it was last edited, or `null` (chapter 3.23, FR-003). Optional on this
    * interface rather than required, because the WRITE paths build a row that has never
@@ -4399,6 +4414,9 @@ export class Repository {
         channel_id: channel.id,
         seq,
         text,
+        // `[]` UNTIL PHASE 4 WRITES THE INSERT. True today rather than a placeholder:
+        // no send body accepts attachments yet, so there is nothing to carry.
+        attachments: [],
         created_at: createdAt,
       };
     });
@@ -4547,6 +4565,12 @@ export class Repository {
         channel_id: channelId,
         seq: row.seq,
         text,
+        // `[]` UNTIL PHASE 7 ADDS THE COLUMN TO THIS READ. An edit does not change
+        // attachments (FR-016), and the `message.updated` event must carry the ones
+        // the message already has — so this read gains the column with T046a rather
+        // than staying as it is. **`traceability.md`'s T053 lists this read among the
+        // four that "do not change", and after phase 7 that will be three.**
+        attachments: [],
         created_at: toIso(row.createdAt),
         edited_at: toIso(editedAt),
         prior_text: row.text,
@@ -4673,6 +4697,10 @@ export class Repository {
             seq: row.seq,
             text: null,
             created_at: toIso(row.createdAt),
+            // `[]` AND IT STAYS `[]`. FR-012: deleting a message unlinks its
+            // attachments, so a tombstone's list is empty on every path that
+            // returns one. This is the answer, not a value a later phase fills.
+            attachments: [],
             user: author,
             // THE INSTANT ALREADY ON THE ROW, not a fresh reading. FR-009 says a
             // repeated deletion changes nothing, and the timestamp is the column that
@@ -4748,6 +4776,10 @@ export class Repository {
           seq: row.seq,
           text: null,
           created_at: toIso(row.createdAt),
+          // `[]` AND IT STAYS `[]`. FR-012: deleting a message unlinks its
+          // attachments, so a tombstone's list is empty on every path that
+          // returns one. This is the answer, not a value a later phase fills.
+          attachments: [],
           user: author,
           // THE COMMITTED INSTANT, read back from the UPDATE. The outbox event above
           // quotes this same value, so a consumer and a socket client comparing the
@@ -5045,6 +5077,11 @@ export class Repository {
         channel_id: messages.channelId,
         seq: messages.sequence,
         text: messages.text,
+        /** A CAST AND NOT A CHECK. `messages.attachments` is a bare `jsonb()` with no
+         * `.$type<>()`, so drizzle infers `unknown` and this names it. Postgres
+         * enforces no shape on the column; `data-model.md` argues why the claim sits
+         * at each read site rather than once in the schema. */
+        attachments: sql<Attachment[] | null>`${messages.attachments}`,
         created_at: messages.createdAt,
       })
       .from(messages)
@@ -5063,7 +5100,15 @@ export class Repository {
         `idempotency key ${idempotencyKey} conflicted but its message is missing — index inconsistency`,
       );
     }
-    return { ...row, created_at: toIso(row.created_at) };
+    return {
+      ...row,
+      // FR-007's `?? []`, AT THE READ. The column holds NULL for a message with no
+      // attachments and `[]` is what a client gets, so exactly one place converts.
+      // `?? []` and not `|| []`: an empty array is falsy to neither, but the habit of
+      // `||` here is how a `0` or a `""` becomes a default somewhere else.
+      attachments: row.attachments ?? [],
+      created_at: toIso(row.created_at),
+    };
   }
 
   /** Does this channel resolve IN THIS TENANT? (chapter 2.8.)
@@ -5286,6 +5331,9 @@ export class Repository {
           .limit(limit));
     return rows.map((row) => ({
       ...row,
+      // `[]` UNTIL PHASE 5 ADDS THE COLUMN TO THE SELECT ABOVE. The shape is required
+      // from this phase and the value arrives with T028.
+      attachments: [],
       created_at: toIso(row.created_at),
       // `null`, NOT `undefined`, and the difference is what a test can see. An absent
       // key and a null one are the same value through `??` — the control test for this

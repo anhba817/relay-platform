@@ -27,6 +27,7 @@ function frame(channel: string, seq: number): Message {
     seq,
     user: "tuan",
     text: `m${seq}`,
+    attachments: [],
     created_at: "2026-08-04T00:00:00.000Z",
   };
 }
@@ -148,6 +149,7 @@ describe("suppressed", () => {
     seq,
     user: "dispatcher",
     text: `m${seq}`,
+    attachments: [],
     created_at: "2026-08-19T00:00:00.000Z",
   });
 

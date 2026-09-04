@@ -12,6 +12,11 @@ const message = {
   seq: 42,
   user: "u1",
   text: "hello",
+  // Chapter 3.24: REQUIRED on `messageSchema`, so this fixture says. `[]` rather than a
+  // populated list, because these tests are about the frame's SHAPE — the attachment's
+  // own shape is `attachments.test.ts`'s subject and duplicating it here would give two
+  // places to change when it moves.
+  attachments: [],
   created_at: "2026-08-01T09:00:00.000Z",
 };
 
@@ -159,6 +164,34 @@ describe("malformed frames reject", () => {
 // T015 and T016 (chapter 3.23). THE EXACT KEY SET, on `codes.test.ts`'s precedent: an
 // exact set is what makes a payload change a decision rather than an accident, and the
 // only field that must NOT be there is the one this frame exists because it cannot fill.
+describe("the message payload's exact key set (chapter 3.24, FR-022 (3.24))", () => {
+  it("names exactly seven, and attachments is one of them", () => {
+    // SIX UNTIL CHAPTER 3.24, and pinned here for the first time — the frame had no
+    // exact-set assertion at all, so `messageSchema` was the one published payload a
+    // silent addition could reach. `codes.test.ts` has pinned its set since 3.2 for the
+    // same reason: an exact set makes a change a decision rather than an accident.
+    const parsed = messageSchema.parse(message);
+    expect(Object.keys(parsed).sort()).toEqual([
+      "attachments",
+      "channel",
+      "created_at",
+      "id",
+      "seq",
+      "text",
+      "user",
+    ]);
+  });
+
+  it("refuses a payload with no attachments key, because the field is required", () => {
+    // The other half of FR-022 (3.24). An OPTIONAL field would accept this, and a
+    // construction site nobody widened would deliver a message whose attachments are
+    // simply absent — green tests, silent loss.
+    const withoutAttachments: Record<string, unknown> = { ...message };
+    delete withoutAttachments["attachments"];
+    expect(messageSchema.safeParse(withoutAttachments).success).toBe(false);
+  });
+});
+
 describe("the deleted frame carries an identity and no text (chapter 3.23)", () => {
   const tombstone = {
     id: message.id,
@@ -180,6 +213,19 @@ describe("the deleted frame carries an identity and no text (chapter 3.23)", () 
       "seq",
       "user",
     ]);
+  });
+
+  it("refuses an ATTACHMENTS field, for the same reason it refuses text (FR-013 (3.24))", () => {
+    // Chapter 3.24 gave `messageSchema` a required attachments array, and the obvious
+    // next move — symmetry — would be wrong here. A deletion's payload carries no text
+    // because a payload with a text field is a payload that can carry the words somebody
+    // asked to have removed; an attachment URL is exactly as recoverable. So this frame
+    // keeps its five keys and the absence is the assertion.
+    const withAttachments = messageDeletedSchema.safeParse({
+      type: "message.deleted",
+      payload: { ...tombstone, attachments: [] },
+    });
+    expect(withAttachments.success).toBe(false);
   });
 
   it("refuses a text field, because a deleted message has none", () => {

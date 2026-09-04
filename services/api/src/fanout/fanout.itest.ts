@@ -115,6 +115,7 @@ describe("the api's fan-out publish", () => {
       seq: committed.seq,
       user: committed.user,
       text: committed.text,
+      attachments: [],
       created_at: committed.created_at,
     };
     return res;
@@ -241,6 +242,7 @@ describe("the api's fan-out publish", () => {
     const parsed = messageSchema.safeParse(JSON.parse(raw!));
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
     expect(Object.keys(JSON.parse(raw!)).sort()).toEqual([
+      "attachments",
       "channel",
       "created_at",
       "id",
