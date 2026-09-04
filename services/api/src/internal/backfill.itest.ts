@@ -112,6 +112,41 @@ describe("POST /internal/backfill", () => {
     });
   });
 
+  it("replays two attachments in the order they were sent (T052, FR-010 (3.24), SC-005 (3.24))", async () => {
+    // SC-005: A CLIENT THAT WAS AWAY ENDS WITH THE SAME VIEW AS ONE THAT STAYED. The
+    // replay is a different code path from delivery — it maps rows out of the database
+    // rather than passing a payload along — so a field threaded correctly through every
+    // live path can still be missing here.
+    //
+    // TWO, AND IN ORDER. FR-006 says order holds on every path that returns a message,
+    // and a single-attachment test cannot see an order at all.
+    const sent = await repo.sendMessage(channelId, {
+      text: "away across this one",
+      userId: tuan.id,
+      attachments: [
+        { type: "url", kind: "image", url: "https://example.test/replay-first.png" },
+        { type: "url", kind: "video", url: "https://example.test/replay-second.mp4" },
+      ],
+    });
+
+    const body = await parsed(await ask({ [channelId]: sent.seq - 1 }));
+    const page = body.channels[channelId]!;
+    const frame = page.messages.find((m) => m.seq === sent.seq)!;
+    expect(frame.attachments.map((a) => (a.type === "url" ? a.url : "media"))).toEqual([
+      "https://example.test/replay-first.png",
+      "https://example.test/replay-second.mp4",
+    ]);
+  });
+
+  it("replays a message with none as an empty list (FR-007 (3.24))", async () => {
+    const sent = await say(channelId, "nothing attached");
+    const body = await parsed(await ask({ [channelId]: sent.seq - 1 }));
+    const frame = body.channels[channelId]!.messages.find((m) => m.seq === sent.seq)!;
+    // `toHaveProperty` rather than `toEqual([])`: an absent key satisfies the latter when
+    // the value is undefined, and `messageSchema` requires the field on this frame.
+    expect(frame).toHaveProperty("attachments", []);
+  });
+
   it("excludes the cursor's own message — the anchor is exclusive", async () => {
     const a = await say(channelId, "already applied");
     const body = await parsed(await ask({ [channelId]: a.seq }));

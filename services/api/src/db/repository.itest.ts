@@ -1375,3 +1375,52 @@ describe("listMessages returns attachments on BOTH branches (T030a, FR-009 (3.24
     }
   });
 });
+
+// T053 (chapter 3.24). THE READ SHAPES THAT DO NOT CHANGE, ASSERTED.
+//
+// `data-model.md` names six read shapes and two of them gained the column. The plan said
+// four would not change; it is THREE, because `editMessage`'s internal read gained it at
+// phase 7 for FR-015 — the edit event must carry the attachments the message already has,
+// and that read is the only thing that holds them. Phase 3 predicted this at the site and
+// T053 says to re-check against the tree rather than copy the list forward.
+//
+// A RECORD SAYS "DECIDED"; ONLY AN ASSERTION TELLS THE NEXT READER THAT FROM "FORGOTTEN".
+// Chapter 3.23 left four sentences that had stopped being true because nothing compared
+// them with the code.
+describe("the read shapes that do NOT carry attachments (T053, FR-009 (3.24))", () => {
+  it("the channel listing's preview has no attachments field", async () => {
+    const user = await repoA.createUser("t053-user", "User");
+    const channel = await repoA.createChannel("t053", "public");
+    await repoA.addMember(channel.id, user.id);
+    await repoA.sendMessage(channel.id, {
+      text: "with a picture",
+      userId: user.id,
+      attachments: [{ type: "url", kind: "image", url: "https://example.test/preview.png" }],
+    });
+
+    const { rows } = await repoA.listChannelsForUser(user.id, { limit: 10 });
+    const row = rows.find((r) => r.external_id === "t053")!;
+    // A PREVIEW SHOWS WHAT WAS SAID. FR-CHN-09 asks for the most recent message rather
+    // than its contents, and a listing that carried every message's attachment list would
+    // pay for them on a query a client runs to render its first screen.
+    expect(row.last_message).not.toBeNull();
+    expect(row.last_message).not.toHaveProperty("attachments");
+  });
+
+  it("listMessagesRaw returns three columns and none of them is attachments", async () => {
+    const user = await repoA.createUser("t053-raw", "Raw");
+    const channel = await repoA.createChannel("t053-raw", "public");
+    await repoA.addMember(channel.id, user.id);
+    await repoA.sendMessage(channel.id, {
+      text: "with a picture",
+      userId: user.id,
+      attachments: [{ type: "url", kind: "image", url: "https://example.test/raw.png" }],
+    });
+
+    const rows = await repoA.listMessagesRaw(channel.id);
+    // A TEST-ONLY HELPER WITH FIVE CALL SITES, all in `idempotency.itest.ts`, which count
+    // rows and read text. An exact key set rather than a negative check: this is what
+    // stops the helper growing a column nobody asked for.
+    expect(Object.keys(rows[0]!).sort()).toEqual(["id", "seq", "text"]);
+  });
+});

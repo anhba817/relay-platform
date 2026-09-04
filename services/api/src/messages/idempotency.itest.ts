@@ -82,6 +82,86 @@ describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
     expect(retry.duplicate).toBe(true);
   });
 
+  it("a retry returns the original's attachments and writes no second row (T050, FR-011 (3.24))", async () => {
+    const channel = await repo.createChannel("idem-attachments", "public");
+    const key = randomUUID();
+    const attachments = [
+      { type: "url" as const, kind: "image" as const, url: "https://example.test/retry-a.png" },
+      { type: "url" as const, kind: "audio" as const, url: "https://example.test/retry-b.mp3" },
+    ];
+    const first = await repo.sendMessage(channel.id, {
+      userId: sender,
+      text: "sent once",
+      idempotencyKey: key,
+      attachments,
+    });
+    const retry = await repo.sendMessage(channel.id, {
+      userId: sender,
+      text: "sent once",
+      idempotencyKey: key,
+      attachments,
+    });
+
+    expect(retry.duplicate).toBe(true);
+    expect(retry.id).toBe(first.id);
+    // THE RETRY BRANCH IS A DIFFERENT READ. It spreads `getMessageByIdempotencyKey`'s row
+    // rather than returning the values the insert branch built, so a field carried on one
+    // is not carried on the other by construction — analysis pass 9 found exactly that
+    // asymmetry in the plan, and phase 3 fixed it by widening this read there.
+    expect(retry.attachments.map((a) => (a.type === "url" ? a.url : "media"))).toEqual([
+      "https://example.test/retry-a.png",
+      "https://example.test/retry-b.mp3",
+    ]);
+
+    // AND NO SECOND ROW, READ FROM THE DATABASE rather than inferred from `duplicate`.
+    // Two 201-equivalents prove nothing about what the second call DID; the row count is
+    // what carries it.
+    const rows = await repo.listMessagesRaw(channel.id);
+    expect(rows.filter((m) => m.text === "sent once")).toHaveLength(1);
+  });
+
+  it("recovers a TOMBSTONE with an empty list and nothing published (T050a, FR-011 (3.24), FR-012 (3.24))", async () => {
+    // THE CASE CHAPTER 3.18 GUARDED FOR TEXT, NOW WITH AN ATTACHMENT LIST. A message is
+    // sent with a key, deleted, and the same key is retried: the idempotency index still
+    // recognises it, so the retry returns the ORIGINAL row — which is now a tombstone.
+    //
+    // TWO THINGS FOLLOW, and both guards that carry them read `text !== null`:
+    // `messages.controller.ts:234` and `session.ts:1552`. A recovered tombstone is not a
+    // creation, so nothing is published; and FR-012 says its attachments are unlinked, so
+    // the list comes back empty rather than as what the message once carried.
+    const channel = await repo.createChannel("idem-tombstone", "public");
+    const key = randomUUID();
+    const first = await repo.sendMessage(channel.id, {
+      userId: sender,
+      text: "about to be deleted",
+      idempotencyKey: key,
+      attachments: [
+        { type: "url", kind: "image", url: "https://example.test/doomed.png" },
+      ],
+    });
+    await repo.deleteMessage(channel.id, first.id, { userId: sender });
+
+    const recovered = await repo.sendMessage(channel.id, {
+      userId: sender,
+      text: "about to be deleted",
+      idempotencyKey: key,
+      attachments: [
+        { type: "url", kind: "image", url: "https://example.test/doomed.png" },
+      ],
+    });
+
+    expect(recovered.duplicate).toBe(true);
+    expect(recovered.id).toBe(first.id);
+    // A TOMBSTONE, RECOVERED. `text` is null and the attachments are gone — the retry did
+    // not resurrect what the deletion unlinked.
+    expect(recovered.text).toBeNull();
+    expect(recovered).toHaveProperty("attachments", []);
+
+    // AND THE GUARD'S PREMISE HOLDS: `text !== null` is false here, so both publish sites
+    // skip. That is what stops a deleted message reappearing on every member's screen.
+    expect(recovered.text === null).toBe(true);
+  });
+
   it("five concurrent sends with the SAME key produce exactly one row", async () => {
     const channel = await repo.createChannel("idem-concurrent", "public");
     const key = randomUUID();
