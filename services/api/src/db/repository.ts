@@ -3960,6 +3960,7 @@ export class Repository {
       userExternalId,
       text,
       metadata,
+      attachments,
       idempotencyKey,
       senderMustBeBot = false,
     }: {
@@ -3977,6 +3978,11 @@ export class Repository {
        * reach. Enforcing it in the service would put it FIRST — before the ban, the
        * visibility and the archive — and leak exactly what the ordering protects.
        * There is no way to be both last and outside this transaction. */
+      /** FR-001 and FR-006. Optional in, and the column stores `NULL` rather than `[]`
+       * when there are none — `data-model.md` says why the two differ: NULL means the
+       * message has no attachments, and `[]` would be a list that happens to be empty.
+       * Every read converts NULL to `[]` on the way out (FR-007), once. */
+      attachments?: Attachment[] | undefined;
       senderMustBeBot?: boolean;
       /** REQUIRED SINCE CHAPTER 3.17 (FR-MSG-15, FR-006), and required is the whole
        * mechanism. SC-003 asks that no write path be able to produce a senderless
@@ -4208,6 +4214,14 @@ export class Repository {
         userId: userId ?? null,
         text,
         metadata: metadata ?? {},
+        // THE ARRAY AS SENT, IN ORDER (FR-006), or NULL when there are none. JSONB
+        // preserves array order, so nothing here sorts or de-duplicates: FR-021 says
+        // the same URL twice is two attachments.
+        //
+        // `?? null` AND NOT `?? []`. An empty array stored would be a message that
+        // carries a list of no attachments, which is a different fact from carrying
+        // none — and `listMessages`' own `?? []` makes both read identically anyway.
+        attachments: attachments ?? null,
         idempotencyKey: idempotencyKey ?? null,
       });
 

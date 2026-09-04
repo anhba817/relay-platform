@@ -120,6 +120,55 @@ describe("POST /v1/channels/:channelId/messages", () => {
     expect(typeof body.docs_url).toBe("string");
   });
 
+  // T020b (chapter 3.24). THE REFUSAL'S `field`, NOT ONLY ITS CODE.
+  //
+  // The three sibling refusals measured together, so they cannot drift apart. The api's
+  // pipe joins zod's `path` with dots into `field`, and a rule with no path produces a
+  // refusal that names nothing — which is why `refineTextAndAttachments` sets one.
+  //
+  //     neither text nor attachments   field = text
+  //     eleven attachments             field = attachments
+  //     a bad kind at index 3          field = attachments.3.kind
+  describe("the refusals name a field (T020b, FR-019b (3.24))", () => {
+    const png = (n: number) => ({
+      type: "url",
+      kind: "image",
+      url: `https://example.test/${n}.png`,
+    });
+
+    it("names `text` when a body carries neither text nor attachments", async () => {
+      const res = await send({ text: "", user: "courier" });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.code).toBe("invalid_request");
+      // NOT ABSENT. A refusal that says "Invalid input" and no field leaves the caller to
+      // work out which key it was about — chapter 3.14's whole subject, and the reason
+      // this assertion is on the field rather than the status.
+      expect(body.field).toBe("text");
+    });
+
+    it("names `attachments` when there are eleven (FR-005 (3.24))", async () => {
+      const res = await send({
+        text: "eleven",
+        user: "courier",
+        attachments: Array.from({ length: 11 }, (_, i) => png(i)),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.field).toBe("attachments");
+    });
+
+    it("names the index and the key for a bad kind at position 3 (FR-002 (3.24))", async () => {
+      const attachments = [png(0), png(1), png(2), { ...png(3), kind: "spreadsheet" }];
+      const res = await send({ text: "a bad kind", user: "courier", attachments });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, unknown>;
+      // THE INDEX IS THE POINT. `attachments` alone would tell a caller with ten links
+      // to check all ten; the joined path names the one that failed.
+      expect(body.field).toBe("attachments.3.kind");
+    });
+  });
+
   it("answers a foreign channel's HISTORY with that same 404 (chapter 2.8)", async () => {
     // The milestone suite found the two doors disagreeing: POST said 404 for
     // a channel this tenant cannot see, GET said 200 with an empty page. An

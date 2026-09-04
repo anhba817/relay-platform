@@ -1192,3 +1192,130 @@ describe("an empty text is a live message on every read path (T004, FR-019 (3.24
     expect(after.find((m) => m.id === plantedId)!.text).toBeNull();
   });
 });
+
+// T023 and T024 (chapter 3.24). THE WRITER, AND THE EMPTY TEXT IT NOW ACCEPTS.
+//
+// T004 above proved the READ paths already treat `text = ''` as live, against a row
+// planted by hand. These two prove the WRITE path produces such a row and that the
+// round trip keeps what it was given, in the order it was given.
+describe("sendMessage writes attachments (T023, FR-001 (3.24), FR-006 (3.24))", () => {
+  const url = (name: string) => ({
+    type: "url" as const,
+    kind: "image" as const,
+    url: `https://example.test/${name}.png`,
+  });
+
+  it("keeps two attachments in the order they were sent, through the round trip", async () => {
+    const user = await repoA.createUser("t023-sender", "Sender");
+    const channel = await repoA.createChannel("t023", "public");
+    await repoA.addMember(channel.id, user.id);
+
+    // TWO, AND IN A DELIBERATE ORDER. One attachment cannot show an order at all, and
+    // FR-006 says order holds on every path that returns a message — so a
+    // single-attachment test would assert the easy half of the requirement.
+    const sent = await repoA.sendMessage(channel.id, {
+      text: "two pictures",
+      userId: user.id,
+      attachments: [url("first"), url("second")],
+    });
+
+    // THE COLUMN, BECAUSE THE READ PATH IS NOT WIDENED UNTIL PHASE 5. `listMessages`
+    // returns `attachments: []` from phase 3's placeholder until T028 adds the column to
+    // its select, so asserting through it here would assert the next phase's work and
+    // fail for a reason that has nothing to do with the writer.
+    const { rows } = await db.execute(
+      sql`SELECT attachments FROM messages WHERE id = ${sent.id}`,
+    );
+    const stored = rows[0]!["attachments"] as Array<{ url: string }>;
+    expect(stored.map((a) => a.url)).toEqual([
+      "https://example.test/first.png",
+      "https://example.test/second.png",
+    ]);
+  });
+
+  it("stores NULL rather than an empty array when there are none", async () => {
+    const user = await repoA.createUser("t023-none", "None");
+    const channel = await repoA.createChannel("t023-none", "public");
+    await repoA.addMember(channel.id, user.id);
+    const sent = await repoA.sendMessage(channel.id, { text: "no pictures", userId: user.id });
+
+    // THE COLUMN, NOT THE READ. `data-model.md` decides that NULL and `[]` are different
+    // values and that a message with no attachments stores NULL; every read converts to
+    // `[]` on the way out (FR-007), so a read-side assertion cannot tell them apart.
+    const { rows } = await db.execute(
+      sql`SELECT attachments FROM messages WHERE id = ${sent.id}`,
+    );
+    expect(rows[0]!["attachments"]).toBeNull();
+
+    // And the read is `[]` — which in this phase proves nothing, because phase 3's
+    // placeholder returns `[]` for every message. T029 in phase 5 is where that
+    // assertion starts meaning something.
+    const page = await repoA.listMessages(channel.id, { userId: user.id, limit: 10 });
+    expect(page.find((m) => m.id === sent.id)!.attachments).toEqual([]);
+  });
+
+  it("stores the same url twice as two attachments (FR-021 (3.24))", async () => {
+    const user = await repoA.createUser("t023-dup", "Dup");
+    const channel = await repoA.createChannel("t023-dup", "public");
+    await repoA.addMember(channel.id, user.id);
+    const sent = await repoA.sendMessage(channel.id, {
+      text: "the same link twice",
+      userId: user.id,
+      attachments: [url("same"), url("same")],
+    });
+    const { rows } = await db.execute(
+      sql`SELECT attachments FROM messages WHERE id = ${sent.id}`,
+    );
+    expect(rows[0]!["attachments"]).toHaveLength(2);
+  });
+});
+
+describe("an attachments-only message is written and is not a tombstone (T024, FR-019 (3.24))", () => {
+  it("stores text = '' and reads back live, with the deletion path still available", async () => {
+    const user = await repoA.createUser("t024-sender", "Sender");
+    const channel = await repoA.createChannel("t024", "public");
+    await repoA.addMember(channel.id, user.id);
+
+    const sent = await repoA.sendMessage(channel.id, {
+      text: "",
+      userId: user.id,
+      attachments: [{ type: "url", kind: "image", url: "https://example.test/only.png" }],
+    });
+
+    // THE COLUMN IS `''` AND NOT NULL, which is the whole of FR-019a. A null here would
+    // make chapter 3.23's tombstone predicate fire on a message somebody just sent.
+    const { rows } = await db.execute(sql`SELECT text FROM messages WHERE id = ${sent.id}`);
+    expect(rows[0]!["text"]).toBe("");
+    expect(rows[0]!["text"]).not.toBeNull();
+
+    // Live on the read paths, and its attachment is in the column. The read path's own
+    // list is phase 5's (T028); what this phase can assert is that the row exists, is
+    // live, and holds what it was given.
+    const page = await repoA.listMessages(channel.id, { userId: user.id, limit: 10 });
+    expect(page.find((m) => m.id === sent.id)!.text).toBe("");
+    const { rows: stored } = await db.execute(
+      sql`SELECT attachments FROM messages WHERE id = ${sent.id}`,
+    );
+    expect(stored[0]!["attachments"]).toHaveLength(1);
+
+    // AND THE TOMBSTONE PREDICATE DOES NOT FIRE. `editMessage` and `deleteMessage` both
+    // throw `MessageDeletedError` on `text === null`; an edit succeeding is the stronger
+    // of the two, because it proves the row was writable rather than that a refusal was
+    // skipped.
+    const edited = await repoA.editMessage(channel.id, sent.id, {
+      userId: user.id,
+      text: "a caption after all",
+    });
+    expect(edited.text).toBe("a caption after all");
+
+    await repoA.deleteMessage(channel.id, sent.id, { userId: user.id });
+    const after = await repoA.listMessages(channel.id, { userId: user.id, limit: 10 });
+    const tomb = after.find((m) => m.id === sent.id)!;
+    expect(tomb.text).toBeNull();
+    // FR-012: deletion unlinks them, asserted at the column for the same reason as above.
+    const { rows: gone } = await db.execute(
+      sql`SELECT attachments FROM messages WHERE id = ${sent.id}`,
+    );
+    expect(gone[0]!["attachments"]).toBeNull();
+  });
+});

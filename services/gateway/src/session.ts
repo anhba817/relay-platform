@@ -1509,11 +1509,16 @@ export function attachSessions({
       }
     }
 
-    const { channel, text, idem_key } = frame.data.payload;
+    // A NAMED DESTRUCTURE, AND THAT IS THE POINT (chapter 3.24, FR-001). Widening
+    // `messageSendSchema` puts `attachments` on the wire; without naming it here nothing
+    // carries it further, the message commits without attachments, and the client is
+    // acked as though it worked. There is no error anywhere in that sequence.
+    const { channel, text, idem_key, attachments } = frame.data.payload;
     try {
       const committed = await api.sendMessage(connection.identity, {
         channel_id: channel,
         text,
+        ...(attachments !== undefined && { attachments }),
         idempotency_key: idem_key,
       });
       const { seq } = committed;

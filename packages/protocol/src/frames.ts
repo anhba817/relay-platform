@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { attachmentSchema, MAX_ATTACHMENTS } from "./attachments.js";
+import {
+  attachmentSchema,
+  MAX_ATTACHMENTS,
+  refineTextAndAttachments,
+} from "./attachments.js";
 
 // The wire contract, one home (ADR-01). Every frame is a JSON object with a
 // `type` discriminator and a `payload` (EIR-WS-02). Schemas are the single
@@ -54,17 +58,29 @@ export const connectionAckSchema = z.strictObject({
  * server-side within 24 h (FR-MSG-04). */
 export const messageSendSchema = z.strictObject({
   type: z.literal("message.send"),
-  payload: z.strictObject({
-    idem_key: z.string().min(1).max(255),
-    channel: z.string().min(1),
-    text: z.string(),
-    /** OPTIONAL here and required on the outbound `messageSchema`, which is not an
-     * inconsistency: a caller may send none, and a payload the platform BUILDS must
-     * always say. The bound is imported rather than spelled — two schemas that happen
-     * to agree are what `idem_key` against `idempotency_key` looks like three chapters
-     * later. */
-    attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional(),
-  }),
+  payload: z
+    .strictObject({
+      idem_key: z.string().min(1).max(255),
+      channel: z.string().min(1),
+      text: z.string(),
+      /** OPTIONAL here and required on the outbound `messageSchema`, which is not an
+       * inconsistency: a caller may send none, and a payload the platform BUILDS must
+       * always say. The bound is imported rather than spelled — two schemas that happen
+       * to agree are what `idem_key` against `idempotency_key` looks like three chapters
+       * later. */
+      attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional(),
+    })
+    /** THE PAIR RULE ON THIS DOOR TOO, AND THE REASON IS THE LAYER, NOT THE RULE.
+     *
+     * FR-019b was already met without this line: the frame parsed, the api's
+     * `internalSendRequestSchema` refused it, and the client got `invalid_request`. But
+     * the ten-item bound above is on THIS schema, so the gateway answers that one with
+     * `invalid_frame` — two rules about one payload refused at two layers under two
+     * codes, for no reason a caller could discover.
+     *
+     * Measured before it was decided: `{ text: "", attachments: [] }` came back
+     * `invalid_request` while eleven attachments came back `invalid_frame`. */
+    .superRefine(refineTextAndAttachments),
 });
 
 /** Server → sender after commit — never before (SAD §5.1, FR-MSG-05). */

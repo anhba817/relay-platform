@@ -363,6 +363,104 @@ describe("the socket's credentials (chapter 3.2)", () => {
     expect(socket.readyState).toBe(WebSocket.OPEN);
   }, 20_000);
 
+  // T022c and T020a (chapter 3.24). THE SOCKET DOOR, WHICH IS THE ONE THAT DROPS THINGS.
+  //
+  // Every other send test in this chapter walks the REST door, and the REST door was never
+  // at risk: it validates with `sendMessageBodySchema` and hands a typed body straight to
+  // the service. The socket path has three named points where a field can vanish without
+  // an error — `session.ts`'s inbound destructure, `internal.controller.ts`'s named build,
+  // and `session.ts`'s outbound payload — and a message that commits without its
+  // attachments is acked as though it worked.
+  it("commits TWO attachments sent over the socket, in order (T022c, FR-001 (3.24), FR-006 (3.24))", async () => {
+    const socket = connect(await mintToken("tuan", 3600));
+    await firstFrame(socket, "connection.ack");
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelId,
+          text: "two over the socket",
+          // TWO, IN A DELIBERATE ORDER. One cannot show an order, and the ordered pair is
+          // what makes §4.14's later arm safe to add.
+          attachments: [
+            { type: "url", kind: "image", url: "https://example.test/socket-first.png" },
+            { type: "url", kind: "video", url: "https://example.test/socket-second.mp4" },
+          ],
+        },
+      }),
+    );
+    const ack = (await firstFrame(socket, "message.ack")) as { payload: { seq: number } };
+    expect(ack.payload.seq).toBeGreaterThan(0);
+
+    // THROUGH THE COLUMN, NOT HISTORY, AND THAT IS A PHASE ORDERING FACT. The ack carries
+    // a sequence and nothing else — it has never carried a message and this chapter does
+    // not widen it — so an ack alone cannot tell a stored attachment from a dropped one.
+    // History would be the natural reader, and `listMessages` does not select the column
+    // until phase 5 (T028), so asserting there would fail for the next phase's reason.
+    // Phase 5's T030 is where this claim moves to the wire.
+    const client = require_(
+      join(REPO, "services", "api", "dist", "db", "client.js"),
+    ) as {
+      createPool: () => {
+        query: (q: string, v: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
+        end: () => Promise<void>;
+      };
+    };
+    const pool = client.createPool();
+    const { rows } = await pool.query(
+      "SELECT attachments FROM messages WHERE sequence = $1 AND channel_id = $2",
+      [ack.payload.seq, api.channelId],
+    );
+    await pool.end();
+    expect(
+      (rows[0]!["attachments"] as Array<{ url: string }>).map((a) => a.url),
+    ).toEqual([
+      "https://example.test/socket-first.png",
+      "https://example.test/socket-second.mp4",
+    ]);
+  }, 20_000);
+
+  it("accepts an attachments-only message and refuses one with neither (T020a, FR-019 (3.24), FR-019b (3.24))", async () => {
+    const socket = connect(await mintToken("tuan", 3600));
+    await firstFrame(socket, "connection.ack");
+
+    // BOTH HALVES. The acceptance passes the moment the text bound is relaxed; the refusal
+    // needs a rule that relaxation removes, and `refineTextAndAttachments` is the only
+    // thing putting it back on this door.
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelId,
+          text: "",
+          attachments: [
+            { type: "url", kind: "image", url: "https://example.test/no-caption.png" },
+          ],
+        },
+      }),
+    );
+    const ack = (await firstFrame(socket, "message.ack")) as { payload: { seq: number } };
+    expect(ack.payload.seq).toBeGreaterThan(0);
+
+    const bare = connect(await mintToken("tuan", 3600));
+    await firstFrame(bare, "connection.ack");
+    bare.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: { idem_key: randomUUID(), channel: api.channelId, text: "", attachments: [] },
+      }),
+    );
+    const refusal = (await firstFrame(bare, "error")) as {
+      payload: { code: string; message: string };
+    };
+    // `invalid_frame`, NOT `invalid_request`. The bound is on `messageSendSchema`, so the
+    // GATEWAY refuses the frame before the api sees it — two doors, two codes, one rule,
+    // and a test asserting only "it was refused" could not tell which layer answered.
+    expect(refusal.payload.code).toBe("invalid_frame");
+  }, 20_000);
+
   it("a reconnect with a fresh token can send again", async () => {
     // The recovery path the refusal above names, proven rather than asserted.
     const socket = connect(await mintToken("tuan", 3600));

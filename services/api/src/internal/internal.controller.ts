@@ -66,6 +66,11 @@ export class InternalController {
       body.channel_id,
       {
         text: body.text,
+        // A NAMED BUILD, WHICH IS WHERE A WIDENED SCHEMA STOPS. `internalSendRequestSchema`
+        // takes attachments from this phase, and without this line the field arrives on the
+        // wire, parses, and is dropped one statement later — the message commits without it
+        // and the socket client is acked as though it worked.
+        ...(body.attachments !== undefined && { attachments: body.attachments }),
         ...(body.idempotency_key !== undefined && {
           idempotency_key: body.idempotency_key,
         }),
