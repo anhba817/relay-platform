@@ -82,7 +82,7 @@ describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
     expect(retry.duplicate).toBe(true);
   });
 
-  it("a retry returns the original's attachments and writes no second row (T050, FR-011 (3.24))", async () => {
+  it("a retry returns the original's attachments and writes no second row (FR-011 (3.24))", async () => {
     const channel = await repo.createChannel("idem-attachments", "public");
     const key = randomUUID();
     const attachments = [
@@ -120,7 +120,7 @@ describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
     expect(rows.filter((m) => m.text === "sent once")).toHaveLength(1);
   });
 
-  it("recovers a TOMBSTONE with an empty list and nothing published (T050a, FR-011 (3.24), FR-012 (3.24))", async () => {
+  it("recovers a TOMBSTONE with an empty list and nothing published (FR-011 (3.24), FR-012 (3.24))", async () => {
     // THE CASE CHAPTER 3.18 GUARDED FOR TEXT, NOW WITH AN ATTACHMENT LIST. A message is
     // sent with a key, deleted, and the same key is retried: the idempotency index still
     // recognises it, so the retry returns the ORIGINAL row — which is now a tombstone.

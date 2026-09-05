@@ -112,7 +112,7 @@ describe("POST /internal/backfill", () => {
     });
   });
 
-  it("replays two attachments in the order they were sent (T052, FR-010 (3.24), SC-005 (3.24))", async () => {
+  it("replays two attachments in the order they were sent (FR-010 (3.24), SC-005 (3.24))", async () => {
     // SC-005: A CLIENT THAT WAS AWAY ENDS WITH THE SAME VIEW AS ONE THAT STAYED. The
     // replay is a different code path from delivery — it maps rows out of the database
     // rather than passing a payload along — so a field threaded correctly through every

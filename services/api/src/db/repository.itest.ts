@@ -1127,7 +1127,7 @@ describe("deleteMessage (chapter 3.23)", () => {
 // NULL, which is a VALID value (data-model.md: NULL and `[]` are different and NULL means
 // no attachments): the read paths do not re-validate, so a malformed array planted here
 // would surface as a 1011 socket close in some later phase rather than as a failure here.
-describe("an empty text is a live message on every read path (T004, FR-019 (3.24))", () => {
+describe("an empty text is a live message on every read path (FR-019 (3.24))", () => {
   it("reads back as live through history both ways, the listing's preview, and the tombstone predicate", async () => {
     const user = await repoA.createUser("t004-reader", "Reader");
     const channel = await repoA.createChannel("t004", "public");
@@ -1198,7 +1198,7 @@ describe("an empty text is a live message on every read path (T004, FR-019 (3.24
 // T004 above proved the READ paths already treat `text = ''` as live, against a row
 // planted by hand. These two prove the WRITE path produces such a row and that the
 // round trip keeps what it was given, in the order it was given.
-describe("sendMessage writes attachments (T023, FR-001 (3.24), FR-006 (3.24))", () => {
+describe("sendMessage writes attachments (FR-001 (3.24), FR-006 (3.24))", () => {
   const url = (name: string) => ({
     type: "url" as const,
     kind: "image" as const,
@@ -1270,7 +1270,7 @@ describe("sendMessage writes attachments (T023, FR-001 (3.24), FR-006 (3.24))", 
   });
 });
 
-describe("an attachments-only message is written and is not a tombstone (T024, FR-019 (3.24))", () => {
+describe("an attachments-only message is written and is not a tombstone (FR-019 (3.24))", () => {
   it("stores text = '' and reads back live, with the deletion path still available", async () => {
     const user = await repoA.createUser("t024-sender", "Sender");
     const channel = await repoA.createChannel("t024", "public");
@@ -1326,7 +1326,7 @@ describe("an attachments-only message is written and is not a tombstone (T024, F
 // separate builder chains, one ordered `desc` for a backward page and one `asc` for a
 // forward one, and `attachments` had to be added to the column list they share. A
 // single-direction test covers one branch and reports on both.
-describe("listMessages returns attachments on BOTH branches (T030a, FR-009 (3.24))", () => {
+describe("listMessages returns attachments on BOTH branches (FR-009 (3.24))", () => {
   it("carries them in order through the backward page and the forward one", async () => {
     const user = await repoA.createUser("t030a-user", "User");
     const channel = await repoA.createChannel("t030a", "public");
@@ -1387,7 +1387,7 @@ describe("listMessages returns attachments on BOTH branches (T030a, FR-009 (3.24
 // A RECORD SAYS "DECIDED"; ONLY AN ASSERTION TELLS THE NEXT READER THAT FROM "FORGOTTEN".
 // Chapter 3.23 left four sentences that had stopped being true because nothing compared
 // them with the code.
-describe("the read shapes that do NOT carry attachments (T053, FR-009 (3.24))", () => {
+describe("the read shapes that do NOT carry attachments (FR-009 (3.24))", () => {
   it("the channel listing's preview has no attachments field", async () => {
     const user = await repoA.createUser("t053-user", "User");
     const channel = await repoA.createChannel("t053", "public");

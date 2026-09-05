@@ -107,7 +107,7 @@ describe("messageCreatedEvent", () => {
   });
 });
 
-describe("a legacy senderless message in the webhook payload (chapter 3.17, T054a)", () => {
+describe("a legacy senderless message in the webhook payload (chapter 3.17)", () => {
   // THE ONE PATH THAT LEAVES THE PLATFORM. FR-WHK-02 delivers `message.created` to a
   // customer's own HTTPS endpoint and FR-WHK-03 retries a failed delivery for up to two
   // hours — so an event for a legacy senderless row can be delivered, and REdelivered,
@@ -244,7 +244,7 @@ describe("messageUpdatedEvent and messageDeletedEvent (chapter 3.23)", () => {
     );
   });
 
-  it("carries the attachments themselves, in order, on both (T057, FR-006 (3.24))", () => {
+  it("carries the attachments themselves, in order, on both (FR-006 (3.24))", () => {
     // KEY SETS CANNOT SEE VALUES. Two payloads both carrying `[]` have identical key
     // sets, so the set comparison above answers FR-015's "one shape" and says nothing
     // about FR-006's "in the order they were submitted" — which holds on every path that
