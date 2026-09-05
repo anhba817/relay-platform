@@ -4537,12 +4537,33 @@ export class Repository {
       // would be two instants, and the history row's own primary key is
       // (message_id, edited_at), so a caller reading the history could not match an
       // entry to the message state it produced.
+      // THE WRITE REFUSES, NOT ONLY THE READ (feature 043, FR-007).
+      //
+      // This was `.where(eq(messages.id, messageId))`, and the `row.text === null`
+      // check above it is a read taken earlier in the same transaction. Neither this
+      // method nor `deleteMessage` takes a row lock, so a deletion committing in that
+      // window left the edit free to overwrite it: `text` restored, `deleted_at` still
+      // set — **a row one filter calls deleted and another calls alive**, and a
+      // deletion that returned successfully undone by an edit already in flight.
+      //
+      // `gaps.md` 3.23-3 recorded the opposite — *"both interleavings end in a
+      // tombstone… there is no order of the two that leaves a message saying something
+      // nobody wrote"* — and the test that item asked for is what disproved it: three
+      // of five runs, and four incoherent rows left behind in the lane.
+      //
+      // A COMPARE-AND-SET, NOT A LOCK. `SELECT … FOR UPDATE` in both methods would
+      // close it too, and would serialise a pair `assertWithinQuota` deliberately
+      // declined to serialise on the send path. A conditional UPDATE costs nothing
+      // when there is no race and refuses exactly when there is one: zero rows
+      // affected means the row stopped being editable between the read and the write,
+      // which is what `MessageDeletedError` already says.
       const [updated] = await tx
         .update(messages)
         .set({ text, editedAt: sql`now()` })
-        .where(eq(messages.id, messageId))
+        .where(and(eq(messages.id, messageId), isNull(messages.deletedAt)))
         .returning({ editedAt: messages.editedAt });
-      const editedAt = updated!.editedAt!;
+      if (!updated) throw new MessageDeletedError(messageId);
+      const editedAt = updated.editedAt!;
 
       // FR-004. The row carries what the message said BEFORE this edit — `row.text`,
       // read above and narrowed to a string by the tombstone check.

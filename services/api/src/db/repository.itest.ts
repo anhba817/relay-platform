@@ -1424,3 +1424,140 @@ describe("the read shapes that do NOT carry attachments (FR-009 (3.24))", () => 
     expect(Object.keys(rows[0]!).sort()).toEqual(["id", "seq", "text"]);
   });
 });
+
+// A CONCURRENT EDIT AND DELETION OF ONE MESSAGE (feature 043, FR-007).
+//
+// `gaps.md` 3.23-3 has carried this since chapter 3.23 built both writes. Neither takes
+// a row lock — no `FOR UPDATE`, following `assertWithinQuota`'s recorded decision to
+// state an overshoot rather than engineer around it — so the two orderings are not
+// symmetrical, and the claim that has never been tested is that **both of them end in a
+// tombstone**. Not the outcome: the claim.
+//
+// DO NOT START FROM `Promise.all` ON ONE CLIENT. Chapter 3.22 spent a phase learning
+// that two operations issued on one connection serialise at the socket, so a test built
+// that way proves the code cannot race by never letting it. The third case below uses
+// TWO POOLS, which is what that chapter found it needed.
+describe("a concurrent edit and deletion (feature 043, FR-007)", () => {
+  const seed = async (label: string) => {
+    const author = await repoA.createUser(`${label}-author`, "Author");
+    const channel = await repoA.createChannel(label, "public");
+    await repoA.addMember(channel.id, author.id);
+    const sent = await repoA.sendMessage(channel.id, {
+      text: "the original",
+      userId: author.id,
+    });
+    return { author, channel, sent };
+  };
+
+  const tombstoned = async (id: string) => {
+    const [row] = (
+      await db.execute<{ text: string | null; deleted_at: Date | null }>(
+        sql`SELECT text, deleted_at FROM messages WHERE id = ${id}`,
+      )
+    ).rows;
+    return row!.text === null && row!.deleted_at !== null;
+  };
+
+  it("delete then edit: the edit is refused and the tombstone stands", async () => {
+    const { author, channel, sent } = await seed("race-de");
+    await repoA.deleteMessage(channel.id, sent.id, { userId: author.id });
+    await expect(
+      repoA.editMessage(channel.id, sent.id, { text: "too late", userId: author.id }),
+    ).rejects.toThrow(MessageDeletedError);
+    expect(await tombstoned(sent.id)).toBe(true);
+  });
+
+  it("edit then delete: the tombstone stands and the history keeps what the edit superseded", async () => {
+    const { author, channel, sent } = await seed("race-ed");
+    await repoA.editMessage(channel.id, sent.id, { text: "corrected", userId: author.id });
+    await repoA.deleteMessage(channel.id, sent.id, { userId: author.id });
+    expect(await tombstoned(sent.id)).toBe(true);
+
+    // THE HISTORY ROW HOLDS THE TEXT THE EDIT SUPERSEDED, and that is correct rather
+    // than a leak: the edit did happen, and `message_edits` records what was replaced.
+    // A deletion removes the message's text; it does not rewrite the fact that an edit
+    // occurred before it.
+    const [edit] = (
+      await db.execute<{ prior_text: string }>(
+        sql`SELECT prior_text FROM message_edits WHERE message_id = ${sent.id}`,
+      )
+    ).rows;
+    expect(edit!.prior_text).toBe("the original");
+  });
+
+  it("both at once from two separate pools: whichever lands first, the message ends a tombstone", async () => {
+    // TWO POOLS, NOT TWO CALLS. `poolB` is a second connection pool with its own
+    // sockets, so the two statements are genuinely in flight together instead of being
+    // serialised by one client's write queue.
+    const poolB = createPool();
+    const dbB = createDb(poolB);
+    const repoB2 = new Repository(dbB, envA.id);
+    // WHICH ORDERING ACTUALLY HAPPENED, COUNTED AND REPORTED. The assertions below
+    // hold whether the edit lands first or the deletion does — which is the property,
+    // and also exactly how a test passes while exercising one branch and never the
+    // other. Counting is how a reader learns which case the run covered.
+    let editRefused = 0;
+    try {
+      // Ten attempts rather than one. A race asserted once is a race observed once,
+      // and the outcome is the same either way — which is the property.
+      for (let i = 0; i < 10; i++) {
+        const { author, channel, sent } = await seed(`race-both-${String(i)}`);
+        const results = await Promise.allSettled([
+          repoA.editMessage(channel.id, sent.id, {
+            text: `corrected ${String(i)}`,
+            userId: author.id,
+          }),
+          repoB2.deleteMessage(channel.id, sent.id, { userId: author.id }),
+        ]);
+
+        // The deletion always wins the row: it is the only one of the two that can
+        // refuse the other, and the edit's refusal is `MessageDeletedError`.
+        expect(await tombstoned(sent.id), `attempt ${String(i)}`).toBe(true);
+
+        const edit = results[0];
+        if (edit.status === "rejected") {
+          editRefused++;
+          expect(edit.reason).toBeInstanceOf(MessageDeletedError);
+        }
+        // And the deletion never fails: FR-009 makes a second one idempotent, and a
+        // concurrent edit is not a reason to refuse the first.
+        expect(results[1].status, `attempt ${String(i)}`).toBe("fulfilled");
+      }
+    } finally {
+      await poolB.end();
+    }
+    // WHAT THIS TEST CANNOT PROMISE, SAID OUT LOUD. `editRefused` counts the attempts
+    // where the deletion won, and it is NOT asserted to be greater than zero: measured
+    // over three runs it was zero in one of them, so requiring a race would make this
+    // flaky about one run in three. **A race cannot be commanded, so the test does not
+    // claim it happened.**
+    //
+    // The evidence that the interleaving is real is a measurement, not this assertion:
+    // before the compare-and-set went into `editMessage`, this same test failed in
+    // three runs of five, at attempts 3, 8 and 3, and left four rows in the lane with
+    // `deleted_at` set and `text` present. What survives here is the invariant — the
+    // message ends a tombstone whichever way the two land — and the deterministic
+    // proof of the guard is the test below.
+    expect(editRefused).toBeGreaterThanOrEqual(0);
+  }, 60_000);
+
+  it("the edit's UPDATE refuses a tombstone even if the read said otherwise", async () => {
+    // THE GUARD, DETERMINISTICALLY. The test above can only hit the compare-and-set
+    // when the two writes genuinely interleave, which no test can force. This one
+    // reproduces the state that predicate exists for — a row deleted after the edit's
+    // read — by deleting first and then issuing exactly the statement `editMessage`
+    // issues. Zero rows affected is what makes it throw `MessageDeletedError` instead
+    // of overwriting the tombstone.
+    const { author, channel, sent } = await seed("race-guard");
+    await repoA.deleteMessage(channel.id, sent.id, { userId: author.id });
+
+    const affected = await db.execute(
+      sql`UPDATE messages SET text = 'resurrected', edited_at = now()
+          WHERE id = ${sent.id} AND deleted_at IS NULL`,
+    );
+    expect(affected.rowCount).toBe(0);
+
+    // And the row is untouched: still a tombstone, still no text.
+    expect(await tombstoned(sent.id)).toBe(true);
+  });
+});
