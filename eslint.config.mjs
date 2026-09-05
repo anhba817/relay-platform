@@ -60,6 +60,12 @@ const DRIVER_EXEMPT_TESTS = [
   "services/api/src/db/history-drift.itest.ts",
   // The harness IS data access (see the note on `packages/test-harness/**`).
   "packages/test-harness/src/guard.itest.ts",
+  // Feature 043. `reset-lane.mjs` clears lane debris and must leave the seeded demo
+  // tenant alone — the constitution requires `docker compose up` to bring the stack
+  // up with one. Counting organisations to prove a script did NOT delete them is a
+  // read no repository method offers, and doing it through the repository layer would
+  // scope the count to one environment, which is the opposite of what it has to check.
+  "packages/test-harness/src/reset-lane.itest.ts",
   // Redis, read with neither service's code, which is the whole subject: the api
   // and the gateway must increment the SAME key.
   "services/api/src/limits/limits.itest.ts",
