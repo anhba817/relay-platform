@@ -444,7 +444,13 @@ describe("outboxEventSchema — what a CONSUMER will accept", () => {
       // not a stricter contract; it is every in-flight event of these two types
       // destroyed. Six tests in `consumer.itest.ts` went red on exactly this, and the
       // close-out coverage lane is what ran them.
-      const { attachments: _omitted, ...before } = MESSAGE;
+      // DELETED, NOT SET TO `undefined`. A key whose value is `undefined` survives
+      // `JSON.stringify` as no key at all, but it is not the same object here, and
+      // `.default([])` fires on an ABSENT key — which is the distinction this whole
+      // chapter is about. A rest-destructure would need a binding for the discarded
+      // half, and this repository's eslint has no ignore pattern for one.
+      const before: Record<string, unknown> = { ...MESSAGE };
+      delete before["attachments"];
       const result = outboxEventSchema.safeParse({ ...envelope, type, data: before });
       expect(result.success).toBe(true);
       if (result.success) {
