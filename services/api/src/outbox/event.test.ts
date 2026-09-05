@@ -434,6 +434,39 @@ describe("outboxEventSchema — what a CONSUMER will accept", () => {
     }
   });
 
+  it.each(["message.created", "message.updated"] as const)(
+    "reads a %s written before this chapter and yields an empty list (FR-007 (3.24))",
+    (type) => {
+      // THE EVENT SPINE IS DURABLE, so on the deploy that ships this chapter the
+      // consumer reads bytes the previous binary wrote — and those have no
+      // `attachments` key at all. `consumer/runtime.ts` answers a failed parse with
+      // `message.term()`, which stops redelivery for good, so a required field here is
+      // not a stricter contract; it is every in-flight event of these two types
+      // destroyed. Six tests in `consumer.itest.ts` went red on exactly this, and the
+      // close-out coverage lane is what ran them.
+      const { attachments: _omitted, ...before } = MESSAGE;
+      const result = outboxEventSchema.safeParse({ ...envelope, type, data: before });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Not absent, and not null. The same answer every read path in this chapter
+        // gives for a message with none.
+        expect(result.data.data).toHaveProperty("attachments", []);
+      }
+    },
+  );
+
+  it("still refuses an attachments value that is not a list", () => {
+    // `.default([])` tolerates an ABSENT key and nothing else. A producer that writes
+    // the field wrongly is still terminated, which is the half of the requirement the
+    // tolerance must not take with it.
+    const result = outboxEventSchema.safeParse({
+      ...envelope,
+      type: "message.created",
+      data: { ...MESSAGE, attachments: "none" },
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("still rejects an unknown type and a mismatched data shape", () => {
     // The union widened; it did not become permissive. A type nothing produces is
     // still terminated, which is the behaviour the consumer's comment describes.

@@ -318,7 +318,21 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
       // Chapter 3.24 (FR-015). BOTH BRANCHES, and restated rather than shared for the
       // reason the comment above gives: FR-015 is the requirement that they not drift,
       // which is only meaningful if a change to one is visible in the other's absence.
-      attachments: z.array(attachmentSchema),
+      //
+      // `.default([])` HERE AND REQUIRED ON `MessageCreatedData` ABOVE, and the two are
+      // not in tension — they are about different directions. That interface types what
+      // this api BUILDS, and required is what makes the compiler name every branch a new
+      // field has to reach; this schema reads BYTES OFF A DURABLE QUEUE, and some of
+      // those bytes were written by the binary that ran before this deploy. A required
+      // field here answers such a message with `message.term()` — destroyed, not retried
+      // — which is the failure this file's own header describes and the reason it exists.
+      //
+      // FOUND BY THE CLOSE-OUT COVERAGE LANE, six red tests in `consumer.itest.ts`, after
+      // eleven analysis passes and eleven phases. The comment above argues NOT OPTIONAL
+      // from `message.term()`, and that argument is correct about the producer and
+      // inverts about the reader: the same sentence that makes a missing branch loud at
+      // compile time makes a missing key fatal at runtime.
+      attachments: z.array(attachmentSchema).default([]),
       created_at: z.iso.datetime(),
     }),
   }),
@@ -343,7 +357,21 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
       // Chapter 3.24 (FR-015). BOTH BRANCHES, and restated rather than shared for the
       // reason the comment above gives: FR-015 is the requirement that they not drift,
       // which is only meaningful if a change to one is visible in the other's absence.
-      attachments: z.array(attachmentSchema),
+      //
+      // `.default([])` HERE AND REQUIRED ON `MessageCreatedData` ABOVE, and the two are
+      // not in tension — they are about different directions. That interface types what
+      // this api BUILDS, and required is what makes the compiler name every branch a new
+      // field has to reach; this schema reads BYTES OFF A DURABLE QUEUE, and some of
+      // those bytes were written by the binary that ran before this deploy. A required
+      // field here answers such a message with `message.term()` — destroyed, not retried
+      // — which is the failure this file's own header describes and the reason it exists.
+      //
+      // FOUND BY THE CLOSE-OUT COVERAGE LANE, six red tests in `consumer.itest.ts`, after
+      // eleven analysis passes and eleven phases. The comment above argues NOT OPTIONAL
+      // from `message.term()`, and that argument is correct about the producer and
+      // inverts about the reader: the same sentence that makes a missing branch loud at
+      // compile time makes a missing key fatal at runtime.
+      attachments: z.array(attachmentSchema).default([]),
       created_at: z.iso.datetime(),
     }),
   }),
