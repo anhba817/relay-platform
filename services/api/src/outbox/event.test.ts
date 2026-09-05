@@ -21,6 +21,13 @@ const MESSAGE = {
   seq: 1,
   user: "tuan",
   text: "B2, north ramp",
+  // Chapter 3.24. TWO, because FR-006 says order holds on every path that returns a
+  // message and a consumer's webhook is one — a single-attachment fixture could not see
+  // an order at all.
+  attachments: [
+    { type: "url" as const, kind: "image" as const, url: "https://example.test/one.png" },
+    { type: "url" as const, kind: "audio" as const, url: "https://example.test/two.mp3" },
+  ],
   created_at: "2026-08-08T13:31:09.229Z",
 };
 
@@ -182,6 +189,15 @@ describe("the outbox event type set", () => {
 });
 
 describe("messageUpdatedEvent and messageDeletedEvent (chapter 3.23)", () => {
+  /** A creation built HERE, because `build` two describes up is out of scope — and the
+   * comparison below needs both events from one place to mean anything. */
+  const created = () =>
+    messageCreatedEvent({
+      eventId: "8f14e45f-ceea-4f6a-9b2c-1d2e3f4a5b6c",
+      environmentId: ENV,
+      message: MESSAGE,
+    });
+
   const updated = () =>
     messageUpdatedEvent({
       eventId: "9c26f1a2-0000-4000-8000-000000000003",
@@ -204,11 +220,16 @@ describe("messageUpdatedEvent and messageDeletedEvent (chapter 3.23)", () => {
     expect(deleted().subject).toBe(`events.msg.deleted.${ENV}`);
   });
 
-  it("leaves the edit's payload identical to a creation's (FR-008a)", () => {
+  it("leaves the edit's payload identical to a creation's (FR-008a, FR-015 (3.24))", () => {
     // FR-008a in one assertion: *"The message payload used by creation and edit events
     // MUST be left unchanged."* Compared as SETS, so a field added to one and not the
     // other fails here rather than in a customer's consumer.
+    //
+    // SEVEN SINCE CHAPTER 3.24, and both events gained the field together because both
+    // are built from one `MessageCreatedData` — which is FR-015 as a type rather than a
+    // promise.
     expect(Object.keys(updated().payload.data).sort()).toEqual([
+      "attachments",
       "channel_id",
       "created_at",
       "id",
@@ -216,6 +237,26 @@ describe("messageUpdatedEvent and messageDeletedEvent (chapter 3.23)", () => {
       "text",
       "user",
     ]);
+    // AND THE TWO SETS ARE THE SAME SET, which is what FR-015 actually asks. Comparing
+    // each against a literal leaves them free to drift together.
+    expect(Object.keys(updated().payload.data).sort()).toEqual(
+      Object.keys(created().payload.data).sort(),
+    );
+  });
+
+  it("carries the attachments themselves, in order, on both (T057, FR-006 (3.24))", () => {
+    // KEY SETS CANNOT SEE VALUES. Two payloads both carrying `[]` have identical key
+    // sets, so the set comparison above answers FR-015's "one shape" and says nothing
+    // about FR-006's "in the order they were submitted" — which holds on every path that
+    // returns a message, and a consumer's webhook is one.
+    const expected = ["https://example.test/one.png", "https://example.test/two.mp3"];
+    for (const [label, event] of [
+      ["created", created()],
+      ["updated", updated()],
+    ] as const) {
+      const data = event.payload.data as { attachments: Array<{ url: string }> };
+      expect(data.attachments.map((a) => a.url), label).toEqual(expected);
+    }
   });
 
   it("gives the deletion NO text key at all (FR-020)", () => {

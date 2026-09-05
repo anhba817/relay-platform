@@ -4304,6 +4304,9 @@ export class Repository {
           seq,
           user: userExternalId ?? null,
           text,
+          // FR-015 and FR-017. The same list the row holds and the frame carries — a
+          // consumer and a socket client comparing the two see one message.
+          attachments: attachments ?? [],
           created_at: createdAt,
         },
       });
@@ -4579,6 +4582,10 @@ export class Repository {
           seq: row.seq,
           user: row.author,
           text,
+          // FR-015: identical to the creation payload, so a consumer needs one shape for
+          // both. An edit does not change attachments (FR-016), so these are the ones the
+          // message already had — which is why phase 7 widened this read.
+          attachments: row.attachments ?? [],
           created_at: toIso(row.createdAt),
         },
       });

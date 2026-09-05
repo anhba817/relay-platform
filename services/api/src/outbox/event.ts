@@ -1,3 +1,5 @@
+import { attachmentSchema, type Attachment } from "@relay/protocol";
+
 import { subjectFor } from "@relay/protocol";
 import { z } from "zod";
 
@@ -19,6 +21,19 @@ export interface MessageCreatedData {
   seq: number;
   user: string | null;
   text: string | null;
+  /** Chapter 3.24 (FR-015, FR-017). ON `message.created` AND `message.updated` AT ONCE,
+   * because both events carry this one interface — FR-015 asks that a consumer need one
+   * shape for both, and the type is where that stops being a promise.
+   *
+   * AND ON NEITHER `message.deleted` NOR THE MEMBERSHIP EVENTS. `MessageDeletedData`
+   * below carries no `text` because a payload with a text field can carry the words
+   * somebody asked to have removed; an attachment URL is exactly as recoverable, so the
+   * absence there is the same decision and not an omission.
+   *
+   * NOT OPTIONAL. `consumer/runtime.ts` answers a failed parse with `message.term()`,
+   * which stops redelivery for good — so a branch that has not been widened is a row
+   * destroyed rather than retried, and an optional field hides the day that happens. */
+  attachments: Attachment[];
   created_at: string;
 }
 
@@ -300,6 +315,10 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
       seq: z.number().int().positive(),
       user: z.string().nullable(),
       text: z.string().nullable(),
+      // Chapter 3.24 (FR-015). BOTH BRANCHES, and restated rather than shared for the
+      // reason the comment above gives: FR-015 is the requirement that they not drift,
+      // which is only meaningful if a change to one is visible in the other's absence.
+      attachments: z.array(attachmentSchema),
       created_at: z.iso.datetime(),
     }),
   }),
@@ -321,6 +340,10 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
       seq: z.number().int().positive(),
       user: z.string().nullable(),
       text: z.string().nullable(),
+      // Chapter 3.24 (FR-015). BOTH BRANCHES, and restated rather than shared for the
+      // reason the comment above gives: FR-015 is the requirement that they not drift,
+      // which is only meaningful if a change to one is visible in the other's absence.
+      attachments: z.array(attachmentSchema),
       created_at: z.iso.datetime(),
     }),
   }),
