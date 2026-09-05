@@ -468,7 +468,20 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     children.push(
       capture(
         name,
-        spawn("pnpm", ["exec", "tsx", "src/main.ts"], {
+        // `node dist/main.js`, THE SAME WAY THE API IS SPAWNED, AND THE REASON IS THE
+        // TEARDOWN. This was `pnpm exec tsx src/main.ts`, which is four processes: pnpm,
+        // its own launcher, tsx, and the node worker that binds the port. `stop()` holds
+        // the FIRST of those. SIGTERM reached pnpm, pnpm exited without passing it on,
+        // `child.once("exit")` resolved on pnpm's exit, and the gateway kept running with
+        // its port held — twelve survivors per lane run, indefinitely.
+        //
+        // AND THE TEARDOWN TEST WAS GREEN THROUGHOUT, because it probes the API's port.
+        // The api is one `spawn("node", …)` and always died correctly. A red probe proves
+        // the teardown for the process you spawned; only a probe of the LEAKING service
+        // proves it for the process that holds the port. `dist/main.js` exists here for
+        // the same reason it does for the api — `test:integration` dependsOn `build` —
+        // so this costs nothing and removes three processes from the chain.
+        spawn("node", [join(REPO, "services", "gateway", "dist", "main.js")], {
           cwd: join(REPO, "services", "gateway"),
           env: { ...env, PORT: "0", RELAY_API_URL: apiUrl },
           stdio: ["ignore", "pipe", "pipe"],
@@ -573,8 +586,48 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       return new Client(name, await token(environmentId, name), say);
     },
     async stop() {
+      // WAIT FOR THEM TO GO, DO NOT SLEEP AND HOPE (feature 043, FR-001).
+      //
+      // This signalled and slept 200 ms. A child that took longer to close its
+      // listeners was still holding its port when the next suite booted — and the
+      // next suite's health check passed against the dying predecessor, printed
+      // `api up on …`, and then failed at its first real request with
+      // `ECONNREFUSED`. **Ten of the attachments chapter's twenty-run battery failed exactly
+      // that way**, and the debt was not settled when a run ended: it was paid by
+      // whatever booted next, in that run or the following one.
+      //
+      // ALL OF THEM AT ONCE, NOT EACH IN TURN, or the waits add up per child. The
+      // timeout has its own message so a hung child is not reported as a port
+      // problem — which is the misdiagnosis this whole change exists to end.
       for (const child of children) child.kill("SIGTERM");
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await Promise.all(
+        children.map(
+          (child) =>
+            new Promise<void>((resolve) => {
+              if (child.exitCode !== null || child.signalCode !== null) return resolve();
+              // A SHORT GRACE, THEN SIGKILL — AND THE NUMBER IS MEASURED, NOT CHOSEN.
+              //
+              // The api takes **5,035 ms** to exit on SIGTERM, and its listener stays
+              // open for all of it: the port frees at 5,037 ms and the process exits at
+              // 5,034 ms, so there is no early release to wait for. Waiting the full
+              // drain cost the e2e package **37.28 s against a 6.72 s baseline**, on a
+              // lane with 5.39 s of budget headroom.
+              //
+              // What this harness needs is the port, not a clean drain. A second is
+              // enough for a child to flush the log lines `dump()` reports on failure,
+              // and SIGKILL frees the port at once. The old code sent SIGTERM, slept
+              // 200 ms and moved on, leaving the child alive and the port held — this
+              // is strictly stronger, because the process is confirmed dead either way.
+              const timer = setTimeout(() => {
+                child.kill("SIGKILL");
+              }, 1_000);
+              child.once("exit", () => {
+                clearTimeout(timer);
+                resolve();
+              });
+            }),
+        ),
+      );
     },
   };
 }
