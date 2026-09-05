@@ -39,7 +39,17 @@ async function bootstrap(): Promise<void> {
   // Nest calls onModuleDestroy on shutdown hooks; without this the relay's loop
   // would outlive the process's intent to stop.
   app.enableShutdownHooks();
-  createLogger("api").log("info", "listening", { port });
+  // THE PORT IT BOUND, NOT THE ONE IT ASKED FOR (feature 043, FR-002). `port` is the
+  // REQUEST — `Number(process.env.PORT ?? 4000)` — and with `PORT=0` the operating system
+  // assigns an ephemeral one, so this line used to report `0` while the server listened
+  // somewhere else. A log that states a requested value as though it were the assigned one
+  // is wrong whether or not anybody reads it; that it also makes `PORT=0` usable by a test
+  // harness is the second reason, not the first.
+  const bound = (app.getHttpServer() as { address(): { port: number } | string | null })
+    .address();
+  createLogger("api").log("info", "listening", {
+    port: typeof bound === "object" && bound !== null ? bound.port : port,
+  });
 }
 
 void bootstrap();

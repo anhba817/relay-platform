@@ -26,6 +26,24 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 //   5200-5400  gateway/public-surface.itest.ts  api
 //   5400-5600  gateway/membership.itest.ts      api
 //
+//   THE e2e LANE WAS NOT ON THIS MAP AT ALL (feature 043, FR-026), and it held three
+//   FIXED ports — 4100, 4101, 4102 — inside the 4100-4300 registered above to this
+//   file. `grep -c e2e` on this file returned zero. The map's own first sentence
+//   condemns that: two files drawing from one range is the same fault as two files
+//   sharing a fixed port.
+//
+//   It could not fire through `pnpm test:integration`, which runs turbo with
+//   `--concurrency=1`, so the two packages never execute together — the overlap was
+//   latent, not active. A range that is safe only because of a flag in another
+//   package's script is a range somebody re-checks every time that flag moves.
+//
+//   packages/e2e/src/harness.ts  api and gateways  EPHEMERAL, assigned by the OS
+//
+//   That lane now binds port 0 and reads the assignment back out of the child's own
+//   log line, so it registers no range here and cannot collide with one. **Do not
+//   give it a band in this map**: the next reader's instinct will be to allocate it
+//   one, and a fixed band is what it just stopped having.
+//
 // THE MAP WAS NOT 78% COMPLETE, IT WAS WRONG. Chapter 3.21's `gaps.md` item 4 put
 // the two missing entries at two-of-nine and called the map incomplete. Adding them
 // shows something a completeness figure cannot: `presence.itest.ts` takes

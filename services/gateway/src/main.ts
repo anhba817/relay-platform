@@ -151,7 +151,13 @@ if (import.meta.main) {
   const port = Number(process.env.PORT ?? 4001);
   const logger = createLogger("gateway");
   const server = createServer(logger).listen(port, () => {
-    logger.log("info", "listening", { port });
+    // THE PORT IT BOUND, NOT THE ONE IT ASKED FOR (feature 043, FR-002), and the api's
+    // entry point carries the same change for the same reason. With `PORT=0` this line
+    // used to report `0` while the server listened on an ephemeral port.
+    const bound = server.address();
+    logger.log("info", "listening", {
+      port: typeof bound === "object" && bound !== null ? bound.port : port,
+    });
   });
 
   // A GRACEFUL SHUTDOWN, WHICH THIS SERVICE DID NOT HAVE (research R11, FR-RTL-05).

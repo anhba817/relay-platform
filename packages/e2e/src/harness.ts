@@ -349,6 +349,38 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     });
     return child;
   };
+  /** THE PORT THE CHILD ACTUALLY BOUND (feature 043, FR-002).
+   *
+   * Every child is spawned with `PORT=0`, so the operating system assigns one nothing
+   * else holds and there is no range to register, collide with, or maintain by hand.
+   * The value comes back out of the child's own `listening` line, which
+   * `services/api/src/main.ts` and `services/gateway/src/main.ts` were changed to
+   * report correctly — both used to log the port they ASKED for, which is `0`.
+   *
+   * IT READS THE BUFFER `capture` ALREADY FILLS. `gaps.md` 3.22-6 counts eleven files
+   * that spawn a child and six that discard its output entirely; this one captured it
+   * and used it for a failure message only. Now it is load-bearing.
+   *
+   * The alternative was a fixed port, which collides always under contention, or a
+   * random one from a band, which `session.itest.ts:133` draws and chapter 3.23
+   * measured as self-colliding 2.96% of runs. Binding 0 cannot collide at all. */
+  const boundPort = async (name: string, timeoutMs = 30_000): Promise<number> => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      for (const line of output.get(name) ?? []) {
+        const m = /"msg":"listening","port":(\d+)/.exec(line);
+        if (m) return Number(m[1]);
+      }
+      if (Date.now() > deadline) {
+        throw new Error(
+          `${name} never reported a listening port within ${timeoutMs}ms\n` +
+            (output.get(name) ?? []).slice(-12).join("\n"),
+        );
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+
   const dump = (what: string) => {
     const lines = [`${what}; child output follows:`];
     for (const [name, log] of output) {
@@ -408,33 +440,40 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     RELAY_DELIVERY_RELAY: "off",
   };
 
-  const apiPort = Number(process.env.RELAY_E2E_API_PORT ?? 4100);
+  // `RELAY_E2E_API_PORT` IS GONE, AND SO IS THE 4100 BEHIND IT (feature 043, FR-002).
+  // A fixed default put three ports inside a range `limits.itest.ts` registers to
+  // itself, unlisted in that file's map; `PORT=0` needs no map and no variable.
   children.push(
     capture(
       "api",
       spawn("node", [join(REPO, "services", "api", "dist", "main.js")], {
-        env: { ...env, PORT: String(apiPort) },
+        env: { ...env, PORT: "0" },
         stdio: ["ignore", "pipe", "pipe"],
       }),
     ),
   );
+  const apiPort = await boundPort("api");
   const apiUrl = `http://127.0.0.1:${apiPort}`;
   await waitForHealth(`${apiUrl}/healthz`, "api");
   say(`api up on ${apiPort}`);
 
   const urls: string[] = [];
   for (let i = 0; i < gateways; i++) {
-    const port = apiPort + 1 + i;
+    // NOT `apiPort + 1 + i` ANY MORE. Deriving a gateway's port from the api's made
+    // three ports out of one collision, and an ephemeral api port is no basis for
+    // arithmetic. Each child binds its own.
+    const name = `gateway ${i + 1}`;
     children.push(
       capture(
-        `gateway ${i + 1}`,
+        name,
         spawn("pnpm", ["exec", "tsx", "src/main.ts"], {
           cwd: join(REPO, "services", "gateway"),
-          env: { ...env, PORT: String(port), RELAY_API_URL: apiUrl },
+          env: { ...env, PORT: "0", RELAY_API_URL: apiUrl },
           stdio: ["ignore", "pipe", "pipe"],
         }),
       ),
     );
+    const port = await boundPort(name);
     await waitForHealth(`http://127.0.0.1:${port}/healthz`, `gateway ${i + 1}`);
     urls.push(`ws://127.0.0.1:${port}`);
     say(`gateway ${i + 1} up on ${port}`);
@@ -532,8 +571,48 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       return new Client(name, await token(environmentId, name), say);
     },
     async stop() {
+      // WAIT FOR THEM TO GO, DO NOT SLEEP AND HOPE (feature 043, FR-001).
+      //
+      // This signalled and slept 200 ms. A child that took longer to close its
+      // listeners was still holding its port when the next suite booted — and the
+      // next suite's health check passed against the dying predecessor, printed
+      // `api up on …`, and then failed at its first real request with
+      // `ECONNREFUSED`. **Ten of chapter 3.24's twenty-run battery failed exactly
+      // that way**, and the debt was not settled when a run ended: it was paid by
+      // whatever booted next, in that run or the following one.
+      //
+      // ALL OF THEM AT ONCE, NOT EACH IN TURN, or the waits add up per child. The
+      // timeout has its own message so a hung child is not reported as a port
+      // problem — which is the misdiagnosis this whole change exists to end.
       for (const child of children) child.kill("SIGTERM");
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await Promise.all(
+        children.map(
+          (child) =>
+            new Promise<void>((resolve) => {
+              if (child.exitCode !== null || child.signalCode !== null) return resolve();
+              // A SHORT GRACE, THEN SIGKILL — AND THE NUMBER IS MEASURED, NOT CHOSEN.
+              //
+              // The api takes **5,035 ms** to exit on SIGTERM, and its listener stays
+              // open for all of it: the port frees at 5,037 ms and the process exits at
+              // 5,034 ms, so there is no early release to wait for. Waiting the full
+              // drain cost the e2e package **37.28 s against a 6.72 s baseline**, on a
+              // lane with 5.39 s of budget headroom.
+              //
+              // What this harness needs is the port, not a clean drain. A second is
+              // enough for a child to flush the log lines `dump()` reports on failure,
+              // and SIGKILL frees the port at once. The old code sent SIGTERM, slept
+              // 200 ms and moved on, leaving the child alive and the port held — this
+              // is strictly stronger, because the process is confirmed dead either way.
+              const timer = setTimeout(() => {
+                child.kill("SIGKILL");
+              }, 1_000);
+              child.once("exit", () => {
+                clearTimeout(timer);
+                resolve();
+              });
+            }),
+        ),
+      );
     },
   };
 }
