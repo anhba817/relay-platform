@@ -17,8 +17,15 @@ export const cursorSchema = z.record(z.string(), z.number().int().positive());
 
 /** The message on the wire — derived from the SAD §6.1 `messages` columns.
  * Wire spellings follow SAD §5.1's own frame line (`channel`, `seq`).
- * metadata/edit/tombstone fields arrive with Part 2/4; attachments arrived
- * with chapter 3.24, which is why this comment no longer schedules them. */
+ *
+ * `metadata` is the one column of §6.1 this payload still does not carry.
+ *
+ * THIS COMMENT SCHEDULED ATTACHMENTS FOR PART 4 AND FR-MSG-11 IS P2, which is
+ * Part 3 — a sentence that had been wrong for two parts, in the file that
+ * publishes the contract, and no checker reads prose. Editing and deletion do
+ * not appear here either, and that is a different fact rather than the same
+ * one: they arrived in chapter 3.23 as their own frames, `message.updated`
+ * and `message.deleted`, because a deletion is not a message. */
 export const messageSchema = z.strictObject({
   id: z.string().min(1),
   channel: z.string().min(1),
