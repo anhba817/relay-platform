@@ -71,8 +71,53 @@ async function waitForHealth(url: string): Promise<void> {
  * still holding a fixed port answers the health check from a DIFFERENT
  * environment, and every token this run minted is then refused by an api that has
  * never heard of it. */
+/** The port the OS actually gave a child, read from the child's own `listening` line.
+ *
+ * Feature 043 (FR-002). `main.ts` logs the address it BOUND rather than the one it was
+ * asked for, which is the only number that is true when `PORT=0`. Waiting on a health
+ * URL cannot replace this: a health check answers from whoever holds the port, so it
+ * says "up" just as cheerfully when the answer is somebody else's process.
+ *
+ * It rejects on exit rather than waiting out the timeout, so a child that dies on
+ * startup reports the reason it printed instead of thirty seconds of nothing. */
+async function boundPort(
+  child: ChildProcess,
+  label: string,
+  timeoutMs = 30_000,
+): Promise<number> {
+  let output = "";
+  return new Promise<number>((resolve, reject) => {
+    const done = (fn: () => void) => {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      fn();
+    };
+    const timer = setTimeout(
+      () =>
+        done(() =>
+          reject(
+            new Error(`${label} never reported a listening port in ${timeoutMs}ms\n${output}`),
+          ),
+        ),
+      timeoutMs,
+    );
+    const onExit = (code: number | null) =>
+      done(() => reject(new Error(`${label} exited ${code} before listening\n${output}`)));
+    const onData = (chunk: Buffer | string) => {
+      output += String(chunk);
+      const m = /"msg":"listening","port":(\d+)/.exec(output);
+      if (m) done(() => resolve(Number(m[1])));
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    child.once("exit", onExit);
+  });
+}
+
 async function startApi(): Promise<{ url: string; credential: string; stop: () => void }> {
-  const port = 5200 + Math.floor(Math.random() * 200);
+  // NO BAND (feature 043, FR-001/FR-002). This drew from a hand-allocated range, and
+  // two of the nine such ranges contained a service the lane itself runs: NATS on
+  // 4222 and Postgres on 5432. `PORT=0` asks the OS instead of guessing.
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error("the api is not built — run `pnpm build` before this lane");
@@ -91,13 +136,14 @@ async function startApi(): Promise<{ url: string; credential: string; stop: () =
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     env: {
       ...process.env,
-      PORT: String(port),
+      PORT: "0",
       RELAY_OUTBOX_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",
       RELAY_AUTH_KEY_PREFIX: `rlauth-public-${randomUUID().slice(0, 8)}`,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const port = await boundPort(child, "api");
   const url = `http://127.0.0.1:${port}`;
   await waitForHealth(`${url}/healthz`);
   return { url, credential: key.credential, stop: () => child.kill() };

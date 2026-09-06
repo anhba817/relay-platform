@@ -88,11 +88,58 @@ interface ApiUnderTest {
   stop: () => void;
 }
 
+/** The port the OS actually gave a child, read from the child's own `listening` line.
+ *
+ * Feature 043 (FR-002). `main.ts` logs the address it BOUND rather than the one it was
+ * asked for, which is the only number that is true when `PORT=0`. Waiting on a health
+ * URL cannot replace this: a health check answers from whoever holds the port, so it
+ * says "up" just as cheerfully when the answer is somebody else's process.
+ *
+ * It rejects on exit rather than waiting out the timeout, so a child that dies on
+ * startup reports the reason it printed instead of thirty seconds of nothing. */
+async function boundPort(
+  child: ChildProcess,
+  label: string,
+  timeoutMs = 30_000,
+): Promise<number> {
+  let output = "";
+  return new Promise<number>((resolve, reject) => {
+    const done = (fn: () => void) => {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      fn();
+    };
+    const timer = setTimeout(
+      () =>
+        done(() =>
+          reject(
+            new Error(`${label} never reported a listening port in ${timeoutMs}ms\n${output}`),
+          ),
+        ),
+      timeoutMs,
+    );
+    const onExit = (code: number | null) =>
+      done(() => reject(new Error(`${label} exited ${code} before listening\n${output}`)));
+    const onData = (chunk: Buffer | string) => {
+      output += String(chunk);
+      const m = /"msg":"listening","port":(\d+)/.exec(output);
+      if (m) done(() => resolve(Number(m[1])));
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    child.once("exit", onExit);
+  });
+}
+
 /** Two members of ONE channel, which no existing gateway fixture provides:
  * `seedSocketTenants` gives one user per tenant, and presence needs a watcher and
  * a subject who share a channel. */
 async function startApi(): Promise<ApiUnderTest> {
-  const port = 4700 + Math.floor(Math.random() * 200);
+  // NO PORT IS CHOSEN HERE (feature 043, FR-001/FR-002). This drew from 4700-4899,
+  // one of nine hand-allocated bands, two of which contained a service the lane runs —
+  // `membership.itest.ts` held Postgres's 5432 and `limits.itest.ts` holds NATS's 4222.
+  // This band collided with `meter.itest.ts`'s api range instead, which the table two
+  // files over recorded and nobody could act on. Asking the OS ends the bookkeeping.
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error(
@@ -175,23 +222,31 @@ async function startApi(): Promise<ApiUnderTest> {
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     env: {
       ...process.env,
-      PORT: String(port),
+      PORT: "0",
       RELAY_OUTBOX_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",
       RELAY_EVENT_CONSUMER: "off",
     },
-    stdio: "ignore",
+    // PIPED, NOT IGNORED — the port is read back out of the child, and a spawn that
+    // fails gets to say why.
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  const port = await boundPort(child, "api");
   const url = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 100; i += 1) {
+  // `/healthz`, AND A THROW. This probed `/health`, which the api has never served
+  // (`health.controller.ts:7`), so `res.ok` was false on all hundred iterations and the
+  // loop fell through and returned `url` anyway — a flat ten-second sleep that reported
+  // success. The wrong path and the missing throw each hid the other.
+  let healthy = false;
+  for (let i = 0; i < 100 && !healthy; i += 1) {
     try {
-      const res = await fetch(`${url}/health`);
-      if (res.ok) break;
+      healthy = (await fetch(`${url}/healthz`)).ok;
     } catch {
       /* not up yet */
     }
-    await new Promise((r) => setTimeout(r, 100));
+    if (!healthy) await new Promise((r) => setTimeout(r, 100));
   }
+  if (!healthy) throw new Error(`api bound ${port} and never answered /healthz`);
   return {
     url,
     credential: key.credential,

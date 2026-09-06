@@ -129,11 +129,54 @@ async function waitForHealth(url: string, why?: () => string): Promise<void> {
  * `expected 'internal_error' to be 'unauthorized'`: three different assertions,
  * one fixture. `meter.itest.ts` already picks a random high port for exactly
  * this, and this now does the same. */
+/** The port the OS actually gave a child, read from the child's own `listening` line.
+ *
+ * Feature 043 (FR-002). `main.ts` logs the address it BOUND rather than the one it was
+ * asked for, which is the only number that is true when `PORT=0`. Waiting on a health
+ * URL cannot replace this: a health check answers from whoever holds the port, so it
+ * says "up" just as cheerfully when the answer is somebody else's process.
+ *
+ * It rejects on exit rather than waiting out the timeout, so a child that dies on
+ * startup reports the reason it printed instead of thirty seconds of nothing. */
+async function boundPort(
+  child: ChildProcess,
+  label: string,
+  timeoutMs = 30_000,
+): Promise<number> {
+  let output = "";
+  return new Promise<number>((resolve, reject) => {
+    const done = (fn: () => void) => {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      fn();
+    };
+    const timer = setTimeout(
+      () =>
+        done(() =>
+          reject(
+            new Error(`${label} never reported a listening port in ${timeoutMs}ms\n${output}`),
+          ),
+        ),
+      timeoutMs,
+    );
+    const onExit = (code: number | null) =>
+      done(() => reject(new Error(`${label} exited ${code} before listening\n${output}`)));
+    const onData = (chunk: Buffer | string) => {
+      output += String(chunk);
+      const m = /"msg":"listening","port":(\d+)/.exec(output);
+      if (m) done(() => resolve(Number(m[1])));
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    child.once("exit", onExit);
+  });
+}
+
 async function startApi(
-  port = Number(
-    process.env.RELAY_SESSION_ITEST_API_PORT ??
-      4400 + Math.floor(Math.random() * 200),
-  ),
+  // NO BAND (feature 043, FR-001/FR-002). The override stays — pinning a port is how
+  // somebody attaches a debugger, which is a person choosing rather than a file
+  // guessing. Everything else asks the OS.
+  pinned = process.env.RELAY_SESSION_ITEST_API_PORT ?? "0",
 ): Promise<ApiUnderTest> {
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
@@ -185,7 +228,7 @@ async function startApi(
     // Chapter 3.3: no outbox relay in this child. This suite is about the
     // socket's credentials; a background loop draining a table that chapter
     // 3.3's suite is asserting on turns two unrelated test files into a race.
-    env: { ...process.env, PORT: String(port), RELAY_OUTBOX_RELAY: "off",
+    env: { ...process.env, PORT: pinned, RELAY_OUTBOX_RELAY: "off",
       // Chapter 3.8: nor the notification relay, for the same reason.
       RELAY_NOTIFICATION_RELAY: "off",
       // Chapter 3.11: its own failed-authentication keyspace. Chapter 3.8's auth
@@ -219,6 +262,7 @@ async function startApi(
   child.on("exit", (code, signal) => {
     keep(`\n[child exited code=${String(code)} signal=${String(signal)}]\n`);
   });
+  const port = await boundPort(child, "api");
   const url = `http://127.0.0.1:${port}`;
   await waitForHealth(`${url}/healthz`, () => output.join(""));
 

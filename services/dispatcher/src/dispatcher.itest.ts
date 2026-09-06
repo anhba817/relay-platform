@@ -99,11 +99,54 @@ async function waitForHealth(url: string): Promise<void> {
 /** The api, as a child process. Extracted so invariant 11 can kill it and start
  * a new one — the point of that test is that neither process holds the retry
  * schedule, and a suite that could not restart the api could not show it. */
-function spawnApi(port: number, credential: string): ChildProcess {
+/** The port the OS actually gave a child, read from the child's own `listening` line.
+ *
+ * Feature 043 (FR-002). `main.ts` logs the address it BOUND rather than the one it was
+ * asked for, which is the only number that is true when `PORT=0`. Waiting on a health
+ * URL cannot replace this: a health check answers from whoever holds the port, so it
+ * says "up" just as cheerfully when the answer is somebody else's process.
+ *
+ * It rejects on exit rather than waiting out the timeout, so a child that dies on
+ * startup reports the reason it printed instead of thirty seconds of nothing. */
+async function boundPort(
+  child: ChildProcess,
+  label: string,
+  timeoutMs = 30_000,
+): Promise<number> {
+  let output = "";
+  return new Promise<number>((resolve, reject) => {
+    const done = (fn: () => void) => {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      fn();
+    };
+    const timer = setTimeout(
+      () =>
+        done(() =>
+          reject(
+            new Error(`${label} never reported a listening port in ${timeoutMs}ms\n${output}`),
+          ),
+        ),
+      timeoutMs,
+    );
+    const onExit = (code: number | null) =>
+      done(() => reject(new Error(`${label} exited ${code} before listening\n${output}`)));
+    const onData = (chunk: Buffer | string) => {
+      output += String(chunk);
+      const m = /"msg":"listening","port":(\d+)/.exec(output);
+      if (m) done(() => resolve(Number(m[1])));
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    child.once("exit", onExit);
+  });
+}
+
+function spawnApi(pinned: string, credential: string): ChildProcess {
   return spawn("node", [join(API_DIST, "main.js")], {
     env: {
       ...process.env,
-      PORT: String(port),
+      PORT: pinned,
       RELAY_INTERNAL_CREDENTIAL: credential,
       // Chapter 3.3's finding 4, for the third time: this suite drives the relay
       // explicitly, so a background copy draining the same table would race it.
@@ -371,11 +414,11 @@ describe("the dispatcher", () => {
     // bite is a back-to-back run whose previous child still holds the port, and
     // then the health check answers from an api serving a different environment.
     // See the port map at the top of `services/gateway/src/limits.itest.ts`.
-    apiPort = Number(
-      process.env["RELAY_DISPATCHER_ITEST_API_PORT"] ??
-        4310 + Math.floor(Math.random() * 60),
-    );
-    child = spawnApi(apiPort, CREDENTIAL);
+    // NO BAND (feature 043, FR-001/FR-002). This drew 4310-4369 out of nine
+    // hand-allocated ranges, two of which contained a service the lane runs. The
+    // override stays for deliberate pinning; otherwise the OS assigns.
+    child = spawnApi(process.env["RELAY_DISPATCHER_ITEST_API_PORT"] ?? "0", CREDENTIAL);
+    apiPort = await boundPort(child, "api");
     apiUrl = `http://127.0.0.1:${apiPort}`;
     await waitForHealth(`${apiUrl}/healthz`);
     // A per-run position, and only messages published after it exists. Sharing
@@ -623,7 +666,12 @@ describe("the dispatcher", () => {
     await dispatcher.stop();
     child.kill("SIGKILL");
     await new Promise((resolve) => setTimeout(resolve, 250));
-    child = spawnApi(apiPort, CREDENTIAL);
+    // THE SAME PORT, DELIBERATELY. The rest of this file lets the OS assign, but
+    // this restart has to land back on `apiUrl` — the assertion is that the schedule
+    // survived in the DATABASE, and reaching it through a different port would test
+    // the same thing while reading as though the address mattered. The predecessor was
+    // SIGKILLed 250 ms ago and the port is free.
+    child = spawnApi(String(apiPort), CREDENTIAL);
     await waitForHealth(`${apiUrl}/healthz`);
 
     // The schedule is exactly where it was, in a database neither process was

@@ -13,31 +13,36 @@ import { docsUrl } from "@relay/protocol";
 import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-// THE LANE'S PORT MAP, and it is a map because two files drawing from one range
-// is the same fault as two files sharing a fixed port (chapter 3.13, T077):
+// THE LANE'S PORT MAP IS RETIRED, AND THIS IS WHAT REPLACED IT (feature 043,
+// FR-001/FR-002/FR-026). Every lane in this repository now spawns its children with
+// `PORT=0` and reads the assignment out of the child's own `listening` line. There is
+// no map to keep, because nothing chooses a number.
 //
-//   4100-4300  gateway/limits.itest.ts          api
-//   4310-4370  dispatcher/dispatcher.itest.ts   api
-//   4400-4600  gateway/session.itest.ts         api
-//   4610-4670  gateway/meter.itest.ts           gateway
-//   4700-4900  gateway/presence.itest.ts        api  ** CONTAINS the line below **
-//   4710-4770  gateway/meter.itest.ts           api
-//   4900-5100  gateway/isolation.itest.ts       api (TWO children, see below)
-//   5200-5400  gateway/public-surface.itest.ts  api
-//   5400-5600  gateway/membership.itest.ts      api
+// The map that used to be here allocated nine hand-picked bands across eight files.
+// It was maintained by hand, it was correct about the thing it could see, and it was
+// wrong about the thing it could not:
 //
-//   THE e2e LANE WAS NOT ON THIS MAP AT ALL (feature 043, FR-026), and it held three
-//   FIXED ports — 4100, 4101, 4102 — inside the 4100-4300 registered above to this
-//   file. `grep -c e2e` on this file returned zero. The map's own first sentence
-//   condemns that: two files drawing from one range is the same fault as two files
-//   sharing a fixed port.
+//   4100-4300  this file            **CONTAINED 4222 — NATS**
+//   5400-5600  membership.itest.ts  **CONTAINED 5432 — Postgres**
+//   4700-4900  presence.itest.ts    contained meter's own api band, 4710-4770
 //
-//   It could not fire through `pnpm test:integration`, which runs turbo with
-//   `--concurrency=1`, so the two packages never execute together — the overlap was
-//   latent, not active. A range that is safe only because of a flag in another
-//   package's script is a range somebody re-checks every time that flag moves.
+// A band table can only avoid the ports it knows about. It cannot know which services
+// a contributor runs, and on the machine where this was found 4222 and 5432 were both
+// held — the first by the lane's own NATS, the second by a Postgres that has nothing
+// to do with Relay. Two of nine bands aimed at a live listener.
 //
-//   packages/e2e/src/harness.ts  api and gateways  EPHEMERAL, assigned by the OS
+// WHAT IT COST, MEASURED. A twenty-run battery was stopped at eight: two runs died in
+// `membership.itest.ts` with all 32 of its tests failing against Postgres, reporting
+// `other side closed` and naming no port. And chapter 3.24's record carries an
+// eleventh red it calls unexplainable — THIS file, saying "api never became healthy",
+// with the child's EADDRINUSE written to a pipe nobody read. Same mechanism, one band
+// along.
+//
+// The e2e lane was never on the map at all and held three FIXED ports, 4100-4102,
+// inside the range this file had registered. `grep -c e2e` on this file returned zero.
+// It could not fire through `pnpm test:integration` — turbo runs `--concurrency=1`, so
+// the two packages never execute together — but a range that is safe only because of a
+// flag in another package's script is a range somebody re-checks every time it moves.
 //
 //   That lane now binds port 0 and reads the assignment back out of the child's own
 //   log line, so it registers no range here and cannot collide with one. **Do not
@@ -108,6 +113,49 @@ interface ApiUnderTest extends Seeded {
     connect?: number | null;
   }) => Promise<void>;
   stop: () => void;
+}
+
+/** The port the OS actually gave a child, read from the child's own `listening` line.
+ *
+ * Feature 043 (FR-002). `main.ts` logs the address it BOUND rather than the one it was
+ * asked for, which is the only number that is true when `PORT=0`. Waiting on a health
+ * URL cannot replace this: a health check answers from whoever holds the port, so it
+ * says "up" just as cheerfully when the answer is somebody else's process.
+ *
+ * It rejects on exit rather than waiting out the timeout, so a child that dies on
+ * startup reports the reason it printed instead of thirty seconds of nothing. */
+async function boundPort(
+  child: ChildProcess,
+  label: string,
+  timeoutMs = 30_000,
+): Promise<number> {
+  let output = "";
+  return new Promise<number>((resolve, reject) => {
+    const done = (fn: () => void) => {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      fn();
+    };
+    const timer = setTimeout(
+      () =>
+        done(() =>
+          reject(
+            new Error(`${label} never reported a listening port in ${timeoutMs}ms\n${output}`),
+          ),
+        ),
+      timeoutMs,
+    );
+    const onExit = (code: number | null) =>
+      done(() => reject(new Error(`${label} exited ${code} before listening\n${output}`)));
+    const onData = (chunk: Buffer | string) => {
+      output += String(chunk);
+      const m = /"msg":"listening","port":(\d+)/.exec(output);
+      if (m) done(() => resolve(Number(m[1])));
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    child.once("exit", onExit);
+  });
 }
 
 async function waitForHealth(url: string): Promise<void> {
@@ -191,16 +239,14 @@ async function startApi(): Promise<ApiUnderTest> {
   // service that has never heard of it. Three unrelated-looking assertions, one
   // fixture, and green until the day it is not.
   //
-  // 4100-4300 here. The whole map is at the top of this file, because a range
-  // that only says what it avoids goes stale the next time a file is added.
-  const port = Number(
-    process.env.RELAY_LIMITS_ITEST_API_PORT ??
-      4100 + Math.floor(Math.random() * 200),
-  );
+  // NO BAND. `PORT=0` unless someone pins one deliberately — the override stays
+  // because pinning a port is how you attach a debugger to this child, and that is a
+  // person making a choice rather than a file guessing at a free number.
+  const pinned = process.env.RELAY_LIMITS_ITEST_API_PORT;
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     env: {
       ...process.env,
-      PORT: String(port),
+      PORT: pinned ?? "0",
       RELAY_OUTBOX_RELAY: "off",
       // Chapter 3.8: nor the notification relay, for the same reason.
       RELAY_NOTIFICATION_RELAY: "off",
@@ -208,6 +254,7 @@ async function startApi(): Promise<ApiUnderTest> {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const port = await boundPort(child, "api");
   const url = `http://127.0.0.1:${port}`;
   await waitForHealth(`${url}/healthz`);
 

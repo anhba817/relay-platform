@@ -79,9 +79,54 @@ async function waitForHealth(url: string): Promise<void> {
  * children, and two draws from one range can collide with each other — a 1-in-200
  * failure that would read as a broken gateway rather than a broken fixture, which
  * is the exact trap the fixed port was. */
-let children = 0;
+/** The port the OS actually gave a child, read from the child's own `listening` line.
+ *
+ * Feature 043 (FR-002). `main.ts` logs the address it BOUND rather than the one it was
+ * asked for, which is the only number that is true when `PORT=0`. Waiting on a health
+ * URL cannot replace this: a health check answers from whoever holds the port, so it
+ * says "up" just as cheerfully when the answer is somebody else's process.
+ *
+ * It rejects on exit rather than waiting out the timeout, so a child that dies on
+ * startup reports the reason it printed instead of thirty seconds of nothing. */
+async function boundPort(
+  child: ChildProcess,
+  label: string,
+  timeoutMs = 30_000,
+): Promise<number> {
+  let output = "";
+  return new Promise<number>((resolve, reject) => {
+    const done = (fn: () => void) => {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      fn();
+    };
+    const timer = setTimeout(
+      () =>
+        done(() =>
+          reject(
+            new Error(`${label} never reported a listening port in ${timeoutMs}ms\n${output}`),
+          ),
+        ),
+      timeoutMs,
+    );
+    const onExit = (code: number | null) =>
+      done(() => reject(new Error(`${label} exited ${code} before listening\n${output}`)));
+    const onData = (chunk: Buffer | string) => {
+      output += String(chunk);
+      const m = /"msg":"listening","port":(\d+)/.exec(output);
+      if (m) done(() => resolve(Number(m[1])));
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    child.once("exit", onExit);
+  });
+}
+
 async function startApi(): Promise<{ url: string; stop: () => void }> {
-  const port = 4900 + ((Math.floor(Math.random() * 100) * 2 + children++) % 200);
+  // NO BAND, AND NO COUNTER (feature 043, FR-001/FR-002). The `+ children`
+  // alternation existed so this file's TWO api children could not draw the same
+  // port from one 200-wide range. `PORT=0` makes that impossible rather than
+  // unlikely — the OS does not hand the same port to two listeners.
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error(
@@ -92,7 +137,7 @@ async function startApi(): Promise<{ url: string; stop: () => void }> {
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     env: {
       ...process.env,
-      PORT: String(port),
+      PORT: "0",
       // Neither relay: this suite asserts on rows and on frames, and a
       // background loop draining the tables another file is asserting on turns
       // two unrelated suites into a race (chapters 3.3 and 3.8).
@@ -106,6 +151,7 @@ async function startApi(): Promise<{ url: string; stop: () => void }> {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const port = await boundPort(child, "api");
   const url = `http://127.0.0.1:${port}`;
   await waitForHealth(`${url}/healthz`);
   return { url, stop: () => child.kill() };
