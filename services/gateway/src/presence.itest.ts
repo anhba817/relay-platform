@@ -149,7 +149,7 @@ async function startApi(): Promise<ApiUnderTest> {
   }
   const client = require_(join(dist, "db", "client.js")) as {
     createDb: (pool: unknown) => unknown;
-    createPool: () => { query: (sql: string) => Promise<unknown> };
+    createPool: () => { query: (sql: string, params?: unknown[]) => Promise<unknown> };
   };
   const seeder = require_(join(dist, "db", "repository.js")) as Seeder;
   const pool = client.createPool();
@@ -251,8 +251,22 @@ async function startApi(): Promise<ApiUnderTest> {
     url,
     credential: key.credential,
     subjects,
+    /** THIS ENVIRONMENT'S ROWS, NOT THE TABLE'S.
+     *
+     * This counted `select count(*) from outbox` — every row written by anything. The
+     * assertion it serves is "a presence transition writes no outbox row", and vitest
+     * runs this package's files in PARALLEL, so `membership.itest.ts` sending a message
+     * next door moved the number and the test reported `expected 614255 to be 614250`.
+     * Nothing in that failure suggests a neighbour.
+     *
+     * The outbox has no `environment_id` column — it keys on `subject`, and the subject
+     * carries the environment (`events.msg.created.<environment_id>`), so that is what
+     * scopes it. Measured: 2 failures in 8 consecutive runs before this. */
     outboxCount: async () => {
-      const result = (await pool.query("select count(*)::int as n from outbox")) as {
+      const result = (await pool.query(
+        "select count(*)::int as n from outbox where subject like '%' || $1 || '%'",
+        [environment.id],
+      )) as {
         rows: { n: number }[];
       };
       return result.rows[0]?.n ?? 0;
