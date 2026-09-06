@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { frameSchema, messageDeletedSchema, messageSchema, parseFrame } from "./frames.js";
+import {
+  frameSchema,
+  MESSAGE_TEXT_MAX,
+  messageDeletedSchema,
+  messageSchema,
+  parseFrame,
+} from "./frames.js";
 
 // The contract must bite: for every frame, one specimen that parses and a
 // table of malformed near-misses that MUST reject. A schema that accepts
@@ -278,5 +284,52 @@ describe("the frame union's membership (chapter 3.21)", () => {
     expect(
       parseFrame({ type: "typing.send", payload: { channel: "c1" } }).success,
     ).toBe(true);
+  });
+});
+
+describe("the message-length maximum (feature 043, FR-008)", () => {
+  const send = (text: string) =>
+    parseFrame({
+      type: "message.send",
+      payload: { idem_key: "k1", channel: "c1", text },
+    });
+
+  it("refuses a socket send one character over the maximum", () => {
+    // The door this feature closed. It was `z.string()` — no bound at all — so an
+    // over-long text parsed here and was refused one hop later by the api's
+    // `internalSendRequestSchema`, under a code that named the internal contract rather
+    // than the field the customer wrote.
+    expect(send("a".repeat(MESSAGE_TEXT_MAX)).success).toBe(true);
+    expect(send("a".repeat(MESSAGE_TEXT_MAX + 1)).success).toBe(false);
+  });
+
+  it("names `payload.text` when it refuses, which is what the gateway sends as `field`", () => {
+    // `session.ts` answers a failed frame parse with `invalid_frame` and
+    // `issues[0].path.join(".")`. This asserts the path that produces, because the
+    // field a customer sees is this array and not a string written anywhere.
+    const result = send("a".repeat(MESSAGE_TEXT_MAX + 1));
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.path.join(".")).toBe("payload.text");
+  });
+
+  it("does NOT bound the outbound message, and that is deliberate", () => {
+    // `messageSchema` is what the server EMITS, read off rows the platform already
+    // stored. Chapter 3.24's `outboxEventSchema` defect is the argument: a reader of
+    // anything durable cannot impose a rule its writer did not have. Every stored row
+    // came through a bounded door, so the bound buys nothing here and would turn a
+    // hypothetical long row into an undeliverable one.
+    //
+    // This test exists because the task for FR-008 named THIS schema by line number.
+    const long = {
+      id: "m1",
+      channel: "c1",
+      seq: 1,
+      user: "u1",
+      text: "a".repeat(MESSAGE_TEXT_MAX + 1),
+      attachments: [],
+      created_at: "2026-09-06T00:00:00.000Z",
+    };
+    expect(messageSchema.safeParse(long).success).toBe(true);
   });
 });

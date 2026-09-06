@@ -441,6 +441,38 @@ describe("one counter, two services (chapter 3.8)", () => {
     expect(await count("send")).toBe(before + 1);
   });
 
+  it("spends NO budget and makes NO internal request for over-long text (FR-008, SC-004)", async () => {
+    // THE ASSERTION T026 ASKED FOR, IN THE FILE THAT CAN MAKE IT. The requirement is that
+    // the gateway refuses over-long text *without an internal request being made*, and a
+    // test that checks only the refusal passes whether or not the hop was saved.
+    //
+    // `session.itest.ts` holds the refusal and its field, and it has no way to see the
+    // hop: the api does not log per-request, and both "forwarded and refused" and "never
+    // forwarded" end with no message row. THE BUDGET IS THE DISCRIMINATOR. `session.ts`
+    // spends the send budget at `:1500` — AFTER the frame parse at `:1452` and BEFORE
+    // `api.sendMessage`. So an unchanged counter means the parse refused first, which is
+    // the same thing as saying no request was made.
+    const socket = await connect(await mintToken());
+    const before = await count("send");
+
+    await frameSend(socket, "a".repeat(8001));
+    const refusal = (await firstFrame(socket, "error")) as {
+      payload: { code: string; field?: string };
+    };
+    expect(refusal.payload.code).toBe("invalid_frame");
+    expect(refusal.payload.field).toBe("payload.text");
+
+    // Unchanged: no budget spent, so the frame never reached the limiter, so it never
+    // reached the api.
+    expect(await count("send")).toBe(before);
+
+    // AND THE CONTROL, because "the counter did not move" is also what a socket that
+    // silently dropped every frame would produce. One well-formed send moves it by one.
+    await frameSend(socket, "within the bound");
+    await firstFrame(socket, "message.ack");
+    expect(await count("send")).toBe(before + 1);
+  });
+
   it("spends ONE budget across both transports (FR-RTL-01, research R11)", async () => {
     // Five over REST and five over the socket. If the two services were
     // counting separately this would read 5 and 5.

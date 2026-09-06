@@ -49,9 +49,46 @@ const userMetadataSchema = z
  * `null` CLEARS, and it is distinct from absent. `{"display_name": null}` removes the
  * name; `{}` leaves it. Both columns are nullable, so the API can express the difference
  * and a PATCH that could only set would leave a customer unable to undo one. */
+/** FR-011, FR-012. The schemes an avatar URL may use — a list, because the list is the
+ * requirement, and `packages/protocol/src/attachments.ts:49` is the precedent.
+ *
+ * `z.url()` IS NOT THIS CHECK. Re-measured against zod 4.4.3 on 2026-09-06, the same
+ * table research R7 ran: `z.string().url()` ACCEPTS `javascript:alert(1)`,
+ * `data:text/html,<b>`, `file:///etc/passwd`, `vbscript:` and `ftp:`. It refuses
+ * `not-a-url` and almost nothing else. So the field this API publishes as a URL would
+ * store a scheme the customer's own client executes when it renders the avatar — an
+ * `<img src>` or an `<a href>` built from a value we accepted.
+ *
+ * `attachments.ts` already said this in chapter 3.24 — *"A URL validator that accepts
+ * `javascript:alert(1)` is not a scheme rule"* — and the avatar field, which is older,
+ * never got the same treatment. One schema fragment, consumed twice below, because
+ * `upsertUserEntrySchema`'s own comment already promises the two routes "cannot drift
+ * into accepting different things for the same column". */
+export const AVATAR_URL_SCHEMES = ["http:", "https:"] as const;
+
+const avatarUrl = z
+  .string()
+  .url()
+  .max(2048)
+  .refine(
+    (value) => {
+      // `new URL`, not a prefix match. A prefix match passes `https:/example.test` and
+      // `httpsx://…` depending on how it is written, and the parser already knows what a
+      // scheme is. Same argument, same code, as `attachments.ts`.
+      let parsed: URL;
+      try {
+        parsed = new URL(value);
+      } catch {
+        return false;
+      }
+      return (AVATAR_URL_SCHEMES as readonly string[]).includes(parsed.protocol);
+    },
+    { message: "avatar_url must use the http or https scheme" },
+  );
+
 export const userProfileBodySchema = z.strictObject({
   display_name: z.string().min(1).max(255).nullable().optional(),
-  avatar_url: z.string().url().max(2048).nullable().optional(),
+  avatar_url: avatarUrl.nullable().optional(),
   metadata: userMetadataSchema.optional(),
   /** A bot's description, editable here (chapter 3.17, FR-004).
    *
@@ -89,7 +126,7 @@ export const upsertUserEntrySchema = z
   .strictObject({
     external_id: z.string().min(1).max(255),
     display_name: z.string().min(1).max(255).nullable().optional(),
-    avatar_url: z.string().url().max(2048).nullable().optional(),
+    avatar_url: avatarUrl.nullable().optional(),
     metadata: userMetadataSchema.optional(),
     /** What kind of thing this user is (chapter 3.17, FR-USR-07).
      *

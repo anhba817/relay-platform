@@ -1,6 +1,7 @@
 import {
   attachmentSchema,
   MAX_ATTACHMENTS,
+  MESSAGE_TEXT_MAX,
   refineTextAndAttachments,
 } from "@relay/protocol";
 import { z } from "zod";
@@ -15,7 +16,7 @@ export const sendMessageBodySchema = z
      * refinement below rather than disappearing. An attachments-only message is a
      * photograph with no caption, and it stores `text = ""` rather than a null so
      * chapter 3.23's tombstone predicate — `text === null` — is untouched. */
-    text: z.string().max(8000),
+    text: z.string().max(MESSAGE_TEXT_MAX),
     metadata: z.record(z.string(), z.unknown()).optional(),
     // Chapter 2.3 (FR-MSG-04): the client's idempotency key — minted at send
     // time (FR-SDK-06), optional because server-originated messages may not
@@ -53,10 +54,18 @@ export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
 
 /** The edit body (chapter 3.23, FR-001).
  *
- * THE SAME BOUNDS AS THE SEND BODY'S `text`, and the same reason: FR-MSG-01 fixes them
- * for a message and an edited message is still a message. Written as a reference to that
- * shape rather than as a second `z.string().min(1).max(8000)`, so the two cannot drift
- * when FR-EMJ-02's code-point counting replaces the character bound.
+ * THE SAME MAXIMUM AS THE SEND BODY'S `text` AND A DIFFERENT FLOOR, which is the whole
+ * history of this field in one line. FR-MSG-01 fixes the maximum for a message and an
+ * edited message is still a message, so both import `MESSAGE_TEXT_MAX` and neither
+ * spells it.
+ *
+ * THE FLOORS DIVERGED IN CHAPTER 3.24 AND MUST STAY DIVERGED. This paragraph used to say
+ * the field was "written as a reference to that shape" — it was
+ * `sendMessageBodySchema.shape.text` — and that is what broke: FR-019 removed the send's
+ * `.min(1)` so an attachments-only message could carry empty text, and the edit's floor
+ * went with it silently, because the types are identical either way. An edit has no
+ * attachments field to justify empty text. 3.24 separated them into two literals; this
+ * feature shares the number they agree on and leaves the rule they do not.
  *
  * ONE FIELD, AND THE ABSENCES ARE DECISIONS:
  *
@@ -84,7 +93,17 @@ export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
  * chapter has already recorded twice; two schemas that must DIFFER cannot share a
  * reference at all. */
 export const editMessageBodySchema = z.strictObject({
-  text: z.string().min(1).max(8000),
+  /** THE MAXIMUM IS SHARED; THE FLOOR IS NOT, AND THAT IS THE WHOLE POINT (FR-008).
+   *
+   * Chapter 3.24 found this field defined as `sendMessageBodySchema.shape.text`, so
+   * relaxing the send's `.min(1)` for attachments-only messages silently relaxed the
+   * edit's too — and an edit has no attachments field to restore its floor. The compiler
+   * could not see it: the types are identical either way.
+   *
+   * Importing a NUMBER cannot bring that back. `MESSAGE_TEXT_MAX` is FR-MSG-01's bound,
+   * common to all four doors; `.min(1)` is this schema's own rule and stays written here
+   * where it can be read. */
+  text: z.string().min(1).max(MESSAGE_TEXT_MAX),
 });
 
 export type EditMessageBody = z.infer<typeof editMessageBodySchema>;

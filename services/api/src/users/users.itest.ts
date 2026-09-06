@@ -485,6 +485,60 @@ describe("a user's channel listing", () => {
       body: JSON.stringify(body),
     });
 
+  // ── Feature 043: the avatar's scheme (FR-011, FR-012, SC-005) ───────────────
+  it("refuses an avatar_url whose scheme the browser would execute, naming the field", async () => {
+    // MEASURED, NOT ASSUMED. zod 4.4.3's `z.string().url()` accepts every one of these —
+    // re-run on 2026-09-06, the same table research R7 produced. The field is published
+    // as a URL and a customer's client renders it into an `<img src>` or an `<a href>`,
+    // so `javascript:` here is a value we handed them to execute.
+    await repo.createUser("schemer", "Schemer");
+    for (const bad of [
+      "javascript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "file:///etc/passwd",
+      "vbscript:msgbox(1)",
+    ]) {
+      const res = await patchProfile("schemer", { avatar_url: bad });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code: string; field?: string };
+      // THE FIELD, NOT ONLY THE STATUS. A 400 that does not name `avatar_url` sends a
+      // customer to check their whole body, and this route takes four fields.
+      expect(body.field).toBe("avatar_url");
+    }
+  });
+
+  it("accepts http and https, so the rule is a scheme rule and not a ban on URLs", async () => {
+    // THE CONTROL, and it is the half that catches an over-tight refinement. A rule that
+    // refused everything would pass the test above and break every customer.
+    await repo.createUser("schemer-ok", "Fine");
+    for (const good of [
+      "https://cdn.example.com/a/b.png",
+      "http://cdn.example.com/a/b.png",
+    ]) {
+      const res = await patchProfile("schemer-ok", { avatar_url: good });
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it("applies the same rule on the bulk upsert, not just the PATCH", async () => {
+    // TWO ROUTES, ONE FRAGMENT. `upsertUserEntrySchema`'s own comment promises the two
+    // "cannot drift into accepting different things for the same column" — and before
+    // this feature both accepted `javascript:`, which is agreement of the wrong kind.
+    const res = await fetch(`${url}/v1/users`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${credential}`,
+      },
+      body: JSON.stringify({
+        users: [{ external_id: "bulk-schemer", avatar_url: "javascript:alert(1)" }],
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { field?: string };
+    expect(body.field).toContain("avatar_url");
+  });
+
   // ── T131: the round trip, all three fields (SC-011) ─────────────────────────
   it("round-trips display name, avatar url and metadata", async () => {
     await repo.createUser("profiled", "Before");

@@ -6,7 +6,7 @@ import {
   refineTextAndAttachments,
 } from "./attachments.js";
 
-import { messageSchema } from "./frames.js";
+import { MESSAGE_TEXT_MAX, messageSchema } from "./frames.js";
 
 // The INTERNAL service contract (chapter 2.5) — distinct from the wire
 // contract above it. `frames.ts` is what a customer's client speaks;
@@ -29,7 +29,7 @@ export const internalSendRequestSchema = z
      * would meet FR-019 on the REST door alone: a REST client could send a
      * photograph with no caption and a socket client could not, with no
      * requirement anywhere saying so. The 8,000 stays — FR-MSG-01 is untouched. */
-    text: z.string().max(8000), // FR-MSG-01
+    text: z.string().max(MESSAGE_TEXT_MAX), // FR-MSG-01, imported not spelled
     idempotency_key: z.string().min(1).max(255).optional(), // FR-MSG-04
     attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional(),
   })

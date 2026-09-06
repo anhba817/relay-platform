@@ -15,6 +15,24 @@ import {
 /** Per-channel resume cursor: { channel_id: highest seq seen } (ADR-03). */
 export const cursorSchema = z.record(z.string(), z.number().int().positive());
 
+/** FR-MSG-01's message-length maximum, in one place because it is one rule (FR-008).
+ *
+ * THREE DOORS ENFORCE IT AND ONE OF THEM DID NOT. The REST body and the internal hop each
+ * spelled `8000` as a literal, and `messageSendSchema` below — the socket door a customer's
+ * client writes to — carried `z.string()` with no bound at all. A rule the contract
+ * publishes and one door does not enforce is the review's finding, and three literals is
+ * how it happened.
+ *
+ * NOT IN `attachments.ts`, whose six exports are all about attachments. A message-text
+ * bound on that shelf is the drift this constant exists to remove.
+ *
+ * A CONSTANT IS SAFE TO SHARE WHERE A SCHEMA WAS NOT. Chapter 3.24 found
+ * `editMessageBodySchema.text` defined as `sendMessageBodySchema.shape.text`, so relaxing
+ * the send's `.min(1)` silently relaxed the edit's — and an edit has no attachments to
+ * justify empty text. The maximum is common to all four sites; the FLOOR is what must
+ * differ. A number cannot drag a floor along with it. */
+export const MESSAGE_TEXT_MAX = 8000;
+
 /** The message on the wire — derived from the SAD §6.1 `messages` columns.
  * Wire spellings follow SAD §5.1's own frame line (`channel`, `seq`).
  *
@@ -69,7 +87,19 @@ export const messageSendSchema = z.strictObject({
     .strictObject({
       idem_key: z.string().min(1).max(255),
       channel: z.string().min(1),
-      text: z.string(),
+      /** BOUNDED HERE FOR THE FIRST TIME (feature 043, FR-008/FR-009).
+       *
+       * This was `z.string()`. The REST and internal doors have refused over-long text
+       * since chapter 2.2, and a socket client could send any length at all — the api's
+       * `internalSendRequestSchema` caught it one hop later, so the refusal named the
+       * internal contract rather than the field the customer wrote.
+       *
+       * The refusal now happens at the gateway, before the internal request is made:
+       * `session.ts:1452` fails the frame parse and answers `invalid_frame` with
+       * `payload.text` as the field. That is the same shape the attachments bound already
+       * takes, and `refineTextAndAttachments` below records why one payload must not be
+       * refused at two layers under two codes. */
+      text: z.string().max(MESSAGE_TEXT_MAX),
       /** OPTIONAL here and required on the outbound `messageSchema`, which is not an
        * inconsistency: a caller may send none, and a payload the platform BUILDS must
        * always say. The bound is imported rather than spelled — two schemas that happen

@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 
 import { createLogger, serve, type Logger } from "@relay/service-kit";
-import { docsUrl, frameSchema } from "@relay/protocol";
+import { docsUrl, frameSchema, MESSAGE_TEXT_MAX } from "@relay/protocol";
 import { WebSocket } from "ws";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -445,6 +445,52 @@ describe("the socket's credentials (chapter 3.2)", () => {
     // T041a: the frame contract has published `field` since chapter 1.3 and the gateway
     // had never set it. The joined path is what a developer reading their own frame sees.
     expect(refusal.payload.field).toBe("payload.attachments");
+  }, 20_000);
+
+  it("refuses over-long text at the GATEWAY, naming payload.text (FR-008, FR-009)", async () => {
+    // THE DOOR THAT HAD NO BOUND. `messageSendSchema.payload.text` was `z.string()`, so
+    // an over-long socket send parsed here and was refused one hop later by the api's
+    // `internalSendRequestSchema` — under `invalid_request`, which names the internal
+    // contract rather than the field the customer wrote. The REST and internal doors have
+    // enforced FR-MSG-01 since chapter 2.2; this one never did.
+    //
+    // THE CODE IS `invalid_frame`, AND THAT IS THE PRECEDENT RATHER THAN A PREFERENCE.
+    // `frames.ts` records the same decision for the attachments bound: one payload must
+    // not be refused at two layers under two codes, "for no reason a caller could
+    // discover".
+    const socket = connect(await mintToken("tuan", 3600));
+    await firstFrame(socket, "connection.ack");
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelId,
+          text: "a".repeat(MESSAGE_TEXT_MAX + 1),
+        },
+      }),
+    );
+    const refusal = (await firstFrame(socket, "error")) as {
+      payload: { code: string; field?: string };
+    };
+    expect(refusal.payload.code).toBe("invalid_frame");
+    expect(refusal.payload.field).toBe("payload.text");
+
+    // AND THE SOCKET SURVIVES IT. A malformed frame is one bad message, not a bad client
+    // — `unknown_frame_type` closes 4002 and this must not. The proof is that the same
+    // socket still works: a well-formed send is acked on the connection that was just
+    // refused.
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelId,
+          text: "a".repeat(MESSAGE_TEXT_MAX),
+        },
+      }),
+    );
+    expect(await firstFrame(socket, "message.ack")).toBeDefined();
   }, 20_000);
 
   it("refuses a media_id and SAYS hosted media is unavailable (FR-003a (3.24))", async () => {
