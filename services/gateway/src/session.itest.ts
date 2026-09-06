@@ -43,6 +43,13 @@ interface ApiUnderTest {
   environmentId: string;
   credential: string;
   channelId: string;
+  /** Feature 044. A seeding handle, so a test can add a SECOND channel.
+   *
+   * Boundedness is a claim about several channels — only the revised one reports a
+   * raised count — and a fixture with one channel can state it but cannot fail it.
+   * The alternative was a second channel in `boot` that every other test ignores,
+   * which changes what those tests are connecting to for no reason of their own. */
+  repo: InstanceType<Seeder["Repository"]>;
   stop: () => void;
 }
 
@@ -271,6 +278,7 @@ async function startApi(
     environmentId: environment.id,
     credential: key.credential,
     channelId: channel.id,
+    repo,
     stop: () => child.kill(),
   };
 }
@@ -1344,6 +1352,114 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     // BY ONE, not by the number of messages affected (FR-002). A deletion is one
     // revision the same way an edit is.
     expect(await countNow("after the deletion")).toBe(before + 2);
+  });
+
+  /** FEATURE 044, US2. THE REPAIR IS BOUNDED — three claims, one fixture.
+   *
+   * All three need a SECOND channel, which is why `boot` now returns a seeding handle.
+   * A one-channel fixture can state boundedness and cannot fail it: "only the revised
+   * channel rose" is trivially true when there is one channel, and a gateway that raised
+   * every channel's count would pass. */
+  it("raises only the revised channel, by exactly the number of revisions, and reports a channel joined during the absence (SC-002, SC-003, FR-007a)", async () => {
+    // A second channel this person belongs to, and a third they do not belong to YET.
+    const quiet = await api.repo.createChannel(`quiet-${randomUUID()}`, "public");
+    const joinedLater = await api.repo.createChannel(`later-${randomUUID()}`, "public");
+    const watcherRow = await api.repo.createUser("watcher");
+    await api.repo.addMember(quiet.id, watcherRow.id);
+
+    const revisions = async (label: string): Promise<Record<string, number>> => {
+      const socket = connect(await mintToken("watcher"));
+      const frames = record(socket);
+      const ack = (await waitFor(
+        frames,
+        (f) => f.type === "connection.ack",
+        `connection.ack (${label})`,
+      )) as { payload: { revisions: Record<string, number> } };
+      socket.close();
+      return ack.payload.revisions;
+    };
+
+    const before = await revisions("before");
+    expect(Object.keys(before)).toEqual(
+      expect.arrayContaining([api.channelId, quiet.id]),
+    );
+    // NOT a member yet, so not reported. The negative half of FR-007a: the platform
+    // reports the channels this user belongs to, not every channel in the tenant.
+    expect(Object.keys(before)).not.toContain(joinedLater.id);
+
+    // THREE revisions, all in one channel, while the client is away.
+    const editorToken = await mintToken("editor");
+    const posted = await fetch(`${api.url}/v1/channels/${api.channelId}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${editorToken}`,
+      },
+      body: JSON.stringify({ text: `bounded ${randomUUID()}` }),
+    });
+    expect(posted.status, await posted.clone().text()).toBe(201);
+    const sent = (await posted.json()) as { id: string };
+    for (const text of ["once", "twice", "three times"]) {
+      const edited = await fetch(
+        `${api.url}/v1/channels/${api.channelId}/messages/${sent.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${editorToken}`,
+          },
+          body: JSON.stringify({ text }),
+        },
+      );
+      expect(edited.status, await edited.clone().text()).toBe(200);
+    }
+
+    // …and the client joins the third channel while it is away, AFTER that channel
+    // already had a revision of its own. It holds nothing there.
+    const strangerToken = await mintToken("editor");
+    await api.repo.addMember(joinedLater.id, (await api.repo.createUser("editor")).id);
+    const inLater = await fetch(`${api.url}/v1/channels/${joinedLater.id}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${strangerToken}`,
+      },
+      body: JSON.stringify({ text: "before they arrived" }),
+    });
+    expect(inLater.status, await inLater.clone().text()).toBe(201);
+    const laterMsg = (await inLater.json()) as { id: string };
+    expect(
+      (
+        await fetch(
+          `${api.url}/v1/channels/${joinedLater.id}/messages/${laterMsg.id}`,
+          {
+            method: "PATCH",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${strangerToken}`,
+            },
+            body: JSON.stringify({ text: "revised before they arrived" }),
+          },
+        )
+      ).status,
+    ).toBe(200);
+    await api.repo.addMember(joinedLater.id, watcherRow.id);
+
+    const after = await revisions("after");
+
+    // SC-003: exactly three, not "more than zero". A difference is how much to re-read,
+    // and a signal that only says "something changed" is the connection-wide flag FR-009
+    // rejects, wearing a per-channel shape.
+    expect(after[api.channelId]! - before[api.channelId]!).toBe(3);
+    // SC-002: the other channel did not move. This is the assertion the one-channel
+    // fixture could not make.
+    expect(after[quiet.id]).toBe(before[quiet.id]);
+    // FR-007a: the newly joined channel is REPORTED, carrying the revision that happened
+    // before this client could see it. The client holds no count for it, so by the
+    // contract it repairs nothing and stores this as its baseline — and the platform
+    // signals nothing either way, because it never learns what the client holds.
+    expect(after[joinedLater.id]).toBe(1);
+    expect(before[joinedLater.id]).toBeUndefined();
   });
 
   it("stops delivering to a member who was REMOVED while connected (FR-RTM-10)", async () => {
