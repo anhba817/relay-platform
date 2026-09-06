@@ -201,6 +201,83 @@ export default defineConfig({
           statements: 97,
         },
 
+        // ── feature 044: the revision watermark ──────────────────────────────
+        //
+        // FIVE FILES THIS FEATURE CHANGED AND NOTHING PINNED. `repository.ts`,
+        // `resume.ts`, `frames.ts` and `memberships.controller.ts` were already
+        // here and all four still meet their floors, so only the unpinned ones
+        // are added — at the values measured on 2026-09-06, not at round numbers
+        // chosen to look tidy.
+        //
+        // AND `services/api/src/db/schema.ts` IS DELIBERATELY NOT PINNED. It
+        // measures 59.15 statements / 40.81 functions, which looks alarming and
+        // is not: the file is drizzle table declarations, and the "functions"
+        // are the per-table callbacks that build indexes, executed only when a
+        // query touches that table. A floor here would ratchet on which tables
+        // the suite happens to query, which is not a property anybody wants to
+        // defend. The column this feature added is covered by
+        // `repository.itest.ts` at the level that matters — whether it moves.
+        "packages/protocol/src/internal.ts": {
+          // 85.71 branches, 60 functions. The functions figure is the schema
+          // module's shape rather than a gap: most exports are zod schemas whose
+          // `.default()` and refinement callbacks only run on the inputs a test
+          // supplies, and this feature's `channel_revisions` default is one of
+          // them — exercised by the fixtures that omit it.
+          branches: 85,
+          functions: 60,
+          lines: 92,
+          statements: 91,
+        },
+        "services/gateway/src/auth.ts": {
+          // 100 across all four. The counts pass through this file untouched, so
+          // the arm that reads them is on the path every socket takes.
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/gateway/src/registry.ts": {
+          branches: 100,
+          functions: 87,
+          lines: 87,
+          statements: 88,
+        },
+        "services/gateway/src/session.ts": {
+          // The largest file this feature touched, and the ack's three call
+          // sites are all on covered paths — the fresh connect, the resume and
+          // the degrade each have a test in `resume.itest.ts`.
+          //
+          // UNUSUAL HEADROOM, AND IT WAS MEASURED RATHER THAN CHOSEN. Two full
+          // coverage runs on IDENTICAL code gave 87.80% and 85.36% functions —
+          // a 2.44-point swing, about one function of forty. The other three
+          // metrics moved by a third of a point and every other file this
+          // feature pinned was byte-identical across both runs.
+          //
+          // A floor at the measured value would have been red on the next run
+          // for no change to the code, and the fix would then be to lower it —
+          // which is a ratchet that trains people to lower ratchets. Pinned
+          // below the lower observation by roughly the observed swing, and the
+          // swing is recorded so the next feature does not rediscover it.
+          //
+          // The instability itself is a `C7` case in `gaps.md`: something in
+          // this suite is timing-dependent, and coverage reports the symptom
+          // without naming the arm.
+          branches: 90,
+          functions: 83,
+          lines: 93,
+          statements: 93,
+        },
+        "services/api/src/internal/session.controller.ts": {
+          // 62.5 branches, and the uncovered arms are the null-user paths this
+          // feature did not touch: a verified token naming somebody with no row.
+          // Pinned at what it measures so a later change cannot lower it
+          // silently, and not raised to a number the file does not reach.
+          branches: 62,
+          functions: 100,
+          lines: 83,
+          statements: 83,
+        },
+
         // The dispatcher's two decision-bearing files (chapter 3.5). `expand.ts`
         // decides whether a redelivered event produces a second set of webhooks
         // — constitution VI names idempotency explicitly — and `deliver.ts`
