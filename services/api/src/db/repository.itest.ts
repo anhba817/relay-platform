@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+// `__dirname`, not `import.meta` — this service builds to CommonJS, and `import.meta`
+// is a hard compile error there. `migrations.test.ts` carries the same line and the same
+// reason, three files away, which is where this was read from rather than rediscovered.
+const HERE = __dirname;
 import { sql } from "drizzle-orm";
 
 import { createDb, createPool, DEFAULT_DATABASE_URL, type Db } from "./client";
