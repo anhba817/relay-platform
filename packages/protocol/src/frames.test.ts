@@ -348,7 +348,7 @@ describe("the message-length maximum (feature 043, FR-008)", () => {
   });
 });
 
-describe("the revision count on the ack (feature 044, FR-004, FR-007, FR-009)", () => {
+describe("the revision count on the ack (feature 044, FR-007, FR-009)", () => {
   const ack = (revisions: unknown) =>
     parseFrame({
       type: "connection.ack",
@@ -385,7 +385,7 @@ describe("the revision count on the ack (feature 044, FR-004, FR-007, FR-009)", 
     expect(withoutIt.success).toBe(false);
   });
 
-  it("refuses a negative count and a fractional one", () => {
+  it("refuses a negative count, a fractional one, and a string", () => {
     // A count that falls would silently tell a client it is up to date (FR-002), and a
     // fraction is not a number of revisions. Neither is reachable from the writer, which
     // is why the door is here rather than trusted upstream.
@@ -404,7 +404,7 @@ describe("the revision count on the ack (feature 044, FR-004, FR-007, FR-009)", 
     expect(ack({}).success).toBe(true);
   });
 
-  it("exports the count schema on its own, so the internal hop validates the same rule", () => {
+  it("exports the count schema on its own, not only as part of the ack", () => {
     // `internalSessionResponseSchema` reuses this rather than restating it. Two schemas
     // that must agree and are spelled twice are two schemas that will stop agreeing —
     // feature 043 found that with `editMessageBodySchema.text`, from the other side: two

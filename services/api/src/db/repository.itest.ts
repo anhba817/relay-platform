@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 import { sql } from "drizzle-orm";
 
 import { createDb, createPool, DEFAULT_DATABASE_URL, type Db } from "./client";
@@ -1519,7 +1524,7 @@ describe("the channel's revision counter (feature 044, FR-002, FR-003, FR-011)",
     expect(await countFor(right.id)).toBe(0);
   });
 
-  it("carries the count on channelsForUser, for both of that query's callers (FR-014)", async () => {
+  it("carries the count on channelsForUser, the query the gateway's session read already makes", async () => {
     // The count reaches the gateway on the membership query rather than on a read of its
     // own, because at 10,000 connections a per-channel read per handshake is 10,000 reads.
     const author = await repoA.createUser("t044-e", "E");
@@ -1534,6 +1539,64 @@ describe("the channel's revision counter (feature 044, FR-002, FR-003, FR-011)",
     const row = rows.find((r) => r.channel_id === channel.id);
     expect(row).toBeDefined();
     expect(row!.revision_sequence).toBe(1);
+  });
+
+  it("does not rise for an edit refused before it is applied", async () => {
+    // WHAT THIS PROVES, AND WHAT IT DOES NOT. The edit path refuses a deleted message
+    // twice — once on the read (`MessageDeletedError`) and once on the compare-and-set
+    // that affects zero rows — and BOTH refusals happen before the counter's statement.
+    // So this asserts that the refusal path does not count, which is worth having and is
+    // NOT FR-003: the bump never executes here, so the test would pass just as well with
+    // the bump outside the transaction entirely.
+    //
+    // It was written titled `(FR-003)` and the title audit caught it. FR-003's actual
+    // failure mode — a bump that commits when the revision behind it does not — is
+    // asserted by the source test below, because nothing after the bump can be made to
+    // fail from out here without breaking the repository to do it.
+    const author = await repoA.createUser("t044-f", "F");
+    const channel = await repoA.createChannel("t044-f", "public");
+    await repoA.addMember(channel.id, author.id);
+    const m = await repoA.sendMessage(channel.id, {
+      text: "to be deleted", userId: author.id, userExternalId: "t044-f",
+    });
+
+    await repoA.deleteMessage(channel.id, m.id, { userId: author.id, userExternalId: "t044-f" });
+    const afterDeletion = await countFor(channel.id);
+    expect(afterDeletion).toBe(1);
+
+    await expect(
+      repoA.editMessage(channel.id, m.id, { text: "too late", userId: author.id }),
+    ).rejects.toThrow();
+    // Unmoved — because the edit was refused before the counter was reached.
+    expect(await countFor(channel.id)).toBe(afterDeletion);
+  });
+
+  it("raises the counter INSIDE the transaction, on both revision paths (FR-003)", () => {
+    // FR-003 says a revision that commits and a count that rises are the same event. The
+    // way that stops being true is somebody moving the bump onto `this.db`, where it
+    // commits on its own — and then a failure in the `messageEdits` or `outbox` insert
+    // that follows it leaves a count describing a revision that never happened.
+    //
+    // NO RUNTIME TEST CAN REACH THAT. Everything after the bump succeeds unless the
+    // repository is broken on purpose, so the property is read off the source instead —
+    // the same instrument `main.test.ts` uses for the producers it cannot otherwise see.
+    const source = readFileSync(join(HERE, "repository.ts"), "utf8");
+    const MARKER = "revisionSequence: sql";
+    const at: number[] = [];
+    for (let i = source.indexOf(MARKER); i !== -1; i = source.indexOf(MARKER, i + 1)) {
+      at.push(i);
+    }
+    // Two revision paths, and a third would need its own decision rather than inheriting
+    // this assertion silently.
+    expect(at).toHaveLength(2);
+    for (const i of at) {
+      // The statement this bump belongs to, read back to the `await` that opens it.
+      const statement = source.slice(source.lastIndexOf("await ", i), i);
+      expect(statement, `the bump at ${i} must run on the transaction`).toContain("tx\n");
+      expect(statement, `the bump at ${i} must not run on the pool`).not.toContain(
+        "this.db",
+      );
+    }
   });
 });
 

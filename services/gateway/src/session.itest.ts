@@ -1293,7 +1293,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
    * outright (`wrong_credential_type`), so the edit rides the author's own token; the
    * delete route takes the tenant key. A probe of this feature's premise hit the first
    * rule before it ran, and the quickstart now says so in its Prerequisites. */
-  it("a real edit and a real deletion each raise the real count, and a send raises nothing (FR-002, FR-003, FR-004, FR-011)", async () => {
+  it("a real edit and a real deletion each raise the real count, and a send raises nothing (FR-002, FR-004, FR-011)", async () => {
     const countNow = async (label: string): Promise<number> => {
       const socket = connect(await mintToken("watcher"));
       const frames = record(socket);
