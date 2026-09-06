@@ -34,7 +34,6 @@
     "@swc/core": "^1.15.47",
     "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.20.3",
-    "drizzle-kit": "^0.31.10",
     "unplugin-swc": "^1.5.9"
   }
 }
