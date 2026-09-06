@@ -81,29 +81,67 @@ export interface MembershipChangedData {
  * WIDENED FROM A LITERAL. `type` was `"message.created"` alone, which is the shape a
  * consumer narrows on: every `switch` and every `===` against it sees this change,
  * which is what a typecheck catches and an integration lane does not. */
-/** THE ARRAY IS THE SOURCE AND THE TYPE IS DERIVED, so the set has a size a test can
- * read. A bare union has no runtime form: "the union has exactly three members" is
- * unassertable, and chapter 3.19's `codes.test.ts` earned its keep precisely by
- * asserting an exact set and an exact count — which is what makes a new member a
- * decision rather than an accident. `as const` plus `(typeof …)[number]` costs one
- * line and buys that. */
-export const OUTBOX_EVENT_TYPES = [
-  "message.created",
+/** FR-WHK-02's DECLARED SET, AND WHETHER THE PLATFORM EMITS EACH ONE (feature 043,
+ * FR-016).
+ *
+ * TWO LISTS THAT MUST AGREE AND ARE MAINTAINED SEPARATELY IS THE DEFECT. `gaps.md`
+ * 3.23-4 records it about `targets.ts`, and `eslint.config.mjs`'s own comment says *MUST
+ * AGREE* with nothing comparing them. The declared eight and the emitted five were
+ * exactly that pair: FR-WHK-02 names eight, this array named five, and the only thing
+ * connecting them was somebody remembering.
+ *
+ * `emitted` IS NOT OPTIONAL, AND THAT IS THE POINT. `satisfies Record<string, { emitted:
+ * boolean }>` makes a type added without deciding a compile error. A type declared and
+ * not emitted is a subscription a customer can create and never hear from — which is
+ * survivable when it is written down and a silent trap when it is not.
+ *
+ * THE THREE FALSE ONES ARE NOT OVERSIGHTS. `channel.created`, `user.connected` and
+ * `user.disconnected` are declared by FR-WHK-02 and unbuilt, and **741 stored
+ * subscriptions name `channel.created`**. The review and `gaps.md` 3.23-1 both recommend
+ * validating subscriptions against the EMITTED set; doing that would refuse those rows,
+ * and those customers made no mistake. */
+export const WEBHOOK_EVENT_TYPES = {
+  "message.created": { emitted: true },
   // CHAPTER 3.23's TWO, spelled as FR-WHK-02 spells them because a customer's
   // subscription filters on these exact strings.
-  //
-  // BROUGHT FORWARD FROM PHASE 9, and the reason is ADR-06 rather than convenience.
-  // `repository.deleteMessage` writes its event INSIDE the transaction that writes the
-  // tombstone — publishing after the commit leaves a window where the row changed and
-  // the event never existed — so the envelope cannot arrive three phases after the
-  // transaction that has to build it. FR-009's "no second event" is also unassertable
-  // without it: two 204s prove nothing, and the outbox row is what carries the
-  // requirement. `baseline.txt` records the ordering defect.
-  "message.updated",
-  "message.deleted",
-  "channel.member_added",
-  "channel.member_removed",
-] as const;
+  "message.updated": { emitted: true },
+  "message.deleted": { emitted: true },
+  "channel.created": { emitted: false },
+  "channel.member_added": { emitted: true },
+  "channel.member_removed": { emitted: true },
+  "user.connected": { emitted: false },
+  "user.disconnected": { emitted: false },
+} as const satisfies Record<string, { emitted: boolean }>;
+
+export type WebhookEventType = keyof typeof WEBHOOK_EVENT_TYPES;
+
+/** THE EMITTED NAMES, DERIVED AT THE TYPE LEVEL AND NOT ONLY AT RUNTIME.
+ *
+ * This is the part that cannot be done the obvious way.
+ * `Object.entries(...).filter(...).map(...)` returns `string[]`, which would widen
+ * `OutboxEventType` to `string` — and `outboxEventSchema` below is a discriminated union
+ * **exhaustive over those literals**. Widening it means every branch still typechecks and
+ * the compile error that catches a MISSING branch never fires again.
+ *
+ * What that error protects is not tidiness. `consumer/runtime.ts:163` answers a failed
+ * parse with `message.term()`, which stops redelivery for good, so a type added with no
+ * branch is a customer's event DESTROYED in production — and the api's own suite cannot
+ * see it, because it runs `RELAY_EVENT_CONSUMER=off`.
+ *
+ * So the union is derived from the object's literal keys, and stays as sharp as the
+ * hand-written tuple it replaced. */
+type Declared = typeof WEBHOOK_EVENT_TYPES;
+type EmittedName = {
+  [K in keyof Declared]: Declared[K]["emitted"] extends true ? K : never;
+}[keyof Declared];
+
+/** THE ARRAY IS STILL THE RUNTIME FORM, so the set has a size a test can read. A bare
+ * union has no runtime form: "the union has exactly five members" is unassertable, and
+ * chapter 3.19's `codes.test.ts` earned its keep by asserting an exact set and an exact
+ * count — which is what makes a new member a decision rather than an accident. */
+export const OUTBOX_EVENT_TYPES = (
+  Object.keys(WEBHOOK_EVENT_TYPES) as WebhookEventType[]
+).filter((name): name is EmittedName => WEBHOOK_EVENT_TYPES[name].emitted);
 
 export type OutboxEventType = (typeof OUTBOX_EVENT_TYPES)[number];
 
@@ -302,9 +340,13 @@ const envelope = {
  * second, permissive envelope in `packages/protocol/src/internal.ts:276` whose `type`
  * is `z.string().min(1)`, which is what a grep for "outboxEventSchema" finds first.
  *
- * Adding a type to `OUTBOX_EVENT_TYPES` now forces a branch here: the union is
- * exhaustive over the same three names, and a fourth added above without one below is
- * a typecheck failure rather than a terminated message in production. */
+ * Adding an emitted type forces a branch here — and until feature 043 this comment was
+ * overstating where that came from. `z.discriminatedUnion` builds from whatever branches
+ * are listed; nothing in this file compared them with the type. **The typecheck failure
+ * came from `event.test.ts:405`**, whose `Record<(typeof OUTBOX_EVENT_TYPES)[number],
+ * unknown>` happens to be exhaustive. A real guarantee living in another file's
+ * incidental map is one an unrelated refactor can delete. The assertion below moves it
+ * here, where the claim is made. */
 export const outboxEventSchema = z.discriminatedUnion("type", [
   z.strictObject({
     ...envelope,
@@ -409,3 +451,22 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
     }),
   }),
 ]);
+
+/** COMPILE-TIME PROOF THAT EVERY EMITTED TYPE HAS A BRANCH ABOVE (feature 043).
+ *
+ * `Assert<T extends true>` fails to instantiate when the condition is false, so a type
+ * added to `WEBHOOK_EVENT_TYPES` with `emitted: true` and no branch in the union is a
+ * compile error in THIS file rather than a coincidence in a test.
+ *
+ * What it protects: `consumer/runtime.ts:163` answers a failed parse with
+ * `message.term()`, which stops redelivery permanently. A missing branch is a customer's
+ * event destroyed, and the lane cannot see it — it runs `RELAY_EVENT_CONSUMER=off`, so
+ * the api suite stayed green through 505 tests with exactly that defect in place.
+ *
+ * Exported rather than a local `const`, because an unused local trips this repository's
+ * eslint config, which sets no `varsIgnorePattern`. */
+type Assert<T extends true> = T;
+export type EveryEmittedTypeHasASchemaBranch = Assert<
+  OutboxEventType extends z.infer<typeof outboxEventSchema>["type"] ? true : false
+>;
+

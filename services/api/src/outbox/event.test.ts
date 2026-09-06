@@ -6,6 +6,7 @@ import {
   messageDeletedEvent,
   messageUpdatedEvent,
   OUTBOX_EVENT_TYPES,
+  WEBHOOK_EVENT_TYPES,
   outboxEventSchema,
   subjectFor,
 } from "./event";
@@ -172,6 +173,47 @@ describe("the outbox event type set", () => {
       "channel.member_removed",
     ]);
     expect(OUTBOX_EVENT_TYPES).toHaveLength(5);
+  });
+
+  it("declares exactly FR-WHK-02's eight, and says which three are unbuilt", () => {
+    // THE DECLARED SET, ASSERTED EXACTLY, for the reason `codes.test.ts` established:
+    // chapter 3.24's plan expected one new error code and shipped two, and an exact-count
+    // assertion is what caught it. A type appearing here without a decision behind it is
+    // a subscription a customer can create and never hear from.
+    expect(Object.keys(WEBHOOK_EVENT_TYPES)).toEqual([
+      "message.created",
+      "message.updated",
+      "message.deleted",
+      "channel.created",
+      "channel.member_added",
+      "channel.member_removed",
+      "user.connected",
+      "user.disconnected",
+    ]);
+    expect(Object.keys(WEBHOOK_EVENT_TYPES)).toHaveLength(8);
+
+    // AND WHICH ARE UNBUILT, by name. This is the half the review and `gaps.md` 3.23-1
+    // both got wrong: they recommend validating subscriptions against the EMITTED set,
+    // and 741 stored subscriptions name `channel.created` — declared here, not emitted,
+    // and not a customer's mistake.
+    const unbuilt = Object.entries(WEBHOOK_EVENT_TYPES)
+      .filter(([, v]) => !v.emitted)
+      .map(([k]) => k);
+    expect(unbuilt).toEqual(["channel.created", "user.connected", "user.disconnected"]);
+  });
+
+  it("derives the emitted five from the declared eight rather than repeating them", () => {
+    // ONE LIST, NOT TWO. `gaps.md` 3.23-4 records the two-lists-that-must-agree defect
+    // about `targets.ts`, and `eslint.config.mjs` says *MUST AGREE* with nothing
+    // comparing them. This asserts the derivation rather than the result: every emitted
+    // name is declared, and every declared-and-emitted name is in the array.
+    for (const name of OUTBOX_EVENT_TYPES) {
+      expect(WEBHOOK_EVENT_TYPES[name].emitted).toBe(true);
+    }
+    const declaredEmitted = Object.entries(WEBHOOK_EVENT_TYPES)
+      .filter(([, v]) => v.emitted)
+      .map(([k]) => k);
+    expect([...OUTBOX_EVENT_TYPES]).toEqual(declaredEmitted);
   });
 
   it("gives every type a subject without a mapping entry", () => {

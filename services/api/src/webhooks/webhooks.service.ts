@@ -1,9 +1,7 @@
-import {
-  Inject,
-  Injectable,
-  NotFoundException,
-  UnprocessableEntityException,
-} from "@nestjs/common";
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+
+import { WEBHOOK_EVENT_TYPES } from "../outbox/event";
+import { protocolError } from "../protocol-error";
 
 import type { Db } from "../db/client";
 import {
@@ -85,8 +83,10 @@ export class WebhooksService {
 
     const existing = await this.repo.countEndpoints();
     if (existing >= MAX_ENDPOINTS_PER_ENVIRONMENT) {
-      throw new UnprocessableEntityException(
+      throw protocolError(
+        "webhook_endpoint_limit_reached",
         `an environment may have at most ${MAX_ENDPOINTS_PER_ENVIRONMENT} webhook endpoints; this one already has ${existing}`,
+        422,
       );
     }
 
@@ -190,25 +190,62 @@ export class WebhooksService {
     try {
       parsed = new URL(raw);
     } catch {
-      throw new UnprocessableEntityException("url must be a valid absolute URL");
+      throw protocolError(
+        "webhook_url_invalid",
+        "url must be a valid absolute URL",
+        422,
+        "url",
+      );
     }
     if (parsed.protocol !== "https:") {
-      throw new UnprocessableEntityException(
+      throw protocolError(
+        "webhook_url_insecure",
         "url must use https — a signature over a plaintext channel protects the body, not the reader",
+        422,
+        "url",
       );
     }
     const host = parsed.hostname;
     if (BLOCKED_HOSTS.test(host) || BLOCKED_RANGES.some((r) => r.test(host))) {
-      throw new UnprocessableEntityException(
+      throw protocolError(
+        "webhook_url_private_address",
         "url must not point at a loopback, link-local or private address",
+        422,
+        "url",
       );
     }
   }
 
+  /** FR-016. Validate against the DECLARED eight, not the emitted five.
+   *
+   * THE REVIEW AND `gaps.md` 3.23-1 BOTH RECOMMEND `OUTBOX_EVENT_TYPES`, AND BOTH ARE
+   * WRONG. That array holds the five types the platform emits; FR-WHK-02 declares eight.
+   * Measured before this was written: **741 stored subscriptions name
+   * `channel.created`**, which is declared and not yet built. Comparing against the
+   * emitted set would refuse every one of them, and those customers made no mistake —
+   * they subscribed to a published event type and are waiting for the feature.
+   *
+   * So a name outside the declared eight is a typo and is refused; a declared name the
+   * platform does not emit yet is accepted, and the refusal message for the typo names
+   * the set so a customer can see which they hit. */
   private assertEventTypes(types: string[]): void {
     if (!Array.isArray(types) || types.length === 0) {
-      throw new UnprocessableEntityException(
+      throw protocolError(
+        "webhook_event_types_empty",
         "event_types must list at least one event type",
+        422,
+        "event_types",
+      );
+    }
+    const declared = Object.keys(WEBHOOK_EVENT_TYPES);
+    const unknown = types.filter((t) => !declared.includes(t));
+    if (unknown.length > 0) {
+      throw protocolError(
+        "webhook_event_type_unknown",
+        `not an event type this platform declares: ${unknown.join(", ")}. ` +
+          `The accepted set is ${declared.join(", ")}.`,
+        422,
+        "event_types",
       );
     }
   }

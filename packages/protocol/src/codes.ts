@@ -245,6 +245,39 @@ export const ERROR_CODES = {
    * platform no longer has — at which point it is deleted, not repurposed. */
   media_not_available:
     "hosted media is not available yet; attach an http or https url instead",
+  /** THE FIVE BARE 422s, NAMED (feature 043, FR-014). `gaps.md` records them as still
+   * open and the paragraph above says exactly what they cost: `ProtocolErrorFilter`
+   * answers `internal_error` for any status outside 400/401/403/404, so every one of
+   * these refusals told a customer the PLATFORM had failed when the platform had
+   * understood them perfectly and declined.
+   *
+   * SIX CODES, NOT FIVE. The plan said one per bare throw; validating the event-type set
+   * (FR-016) adds a refusal that did not exist to be counted. Chapter 3.24's plan
+   * expected one new code and shipped two, and `codes.test.ts`'s exact-count assertion is
+   * what caught it — so the count moves deliberately here rather than being discovered
+   * there.
+   *
+   * ALL 422 AND NOT 400. Each body is well-formed and each request is understood; what
+   * cannot be done is the thing it asks for. That is the same line `media_not_available`
+   * draws above. It is also why the avatar scheme rule in `users.schema.ts` is a 400 and
+   * these are not: a bad scheme fails SCHEMA validation, and these fail after it. */
+  webhook_endpoint_limit_reached:
+    "this environment already holds the maximum number of webhook endpoints; delete one before adding another",
+  webhook_url_invalid:
+    "the endpoint url is not a valid absolute url",
+  webhook_url_insecure:
+    "the endpoint url must use https — a signature over a plaintext channel protects the body, not the reader",
+  webhook_url_private_address:
+    "the endpoint url points at a loopback, link-local or private address, which this platform will not call",
+  webhook_event_types_empty:
+    "event_types must name at least one event type",
+  /** THE REFUSAL THE REVIEW ASKED FOR, AND NOT THE ONE IT RECOMMENDED. It says to compare
+   * a subscription with the types the platform EMITS. Measured: 741 stored subscriptions
+   * name `channel.created`, which FR-WHK-02 declares and the platform has not built. Those
+   * customers made no mistake, so the comparand is the DECLARED eight and this code is for
+   * a name outside them — a typo, which is the finding. */
+  webhook_event_type_unknown:
+    "that event type is not one this platform declares; the message names the accepted set",
   not_found:
     "no such resource for this tenant — and DELIBERATELY the same answer as for a resource in another tenant (FR-TEN-05)",
   internal_error:

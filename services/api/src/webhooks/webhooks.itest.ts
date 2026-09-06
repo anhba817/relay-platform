@@ -94,6 +94,66 @@ describe("webhook endpoints", () => {
     expect(body).toContain(String(MAX_ENDPOINTS_PER_ENVIRONMENT));
   });
 
+  // --- feature 043: the refusals name the customer's mistake -------------
+
+  it("names a CODE for every customer-caused refusal, not just a status (FR-014, SC-006)", async () => {
+    // WHAT THIS FILE USED TO ASSERT, AND WHY IT MISSED THE DEFECT. The endpoint-cap test
+    // above checks `status` and the message TEXT. Both were right the whole time and the
+    // body still said `internal_error` — because `ProtocolErrorFilter` derives a code
+    // from 400/401/403/404 and answers `internal_error` for anything else, and these were
+    // bare 422s. A customer reading `code` was told the platform had failed.
+    //
+    // Asserting the code is the only thing that could have caught it, which is why this
+    // has been open since chapter 3.5.
+    const cases: [Record<string, unknown>, string][] = [
+      [{ url: "not-a-url" }, "webhook_url_invalid"],
+      [{ url: "http://example.test/hook" }, "webhook_url_insecure"],
+      [{ url: "https://127.0.0.1/hook" }, "webhook_url_private_address"],
+      [{ url: "https://example.test/hook", event_types: [] }, "webhook_event_types_empty"],
+      [
+        { url: "https://example.test/hook", event_types: ["mesage.updated"] },
+        "webhook_event_type_unknown",
+      ],
+    ];
+    for (const [body, code] of cases) {
+      const res = await create(key.credential, body);
+      expect(res.status).toBe(422);
+      const parsed = (await res.json()) as { code: string; message: string };
+      expect(parsed.code).toBe(code);
+      // AND NOT the code the filter would have invented.
+      expect(parsed.code).not.toBe("internal_error");
+    }
+  });
+
+  it("refuses a typo and names the accepted set (FR-016, SC-008)", async () => {
+    const res = await create(key.credential, {
+      url: "https://example.test/typo",
+      event_types: ["mesage.updated"],
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { code: string; message: string; field?: string };
+    expect(body.code).toBe("webhook_event_type_unknown");
+    expect(body.field).toBe("event_types");
+    // THE ACCEPTED SET, IN THE MESSAGE. A refusal that says only "unknown event type"
+    // leaves a customer guessing at the spelling, which is the failure mode the finding
+    // describes: a typo produces a permanently silent endpoint.
+    expect(body.message).toContain("message.updated");
+    expect(body.message).toContain("channel.created");
+  });
+
+  it("ACCEPTS a declared type the platform does not emit yet (FR-016)", async () => {
+    // THE HALF THE REVIEW GOT WRONG, and the reason this feature amended its own
+    // requirement. `channel.created` is declared by FR-WHK-02 and unbuilt, and **838
+    // stored subscriptions name it**. Validating against the emitted five — which the
+    // review and chapter 3.23's gaps ledger both recommend — would refuse every one of
+    // them, and those customers made no mistake.
+    const res = await create(key.credential, {
+      url: "https://example.test/declared-unemitted",
+      event_types: ["channel.created"],
+    });
+    expect(res.status).toBe(201);
+  });
+
   // --- invariant 2 -------------------------------------------------------
 
   it("invariant 2: returns the secret once at creation and by no later read", async () => {
