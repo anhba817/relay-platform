@@ -775,6 +775,43 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
+        // FEATURE 043's THREE, ALL AT 100 ON EVERY METRIC.
+        //
+        // `frames.ts` gained `MESSAGE_TEXT_MAX` and the bound on the socket door;
+        // `webhooks.service.ts` had all five bare 422s replaced and gained the event-type
+        // check; `event.ts` gained the declared-eight object and the compile-time
+        // assertion that every emitted type has a schema branch.
+        //
+        // Pinned because they measured 100 and not because 100 was the target — the
+        // ratchet's job is to stop a later change lowering them silently.
+        "packages/protocol/src/frames.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/webhooks/webhooks.service.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/outbox/event.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // NOT PINNED, AND NAMED RATHER THAN QUIETLY OMITTED (feature 043):
+        //
+        //   packages/protocol/src/internal.ts   92.68 lines · 85.71 branches · 60 funcs
+        //   packages/protocol/src/codes.ts      83.33 lines · 100 branches · 50 funcs
+        //
+        // Both were touched by this feature and neither was touched in a way that moved
+        // these numbers: `internal.ts` had one literal replaced with an import, and
+        // `codes.ts` gained six registry ENTRIES, which are data. Pinning a file at 85.71
+        // ratchets a number nobody chose, and the honest version is to say so here — the
+        // omission is a decision, not an oversight.
       },
     },
   },
