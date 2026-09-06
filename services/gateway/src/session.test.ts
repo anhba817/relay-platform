@@ -54,6 +54,10 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
             // that does not say is a stub that has not thought about it.
             banned: false,
             channel_ids: [CHANNEL],
+            // Feature 044: the api reports a revision count per channel. These fixtures wire
+            // none, so every channel reports zero — the pre-feature behaviour, and what a
+            // client that stores the counts will compare against next time.
+            channel_revisions: {},
             // Chapter 3.8. The limits ride the session response because the
             // gateway has no database to read them from — so the stub supplies
             // them, exactly as the api would. Generous by default: every test
@@ -989,6 +993,10 @@ describe("the socket's limits (chapter 3.8)", () => {
           // that does not say is a stub that has not thought about it.
           banned: false,
           channel_ids: [CHANNEL],
+          // Feature 044: the api reports a revision count per channel. These fixtures wire
+          // none, so every channel reports zero — the pre-feature behaviour, and what a
+          // client that stores the counts will compare against next time.
+          channel_revisions: {},
           limits: { connect: 2, send: 600 },
         }),
       }),
@@ -1025,6 +1033,10 @@ describe("the socket's limits (chapter 3.8)", () => {
           // that does not say is a stub that has not thought about it.
           banned: false,
           channel_ids: [CHANNEL],
+          // Feature 044: the api reports a revision count per channel. These fixtures wire
+          // none, so every channel reports zero — the pre-feature behaviour, and what a
+          // client that stores the counts will compare against next time.
+          channel_revisions: {},
           limits: { connect: 3_000, send: configured },
         }),
       }),

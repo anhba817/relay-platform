@@ -114,6 +114,12 @@ export class SessionController {
       throw error;
     }
 
+    // ONE QUERY FEEDING TWO FIELDS (feature 044, FR-014). Hoisted out of the object below
+    // because `channel_ids` and `channel_revisions` come from the same rows — calling
+    // `channelsForUser` twice would be two queries per handshake, and at 10,000 connections
+    // that is 10,000 extra reads on the one call this feature was careful not to add.
+    const memberships = user ? await this.repo.channelsForUser(user.id) : [];
+
     return {
       environment_id: principal.environmentId,
       user: principal.userExternalId,
@@ -126,10 +132,15 @@ export class SessionController {
       // verified token naming somebody with no row, which chapter 2.5 decided is a user
       // with no channels rather than an error — and a user with no row has no ban either.
       banned: user?.banned_at != null,
-      // Ids here; the counts ride the same rows and are filled in below (feature 044).
-      channel_ids: user
-        ? (await this.repo.channelsForUser(user.id)).map((c) => c.channel_id)
-        : [],
+      channel_ids: memberships.map((c) => c.channel_id),
+      /** The counts, from the same rows (feature 044, FR-004).
+       *
+       * EVERY CHANNEL, INCLUDING THOSE AT ZERO. The gateway reports all of them on the ack
+       * so a client needing no repair still has a baseline to store (FR-007a); omitting the
+       * zeros here would make that impossible one layer up. */
+      channel_revisions: Object.fromEntries(
+        memberships.map((c) => [c.channel_id, c.revision_sequence]),
+      ),
       limits: {
         connect: policy.limits.connect,
         send: policy.limits.send,

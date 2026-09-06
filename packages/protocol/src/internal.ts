@@ -6,7 +6,11 @@ import {
   refineTextAndAttachments,
 } from "./attachments.js";
 
-import { MESSAGE_TEXT_MAX, messageSchema } from "./frames.js";
+import {
+  MESSAGE_TEXT_MAX,
+  messageSchema,
+  revisionCountSchema,
+} from "./frames.js";
 
 // The INTERNAL service contract (chapter 2.5) — distinct from the wire
 // contract above it. `frames.ts` is what a customer's client speaks;
@@ -173,6 +177,31 @@ export const internalSessionResponseSchema = z.strictObject({
   environment_id: z.string().min(1),
   user: z.string().min(1),
   channel_ids: z.array(z.string().min(1)),
+  /** How many revisions each of those channels has seen (feature 044, FR-004, FR-014).
+   *
+   * IT RIDES THIS RESPONSE FOR THE REASON `banned` AND THE LIMITS DO: the gateway has no
+   * database and must not gain one, `revision_sequence` is a column in Postgres, and the api
+   * is the only service that reads Postgres. So the counts travel on the one call the gateway
+   * already makes at connect — no new table reaches the gateway and no new round trip is
+   * added. At 10,000 connections a second call per handshake is 10,000 calls, and the
+   * reconnect rate measured before this feature was 1,402 per second.
+   *
+   * ON THIS RESPONSE AND NOT ON `internalMembershipsResponseSchema` above. That route answers
+   * what a user MAY HEAR — the periodic re-read ADR-20 uses as its backstop — and a revision
+   * count is no part of that question. The watermark is a connect-time signal.
+   *
+   * A PARALLEL MAP RATHER THAN A WIDENED `channel_ids`. Eleven chapters publish that field;
+   * turning it into an array of objects would edit all of them for a field they do not read.
+   * The keys here are the ids above.
+   *
+   * `revisionCountSchema` IMPORTED, NOT RESPELLED. The same shape appears on the ack, and two
+   * records that must agree and are maintained separately is the defect `gaps.md` 3.23-4
+   * records about `targets.ts` — one file apart in this case.
+   *
+   * `.default({})` FOR THE DEPLOY WINDOW, following `banned` below: an api built before this
+   * feature still satisfies the schema during a rolling deploy, and the gateway then reports
+   * every channel at zero, which is today's behaviour. */
+  channel_revisions: revisionCountSchema.default({}),
   /** Chapter 3.15, FR-031. Whether this user is banned in this environment.
    *
    * IT RIDES THIS RESPONSE FOR THE REASON THE LIMITS DO: the gateway has no database and

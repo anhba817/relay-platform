@@ -176,3 +176,23 @@ export async function withDeadline(
     if (timer) clearTimeout(timer);
   }
 }
+
+/** THERE IS NO `?rev=` PARAMETER ON THIS URL, AND THAT IS A DECISION (feature 044).
+ *
+ * A draft of the revision watermark had the client present the counts it holds so the gateway
+ * could compare and answer with the channels that were stale. It was built here and removed:
+ * `connection.ack` carries the platform's count for **every** channel the user belongs to, so
+ * a client that stores those counts compares them itself, and the parameter was never read.
+ *
+ * The whole of the request table in that feature's contract is satisfied without it. A client
+ * built before the feature simply ignores the new ack field, which is the same outcome as
+ * "presented no counts, so no repair signalled" — reached by doing nothing rather than by a
+ * rule the gateway has to hold.
+ *
+ * **A parameter the server parses and never acts on is a contract it can never remove.**
+ *
+ * It also keeps `parseCursors` above untouched, which matters more than it looks: that
+ * function splits on the LAST colon because a channel id is opaque and may contain one, so a
+ * `<channel>:<seq>:<rev>` entry would have parsed `rev` as the sequence. Every resume would
+ * have silently resumed from the wrong place, producing plausible numbers rather than an
+ * error. */

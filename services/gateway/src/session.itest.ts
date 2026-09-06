@@ -1268,6 +1268,84 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     expect(frames.filter((f) => f.type === "message.deleted")).toHaveLength(1);
   });
 
+  /** FEATURE 044. THE WHOLE CHAIN IN ONE TEST, and the only place it runs end to end.
+   *
+   * `repository.itest.ts` proves the column moves; `resume.itest.ts` proves the ack
+   * carries whatever a stubbed api reports. Neither proves the two are connected —
+   * a repository that counted correctly into a field nobody read would pass both.
+   * Here a REAL edit goes over REST to a REAL api against Postgres, and the number
+   * comes back on a REAL socket's ack.
+   *
+   * RELATIVE, NOT ABSOLUTE. The channel is shared with every other test in this
+   * describe, several of which edit and delete, so the baseline is read first and the
+   * assertions are `before + 1` and `before + 2`. An absolute expectation here would be
+   * a test that passes or fails on its neighbours' order.
+   *
+   * TWO CREDENTIALS, DELIBERATELY. The edit route refuses an application credential
+   * outright (`wrong_credential_type`), so the edit rides the author's own token; the
+   * delete route takes the tenant key. A probe of this feature's premise hit the first
+   * rule before it ran, and the quickstart now says so in its Prerequisites. */
+  it("a real edit and a real deletion each raise the real count, and a send raises nothing (FR-002, FR-003, FR-004, FR-011)", async () => {
+    const countNow = async (label: string): Promise<number> => {
+      const socket = connect(await mintToken("watcher"));
+      const frames = record(socket);
+      const ack = (await waitFor(
+        frames,
+        (f) => f.type === "connection.ack",
+        `connection.ack (${label})`,
+      )) as { payload: { revisions: Record<string, number> } };
+      socket.close();
+      // PRESENT, not defaulted. `?? 0` here would read an api that stopped reporting
+      // the channel as a channel at zero, which is the one confusion FR-007 turns on.
+      expect(Object.keys(ack.payload.revisions), label).toContain(api.channelId);
+      return ack.payload.revisions[api.channelId] as number;
+    };
+
+    const before = await countNow("before");
+
+    const editorToken = await mintToken("editor");
+    const posted = await fetch(`${api.url}/v1/channels/${api.channelId}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${editorToken}`,
+      },
+      body: JSON.stringify({ text: `countable ${randomUUID()}` }),
+    });
+    expect(posted.status, await posted.clone().text()).toBe(201);
+    const sent = (await posted.json()) as { id: string };
+
+    // FR-011, AND IT IS THE HALF MOST LIKELY TO BE GOT WRONG. The send path already
+    // writes to the channel row — `last_sequence` and `last_activity_at` — so adding
+    // the counter to that UPDATE costs nothing and looks harmless. It would make every
+    // active channel report a repair after every absence, which is the herd this
+    // feature exists to avoid, arriving from the other direction.
+    expect(await countNow("after the send")).toBe(before);
+
+    const edited = await fetch(
+      `${api.url}/v1/channels/${api.channelId}/messages/${sent.id}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${editorToken}`,
+        },
+        body: JSON.stringify({ text: "countable, corrected" }),
+      },
+    );
+    expect(edited.status, await edited.clone().text()).toBe(200);
+    expect(await countNow("after the edit")).toBe(before + 1);
+
+    const removed = await fetch(
+      `${api.url}/v1/channels/${api.channelId}/messages/${sent.id}`,
+      { method: "DELETE", headers: { authorization: `Bearer ${api.credential}` } },
+    );
+    expect(removed.status, await removed.clone().text()).toBe(204);
+    // BY ONE, not by the number of messages affected (FR-002). A deletion is one
+    // revision the same way an edit is.
+    expect(await countNow("after the deletion")).toBe(before + 2);
+  });
+
   it("stops delivering to a member who was REMOVED while connected (FR-RTM-10)", async () => {
     // INVERTED IN CHAPTER 3.20, AND THE TITLE WITH IT. This test read "keeps
     // delivering" and asserted the violation on purpose from chapter 3.18 until
@@ -1424,7 +1502,18 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
       case "connection.ack":
         return {
           type,
-          payload: { user: "tuan", cursor: {}, resume_ok: true, truncated: [] },
+          // FEATURE 044 MADE THIS RED, and for the reason this builder's own comment
+          // gives: `revisions` is required on the ack, so a sample without it fails
+          // `safeParse` and comes back `invalid_frame` — a phase BEFORE the direction
+          // check this test is about. Chapter 3.23 hit the identical fault with
+          // `message.deleted`. Second incident, same builder, same cause.
+          payload: {
+            user: "tuan",
+            cursor: {},
+            resume_ok: true,
+            truncated: [],
+            revisions: {},
+          },
         };
       case "message.ack":
         return { type, payload: { seq: 1 } };

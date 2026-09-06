@@ -138,6 +138,10 @@ async function boot(options: {
       user: options.user,
       banned: false,
       channel_ids: options.channels,
+      // Feature 044: the api reports a revision count per channel. These fixtures wire
+      // none, so every channel reports zero — the pre-feature behaviour, and what a
+      // client that stores the counts will compare against next time.
+      channel_revisions: {},
       limits: { connect: 3_000, send: 600 },
     }),
     memberships: async () => options.channels,

@@ -39,6 +39,13 @@ export type Authentication =
       outcome: "ok";
       identity: Identity;
       channelIds: string[];
+      /** How many revisions each of those channels has seen (feature 044, FR-004).
+       *
+       * Carried for the same reason `channelIds` and `limits` are: the api read a column
+       * the gateway has no database to read, and this is the one call the gateway makes at
+       * connect. The gateway puts it on the ack and does nothing else with it — it never
+       * learns what a client holds, so it cannot be wrong about it. */
+      channelRevisions: Record<string, number>;
       /** Chapter 3.8. The environment's two socket allowances, read from
        * Postgres by the api and carried on the same response — the gateway has
        * no database client and R12 spent its whole argument on keeping it that
@@ -88,6 +95,7 @@ export async function authenticate(
         token,
       },
       channelIds: session.channel_ids,
+      channelRevisions: session.channel_revisions,
       limits: session.limits,
     };
   } catch (error) {

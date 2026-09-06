@@ -15,6 +15,23 @@ import {
 /** Per-channel resume cursor: { channel_id: highest seq seen } (ADR-03). */
 export const cursorSchema = z.record(z.string(), z.number().int().positive());
 
+/** Per-channel revision count: { channel_id: revisions this channel has seen } (feature 044).
+ *
+ * NOT `cursorSchema`, AND THE DIFFERENCE IS ONE WORD. That schema is `.positive()`, and every
+ * channel that has never been revised has a count of **zero** — so reusing it would make an
+ * unrevised channel unrepresentable, force the api to omit it, and leave the gateway unable to
+ * tell "no revisions" from "not reported". Those are exactly the two states FR-007 turns on: a
+ * count of zero can signal a repair once the channel is revised, and an absent count never
+ * does, because the client holds nothing there to be stale.
+ *
+ * A COUNTER RATHER THAN A TIMESTAMP (FR-010). A clock the client and the platform disagree
+ * about produces wrong repairs in both directions, and a counter answers "how many" for free —
+ * which is the difference between a bounded repair and a full refresh. */
+export const revisionCountSchema = z.record(
+  z.string(),
+  z.number().int().nonnegative(),
+);
+
 /** FR-MSG-01's message-length maximum, in one place because it is one rule (FR-008).
  *
  * THREE DOORS ENFORCE IT AND ONE OF THEM DID NOT. The REST body and the internal hop each
@@ -75,6 +92,25 @@ export const connectionAckSchema = z.strictObject({
     cursor: cursorSchema,
     resume_ok: z.boolean(),
     truncated: z.array(z.string().min(1)),
+    /** How many revisions each of this user's channels has seen (feature 044, FR-004).
+     *
+     * WHAT IT IS FOR. Resume is ordered by the channel sequence, and an edit or a deletion
+     * carries the sequence of the message it CHANGES rather than a new one — so a message
+     * revised below this client's cursor arrives on no frame and consumes no sequence,
+     * leaving no gap to notice. Measured: a client on cursor 2 whose message at seq 1 was
+     * edited while away receives exactly this ack and nothing else. SRS FR-016a says the
+     * stale copy is repairable by re-reading history; this is what says when.
+     *
+     * EVERY CHANNEL THE USER BELONGS TO, including those at zero and those the client asked
+     * nothing about (FR-007a). A client needing no repair still needs a baseline to store,
+     * or its next reconnect is the first one again.
+     *
+     * A CLIENT COMPARES, THE PLATFORM DOES NOT DECIDE. Higher here than the client holds
+     * means one or more messages it already has were revised; equal means nothing was; and
+     * a client presenting MORE than this is told nothing is needed rather than refused
+     * (FR-008) — refusing over a number the client supplied is a denial of service the
+     * client controls. */
+    revisions: revisionCountSchema,
   }),
 });
 

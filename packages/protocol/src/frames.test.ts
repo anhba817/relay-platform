@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  connectionAckSchema,
+  cursorSchema,
   frameSchema,
   MESSAGE_TEXT_MAX,
   messageDeletedSchema,
   messageSchema,
   parseFrame,
+  revisionCountSchema,
 } from "./frames.js";
 
 // The contract must bite: for every frame, one specimen that parses and a
@@ -29,7 +32,18 @@ const message = {
 const valid: Record<string, unknown> = {
   "connection.ack": {
     type: "connection.ack",
-    payload: { user: "u1", cursor: { c1: 42 }, resume_ok: true, truncated: [] },
+    // Feature 044: `revisions` is REQUIRED here, and this specimen went red the moment it
+    // was added — which is the point. The ack is a frame the platform BUILDS, so required
+    // is what makes every construction site name it. Chapter 3.24's inverse case is the
+    // one to keep straight: a reader of anything durable cannot require a field its writer
+    // did not have, and `outboxEventSchema` learned that the expensive way.
+    payload: {
+      user: "u1",
+      cursor: { c1: 42 },
+      resume_ok: true,
+      truncated: [],
+      revisions: { c1: 7 },
+    },
   },
   "message.send": {
     type: "message.send",
@@ -331,5 +345,71 @@ describe("the message-length maximum (feature 043, FR-008)", () => {
       created_at: "2026-09-06T00:00:00.000Z",
     };
     expect(messageSchema.safeParse(long).success).toBe(true);
+  });
+});
+
+describe("the revision count on the ack (feature 044, FR-004, FR-007, FR-009)", () => {
+  const ack = (revisions: unknown) =>
+    parseFrame({
+      type: "connection.ack",
+      payload: {
+        user: "u1",
+        cursor: { c1: 42 },
+        resume_ok: true,
+        truncated: [],
+        revisions,
+      },
+    });
+
+  it("accepts a count of ZERO, which is the whole reason it is not `cursorSchema`", () => {
+    // The two schemas differ by one word — `.positive()` against `.nonnegative()` — and
+    // the difference decides whether a never-revised channel can be reported at all.
+    // Reusing `cursorSchema` would have forced the api to omit those channels, and an
+    // omitted channel is indistinguishable from one the platform never mentioned, which
+    // is exactly the pair FR-007 turns on.
+    expect(ack({ c1: 0 }).success).toBe(true);
+    expect(cursorSchema.safeParse({ c1: 0 }).success).toBe(false);
+    // And the other direction still holds, so nothing was relaxed by accident: a cursor
+    // of zero is still refused, because sequence numbering starts at one.
+    expect(cursorSchema.safeParse({ c1: 1 }).success).toBe(true);
+  });
+
+  it("REQUIRES the field, because the platform is the one that builds it", () => {
+    // The specimen above went red when this was added and was repaired rather than
+    // relaxed. Required on a frame the server emits names every construction site; the
+    // compiler cannot do that for an optional field.
+    const withoutIt = connectionAckSchema.safeParse({
+      type: "connection.ack",
+      payload: { user: "u1", cursor: {}, resume_ok: true, truncated: [] },
+    });
+    expect(withoutIt.success).toBe(false);
+  });
+
+  it("refuses a negative count and a fractional one", () => {
+    // A count that falls would silently tell a client it is up to date (FR-002), and a
+    // fraction is not a number of revisions. Neither is reachable from the writer, which
+    // is why the door is here rather than trusted upstream.
+    expect(ack({ c1: -1 }).success).toBe(false);
+    expect(ack({ c1: 1.5 }).success).toBe(false);
+    expect(ack({ c1: "7" }).success).toBe(false);
+  });
+
+  it("does not require the cursor and the counts to name the same channels", () => {
+    // The joined-during-absence case, at the schema layer. A client resuming presents a
+    // cursor for the channels it held; the platform reports counts for every channel the
+    // user belongs to, which is a superset. A schema that tied them together would make
+    // the correct response unrepresentable.
+    expect(ack({ c1: 3, c2: 0 }).success).toBe(true);
+    // And the empty map, which is what a user in no channels gets.
+    expect(ack({}).success).toBe(true);
+  });
+
+  it("exports the count schema on its own, so the internal hop validates the same rule", () => {
+    // `internalSessionResponseSchema` reuses this rather than restating it. Two schemas
+    // that must agree and are spelled twice are two schemas that will stop agreeing —
+    // feature 043 found that with `editMessageBodySchema.text`, from the other side: two
+    // that must DIFFER cannot share a reference at all.
+    expect(revisionCountSchema.safeParse({ c1: 0 }).success).toBe(true);
+    expect(revisionCountSchema.safeParse({ c1: -1 }).success).toBe(false);
   });
 });

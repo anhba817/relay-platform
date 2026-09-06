@@ -806,7 +806,13 @@ function sample(type: string, channel: string, user: string): unknown {
   };
   switch (type) {
     case "connection.ack":
-      return { type, payload: { user, cursor: {}, resume_ok: true, truncated: [] } };
+      // Feature 044 added a required `revisions` to this payload, and a sample missing
+      // it is refused for its SHAPE a phase before the direction check — see the
+      // `message.deleted` note below, which is chapter 3.23 making the same repair.
+      return {
+        type,
+        payload: { user, cursor: {}, resume_ok: true, truncated: [], revisions: {} },
+      };
     case "message.ack":
       return { type, payload: { seq: 1 } };
     case "message.created":

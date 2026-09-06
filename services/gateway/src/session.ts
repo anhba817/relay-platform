@@ -892,6 +892,7 @@ export function attachSessions({
           ws,
           result.identity,
           result.channelIds,
+          result.channelRevisions,
           req.url ?? "/",
           result.limits.send,
           pendingId,
@@ -905,6 +906,16 @@ export function attachSessions({
     socket: WebSocket,
     identity: Identity,
     channelIds: string[],
+    /** How many revisions each of those channels has seen (feature 044, FR-004).
+     *
+     * Arrives with the memberships, from the same session call at the door, for the same
+     * reason: the api read a column the gateway has no database to read. It goes onto the
+     * ack and nowhere else — the gateway reports it and the client decides what it means,
+     * so the gateway never learns what a client holds and cannot be wrong about it.
+     *
+     * Defaults to `{}` for the fixtures that do not wire a session response, which then
+     * report every channel at zero — the pre-feature behaviour. */
+    channelRevisions: Record<string, number>,
     url: string,
     sendLimit: number,
     /** Chapter 3.22. The id the cap claimed a place with, so the connection and
@@ -926,6 +937,7 @@ export function attachSessions({
       // still the only source of membership (ADR-05), it just answers both
       // questions at once, and a failure now closes the socket before it opens.
       channelIds: new Set(channelIds),
+      revisions: channelRevisions,
       missedPings: 0,
       phase: presented === undefined ? "live" : "buffering",
       buffer: [],
@@ -1242,7 +1254,20 @@ export function attachSessions({
   ): void {
     send(connection.socket, {
       type: "connection.ack",
-      payload: { user: connection.identity.userExternalId, ...payload },
+      payload: {
+        user: connection.identity.userExternalId,
+        ...payload,
+        /** EVERY CHANNEL THIS USER BELONGS TO, including those at zero and those this
+         *  client asked nothing about (feature 044, FR-004, FR-007a).
+         *
+         * A client needing no repair still needs a baseline to store, or its next
+         * reconnect is the first one again — so a response carrying only the changed
+         * channels would leave most clients unable to establish one.
+         *
+         * Reported on every ack, resume or not. A fresh connect holds nothing that can be
+         * stale, and giving it the counts anyway is what lets its NEXT reconnect compare. */
+        revisions: connection.revisions,
+      },
     });
   }
 

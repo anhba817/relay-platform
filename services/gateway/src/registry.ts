@@ -19,6 +19,17 @@ export interface Connection {
   readonly identity: Identity;
   readonly socket: WebSocket;
   channelIds: Set<string>;
+  /** How many revisions each of those channels has seen, as the api reported them at
+   *  connect (feature 044, FR-004).
+   *
+   * ON THE CONNECTION RATHER THAN PASSED DOWN, because `ack` is a sibling of the function
+   * that receives them and is called from three places. A parameter threaded through all
+   * three would have to be threaded through `resume` as well, for a value that belongs to
+   * the connection exactly as `channelIds` does.
+   *
+   * READ ONLY. Nothing updates this after connect: it is what the platform said when the
+   * socket opened, and a client that wants a fresher figure reconnects. */
+  revisions: Record<string, number>;
   missedPings: number;
   /** Chapter 2.7. A connection resuming through the tunnel spends its first
    * milliseconds holding live frames back so the backfill can go first; a

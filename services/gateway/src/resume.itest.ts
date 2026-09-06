@@ -131,6 +131,10 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        // Feature 044: the api reports a revision count per channel. These fixtures wire
+        // none, so every channel reports zero — the pre-feature behaviour, and what a
+        // client that stores the counts will compare against next time.
+        channel_revisions: {},
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
@@ -172,6 +176,10 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        // Feature 044: the api reports a revision count per channel. These fixtures wire
+        // none, so every channel reports zero — the pre-feature behaviour, and what a
+        // client that stores the counts will compare against next time.
+        channel_revisions: {},
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
@@ -207,6 +215,10 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        // Feature 044: the api reports a revision count per channel. These fixtures wire
+        // none, so every channel reports zero — the pre-feature behaviour, and what a
+        // client that stores the counts will compare against next time.
+        channel_revisions: {},
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
@@ -260,6 +272,10 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        // Feature 044: the api reports a revision count per channel. These fixtures wire
+        // none, so every channel reports zero — the pre-feature behaviour, and what a
+        // client that stores the counts will compare against next time.
+        channel_revisions: {},
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
@@ -306,6 +322,10 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        // Feature 044: the api reports a revision count per channel. These fixtures wire
+        // none, so every channel reports zero — the pre-feature behaviour, and what a
+        // client that stores the counts will compare against next time.
+        channel_revisions: {},
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
@@ -365,6 +385,10 @@ describe("resume across a real fabric", () => {
         user: "tuan",
         banned: false,
         channel_ids: [CHANNEL],
+        // Feature 044: the api reports a revision count per channel. These fixtures wire
+        // none, so every channel reports zero — the pre-feature behaviour, and what a
+        // client that stores the counts will compare against next time.
+        channel_revisions: {},
         limits: { connect: 3_000, send: 600 },
       }),
       // The api's backfill returns ROWS AS THEY ARE NOW — which for an edited message
@@ -411,6 +435,10 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        // Feature 044: the api reports a revision count per channel. These fixtures wire
+        // none, so every channel reports zero — the pre-feature behaviour, and what a
+        // client that stores the counts will compare against next time.
+        channel_revisions: {},
         // Chapter 3.8: the limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
@@ -437,6 +465,130 @@ describe("resume across a real fabric", () => {
     await settle(300);
 
     expect(created(frames)).toEqual([41]);
+    socket.close();
+  });
+});
+
+// ── feature 044: the revision count on every ack (US1) ──────────────────────
+//
+// WHY HERE AND NOT IN `session.itest.ts`. The task named that file and the four
+// `cursor`/`rev` combinations from the contract. `rev` was built and removed —
+// a client sends nothing to obtain this — so there are no four combinations
+// left to enumerate; what remains is which ACK a connection gets, and there are
+// three of those. This file is where a stubbed api lets a test SAY what the
+// counts are, which is the only way to assert the case the earlier draft got
+// wrong: a channel the presented cursor never mentions.
+//
+// The end-to-end half — a real edit raising a real count on a real ack — is in
+// `session.itest.ts`, which spawns an api. Neither fixture does both.
+describe("the revision count rides every ack (feature 044, FR-004, FR-007a)", () => {
+  let harness: Harness | undefined;
+
+  afterEach(async () => {
+    await harness?.close();
+    harness = undefined;
+  });
+
+  const OTHER = randomUUID();
+
+  /** The counts a test wants reported, wired into an api stub that is otherwise
+   * every other stub in this file. */
+  async function bootReporting(
+    revisions: Record<string, number>,
+    backfill: Omit<ApiClient, "reportUsage">["backfill"],
+  ): Promise<Harness> {
+    return boot({
+      session: async () => ({
+        environment_id: "env-1",
+        user: "tuan",
+        banned: false,
+        channel_ids: [CHANNEL, OTHER],
+        channel_revisions: revisions,
+        limits: { connect: 3_000, send: 600 },
+      }),
+      backfill,
+      sendMessage: async () => {
+        throw new Error("not used");
+      },
+      memberships: async () => [CHANNEL, OTHER],
+    });
+  }
+
+  const ackOf = (frames: Frame[]) =>
+    frames.find((f) => f.type === "connection.ack") as
+      | {
+          payload: {
+            cursor: Record<string, number>;
+            resume_ok: boolean;
+            revisions: Record<string, number>;
+          };
+        }
+      | undefined;
+
+  it("reports on a FRESH connect, which presents no cursor and holds nothing stale", async () => {
+    // FR-007's first absence. A first connection cannot be stale — it has nothing —
+    // and it gets the counts anyway, because the baseline it stores now is what its
+    // NEXT reconnect compares against. A response that gave it nothing would make
+    // every reconnect the first one again (FR-007a).
+    harness = await bootReporting({ [CHANNEL]: 7, [OTHER]: 0 }, async () => ({}));
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    const frames = record(socket);
+    await settle(400);
+
+    const ack = ackOf(frames);
+    expect(ack?.payload.revisions).toEqual({ [CHANNEL]: 7, [OTHER]: 0 });
+    // Including the zero. `cursorSchema` could not have carried that channel at all.
+    expect(ack?.payload.revisions[OTHER]).toBe(0);
+    socket.close();
+  });
+
+  it("reports a channel the presented cursor never mentions", async () => {
+    // FR-007's THIRD absence, and the one a literal reading of the earlier draft got
+    // wrong: it said an absent count was "treated as presenting zero", and zero
+    // compares as lower than any revised channel — so a channel joined during the
+    // absence signalled a repair to a client that holds nothing in it to repair.
+    //
+    // The gateway now compares nothing at all, so this asserts the shape rather than
+    // a branch: the counts are reported WHOLE, never scoped to the presented cursor.
+    harness = await bootReporting({ [CHANNEL]: 2, [OTHER]: 5 }, async () => ({
+      [CHANNEL]: { messages: [frame(42)], truncated: false },
+    }));
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await settle(400);
+
+    const ack = ackOf(frames);
+    expect(ack?.payload.resume_ok).toBe(true);
+    expect(ack?.payload.revisions).toEqual({ [CHANNEL]: 2, [OTHER]: 5 });
+    // The cursor is scoped to what the client presented; the counts are not. That
+    // asymmetry is the requirement, so both halves are asserted here rather than
+    // trusting the one that happens to be easier to read.
+    expect(ack?.payload.cursor).toEqual({ [CHANNEL]: 41 });
+    socket.close();
+  });
+
+  it("reports on a DEGRADED resume too, where the client is told to page everything", async () => {
+    // The ack a client gets when the backfill failed. It is the one most likely to be
+    // written without the field — the code path exists to say "resume did not happen" —
+    // and it is the one where the counts matter most: a client about to re-read every
+    // channel still needs the baseline to compare against NEXT time.
+    //
+    // Structural, not incidental: `revisions` sits inside the single `ack()` helper
+    // rather than at its three call sites, so all three carry it by construction.
+    harness = await bootReporting({ [CHANNEL]: 4, [OTHER]: 0 }, async () => {
+      throw new Error("backfill unavailable");
+    });
+    const socket = new WebSocket(
+      `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
+    );
+    const frames = record(socket);
+    await settle(400);
+
+    const ack = ackOf(frames);
+    expect(ack?.payload.resume_ok).toBe(false);
+    expect(ack?.payload.revisions).toEqual({ [CHANNEL]: 4, [OTHER]: 0 });
     socket.close();
   });
 });
@@ -478,6 +630,10 @@ describe("two instances on one fabric (chapter 3.18)", () => {
       user: "tuan",
       banned: false,
       channel_ids: channels,
+      // Feature 044: the api reports a revision count per channel. These fixtures wire
+      // none, so every channel reports zero — the pre-feature behaviour, and what a
+      // client that stores the counts will compare against next time.
+      channel_revisions: {},
       limits: { connect: 3_000, send: 600 },
     }),
     backfill: async () => ({}),
