@@ -61,6 +61,22 @@ describe("reset-lane.mjs", () => {
         ).rows[0]!.n;
 
       const before = await count();
+
+      // ONE INSTANT, CAPTURED BEFORE THE SCRIPT RUNS, AND BOTH SIDES MEAN IT.
+      //
+      // The assertion below used to re-evaluate `now()`. The script deletes what was
+      // stale when IT ran; the test counted what was stale ~115 ms later, which includes
+      // every row that aged across the threshold in between. Runs 16 and 20 of feature
+      // 043's battery failed exactly there — `expected 1 to be +0` — with the script
+      // having done its job perfectly.
+      //
+      // It could not fire until the lane had been up longer than `STALE_AFTER`, so the
+      // first seven runs were structurally safe and the fault looked like a late-onset
+      // flake. Measured on the live lane: 0.2 rows crossed the mark per second.
+      const {
+        rows: [t0row],
+      } = await client.query<{ t0: Date }>("SELECT now() AS t0");
+
       await run("node", [SCRIPT, "--yes-this-is-my-test-lane"]);
       expect(await count()).toBe(before);
 
@@ -75,10 +91,15 @@ describe("reset-lane.mjs", () => {
       // flight — so an assertion on "due" would fail on a lane that was cleaned
       // correctly.
       //
-      // The query was always the right one. Only the name disagreed with it.
+      // TWICE WRONG, THE SAME WAY BOTH TIMES. First it counted rows "due now", which a
+      // run that has just finished violates legitimately. Then it counted staleness
+      // against a clock that had moved. Both asserted a property of the TABLE; what a
+      // test of a script owes is a property of what the SCRIPT DID.
       const stale = await client.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM webhook_deliveries
-         WHERE state = 'pending' AND created_at < now() - interval '30 minutes'`,
+         WHERE state = 'pending'
+           AND created_at < $1::timestamptz - interval '30 minutes'`,
+        [t0row!.t0],
       );
       expect(stale.rows[0]!.n).toBe(0);
     } finally {
