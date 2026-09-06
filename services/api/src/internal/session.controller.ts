@@ -126,7 +126,10 @@ export class SessionController {
       // verified token naming somebody with no row, which chapter 2.5 decided is a user
       // with no channels rather than an error — and a user with no row has no ban either.
       banned: user?.banned_at != null,
-      channel_ids: user ? await this.repo.channelsForUser(user.id) : [],
+      // Ids here; the counts ride the same rows and are filled in below (feature 044).
+      channel_ids: user
+        ? (await this.repo.channelsForUser(user.id)).map((c) => c.channel_id)
+        : [],
       limits: {
         connect: policy.limits.connect,
         send: policy.limits.send,
