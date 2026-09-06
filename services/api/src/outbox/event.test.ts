@@ -202,11 +202,15 @@ describe("the outbox event type set", () => {
     expect(unbuilt).toEqual(["channel.created", "user.connected", "user.disconnected"]);
   });
 
-  it("derives the emitted five from the declared eight rather than repeating them", () => {
+  it("agrees with the declared eight's emitted flags, member for member", () => {
     // ONE LIST, NOT TWO. `gaps.md` 3.23-4 records the two-lists-that-must-agree defect
     // about `targets.ts`, and `eslint.config.mjs` says *MUST AGREE* with nothing
-    // comparing them. This asserts the derivation rather than the result: every emitted
-    // name is declared, and every declared-and-emitted name is in the array.
+    // comparing them.
+    //
+    // THE TITLE SAID "derives" UNTIL THE AUDIT READ IT AGAINST THIS BODY. Nothing here
+    // can see a derivation: a hand-maintained duplicate that happened to agree would
+    // pass every line below. What this asserts is AGREEMENT, which is the observable —
+    // the derivation is enforced by the compiler in `event.ts`, not here.
     for (const name of OUTBOX_EVENT_TYPES) {
       expect(WEBHOOK_EVENT_TYPES[name].emitted).toBe(true);
     }

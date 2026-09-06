@@ -90,8 +90,14 @@ describe("webhook endpoints", () => {
     expect(refused.status).toBe(422);
     // Chapter 3.2's lesson about error messages that name the mistake, applied
     // to a limit: "too many endpoints" leaves the reader counting.
-    const body = await refused.text();
-    expect(body).toContain(String(MAX_ENDPOINTS_PER_ENVIRONMENT));
+    const body = (await refused.json()) as { code: string; message: string };
+    expect(body.message).toContain(String(MAX_ENDPOINTS_PER_ENVIRONMENT));
+    // AND THE CODE (feature 043, FR-014). This test asserted the status and the text and
+    // passed while the body called itself `internal_error` — which is exactly how the
+    // five bare 422s survived from chapter 3.5. The sixth code is asserted here rather
+    // than in the group below because reaching this refusal costs a full environment's
+    // worth of endpoints.
+    expect(body.code).toBe("webhook_endpoint_limit_reached");
   });
 
   // --- feature 043: the refusals name the customer's mistake -------------
