@@ -11,7 +11,7 @@ import { createLogger, serve, type Logger } from "@relay/service-kit";
 import { Redis } from "ioredis";
 import { docsUrl } from "@relay/protocol";
 import { WebSocket } from "ws";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 // THE LANE'S PORT MAP IS RETIRED, AND THIS IS WHAT REPLACED IT (feature 043,
 // FR-001/FR-002/FR-026). Every lane in this repository now spawns its children with
@@ -305,35 +305,41 @@ describe("one counter, two services (chapter 3.8)", () => {
   /** The key the api and the gateway are both supposed to be incrementing.
    * Spelled out here rather than imported, because a test that computed it with
    * the code under test would agree with a wrong answer. */
-  const key = (operation: string) =>
+  const key = (operation: string, atMs: number = Date.now()) =>
     `rl:${api.environmentId}:${operation}:` +
-    `${Math.floor(Date.now() / 60_000) * 60_000}`;
+    `${Math.floor(atMs / 60_000) * 60_000}`;
 
-  const count = async (operation: string): Promise<number> =>
-    Number((await redis.get(key(operation))) ?? 0);
+  /** THE WINDOW IS WALL-CLOCK, SO A TEST CAN SPAN TWO OF THEM.
+   *
+   * `limits.ts:115` keys on `Math.floor(now / 60_000) * 60_000`. The bucket rolls at the
+   * top of every minute whatever the suite is doing, so ten sends either side of the
+   * boundary write two keys — and reading one of them reports `7` where the test means
+   * `10`, which looks exactly like a limiter dropping increments.
+   *
+   * Measured, twice: run 1 of feature 043's second battery and run 2 of its third.
+   * Nothing in either failure named a clock.
+   *
+   * SUMMING RATHER THAN SLEEPING, and the first attempt did sleep. Waiting for the next
+   * boundary made the test correct and blew its 5-second timeout the moment the guard
+   * actually fired — a fix whose failure mode is worse than the fault, because a timeout
+   * says nothing about what it was waiting for. This asserts the same number without
+   * spending any time: ten sends are ten sends however the minute falls across them. */
+  const windowsSince = (sinceMs: number): number[] => {
+    const first = Math.floor(sinceMs / 60_000) * 60_000;
+    const last = Math.floor(Date.now() / 60_000) * 60_000;
+    const out: number[] = [];
+    for (let w = first; w <= last; w += 60_000) out.push(w);
+    return out;
+  };
 
-  /** Wait for enough room in the current counting window, before a test that spends
-   * several operations and then asserts the total.
-   *
-   * THE WINDOW IS WALL-CLOCK, NOT PER-TEST. `limits.ts:115` keys on
-   * `Math.floor(now / 60_000) * 60_000`, so the bucket rolls at the top of every minute
-   * whatever the suite is doing. A test that sends ten times either side of that
-   * boundary writes into two buckets and then reads one — and the failure it produces
-   * is `expected 7 to be 10`, which reads exactly like a limiter that lost three
-   * increments.
-   *
-   * Measured: that is what run 1 of feature 043's second battery reported, and nothing
-   * about it named a clock. The test had been correct and lucky; retiring the port
-   * bands shortened this suite from 45.7 s to 35.3 s, which moved when it runs relative
-   * to the minute, and the luck changed.
-   *
-   * Sleeping to the next boundary rather than relaxing the assertion, because
-   * `toBe(10)` is the point of the test — a limiter that counted 7 of 10 sends would be
-   * a real defect and this suite has to keep being able to say so. */
-  const roomInWindow = async (needMs: number): Promise<void> => {
-    const remaining = 60_000 - (Date.now() % 60_000);
-    if (remaining >= needMs) return;
-    await new Promise((r) => setTimeout(r, remaining + 50));
+  let testStartedAt = Date.now();
+
+  const count = async (operation: string): Promise<number> => {
+    let total = 0;
+    for (const w of windowsSince(testStartedAt)) {
+      total += Number((await redis.get(key(operation, w))) ?? 0);
+    }
+    return total;
   };
 
   const mintToken = async (user = "tuan") => {
@@ -396,12 +402,23 @@ describe("one counter, two services (chapter 3.8)", () => {
     url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
   }, 60_000);
 
+  beforeEach(() => {
+    // Where `count()` starts summing, and where `afterEach` starts deleting.
+    testStartedAt = Date.now();
+  });
+
   afterEach(async () => {
     for (const socket of sockets.splice(0)) socket.close();
     // Every test starts from an empty bucket and the documented defaults.
     // Otherwise the first test's traffic is the second test's head start, and
     // the window is a minute long.
-    await redis.del(key("rest"), key("send"), key("connect"));
+    //
+    // EVERY WINDOW THE TEST TOUCHED, not just the current one. Deleting only the
+    // bucket that happens to be current when the hook runs leaves the earlier half of a
+    // boundary-crossing test behind, which is a head start that appears once an hour.
+    for (const w of windowsSince(testStartedAt)) {
+      await redis.del(key("rest", w), key("send", w), key("connect", w));
+    }
     await api.setLimits({});
   });
 
@@ -417,7 +434,6 @@ describe("one counter, two services (chapter 3.8)", () => {
     // so the frame is counted by the gateway and not again when its HTTP hop
     // lands. And not zero times, which is what an exemption applied one layer
     // too broadly would produce.
-    await roomInWindow(5_000);
     const socket = await connect(await mintToken());
     const before = await count("send");
     await frameSend(socket, "one");
@@ -428,7 +444,6 @@ describe("one counter, two services (chapter 3.8)", () => {
   it("spends ONE budget across both transports (FR-RTL-01, research R11)", async () => {
     // Five over REST and five over the socket. If the two services were
     // counting separately this would read 5 and 5.
-    await roomInWindow(15_000);
     const socket = await connect(await mintToken());
     for (let i = 0; i < 5; i += 1) {
       const res = await restSend(`rest-${i}`);
