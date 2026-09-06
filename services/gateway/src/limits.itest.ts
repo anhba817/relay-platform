@@ -312,6 +312,30 @@ describe("one counter, two services (chapter 3.8)", () => {
   const count = async (operation: string): Promise<number> =>
     Number((await redis.get(key(operation))) ?? 0);
 
+  /** Wait for enough room in the current counting window, before a test that spends
+   * several operations and then asserts the total.
+   *
+   * THE WINDOW IS WALL-CLOCK, NOT PER-TEST. `limits.ts:115` keys on
+   * `Math.floor(now / 60_000) * 60_000`, so the bucket rolls at the top of every minute
+   * whatever the suite is doing. A test that sends ten times either side of that
+   * boundary writes into two buckets and then reads one — and the failure it produces
+   * is `expected 7 to be 10`, which reads exactly like a limiter that lost three
+   * increments.
+   *
+   * Measured: that is what run 1 of feature 043's second battery reported, and nothing
+   * about it named a clock. The test had been correct and lucky; retiring the port
+   * bands shortened this suite from 45.7 s to 35.3 s, which moved when it runs relative
+   * to the minute, and the luck changed.
+   *
+   * Sleeping to the next boundary rather than relaxing the assertion, because
+   * `toBe(10)` is the point of the test — a limiter that counted 7 of 10 sends would be
+   * a real defect and this suite has to keep being able to say so. */
+  const roomInWindow = async (needMs: number): Promise<void> => {
+    const remaining = 60_000 - (Date.now() % 60_000);
+    if (remaining >= needMs) return;
+    await new Promise((r) => setTimeout(r, remaining + 50));
+  };
+
   const mintToken = async (user = "tuan") => {
     const res = await fetch(`${api.url}/auth/dev-token`, {
       method: "POST",
@@ -393,6 +417,7 @@ describe("one counter, two services (chapter 3.8)", () => {
     // so the frame is counted by the gateway and not again when its HTTP hop
     // lands. And not zero times, which is what an exemption applied one layer
     // too broadly would produce.
+    await roomInWindow(5_000);
     const socket = await connect(await mintToken());
     const before = await count("send");
     await frameSend(socket, "one");
@@ -403,6 +428,7 @@ describe("one counter, two services (chapter 3.8)", () => {
   it("spends ONE budget across both transports (FR-RTL-01, research R11)", async () => {
     // Five over REST and five over the socket. If the two services were
     // counting separately this would read 5 and 5.
+    await roomInWindow(15_000);
     const socket = await connect(await mintToken());
     for (let i = 0; i < 5; i += 1) {
       const res = await restSend(`rest-${i}`);
