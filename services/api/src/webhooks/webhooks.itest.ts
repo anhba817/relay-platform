@@ -152,6 +152,27 @@ describe("webhook endpoints", () => {
       event_types: ["channel.created"],
     });
     expect(res.status).toBe(201);
+
+    // AND IT SAYS SO, which is the half that separates this from silence. The review's
+    // finding is that a bad subscription produces "a permanently silent endpoint"; a
+    // subscription to a declared-but-unbuilt type produces the same silence for a
+    // blameless reason, so the acceptance carries the distinction the refusal would
+    // have made.
+    const body = (await res.json()) as { not_emitted_yet?: string[] };
+    expect(body.not_emitted_yet).toEqual(["channel.created"]);
+  });
+
+  it("says nothing extra when every subscribed type is built", async () => {
+    // THE CONTROL. `not_emitted_yet` is absent rather than empty, so an endpoint
+    // subscribed entirely to built types has exactly the response it always had — and a
+    // client that branches on the key's presence is not made to handle `[]`.
+    const res = await create(key.credential, {
+      url: "https://example.test/all-built",
+      event_types: ["message.created", "message.updated"],
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("not_emitted_yet");
   });
 
   // --- invariant 2 -------------------------------------------------------

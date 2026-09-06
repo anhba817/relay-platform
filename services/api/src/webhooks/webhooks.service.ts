@@ -49,6 +49,15 @@ export interface CreateEndpointInput {
 /** What a customer receives once and never again. */
 export interface EndpointWithSecret extends WebhookEndpointRow {
   secret: string;
+  /** The subscribed types this platform declares and does not emit yet (FR-016).
+   *
+   * PRESENT ONLY WHEN NON-EMPTY, so an endpoint subscribed entirely to built types has
+   * the response it always had. This is the finding's actual remedy: the review describes
+   * a typo producing "a permanently silent endpoint", and a subscription to a
+   * declared-but-unbuilt type produces exactly the same silence for a different and
+   * blameless reason. Refusing it is wrong — 838 stored rows name `channel.created` — so
+   * the acceptance has to carry the distinction the refusal would have made. */
+  not_emitted_yet?: string[];
 }
 
 /** How long a caller waits for a test event to come back.
@@ -98,7 +107,12 @@ export class WebhooksService {
       eventTypes: input.event_types,
       secretCiphertext: encryptSecret(secret),
     });
-    return { ...row, secret };
+    const unemitted = this.unemittedAmong(input.event_types);
+    return {
+      ...row,
+      secret,
+      ...(unemitted.length > 0 ? { not_emitted_yet: unemitted } : {}),
+    };
   }
 
   list(): Promise<WebhookEndpointRow[]> {
@@ -228,6 +242,14 @@ export class WebhooksService {
    * So a name outside the declared eight is a typo and is refused; a declared name the
    * platform does not emit yet is accepted, and the refusal message for the typo names
    * the set so a customer can see which they hit. */
+  /** Which of these the platform declares and does not emit yet. */
+  private unemittedAmong(types: string[]): string[] {
+    return types.filter(
+      (t) => t in WEBHOOK_EVENT_TYPES &&
+        !WEBHOOK_EVENT_TYPES[t as keyof typeof WEBHOOK_EVENT_TYPES].emitted,
+    );
+  }
+
   private assertEventTypes(types: string[]): void {
     if (!Array.isArray(types) || types.length === 0) {
       throw protocolError(
