@@ -64,13 +64,23 @@ describe("reset-lane.mjs", () => {
       await run("node", [SCRIPT, "--yes-this-is-my-test-lane"]);
       expect(await count()).toBe(before);
 
-      // And nothing due: the point of the reset is that the delivery relay has no
-      // backlog to republish, which is what starved the dispatcher lane in 3.24.
-      const due = await client.query<{ n: number }>(
+      // NO STALE BACKLOG LEFT — and the variable used to be called `due`, which is a
+      // different claim from the one the query makes.
+      //
+      // "Due" would mean `next_attempt_at <= now()`, and that is a fact about the whole
+      // table rather than about anything this script promises. Measured immediately
+      // after a clean reset: 372 rows pending and due, every one of them seconds old
+      // and belonging to the suite that had just finished. The script leaves those
+      // deliberately — `STALE_AFTER` exists so a reset cannot race a run still in
+      // flight — so an assertion on "due" would fail on a lane that was cleaned
+      // correctly.
+      //
+      // The query was always the right one. Only the name disagreed with it.
+      const stale = await client.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM webhook_deliveries
          WHERE state = 'pending' AND created_at < now() - interval '30 minutes'`,
       );
-      expect(due.rows[0]!.n).toBe(0);
+      expect(stale.rows[0]!.n).toBe(0);
     } finally {
       await client.end();
     }
