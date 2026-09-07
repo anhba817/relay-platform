@@ -105,7 +105,7 @@ export default defineConfig({
         // Constitution VI, first clause: 70% of business logic. Set to what the
         // constitution says, not to what the code achieves — a threshold tuned
         // down to pass measures nothing. Currently met with room to spare
-        // (89.50% statements, 82.73% branches after chapter 3.8, up from 86.55%
+        // (89.50% statements, 82.73% branches after the rate-limit chapter, up from 86.55%
         // and 78.07%). Ten new files, eight of them small and heavily branched,
         // moved both figures up — which is not the usual direction for a chapter
         // that adds code, and worth naming for that reason.
@@ -336,7 +336,7 @@ export default defineConfig({
         // (FR-004, SC-006), and its `catch` is what stops an analytics outage
         // becoming a delivery outage (contract invariant 4). Both are branches, and
         // an unmeasured branch here fails silently in the direction nobody checks.
-        // ── CHAPTER 3.12'S NEW FILES, PINNED DELIBERATELY ──────────────────
+        // ── THE ISOLATION GAUNTLET'S NEW FILES, PINNED DELIBERATELY ────────
         //
         // T079 asked for an explicit decision either way, and the answer is: pin
         // the ones that decide something, at what they measure. All of these sit
@@ -418,7 +418,7 @@ export default defineConfig({
           statements: 96,
         },
 
-        // ── CHAPTER 3.15's USER SURFACE ────────────────────────────────────────
+        // ── THE CHANNEL-CONTROL CHAPTER'S USER SURFACE ─────────────────────────
         //
         // The controller and the schema at 100 on everything, and they earn it: the
         // controller is eight handlers that delegate, and the schema's every refusal path
@@ -506,7 +506,7 @@ export default defineConfig({
         //
         // WHAT WAS TESTED, and it was the largest part: every one of those routes throws
         // a 400 when the token's subject has no user row, and nothing exercised it. The
-        // send path had had that test since chapter 3.15; the two new routes and the
+        // send path had had that test since the channel-control chapter; the two new routes and the
         // history route beside them did not. One test covering all three took lines to
         // 97.87 and branches to 84.61.
         //
@@ -514,7 +514,7 @@ export default defineConfig({
         // and the fifth time it has produced one:
         //
         //   - `deleted.user ?? "unknown"` on the deletion frame. `deleteMessage` refuses
-        //     a senderless row (FR-018 of 3.23) before it can return, so the arm was
+        //     a senderless row (FR-018 of the revisions chapter) before it can return, so the arm was
         //     unreachable — AND the value it would have produced was a lie: the word
         //     "unknown" on the wire as somebody's name. The narrowing moved to the
         //     repository, where the foreign-key argument for it lives.
@@ -750,7 +750,7 @@ export default defineConfig({
           statements: 100,
         },
 
-        // ── CHAPTER 3.20'S FOUR NEW PRODUCTION FILES ───────────────────────
+        // ── THE MEMBERSHIP-REVOCATION CHAPTER'S FOUR NEW PRODUCTION FILES ──
         //
         // All four at 100 on every metric, and the pin is NFR-MNT-02's MUST rather
         // than a preference: membership decides who may hear what, so this is

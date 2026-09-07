@@ -37,7 +37,7 @@
 -- ABSENT AND NULL BOTH MEAN NO CAP. ZERO MEANS REFUSE EVERYTHING. That is the
 -- same rule 0008 wrote for the limit columns, and jsonb keeps it expressible:
 -- `#>> '{messages,hard}'` returns SQL NULL for an absent key and for a JSON null
--- alike, and the string `'0'` for zero. The distinction 3.8 needed nullable
+-- alike, and the string `'0'` for zero. The distinction the rate-limit chapter needed nullable
 -- columns for survives the move.
 --
 -- WHAT THE JSONB BUYS: THE CONNECTION-METERING CHAPTER adds connection-minutes and FR-MED-12 later
@@ -125,7 +125,7 @@ CREATE TABLE usage_periods (
 -- above: a flush would erase the month.
 --
 -- A SEND WITH NO `user_id` WRITES NO ROW. A key-authenticated REST send is
--- unattributed by design since chapter 3.3, and an unattributed send counts
+-- unattributed by design since the outbox chapter, and an unattributed send counts
 -- toward the message quota and toward no user.
 
 CREATE TABLE usage_active_users (
@@ -140,9 +140,10 @@ CREATE TABLE usage_active_users (
 -- The outbox, a fourth time.
 -- ---------------------------------------------------------------------------
 --
--- The outbox chapter published events, 3.5 dispatched webhook deliveries, 3.9 sent
--- disablement emails. Each is a table whose claim predicate starts null, drained
--- by a relay, retried by falling due again. This is the fourth, and saying the
+-- The outbox chapter published events, the webhook dispatcher chapter dispatched
+-- webhook deliveries, the mail-transport chapter sent disablement emails. Each is a
+-- table whose claim predicate starts null, drained by a relay, retried by falling
+-- due again. This is the fourth, and saying the
 -- number out loud is the point: four concrete tables that look alike is a
 -- pattern, one abstract table serving four purposes is a framework.
 --

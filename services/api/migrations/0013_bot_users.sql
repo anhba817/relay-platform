@@ -7,8 +7,8 @@
 -- rendered, what is delivered and what may be seen, so a message with no sender became
 -- a row those three chapters cannot describe.
 --
--- TWO COLUMNS, NOT A SECOND TABLE. `users` is what every reader built since chapter
--- 3.15 already reads. A `bots` table would have meant teaching each of them a second
+-- TWO COLUMNS, NOT A SECOND TABLE. `users` is what every reader built since the
+-- channel-control chapter already reads. A `bots` table would have meant teaching each of them a second
 -- place to look, and `messages.user_id` would have had to reference one of two tables.
 --
 -- NO BACKFILL, and that is measured rather than assumed. `ADD COLUMN ... NOT NULL

@@ -5,8 +5,8 @@ import tseslint from "typescript-eslint";
 // ── THE TWO RESTRICTION SETS, NAMED SO THEY CAN BE COMBINED ──────────────────
 //
 // `no-restricted-imports` is one rule, and in flat config a later block REPLACES
-// an earlier block's setting for it rather than merging. That is the bug chapter
-// 3.12 found (R23, FR-043): a second block for `**/*.itest.ts` carrying feature
+// an earlier block's setting for it rather than merging. That is the bug the
+// isolation gauntlet found (R23, FR-043): a second block for `**/*.itest.ts` carrying feature
 // 030's global-drain restriction switched the driver-and-engine ban OFF for every
 // integration test in the workspace. Measured — `npx eslint
 // services/api/src/quotas/period.itest.ts` exited 0 while that file imports
@@ -159,8 +159,8 @@ const GLOBAL_DRAINS = {
         "drainDisableNotifications",
         // The connection-metering chapter added this one, and the quota chapter should have.
         // `drainQuotaNotifications` claims undelivered rows across every
-        // environment, exactly as its three siblings above do, and 3.10
-        // listed it in neither this rule nor `exempt.ts` — whose comment
+        // environment, exactly as its three siblings above do, and the quota
+        // chapter listed it in neither this rule nor `exempt.ts` — whose comment
         // says the two MUST AGREE.
         //
         // SAY WHAT THIS DOES NOT BUY. It protects a future DIRECT
@@ -223,7 +223,7 @@ export default tseslint.config(
     // the SAME key, and the only way to check that is to read the key with neither
     // of their code.
     //
-    // CORRECTED IN 3.12 (T069c). This comment used to say it was "the one TEST
+    // CORRECTED IN THE ISOLATION GAUNTLET (T069c). This comment used to say it was "the one TEST
     // allowed a raw client". Every test was allowed one, and had been since the
     // `**/*.itest.ts` block below was added — that block replaced this rule rather
     // than adding to it, which is the whole of R23. Its `ignores` entry here has
@@ -377,7 +377,7 @@ export default tseslint.config(
     },
   },
   {
-    // THE SEAL ON `packages/outsider` (chapter 3.14, FR-030, FR-034, R12).
+    // THE SEAL ON `packages/outsider` (FR-030, FR-034, R12).
     //
     // That package holds one suite that behaves like a customer, and the claim it
     // makes — an integration built from published documentation alone — is worth

@@ -8,11 +8,11 @@
 //   node scripts/webhook-walk.mjs --print-signing-material
 //   node scripts/webhook-walk.mjs --fast-forward     # against --mode=fail
 //   node scripts/webhook-walk.mjs --send-only        # leave it for the real dispatcher
-//   node scripts/webhook-walk.mjs --fast-forward --watch-disable   # chapter 3.6
+//   node scripts/webhook-walk.mjs --fast-forward --watch-disable   # the retry-and-disable chapter
 //
 //   --url=http://127.0.0.1:4555/hook   where to point the endpoint
 //   --api-port=4141                    the api this walk spawns for itself
-//   --watch-disable                    chapter 3.6: print the failure run as it
+//   --watch-disable                    print the failure run as it
 //                                      grows and the disablement when it lands.
 //                                      Ages the run rather than waiting an hour.
 //   --secret=SECRET                    pin the signing secret instead of minting
@@ -102,7 +102,7 @@ const db = createDb(pool);
 // consumer created afterwards would begin after the message this walk is about
 // and wait forever for something it had already missed. (Starting at `All`
 // instead is worse in a different way: the walk replays every event the stream
-// has ever held, which on a development machine is every test run since 3.3.)
+// has ever held, which on a development machine is every test run since the outbox chapter.)
 rule("0. the api and the dispatcher this walk drives");
 
 const api = spawn("node", [join(API_DIST, "main.js")], {

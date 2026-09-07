@@ -20,7 +20,7 @@
 --     denormalised on purpose — the row records an obligation as it stood, and an
 --     application moving between organisations must not retarget a notification
 --     already owed to somebody else;
---   * all three foreign keys are ON DELETE NO ACTION, the choice 3.5 made and
+--   * all three foreign keys are ON DELETE NO ACTION, the choice the webhook dispatcher chapter made and
 --     for its reason: deletion is soft, and a cascade would erase records the
 --     platform is required to keep;
 --   * webhook_endpoints_failure_run_idx is PARTIAL, on failure_run_started_at

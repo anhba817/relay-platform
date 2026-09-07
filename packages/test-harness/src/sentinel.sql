@@ -84,7 +84,7 @@ BEGIN
   -- depends on what the test meant, and a guess printed as advice is worse than
   -- silence. That guidance belongs in the lint rule, which knows the call site.
   --
-  -- `OLD.id` UNTIL CHAPTER 3.12, and that is why extending the array below was
+  -- `OLD.id` UNTIL THE ISOLATION GAUNTLET, and that is why extending the array below was
   -- not a one-line change. Three of the four usage tables have composite primary
   -- keys and no `id` column at all — `usage_periods` is
   -- `(environment_id, period)`, `usage_active_users` adds `user_id`,
@@ -112,9 +112,10 @@ END $$;
 -- gap rather than an oversight (data-model.md).
 --
 -- NINE, NOT FIVE, AS OF THE ISOLATION GAUNTLET (FR-036). The four usage tables were added
--- by chapters 3.10 and 3.11 and neither added them here, so a cross-environment
--- UPDATE or DELETE on any of them passed for two chapters. Confirmed against a
--- running database rather than read off this file: `pg_trigger` held five
+-- by the quota and connection-metering chapters and neither added them here, so a
+-- cross-environment UPDATE or DELETE on any of them passed for two chapters.
+-- Confirmed against a running database rather than read off this file:
+-- `pg_trigger` held five
 -- `__sentinel_guard_*` rows and none of them was a usage table.
 --
 -- TEN AS OF THE USER-SURFACE CHAPTER. `read_positions` carries `environment_id`, so it belongs
@@ -134,9 +135,10 @@ BEGIN
     'webhook_disable_notifications',
     'channels',
     'users',
-    -- Chapters 3.10 and the connection-metering chapter's tables. Every one carries `environment_id`, which
-    -- is the only thing the WHEN clause below needs; what they do NOT all carry
-    -- is `id`, which is what the message expression above had to change for.
+    -- The quota and connection-metering chapters' tables. Every one carries
+    -- `environment_id`, which is the only thing the WHEN clause below needs; what they
+    -- do NOT all carry is `id`, which is what the message expression above had to
+    -- change for.
     'usage_periods',
     'usage_active_users',
     'quota_notifications',

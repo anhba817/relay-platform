@@ -71,8 +71,8 @@ CREATE INDEX channels_environment_last_activity
 -- classification and becomes the guard's tenth table.
 --
 -- NO id COLUMN. The primary key is (channel_id, user_id) because that is what a
--- read position is. The guard's refusal message interpolates a key, and chapter
--- 3.13 installed `coalesce(to_jsonb(OLD) ->> 'id', to_jsonb(OLD)::text)` for
+-- read position is. The guard's refusal message interpolates a key, and the
+-- channel-endpoints chapter installed `coalesce(to_jsonb(OLD) ->> 'id', to_jsonb(OLD)::text)` for
 -- exactly the tables that have no `id` to interpolate.
 CREATE TABLE read_positions (
     environment_id  UUID NOT NULL REFERENCES environments(id),

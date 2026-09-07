@@ -7,7 +7,7 @@
 -- being specified.
 --
 -- ITS OWN CHECK CONSTRAINT, AND NOT THE ONE THAT ALREADY EXISTS. `memberships`
--- has carried `CHECK (role IN ('owner','admin','member'))` since chapter 3.1 —
+-- has carried `CHECK (role IN ('owner','admin','member'))` since the tenancy chapter —
 -- that is FR-TEN-07, a human's role in an ORGANISATION. FR-CHN-04's channel
 -- roles are 'owner', 'moderator', 'member'.
 --
