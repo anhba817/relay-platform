@@ -648,7 +648,7 @@ export const consumedEvents = pgTable(
 // customer. Both fail the test on both halves, so both are scoped and both join
 // the cross-tenant gauntlet as targets.
 //
-// NAMED, NOT NUMBERED. This line used to say "the deduplication chapter's cross-tenant
+// NAMED, NOT NUMBERED. This line used to say "chapter 3.7's cross-tenant
 // gauntlet", and the gauntlet has moved three times since — carried by the
 // comment none of them. A chapter number in a source comment is a reference that
 // ages every time the plan changes, and this file is fenced byte-exact into a
