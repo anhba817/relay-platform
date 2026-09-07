@@ -245,8 +245,8 @@ export interface SessionServerOptions {
    * phase, which makes the phase uncommittable — the membership-revocation chapter paid for that exact
    * task once. Phase 5 destructures it in the same commit that calls it. */
   typing?: Typing;
-  /** Injectable for the reason `meterIntervalMs` above and chapter
-   * The membership-revocation chapter's `rereadIntervalMs` are: **a test that waits out two real seconds pays
+  /** Injectable for the reason `meterIntervalMs` above and
+   * the membership-revocation chapter's `rereadIntervalMs` are: **a test that waits out two real seconds pays
    * them in the package that paces the lane**, which has about four seconds of
    * headroom in the whole budget. That chapter's itest builds with 40 to test a
    * sixty-second backstop; this one builds with 40 and with 0. */
@@ -797,7 +797,7 @@ export function attachSessions({
           // FR-016 and FR-016a. The connection is accepted with the cap
           // UNENFORCED, and this line is the only externally visible evidence of
           // that — from outside, an accepted connection looks identical whether
-          // the cap was checked and satisfied or not checked at all. Chapter
+          // the cap was checked and satisfied or not checked at all.
           // The fan-out chapter's lesson: the assertion that carries the requirement is the log
           // line.
           logger.log("error", "connection.cap_unenforced", {

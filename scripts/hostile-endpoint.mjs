@@ -1,4 +1,4 @@
-// A customer's webhook endpoint, behaving badly on purpose (chapter 3.5).
+// A customer's webhook endpoint, behaving badly on purpose.
 //
 //   node scripts/hostile-endpoint.mjs --mode=ok      # 200, and prints what arrived
 //   node scripts/hostile-endpoint.mjs --mode=fail    # always 500
@@ -20,7 +20,7 @@
 //
 // This is the same artifact the integration suite drives. One endpoint, run by a
 // reader by hand and by the tests in CI, so neither can rot without the other
-// noticing — 3.3's dual-write walk and 3.4's consumer walk made the same
+// noticing — the outbox chapter's dual-write walk and the broker chapter's consumer walk made the same
 // argument, and this script prints the same MARKER lines a parent process can
 // watch for.
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -76,7 +76,7 @@ const server = createServer((req, res) => {
       }
       console.log(`  body: ${body}`);
     }
-    // The line a parent process watches for. Chapter 3.4's walk established the
+    // The line a parent process watches for. The broker chapter's walk established the
     // convention; keeping it means a test can count arrivals without parsing
     // whatever the pretty output happens to look like this year.
     console.log(`MARKER received n=${n} mode=${MODE}`);

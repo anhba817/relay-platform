@@ -1552,7 +1552,7 @@ describe("the channel's other members see who left (US2)", () => {
     //
     // **COUNTED BY SUBJECT, NOT BY TYPE**, and the first version counted by type and
     // read two presence frames. Both were correct: a watcher shares every one of
-    // their own channels with themselves, so `linh` sees `linh` arrive. Chapter
+    // their own channels with themselves, so `linh` sees `linh` arrive.
     // The presence chapter's `collect()` carries this warning in its own comment, T043 repeats it as
     // an instruction — "filter every collector by subject" — and this suite counted
     // unfiltered anyway. The behaviour was right and the assertion was wrong, for

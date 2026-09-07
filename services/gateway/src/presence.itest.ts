@@ -1113,8 +1113,8 @@ describe("presence: who is allowed to see it (FR-RTM-07, FR-CHN-05)", () => {
 // ── WHEN REDIS IS GONE (FR-023, FR-024, FR-030) ──────────────────────────────
 //
 // EVERY TEST HERE COULD PASS AGAINST A MODULE THAT DOES NOTHING. "The socket still
-// opened" is true of a working presence path and of an empty function, and chapter
-// The fan-out chapter recorded that trap against its own publisher: its `publish` swallows errors
+// opened" is true of a working presence path and of an empty function, and
+// the fan-out chapter recorded that trap against its own publisher: its `publish` swallows errors
 // and resolves, so a 201 with Redis down proves nothing. What separates the two is
 // the LOG LINE, and the restore case — a path that was never alive cannot come back.
 describe("presence: when Redis is gone (FR-023, FR-024)", () => {

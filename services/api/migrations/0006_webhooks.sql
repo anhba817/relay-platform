@@ -1,11 +1,11 @@
--- Chapter 3.5 — webhook endpoints, the delivery schedule, and dead letters.
+-- Webhook endpoints, the delivery schedule, and dead letters.
 --
 -- REVIEW DISPOSITION: drizzle-kit generated this from schema.ts and it was read
 -- line by line before being applied (the ADR-16 workflow). Nothing was
 -- rewritten. Five things were checked rather than assumed:
 --
 --   * all three tables carry environment_id NOT NULL with a foreign key to
---     environments. Unlike 3.3's outbox and 3.4's consumed_events, these are
+--     environments. Unlike the outbox chapter's outbox and the broker chapter's consumed_events, these are
 --     tenant data, and the rule distinguishing the two cases is stated in
 --     schema.ts rather than left for the next chapter to infer;
 --   * webhook_deliveries has UNIQUE (event_id, endpoint_id). That constraint IS
@@ -14,14 +14,14 @@
 --     database rather than by care;
 --   * webhook_deliveries_due_idx is PARTIAL, on next_attempt_at WHERE state =
 --     'pending'. It covers the relay's only query and nothing else, so delivered
---     rows cost nothing to keep — the same shape as 3.3's outbox index;
+--     rows cost nothing to keep — the same shape as the outbox chapter's outbox index;
 --   * the state CHECK admits exactly pending / delivered / dead. There is no
 --     fourth state to get stuck in;
 --   * webhook_endpoints.deleted_at exists because DELETION IS SOFT. The foreign
 --     keys from deliveries and dead letters are ON DELETE NO ACTION on purpose:
 --     a hard delete would have to cascade, and cascading would erase a
 --     customer's dead letters, which FR-WHK-04 says to retain for seven days.
---     Chapter 3.2 reached the same conclusion for api_keys.revoked_at.
+--     The credentials chapter reached the same conclusion for api_keys.revoked_at.
 
 CREATE TABLE "webhook_dead_letters" (
 	"id" uuid PRIMARY KEY NOT NULL,

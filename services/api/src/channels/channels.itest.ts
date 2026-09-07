@@ -395,8 +395,8 @@ describe("the public channel surface", () => {
   //
   // FR-006 says "up to 100 in one request" and FR-007 says the result is reported
   // per user — the channel-endpoints chapter's add shape in both halves. The contract specified a
-  // single-user `DELETE` for ten analysis passes, having read "the shape chapter
-  // The channel-endpoints chapter chose" as *named outcomes* and dropped *bulk*. Every pass compared
+  // single-user `DELETE` for ten analysis passes, having read "the shape
+  // the channel-endpoints chapter chose" as *named outcomes* and dropped *bulk*. Every pass compared
   // requirements to tasks, both said "removal", and identifier coverage read 100%.
   // Comparing US2's scenario 4 — which names a hundred users — to the route's path,
   // which named one, is what found it.

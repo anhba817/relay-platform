@@ -1,6 +1,6 @@
 // Set `channels.last_activity_at` to each channel's real last activity.
 //
-// Chapter 3.16, T019 — and it is a SCRIPT and not part of migration 0011 for one
+// T019 — and it is a SCRIPT and not part of migration 0011 for one
 // reason: the constitution's workflow section requires migrations to be
 // "executable without downtime", and this is a scan.
 //

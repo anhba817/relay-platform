@@ -1,4 +1,4 @@
--- Chapter 3.1 — the tenancy hierarchy (FR-TEN-01/02/03/04/07).
+-- The tenancy hierarchy (FR-TEN-01/02/03/04/07).
 --
 -- REVIEW DISPOSITION: drizzle-kit generated this file from schema.ts and it
 -- was reviewed before being applied (the ADR-16 workflow). One statement was

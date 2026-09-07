@@ -8,9 +8,9 @@
 // already exists before it starts.
 //
 // A SCRIPT AND NOT AN ENDPOINT, and the reason is worth stating rather than
-// deferring. Creating an organisation is the sign-up flow's job (chapter 3.4), and
+// deferring. Creating an organisation is the sign-up flow's job, and
 // the sign-up flow ends at an OAuth consent screen that no automated integration
-// can complete. Minting a key is the dashboard's job, which chapter 3.2 deferred
+// can complete. Minting a key is the dashboard's job, which the credentials chapter deferred
 // by name. Inventing either as an API for a test would be inventing product — the
 // rule chapter 2.8 set for `listMessagesRaw` and every seam since.
 //
@@ -28,7 +28,7 @@
 // second key would leave two credentials where the printed one is whichever the
 // script happened to make last. So an existing demo environment is reused and its
 // key is reissued, because a key's plaintext exists only at the moment it is
-// minted: the row keeps a hash, by design (chapter 3.2), so there is nothing to
+// minted: the row keeps a hash, by design, so there is nothing to
 // print for a key that already exists.
 import { createDb, createPool } from "../services/api/dist/db/client.js";
 import {

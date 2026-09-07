@@ -1,4 +1,4 @@
-// The chapter 3.4 walk: a redelivery, made to happen on purpose.
+// The the broker chapter walk: a redelivery, made to happen on purpose.
 //
 //   node scripts/consumer-walk.mjs                     # consume normally
 //   node scripts/consumer-walk.mjs --kill-before-ack   # die in the gap
@@ -112,7 +112,7 @@ for (const message of await nextBatch()) {
   const event = JSON.parse(new TextDecoder().decode(message.data));
   show("delivered", `${event.id} attempt=${message.info.deliveryCount} redelivered=${message.redelivered}`);
 
-  // The claim and the effect commit together (chapter 3.4). After this line the
+  // The claim and the effect commit together. After this line the
   // work has HAPPENED, durably, and the broker still believes it has not.
   const result = await claimEvent(db, durable, event.id, async () => {});
   show("claim", result);

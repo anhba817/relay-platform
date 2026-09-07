@@ -7,7 +7,7 @@
 # only the stores, which is what every chapter from 1.2 onwards tells a reader to
 # run and what the test lanes expect: the suites start their own api and their
 # own gateways, and a second copy holding the same tables would race them
-# (chapter 3.3's finding 4). `--profile services` runs the platform instead.
+# (the outbox chapter's finding 4). `--profile services` runs the platform instead.
 name: relay
 
 services:
@@ -75,7 +75,7 @@ services:
 
   mailpit:
     image: axllent/mailpit:v1.28
-    # Chapter 3.8. An SMTP server that accepts everything and delivers nothing,
+    # An SMTP server that accepts everything and delivers nothing,
     # with an HTTP API for reading what it caught.
     #
     # WHY A CONTAINER RATHER THAN A FAKE. FR-WHK-07 says an email must not contain a
@@ -112,7 +112,7 @@ services:
     environment:
       DATABASE_URL: postgres://relay:relay@postgres:5432/relay
       RELAY_NATS_URL: nats://nats:4222
-      # Chapter 3.8. Container names, not localhost — the api's own default is
+      # Container names, not localhost — the api's own default is
       # `redis://localhost:6379`, which inside this container is not the Redis
       # service. And the tenant limiter FAILS OPEN by design (SAD §6.3), so a
       # missing address would not crash anything: the composed stack would serve
@@ -151,7 +151,7 @@ services:
       RELAY_API_URL: http://api:4000
       RELAY_REDIS_URL: redis://redis:6379
       PORT: "4001"
-      # Chapter 3.11: the gateway's first credential of its own. Every other
+      # The gateway's first credential of its own. Every other
       # call it makes forwards the END USER's token; a usage report is nobody's
       # user action, so it speaks for itself. Its own variable rather than the
       # dispatcher's, because `PlatformPrincipal.service` has to stay true and

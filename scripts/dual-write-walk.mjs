@@ -1,4 +1,4 @@
-// The chapter 3.3 walk: the dual-write problem, and the fix, run side by side.
+// The the outbox chapter walk: the dual-write problem, and the fix, run side by side.
 //
 //   node scripts/dual-write-walk.mjs --mode=naive
 //   node scripts/dual-write-walk.mjs --mode=outbox
@@ -14,7 +14,7 @@
 // repeatable test rather than a story. Run by hand with nobody killing it, the
 // script simply carries on and reports what happened.
 //
-// DECISION (chapter 3.3): the naive publish-after-commit path lives HERE and in
+// DECISION: the naive publish-after-commit path lives HERE and in
 // no service. It is a teaching artifact, like split-brain.mjs — fenced, so it
 // cannot quietly stop compiling, and outside services/ so that nobody copying
 // the repository ships the bug (research R5).

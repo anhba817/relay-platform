@@ -23,8 +23,8 @@ import {
 } from "../db/repository";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 
-// The gateway's only road to a number it can see and cannot write (chapter
-// The connection-metering chapter, constitution IV).
+// The gateway's only road to a number it can see and cannot write
+// (the connection-metering chapter, constitution IV).
 //
 // A SEPARATE CONTROLLER FROM THE OTHER `/internal` ROUTES, and the reason is the
 // decorator two lines below. `/internal/session`, `/internal/backfill` and

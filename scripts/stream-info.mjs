@@ -1,5 +1,5 @@
 // What the stream actually holds and how it is actually configured
-// (chapter 3.4). The chapter quotes the broker, not the config file — a
+//. The chapter quotes the broker, not the config file — a
 // configuration that was written is not the same as a configuration that was
 // applied, and the difference is exactly what this chapter is about.
 //
@@ -7,8 +7,8 @@
 //   RELAY_NATS_URL=nats://localhost:14222 node scripts/stream-info.mjs
 //   RELAY_NATS_URL=nats://localhost:14222 node scripts/stream-info.mjs ANALYTICS
 //
-// The stream is an ARGUMENT as of chapter 3.6, defaulting to the one stream that
-// existed when this was written. It had `"EVENTS"` in three places, and 3.6's
+// The stream is an ARGUMENT as of the retry-and-disable chapter, defaulting to the one stream that
+// existed when this was written. It had `"EVENTS"` in three places, and the retry-and-disable chapter's
 // quickstart asks the reader to inspect `ANALYTICS` — which would have printed
 // the wrong stream's configuration and passed, since every field it shows exists
 // on both. A validation step that cannot fail is worse than no step.

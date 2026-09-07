@@ -30,7 +30,7 @@ export default defineConfig({
       RELAY_DELIVERY_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",
       RELAY_EVENT_CONSUMER: "off",
-      // Chapter 3.10's relay, the fourth. Same reason as the other three.
+      // The quota chapter's relay, the fourth. Same reason as the other three.
       RELAY_QUOTA_RELAY: "off",
     },
     include: ["src/**/*.itest.ts"],

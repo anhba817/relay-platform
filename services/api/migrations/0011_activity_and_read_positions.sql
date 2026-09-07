@@ -1,4 +1,4 @@
--- Chapter 3.16 — ordering a user's channels, and knowing what they have not read.
+-- Ordering a user's channels, and knowing what they have not read.
 --
 -- Two changes with one thing in common: both answer a question `last_sequence`
 -- looks like it should answer and cannot.

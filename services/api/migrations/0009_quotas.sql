@@ -1,6 +1,6 @@
--- Chapter 3.10 — monthly usage quotas (FR-RTL-05 to FR-RTL-08).
+-- Monthly usage quotas (FR-RTL-05 to FR-RTL-08).
 --
--- Chapter 3.8 built the per-minute limiter. This is the other half of FR-RTL and
+-- The rate-limit chapter built the per-minute limiter. This is the other half of FR-RTL and
 -- the two are different problems wearing the same word: a rate limit is about
 -- THIS SECOND and forgets, a quota is about THIS MONTH and must not. Everything
 -- below follows from the second half of that sentence.
@@ -25,7 +25,7 @@
 --
 -- THERE IS NO NEW POLICY COLUMN, because `environments.quota_config` has been
 -- sitting there since `0000_core_tables.sql` — declared in chapter 2.1, named in
--- SRS §6.1, and read by nothing for eighteen chapters. Chapter 3.8 was offered it
+-- SRS §6.1, and read by nothing for eighteen chapters. The rate-limit chapter was offered it
 -- for rate-limit policy and refused, in prose, on the grounds that "the column is
 -- named for quotas, quotas are a later chapter". This is that chapter.
 --
@@ -40,7 +40,7 @@
 -- alike, and the string `'0'` for zero. The distinction 3.8 needed nullable
 -- columns for survives the move.
 --
--- WHAT THE JSONB BUYS: chapter 3.11 adds connection-minutes and FR-MED-12 later
+-- WHAT THE JSONB BUYS: THE CONNECTION-METERING CHAPTER adds connection-minutes and FR-MED-12 later
 -- adds media bytes, and neither needs a table migration — a new dimension is a
 -- new key.
 --
@@ -140,7 +140,7 @@ CREATE TABLE usage_active_users (
 -- The outbox, a fourth time.
 -- ---------------------------------------------------------------------------
 --
--- Chapter 3.3 published events, 3.5 dispatched webhook deliveries, 3.9 sent
+-- The outbox chapter published events, 3.5 dispatched webhook deliveries, 3.9 sent
 -- disablement emails. Each is a table whose claim predicate starts null, drained
 -- by a relay, retried by falling due again. This is the fourth, and saying the
 -- number out loud is the point: four concrete tables that look alike is a
@@ -178,7 +178,7 @@ CREATE TABLE quota_notifications (
     UNIQUE (environment_id, period, dimension, threshold)
 );
 
--- The claim predicate the relay drains on, matching chapter 3.9's shape.
+-- The claim predicate the relay drains on, matching the mail-transport chapter's shape.
 CREATE INDEX quota_notifications_undelivered
   ON quota_notifications (crossed_at)
   WHERE delivered_at IS NULL;

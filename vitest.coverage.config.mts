@@ -42,7 +42,7 @@ export default defineConfig({
       RELAY_DELIVERY_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",
       RELAY_EVENT_CONSUMER: "off",
-      // Chapter 3.10's relay, the fourth. Same reason as the other three.
+      // The quota chapter's relay, the fourth. Same reason as the other three.
       RELAY_QUOTA_RELAY: "off",
     },
     setupFiles: ["./packages/test-harness/src/setup.ts"],
@@ -56,13 +56,13 @@ export default defineConfig({
     // measures the system, not any file's branches, and its child processes'
     // coverage is not attributable here anyway.
     //
-    // AND `packages/outsider` FOR A DIFFERENT REASON, added in chapter 3.15's Phase 1.
+    // AND `packages/outsider` FOR A DIFFERENT REASON, added in the channel-control chapter's Phase 1.
     // That suite integrates against a platform it does not start: without
     // RELAY_API_URL, RELAY_WS_URL and RELAY_DEMO_CREDENTIAL it throws on purpose and
     // prints the five commands that would satisfy it. `pnpm coverage` sets none of
     // them, so it failed every coverage run — 8 tests skipped, one failed suite.
     //
-    // Chapter 3.12 split the lanes so `pnpm test:integration` is
+    // The isolation gauntlet split the lanes so `pnpm test:integration` is
     // `turbo run test:integration --filter=!@relay/outsider`, and the exclusion went
     // into the script and NOT into this config. One lane learned it and the other did
     // not. `pnpm test:outsider` is the way in, and the CI `outsider` job is where it
@@ -73,13 +73,13 @@ export default defineConfig({
       "packages/outsider/**",
     ],
     // Suites in one process would share a database in ways their authors did
-    // not design for — 3.3's outbox suite learned that the hard way.
+    // not design for — the outbox chapter's outbox suite learned that the hard way.
     fileParallelism: false,
     testTimeout: 60_000,
     hookTimeout: 60_000,
     coverage: {
       provider: "v8",
-      // `json` joins the other two for chapter 3.13's FR-040, which asks for every
+      // `json` joins the other two for the channel-endpoints chapter's FR-040, which asks for every
       // uncovered branch to be NAMED and not merely counted. `json-summary` carries
       // totals and percentages; the per-branch locations are only in `coverage-final.json`.
       // Found by trying to list the 25 uncovered arms in `repository.ts` and getting a
@@ -128,7 +128,7 @@ export default defineConfig({
         // uncovered branches named. Raising these to 100 is the work; this
         // feature is the instrument that made the number sayable at all.
         //
-        // CHAPTER 3.5 RAISED THESE, and only after earning it. The webhook work
+        // THE WEBHOOK DISPATCHER CHAPTER RAISED THESE, and only after earning it. The webhook work
         // added six operations to this file and the ratchet immediately went
         // red — branches fell from 85.91% to 78.22%, because `deliveryMaterial`
         // and `pendingDeliveryDepth` were called only by the dispatcher, whose
@@ -138,14 +138,14 @@ export default defineConfig({
         // ratchet, thrown away; the tests in `webhooks/deliveries.itest.ts` were
         // written instead, and these are the measurement that followed.
         //
-        // CHAPTER 3.6 RAISED THEM AGAIN, and the ratchet earned its keep twice on
+        // THE RETRY-AND-DISABLE CHAPTER RAISED THEM AGAIN, and the ratchet earned its keep twice on
         // the way. Measured mid-chapter with the failure run written and its tests
         // not yet, this file read 96.46 statements and 88.80 branches — below both
         // thresholds, which is the instrument saying "you added five operations and
         // tested none of them" in the only language it has. The tests were written;
         // it now reads 97.29 / 90.56 / 100 / 99.14. These numbers are that
         // measurement, not a target negotiated down to meet it.
-        // CHAPTER 3.12 DID NOT RAISE THIS, and the number says why. The chapter
+        // THE ISOLATION GAUNTLET DID NOT RAISE THIS, and the number says why. The chapter
         // added six operations to this file — idempotent creation for channels and
         // users, a three-outcome `addMember`, two scoped counts — and branches
         // measured 90.43% mid-phase, DOWN from T007's 90.60% while still above the
@@ -168,15 +168,15 @@ export default defineConfig({
         // the pin stays at 90 rather than moving to a number the next chapter
         // would have to earn back.
         //
-        // CHAPTER 3.15 RAISED IT, which is the first time this file's branch ratchet has
+        // THE CHANNEL-CONTROL CHAPTER RAISED IT, which is the first time this file's branch ratchet has
         // moved up. The feature added roughly 600 lines here — the membership check, the
         // visibility predicate, bulk removal, roles, archiving, the ban, the read
         // position, the listing with its unread arithmetic — and branches went
-        // **89.51% → 92.11%**. Chapter 3.5's precedent was the opposite: six operations
+        // **89.51% → 92.11%**. The webhook dispatcher chapter's precedent was the opposite: six operations
         // on this file took branches 85.91% → 78.22% on the next run.
         //
         // PINNED AT 91 AND NOT 92, on the reasoning above. 92.11 clears 92 by a tenth,
-        // which is the thin margin chapter 3.12 declined to pin against; 91 locks in most
+        // which is the thin margin the isolation gauntlet declined to pin against; 91 locks in most
         // of the gain and leaves the next chapter more than a rounding error of room.
         //
         // WHAT IS STILL UNCOVERED, and every one is the same class the comment above
@@ -191,8 +191,8 @@ export default defineConfig({
         // the gate went red against its pin of 99; the instrument was right, because the
         // second throw said nothing the first had not. One throw, and lines read 99.13%.
         "services/api/src/db/repository.ts": {
-          // 91 -> 92 (chapter 3.17). Measured 92.59 after this feature, which is 0.59 of
-          // headroom — the same margin chapter 3.16 left when it raised 90 -> 91 at 92.11.
+          // 91 -> 92. Measured 92.59 after this feature, which is 0.59 of
+          // headroom — the same margin the user-surface chapter left when it raised 90 -> 91 at 92.11.
           // The arms that moved it: the sender's `kind` read feeding two checks, the
           // promotion's has-ever-sent scan, and the ceiling's person-only count.
           branches: 92,
@@ -278,7 +278,7 @@ export default defineConfig({
           statements: 83,
         },
 
-        // The dispatcher's two decision-bearing files (chapter 3.5). `expand.ts`
+        // The dispatcher's two decision-bearing files. `expand.ts`
         // decides whether a redelivered event produces a second set of webhooks
         // — constitution VI names idempotency explicitly — and `deliver.ts`
         // holds the post-then-report ordering that chooses a duplicate over a
@@ -297,7 +297,7 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
-        // CHAPTER 3.7 RAISED THIS, 93 -> 95. The chapter added two pure functions
+        // THE DEDUPLICATION CHAPTER RAISED THIS, 93 -> 95. The chapter added two pure functions
         // to this file — the live-path suppression predicate and the scoping that
         // bounds the marks — and both are fully covered.
         //
@@ -320,7 +320,7 @@ export default defineConfig({
           statements: 96,
         },
 
-        // Chapter 3.6's two new files, pinned at 100 on every metric because both
+        // The retry-and-disable chapter's two new files, pinned at 100 on every metric because both
         // reached it and neither has an excuse not to.
         //
         // `disable.ts` is here because constitution VI NAMES this case: it is the
@@ -341,7 +341,7 @@ export default defineConfig({
         // T079 asked for an explicit decision either way, and the answer is: pin
         // the ones that decide something, at what they measure. All of these sit
         // inside the coverage `include` glob, so an unpinned file here is bounded
-        // by nothing but the aggregate 70 — chapter 3.11's T033c made the same
+        // by nothing but the aggregate 70 — the connection-metering chapter's T033c made the same
         // call for the same reason, and its comment is the one to read: an
         // unpinned file is a figure that can slide.
         //
@@ -401,7 +401,7 @@ export default defineConfig({
         // `not_found` outcome after a successful scoped read — the channel deleted
         // between two statements of one call — which nothing in the api can do.
         //
-        // CHAPTER 3.15 RAISED THIS TOO, and T174d predicted the opposite. That task
+        // THE CHANNEL-CONTROL CHAPTER RAISED THIS TOO, and T174d predicted the opposite. That task
         // expected `functions: 100` to go red on the first partially-covered new
         // function — the file gains read-by-id, join, archive, unarchive, bulk removal
         // and role-setting — and it did not, because every one of the six has a route
@@ -448,8 +448,7 @@ export default defineConfig({
           statements: 97,
         },
 
-        // CHOSEN BEFORE THE FIRST COVERAGE REPORT, not read off it (chapter 3.18,
-        // T011). The requirement is that the failure path be covered: this file's
+        // CHOSEN BEFORE THE FIRST COVERAGE REPORT, not read off it (        // T011). The requirement is that the failure path be covered: this file's
         // whole job is to swallow a publish error, log it, and open a window, and
         // a test that only checks `publish` resolved cannot tell that apart from a
         // publisher with no body. So every branch, and every function — the last
@@ -467,12 +466,12 @@ export default defineConfig({
 
         // A FLOOR, NOT AN ACHIEVEMENT. `messages.service.ts` measures 70.83 / 61.76 /
         // 100 / 70.83, and the six uncovered statements are all PRE-EXISTING: the quota
-        // refusal and its rethrow (chapter 3.10) and the history cursor's decode (chapter
+        // refusal and its rethrow and the history cursor's decode (chapter
         // 2.4). This feature's additions to the file — the ban mapping, the archive
         // mapping, the visibility predicate on the history path — are covered.
         //
-        // Pinned anyway, because an unpinned file is a figure that can slide (chapter
-        // 3.11's T033c) and this feature changed the file. A ratchet at 61 does not bless
+        // Pinned anyway, because an unpinned file is a figure that can slide
+        // (the connection-metering chapter's T033c) and this feature changed the file. A ratchet at 61 does not bless
         // 61; it forbids 60. Raising it is the next chapter's work, and the arms are named
         // here so that chapter knows what it is buying.
         "services/api/src/messages/messages.service.ts": {
@@ -499,7 +498,7 @@ export default defineConfig({
         // `text` as non-nullable and a null would publish a frame the delivery side
         // drops silently. A guard against a state the type system forbids is cheap; the
         // alternative is a silent drop.
-        // CHAPTER 3.23 MOVED THIS FILE IN BOTH DIRECTIONS, and the branch number is the
+        // THE REVISIONS CHAPTER MOVED THIS FILE IN BOTH DIRECTIONS, and the branch number is the
         // one worth reading. The chapter added two routes to it — an edit and a deletion,
         // each resolving a caller, each publishing — and the first measurement after that
         // was **91.66 / 78.84 / 100 / 93.61** against pins of 96 / 87 / 100 / 100. Three
@@ -527,7 +526,7 @@ export default defineConfig({
         //     logger — but the count stops growing with every route that publishes.
         //
         // Branches finished at **92.85, above the 87 this chapter inherited**, so the pin
-        // goes UP to 92 — 0.85 of headroom, the same margin chapter 3.17 left on
+        // goes UP to 92 — 0.85 of headroom, the same margin the sender chapter left on
         // `repository.ts` at 92.59.
         //
         // LINES DROP FROM 100 TO 97, and the one uncovered statement is named: the
@@ -544,7 +543,7 @@ export default defineConfig({
           statements: 97,
         },
 
-        // CHAPTER 3.24. The attachment shape and the REST door's schemas, both at 100 on
+        // The attachment shape and the REST door's schemas, both at 100 on
         // all four metrics — which is why neither appears in the text reporter's table
         // and why this pin was written from `coverage-summary.json` instead.
         //
@@ -568,7 +567,7 @@ export default defineConfig({
           statements: 100,
         },
 
-        // The REST door, pinned for the first time because chapter 3.24 is the first to
+        // The REST door, pinned for the first time because the attachments chapter is the first to
         // find a defect in it: `editMessageBodySchema.text` was
         // `sendMessageBodySchema.shape.text`, so relaxing the send's floor for FR-019
         // relaxed the edit's, and an edit has no attachments field to restore it. Two
@@ -593,7 +592,7 @@ export default defineConfig({
           statements: 100,
         },
 
-        // CHAPTER 3.8's limiter. Pinned at what the work achieves, which for the
+        // The rate-limit chapter's limiter. Pinned at what the work achieves, which for the
         // three pure files is everything — they hold no clock, no store and no
         // framework, so a branch they miss is a case nobody thought of rather
         // than a case nobody could reach.
@@ -663,7 +662,7 @@ export default defineConfig({
           statements: 100,
         },
 
-        // CHAPTER 3.11's three, pinned at what they measure, with a reason each.
+        // The connection-metering chapter's three, pinned at what they measure, with a reason each.
         //
         // `credit.ts` is here at 100 on everything and has no excuse not to be:
         // two functions, no clock, no store, no framework, and between them they
@@ -703,7 +702,7 @@ export default defineConfig({
           statements: 100,
         },
 
-        // CHAPTER 3.19's two, both at 100 on every metric, and the pin is
+        // The presence chapter's two, both at 100 on every metric, and the pin is
         // NFR-MNT-02's MUST rather than a preference: presence keys are
         // `presence:{env}:{user}`, so this is tenant-isolation code and the clause
         // asks 100% of its branches.
@@ -762,7 +761,7 @@ export default defineConfig({
         // the `JSON.parse` catch, the `safeParse` rejection, an unsubscribe for a
         // channel never subscribed, a change arriving before `onChange` is wired,
         // `close()` with a timer armed, and a construction taking both defaults —
-        // and drove each with a test in that phase. Chapter 3.19 met its equivalents
+        // and drove each with a test in that phase. The presence chapter met its equivalents
         // at close-out instead and paid for it with seven tests, a deleted branch and
         // a re-measured battery.
         //
@@ -797,7 +796,7 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
-        // CHAPTER 3.21. `packages/protocol/src/typing.ts` reached 100 on the
+        // `packages/protocol/src/typing.ts` reached 100 on the
         // first run — one function and no branches, which is what a subject
         // builder and a schema are.
         //
@@ -822,7 +821,7 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
-        // CHAPTER 3.22. `services/gateway/src/connections.ts` at 100 on all four,
+        // `services/gateway/src/connections.ts` at 100 on all four,
         // and it took three deletions to get there rather than three tests. The
         // first measurement read **96.15 / 82.60 / 100 / 97.67** with four arms
         // uncovered, and three of them were arms nothing could take:

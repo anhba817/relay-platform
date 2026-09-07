@@ -36,7 +36,7 @@ describe("the compose declaration agrees with @relay/config", () => {
     // The assertion above runs one way: every registered service must appear in
     // compose. Nothing ran the other way, so a container added to compose and
     // never registered here was invisible — `INFRA_SERVICES` would quietly stop
-    // naming the local infrastructure while every test still passed. Chapter
+    // naming the local infrastructure while every test still passed.
     // The rate-limit chapter added a fifth container and the gap is how it nearly went unnoticed.
     //
     // The services behind `--profile services` are Relay's own and are not

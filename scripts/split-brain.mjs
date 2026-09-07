@@ -25,7 +25,7 @@ await repo.addMember(channel.id, dispatcher.id);
 await repo.addMember(channel.id, driver.id);
 
 const API = process.env.RELAY_API_URL ?? "http://127.0.0.1:4000";
-// Chapter 3.2: nothing outside the api can sign a token, so this walk gets one
+// Nothing outside the api can sign a token, so this walk gets one
 // the way a reader does — mint the environment's key, then ask the
 // development-only endpoint for a token (FR-AUT-09).
 const key = await createApiKey(db, { environmentId: env.id });

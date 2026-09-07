@@ -176,8 +176,8 @@ describe("the disablement notification, end to end", () => {
    * Asked of one row, never of the batch's return value. `drainDisableNotifications`
    * is global and the integration lane runs files in parallel, so another suite's
    * disablement can be claimed by this test's relay between two of its own lines —
-   * which is precisely the "local facts about a global operation" fault chapter
-   * The deduplication chapter's baseline found in four suites, and which this file walked into on its
+   * which is precisely the "local facts about a global operation" fault
+   * the deduplication chapter's baseline found in four suites, and which this file walked into on its
    * first full-lane run. */
   const undelivered = async (endpointId: string): Promise<boolean> => {
     const { rows } = await pool.query(

@@ -1,4 +1,4 @@
--- Chapter 3.6 — the failure run, automatic disablement, and its notification.
+-- The failure run, automatic disablement, and its notification.
 --
 -- REVIEW DISPOSITION: drizzle-kit generated this from schema.ts and it was read
 -- line by line before being applied (the ADR-16 workflow, and chapter 2.1's rule
@@ -26,7 +26,7 @@
 --   * webhook_endpoints_failure_run_idx is PARTIAL, on failure_run_started_at
 --     WHERE enabled AND the run is open. It covers the sweep's only query and
 --     nothing else, so a healthy endpoint costs nothing to keep out of it — the
---     same shape as 3.3's outbox index and 3.5's delivery index;
+--     same shape as the outbox chapter's outbox index and the webhook dispatcher chapter's delivery index;
 --   * the two CHECK constraints make the run's halves and the disable stamp's
 --     halves travel together. Neither was in the generated output, and neither is
 --     decoration: `shouldDisable` reads a missing attempt count as zero, which

@@ -1,7 +1,7 @@
 // Return the test lane to an empty state (feature 043, FR-005).
 //
 // `stream-info.mjs` beside this file can READ the state this clears, and until now
-// nothing could clear it. Chapter 3.24's close-out found the lane holding 56,193
+// nothing could clear it. The attachments chapter's close-out found the lane holding 56,193
 // messages and 216 durable consumers on DELIVERIES, with 27,847 webhook deliveries due
 // — enough that `dispatcher-deliver` sat permanently at its 100-message ack ceiling and
 // every dispatcher test reported `expected 0 to be greater than 0`. Clearing it took
@@ -37,7 +37,7 @@ if (!process.argv.includes(FLAG)) {
 }
 
 /** Deliveries younger than this belong to a run that may still be going. A run's own
- *  rows are seconds old; the debris chapter 3.24 found went back nine days. */
+ *  rows are seconds old; the debris the attachments chapter found went back nine days. */
 const STALE_AFTER = "30 minutes";
 
 const natsUrl = process.env.RELAY_NATS_URL ?? "nats://127.0.0.1:4222";
@@ -74,7 +74,7 @@ await nc.drain();
 
 // `relay.allow_global` is feature 030's exemption, and this IS a deliberate global
 // operation on one table. Naming that table is how the mechanism is meant to be used —
-// the guard refused an unnamed attempt during chapter 3.24's close-out because the
+// the guard refused an unnamed attempt during the attachments chapter's close-out because the
 // statement touched a sentinel row a test had planted and left behind, which is the
 // guard doing its job.
 const client = new pg.Client({ connectionString: databaseUrl });

@@ -35,8 +35,8 @@ import { UsageController } from "./usage.controller";
     BackfillController,
     SessionController,
     // Registered here for the reason the comment below `UsageController`
-    // gives: a controller nobody registers is a route that does not exist, and chapter
-    // The quota chapter's third analysis pass found exactly that.
+    // gives: a controller nobody registers is a route that does not exist, and
+    // the quota chapter's third analysis pass found exactly that.
     MembershipsController,
     DispatchController,
     // Registered HERE and not in `app.module.ts`, which carries

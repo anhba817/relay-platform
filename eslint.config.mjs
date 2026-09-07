@@ -36,7 +36,7 @@ const DRIVER_AND_ENGINE = {
     {
       name: "ioredis",
       message:
-        "The counter store lives in services/api/src/limits and services/gateway/src/limits.ts only (constitution I, chapter 3.8). Its keys are per environment; an unrestricted client is a cross-tenant read.",
+        "The counter store lives in services/api/src/limits and services/gateway/src/limits.ts only (constitution I). Its keys are per environment; an unrestricted client is a cross-tenant read.",
     },
   ],
   patterns: [
@@ -76,17 +76,17 @@ const DRIVER_EXEMPT_TESTS = [
   "services/api/src/quotas/quotas.itest.ts",
   "services/api/src/quotas/period.itest.ts",
   "services/api/src/quotas/connections.itest.ts",
-  // Chapter 3.17. THE SUBJECT IS A ROW NO REPOSITORY METHOD CAN WRITE ANY MORE, which
+  // THE SUBJECT IS A ROW NO REPOSITORY METHOD CAN WRITE ANY MORE, which
   // is the same reason the three quota suites are here. `sendMessage` requires a sender
   // as of FR-MSG-15, so a senderless message — 121,250 of them exist in the lane, and
-  // any deployment older than chapter 3.17 has them — can only be planted by hand. The
+  // any deployment older than the sender chapter has them — can only be planted by hand. The
   // arms that read one (history's `user: null`, the resume's drop) have no other fixture.
   //
   // Exempted explicitly rather than reached through a helper in another file: the note
   // at the top of this rule says a helper would make the SQL invisible to it, and an
   // invisible exemption is worse than a listed one.
   "services/api/src/internal/backfill.itest.ts",
-  // Chapter 3.18. THE SAME ARGUMENT AS THE TWO LIMITS SUITES: its subject is what
+  // THE SAME ARGUMENT AS THE TWO LIMITS SUITES: its subject is what
   // reaches the fabric, and the only way to check that is to subscribe with
   // neither the api's publisher nor the gateway's `createFanout`. A spy on either
   // would prove that an object was asked to publish, not that a frame arrived —
@@ -94,7 +94,7 @@ const DRIVER_EXEMPT_TESTS = [
   // compares response bodies and a publish is a second output channel.
   "services/api/src/fanout/fanout.itest.ts",
   "services/api/src/messages/history.itest.ts",
-  // Chapter 3.19, and it is 3.18's argument in the other direction. The presence
+  // The presence chapter, and it is the fan-out chapter's argument in the other direction. The presence
   // fabric's receive half has two rejection paths — a body that is not JSON, and a
   // body that is JSON and not a transition — and neither can be reached through
   // `createPresence`, which only ever publishes payloads its own schema produced.
@@ -103,7 +103,7 @@ const DRIVER_EXEMPT_TESTS = [
   //
   // A `publish` and nothing else: this file reads no key and composes none.
   "services/gateway/src/presence.itest.ts",
-  // Chapter 3.20's, for that same reason and on THIS list rather than the `**/*.ts`
+  // The membership-revocation chapter's, for that same reason and on THIS list rather than the `**/*.ts`
   // block's `ignores` — which is where it was written first, and where an `.itest.ts`
   // entry does nothing. The `**/*.itest.ts` block below REPLACES the rule for every
   // integration test not on one of these two lists, so an exemption above it is
@@ -115,12 +115,12 @@ const DRIVER_EXEMPT_TESTS = [
   // reachable through `createMembership`, which only delivers what it already
   // accepted. A `publish` and nothing else: no key read, no key composed.
   "services/gateway/src/membership.itest.ts",
-  // Chapter 3.21, and the same case as the two above: the assertion is on Redis,
+  // The typing chapter, and the same case as the two above: the assertion is on Redis,
   // read with neither service's code. A publish count taken through this
   // chapter's own module would be satisfied by a module that does nothing —
-  // chapter 3.18's warning, in a new place.
+  // The fan-out chapter's warning, in a new place.
   "services/gateway/src/typing.itest.ts",
-  // Chapter 3.22, and NOT for the reason the four above give. This file needs no
+  // The connection-cap chapter, and NOT for the reason the four above give. This file needs no
   // raw client to assert a publish — its subject is delivery, and it asserts on
   // the sockets. It needs one to CAUSE a membership change: `Membership` exposes
   // `onChange`, `subscribeChannel` and `watch` and no `publish`, because the api
@@ -157,7 +157,7 @@ const GLOBAL_DRAINS = {
         "drainOutbox",
         "drainDueDeliveries",
         "drainDisableNotifications",
-        // Chapter 3.11 added this one, and chapter 3.10 should have.
+        // The connection-metering chapter added this one, and the quota chapter should have.
         // `drainQuotaNotifications` claims undelivered rows across every
         // environment, exactly as its three siblings above do, and 3.10
         // listed it in neither this rule nor `exempt.ts` — whose comment
@@ -208,7 +208,7 @@ export default tseslint.config(
     // Isolation lives in data access, not in handlers (constitution I):
     // only the repository layer may touch the driver.
     //
-    // Chapter 3.8 added the SECOND per-tenant store and the same argument
+    // The rate-limit chapter added the SECOND per-tenant store and the same argument
     // applies to it. The rate-limit counters are keyed `rl:{environment_id}:…`,
     // so an unrestricted client would let any handler read or write another
     // tenant's counter — which is the access this rule exists to prevent, and
@@ -236,7 +236,7 @@ export default tseslint.config(
       "services/gateway/src/limits.ts",
       "services/gateway/src/limits.itest.ts",
       "services/gateway/src/fanout.ts",
-      // Chapter 3.18. THE RULE'S REASON DOES NOT APPLY HERE, and that is the
+      // THE RULE'S REASON DOES NOT APPLY HERE, and that is the
       // whole justification rather than a convenience. The restriction exists
       // because rate-limit counters are keyed `rl:{environment_id}:…`, so an
       // unrestricted client can read another tenant's counter. This client
@@ -246,7 +246,7 @@ export default tseslint.config(
       // already subscribed. The gateway's `fanout.ts` is on this list one line
       // up for the same reason; the api needs it too now that it publishes.
       "services/api/src/fanout/**",
-      // Chapter 3.20, AND IT IS THE ENTRY ABOVE'S CASE RATHER THAN THE LIMITER'S.
+      // THE MEMBERSHIP-REVOCATION CHAPTER, AND IT IS THE ENTRY ABOVE'S CASE RATHER THAN THE LIMITER'S.
       // The membership publisher calls PUBLISH and nothing else, onto
       // `member:{channel_id}` and `member:{env}:{user}` — a subject is not
       // readable at all, only listened to by whoever is already subscribed, so
@@ -258,7 +258,7 @@ export default tseslint.config(
       // the way out, never read from a payload on the way in. The gateway's half
       // of this fabric IS the limiter's case, and its entry says so.
       "services/api/src/membership/**",
-      // Chapter 3.19. THIS IS `limits.ts`'s CASE, NOT `fanout.ts`'s, and the
+      // THIS IS `limits.ts`'s CASE, NOT `fanout.ts`'s, and the
       // distinction is the rule's own reason. The entry above is justified by
       // "this client touches no keys" — a publish onto a channel UUID, and a
       // subject is not readable at all. Presence's client touches keys and they
@@ -271,7 +271,7 @@ export default tseslint.config(
       // environment id from a client, and no scan, `KEYS` or pattern read that
       // could reach a key belonging to another tenant.
       "services/gateway/src/presence.ts",
-      // Chapter 3.20, AND IT IS THE FAN-OUT'S CASE RATHER THAN PRESENCE'S — the
+      // THE MEMBERSHIP-REVOCATION CHAPTER, AND IT IS THE FAN-OUT'S CASE RATHER THAN PRESENCE'S — the
       // opposite of what the entry above had to argue. This client SUBSCRIBES and
       // nothing else: no `SET`, no `EXISTS`, no key of any kind, because the
       // module's only command-shaped work is an HTTP re-read against the api.
@@ -282,7 +282,7 @@ export default tseslint.config(
       // the id is composed from the authenticated connection's own identity on the
       // way in. There is no path here that takes an environment id from a payload.
       "services/gateway/src/membership.ts",
-      // Chapter 3.21, AND IT IS THE FAN-OUT'S CASE — the cleanest of the four, and
+      // THE TYPING CHAPTER, AND IT IS THE FAN-OUT'S CASE — the cleanest of the four, and
       // the only one of them that both publishes and subscribes. This client calls
       // PUBLISH and SUBSCRIBE and nothing else, onto `typing:{channel_id}` — a
       // channel UUID, not an environment-scoped key — and a subject is not readable
@@ -294,12 +294,12 @@ export default tseslint.config(
       // about to act on; it is never composed into a key, because this module
       // composes no keys.
       //
-      // THE `.itest.ts` FILE IS NOT LISTED HERE. Chapter 3.20 put an `.itest.ts`
+      // THE `.itest.ts` FILE IS NOT LISTED HERE. THE MEMBERSHIP-REVOCATION CHAPTER put an `.itest.ts`
       // entry in this block's `ignores` and the later `**/*.itest.ts` block
       // silently overrode it. The typing suite's exemption lives in
       // `DRIVER_EXEMPT_TESTS` instead, which is the list that governs test files.
       "services/gateway/src/typing.ts",
-      // Chapter 3.22's connection registry, and its keys are the strongest case on
+      // The connection-cap chapter's connection registry, and its keys are the strongest case on
       // this list rather than the weakest. `conn:{env}:{user}:{slot}` puts the
       // environment FIRST, so Principle I is structural in the key itself: a
       // cross-tenant read would need a caller to hand this module another

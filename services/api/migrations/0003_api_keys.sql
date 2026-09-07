@@ -1,4 +1,4 @@
--- Chapter 3.2 — API keys (FR-AUT-01…05, NFR-SEC-02).
+-- API keys (FR-AUT-01…05, NFR-SEC-02).
 --
 -- REVIEW DISPOSITION: drizzle-kit generated this file from schema.ts and it was
 -- read line by line before being applied (the ADR-16 workflow). Nothing was

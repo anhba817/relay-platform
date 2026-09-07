@@ -1,4 +1,4 @@
--- Chapter 3.23 — what a message used to say.
+-- What a message used to say.
 --
 -- PUBLISHED IN SAD §6.1 SINCE THE SAD WAS WRITTEN, and `schema.ts`'s absence
 -- note named this chapter as its arrival. Reproduced column for column, which
@@ -31,7 +31,7 @@
 -- shape of thing: rows about a message, not rows about a tenant.
 --
 -- NO id COLUMN. The primary key is (message_id, edited_at) because that is what
--- an edit is. Chapter 3.13 installed
+-- an edit is. The channel-endpoints chapter installed
 -- `coalesce(to_jsonb(OLD) ->> 'id', to_jsonb(OLD)::text)` in the guard's
 -- refusal message for exactly the tables that have no `id` to interpolate.
 CREATE TABLE message_edits (

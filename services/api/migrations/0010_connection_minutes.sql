@@ -1,6 +1,6 @@
--- Chapter 3.11 — connection-minutes, the third dimension of FR-RTL-05.
+-- Connection-minutes, the third dimension of FR-RTL-05.
 --
--- Chapter 3.10 metered messages sent and distinct active users and stopped
+-- The quota chapter metered messages sent and distinct active users and stopped
 -- there, because those two are the same kind of problem and this one is not.
 -- Messages and users were already rows: `messages.user_id` has been in
 -- `0000_core_tables.sql` since Part 2, so counting them was an aggregation
@@ -21,12 +21,12 @@
 -- reconnect churn, which summing seconds does not.
 
 -- ---------------------------------------------------------------------------
--- The policy: the one-line change chapter 3.10 promised, priced.
+-- The policy: the one-line change the quota chapter promised, priced.
 -- ---------------------------------------------------------------------------
 --
 -- 0009 said out loud what a third dimension would cost:
 --
---     chapter 3.11 adds connection-minutes and FR-MED-12 later adds media
+--     The connection-metering chapter adds connection-minutes and FR-MED-12 later adds media
 --     bytes, and neither needs a table migration — a new dimension is a new
 --     key … the shape below is enforced by a CHECK that ENUMERATES the two
 --     dimensions, so a third one does cost a one-line constraint change
@@ -92,7 +92,7 @@ ALTER TABLE usage_periods
 -- WHY NOT ONE ROW PER MINUTE. That is the naive dedup key: remember which
 -- minutes have been credited. At a thousand concurrent sockets it is
 -- 1,000 x 43,200 = 43.2 MILLION rows a month. This table is proportional to
--- distinct connections instead — chapter 3.10 made exactly this trade for
+-- distinct connections instead — the quota chapter made exactly this trade for
 -- distinct users and bounded it by users rather than by traffic.
 --
 -- `connection_id` ALONE WOULD BE UNIQUE — it is a `randomUUID()` minted by the
@@ -129,7 +129,7 @@ CREATE TABLE usage_connections (
 -- A third dimension in an existing column.
 -- ---------------------------------------------------------------------------
 --
--- No fifth table. Chapter 3.10 said "four concrete tables that look alike is a
+-- No fifth table. The quota chapter said "four concrete tables that look alike is a
 -- pattern, one abstract table serving four purposes is a framework", and a third
 -- dimension in the fourth table is neither. `quota_notifications_once_per_threshold`
 -- already keys on `(environment_id, period, dimension, threshold)`, so

@@ -1,4 +1,4 @@
--- Chapter 3.4 — the consumer deduplication ledger (SAD risk R5).
+-- The consumer deduplication ledger (SAD risk R5).
 --
 -- REVIEW DISPOSITION: drizzle-kit generated this from schema.ts and it was read
 -- line by line before being applied (the ADR-16 workflow). Nothing was

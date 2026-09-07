@@ -2713,8 +2713,8 @@ export class Repository {
     }));
   }
 
-  /** IDEMPOTENT, for `createChannel`'s reason and found the same way (chapter
-   * The isolation gauntlet). This was a plain insert too, and the members endpoint creates a user
+  /** IDEMPOTENT, for `createChannel`'s reason and found the same way
+   * (the isolation gauntlet). This was a plain insert too, and the members endpoint creates a user
    * on first membership — so a second identical request would have raised against
    * `users_environment_id_external_id_unique` and answered `internal_error`. R14a
    * named `addMember` and `createChannel`; this is the third function on the same
@@ -3114,8 +3114,8 @@ export class Repository {
    * (FR-006, FR-007, FR-008).
    *
    * BULK, BECAUSE THE REQUIREMENT ALWAYS WAS. FR-006 says "up to 100 in one
-   * request" and FR-007 says the result is reported per user — which is chapter
-   * The channel-endpoints chapter's `addMembers` shape in both halves. `contracts/membership.md` specified a
+   * request" and FR-007 says the result is reported per user — which is
+   * the channel-endpoints chapter's `addMembers` shape in both halves. `contracts/membership.md` specified a
    * single-user `DELETE …/members/:userExternalId` for ten analysis passes, having
    * read "the shape the channel-endpoints chapter chose" as *named outcomes* and dropped *bulk*.
    * Every pass compared requirements to tasks, both said "removal", and identifier
@@ -3793,8 +3793,8 @@ export class Repository {
     return updated.length > 0;
   }
 
-  /** A user's channels, most recently active first, keyset-paginated (chapter
-   * The channel-control chapter, FR-013, FR-CHN-08).
+  /** A user's channels, most recently active first, keyset-paginated
+   * (the channel-control chapter, FR-013, FR-CHN-08).
    *
    * `id` IS PART OF THE KEY AND NOT DECORATION. `last_activity_at` is not unique:
    * two channels can take a message in the same millisecond, and a keyset on a

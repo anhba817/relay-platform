@@ -111,13 +111,13 @@ END $$;
 -- bookkeeping, so its bait is protected by the reader mechanism only. A stated
 -- gap rather than an oversight (data-model.md).
 --
--- NINE, NOT FIVE, AS OF CHAPTER 3.12 (FR-036). The four usage tables were added
+-- NINE, NOT FIVE, AS OF THE ISOLATION GAUNTLET (FR-036). The four usage tables were added
 -- by chapters 3.10 and 3.11 and neither added them here, so a cross-environment
 -- UPDATE or DELETE on any of them passed for two chapters. Confirmed against a
 -- running database rather than read off this file: `pg_trigger` held five
 -- `__sentinel_guard_*` rows and none of them was a usage table.
 --
--- TEN AS OF CHAPTER 3.16. `read_positions` carries `environment_id`, so it belongs
+-- TEN AS OF THE USER-SURFACE CHAPTER. `read_positions` carries `environment_id`, so it belongs
 -- here, and it has no `id` — which is what the message expression above was changed
 -- for. `members` is the counter-example and is deliberately absent: it has no
 -- `environment_id`, so the catalogue classifies it as `hop` and no trigger watches
@@ -134,14 +134,14 @@ BEGIN
     'webhook_disable_notifications',
     'channels',
     'users',
-    -- Chapters 3.10 and 3.11's tables. Every one carries `environment_id`, which
+    -- Chapters 3.10 and the connection-metering chapter's tables. Every one carries `environment_id`, which
     -- is the only thing the WHEN clause below needs; what they do NOT all carry
     -- is `id`, which is what the message expression above had to change for.
     'usage_periods',
     'usage_active_users',
     'quota_notifications',
     'usage_connections',
-    -- Chapter 3.16's table. Per-user read positions, keyed
+    -- The user-surface chapter's table. Per-user read positions, keyed
     -- `(channel_id, user_id)` with no `id` column.
     'read_positions'
   ] LOOP

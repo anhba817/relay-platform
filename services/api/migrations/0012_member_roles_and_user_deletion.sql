@@ -1,9 +1,9 @@
--- Chapter 3.15 — a member's role, and a deleted user who is still an author.
+-- A member's role, and a deleted user who is still an author.
 --
 -- FR-CHN-04 has asked for channel member roles since the SRS was written and
--- `members` has been `(channel_id, user_id, joined_at)` the whole time. Chapter
--- 3.12's traceability map recorded the clause as delivered, described it with a
--- paraphrase belonging to FR-CHN-06, and was corrected while chapter 3.15 was
+-- `members` has been `(channel_id, user_id, joined_at)` the whole time.
+-- The isolation gauntlet's traceability map recorded the clause as delivered, described it with a
+-- paraphrase belonging to FR-CHN-06, and was corrected while the channel-control chapter was
 -- being specified.
 --
 -- ITS OWN CHECK CONSTRAINT, AND NOT THE ONE THAT ALREADY EXISTS. `memberships`
@@ -17,7 +17,7 @@
 -- carry a comment naming the other, because a warning on one side of a trap is
 -- a warning the next person does not find (research R8).
 --
--- DEFAULT 'member', which is what lets chapter 3.13's `addMember` keep working
+-- DEFAULT 'member', which is what lets the channel-endpoints chapter's `addMember` keep working
 -- unchanged and gives every existing row a value the CHECK accepts. The
 -- member-add endpoint takes an optional role per entry (FR-011b) so a member
 -- can be created with one rather than only changed into one.

@@ -54,7 +54,7 @@ function actingUser(req: RequestWithPrincipal): string | undefined {
 
 /** The two fields every publish here has to carry (NFR-OBS-01, NFR-OBS-06).
  *
- * ONE FUNCTION AND NOT THREE COPIES, and the coverage ratchet is what asked. Chapter
+ * ONE FUNCTION AND NOT THREE COPIES, and the coverage ratchet is what asked.
  * The revisions chapter added two more publish sites to this file, each with its own
  * `req.requestId ?? "unknown"` and `req.principal?.environmentId ?? "unknown"` — six
  * uncovered branch arms where there had been two, all of them the same two arms written

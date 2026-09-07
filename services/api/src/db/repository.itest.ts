@@ -789,8 +789,8 @@ describe("editMessage", () => {
   });
 
   it("an edit on a row with no author is refused (FR-018)", async () => {
-    // PLANTED WITH RAW SQL, because no write path can produce one any more — chapter
-    // The sender chapter made `userId` required — and 121,250 of them exist in the lane, written
+    // PLANTED WITH RAW SQL, because no write path can produce one any more —
+    // the sender chapter made `userId` required — and 121,250 of them exist in the lane, written
     // before chapter 2.6 recorded a sender.
     const author = await repoA.createUser("t036-author", "Author");
     const channel = await repoA.createChannel("t036", "public");

@@ -62,7 +62,7 @@ describe("the slot registry, without a broker", () => {
     // `resolves.toBeUndefined()` is a statement about the promise. The stronger
     // property is not observable through this module's own surface — a claim walks
     // from slot 0, so whatever an unconditional release did to slot 3 cannot be
-    // seen from here — and the ownership half of it is the test below. Chapter
+    // seen from here — and the ownership half of it is the test below.
     // The membership-revocation chapter's rule: a claim about an observable difference needs falsifying before
     // the test is written.
     await expect(

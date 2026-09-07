@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 
-// The dispatcher's integration lane (chapter 3.5). Same convention 2.1
+// The dispatcher's integration lane. Same convention 2.1
 // established for the api and 2.6 for the gateway: *.itest.ts is invisible to
 // the Docker-free unit include, so `pnpm test` stays runnable with no stores.
 export default defineConfig({
@@ -37,7 +37,7 @@ export default defineConfig({
       RELAY_DELIVERY_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",
       RELAY_EVENT_CONSUMER: "off",
-      // Chapter 3.10's relay, the fourth. Same reason as the other three.
+      // The quota chapter's relay, the fourth. Same reason as the other three.
       RELAY_QUOTA_RELAY: "off",
     },
     include: ["src/**/*.itest.ts"],

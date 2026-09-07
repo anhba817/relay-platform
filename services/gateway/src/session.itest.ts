@@ -233,8 +233,8 @@ async function startApi(
 
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     // No outbox relay in this child. This suite is about the
-    // socket's credentials; a background loop draining a table that chapter
-    // The outbox chapter's suite is asserting on turns two unrelated test files into a race.
+    // socket's credentials; a background loop draining a table that
+    // the outbox chapter's suite is asserting on turns two unrelated test files into a race.
     env: { ...process.env, PORT: pinned, RELAY_OUTBOX_RELAY: "off",
       // The rate-limit chapter: nor the notification relay, for the same reason.
       RELAY_NOTIFICATION_RELAY: "off",

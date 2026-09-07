@@ -530,7 +530,7 @@ describe("the attempt record", () => {
   });
 
   it("persists what the endpoint answered on the delivery row", async () => {
-    // The state the test event and the sweep both read (data-model.md). Chapter
+    // The state the test event and the sweep both read (data-model.md).
     // The webhook dispatcher chapter recorded an attempt by moving the delivery and discarded the answer;
     // this is the column that stops the sweep having to write "cause unknown".
     const scoped = await mintEnvironment("attempts-itest-last");

@@ -46,8 +46,8 @@ export function createServer(logger?: Logger) {
   // created here rather than inside `attachSessions` so the tests that call
   // that function directly stay Redis-free, and so its close has an owner.
   const limits = createGatewayLimits();
-  // The FOURTH and FIFTH Redis clients, and the reason is chapter
-  // The rate-limit chapter's verbatim: a connection in subscribe mode cannot run `SET` or `EXISTS`,
+  // The FOURTH and FIFTH Redis clients, and the reason is
+  // the rate-limit chapter's verbatim: a connection in subscribe mode cannot run `SET` or `EXISTS`,
   // so presence needs a subscriber and a command client of its own. Created here
   // rather than inside `attachSessions` so the tests that call that function
   // directly stay Redis-free, and so its close has an owner.

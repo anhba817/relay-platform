@@ -286,8 +286,8 @@ describe("POST /v1/channels/:channelId/messages", () => {
       const page = (await res.json()) as { messages: Array<Record<string, unknown>> };
       const read = page.messages.find((m) => m["seq"] === created.seq)!;
       // `toHaveProperty` AND NOT `toEqual([])`. An ABSENT key and a `[]` both satisfy
-      // `expect(read.attachments).toEqual([])` when the value is undefined — chapter
-      // The revisions chapter shipped a control test that was green before its field existed for exactly
+      // `expect(read.attachments).toEqual([])` when the value is undefined —
+      // the revisions chapter shipped a control test that was green before its field existed for exactly
       // this reason. This assertion fails on an absent key.
       expect(read).toHaveProperty("attachments", []);
     });
@@ -296,7 +296,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       // WHAT THIS DOES NOT PROVE, said here rather than left to be assumed: the attachment
       // adds no second surface BY CONSTRUCTION, not by this assertion. `channelVisibleTo`
       // runs as a gate before the read, so a non-member's answer contains no message and
-      // therefore no attachment whatever the read path does with the column. Chapter
+      // therefore no attachment whatever the read path does with the column.
       // The revisions chapter's falsification proved this shape of test stays green when the predicate is
       // removed. T032b runs it again here and expects green.
       // THE PRIVATE CHANNEL OF THE SAME TENANT, which the suite already mints — and it is

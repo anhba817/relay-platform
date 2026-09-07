@@ -1,4 +1,4 @@
-// The chapter 3.5 walk: one event, all the way to a customer's server.
+// The the webhook dispatcher chapter walk: one event, all the way to a customer's server.
 //
 //   # in one terminal
 //   node scripts/hostile-endpoint.mjs --mode=ok

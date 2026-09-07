@@ -1,8 +1,8 @@
--- Chapter 3.17 — the sender a message never had.
+-- The sender a message never had.
 --
 -- FR-MSG-13 has said since v1 that the system "shall support sending a message on
 -- behalf of a bot user of that tenant via API key" — and until this chapter it read
--- "on behalf of any user", satisfied by naming nobody. Chapter 3.3 decided that when
+-- "on behalf of any user", satisfied by naming nobody. The outbox chapter decided that when
 -- nothing read the sender. Three chapters since have made the sender decide what is
 -- rendered, what is delivered and what may be seen, so a message with no sender became
 -- a row those three chapters cannot describe.
@@ -13,7 +13,7 @@
 --
 -- NO BACKFILL, and that is measured rather than assumed. `ADD COLUMN ... NOT NULL
 -- DEFAULT` is metadata-only on Postgres 11+ — the existing rows are not rewritten —
--- which chapter 3.16 measured for `last_activity_at` on the same table.
+-- which the user-surface chapter measured for `last_activity_at` on the same table.
 ALTER TABLE users
   ADD COLUMN kind        TEXT NOT NULL DEFAULT 'person',
   ADD COLUMN description TEXT;
@@ -21,7 +21,7 @@ ALTER TABLE users
 -- THE FIRST CHECK IS THE VOCABULARY. `channels_type_check` guards `channels.type`,
 -- `members_role_check` guards a channel member's role and `memberships_role_check` an
 -- organisation member's — one word apart is how `admin` nearly reached a channel
--- member (chapter 3.15), so each of these constraints names its siblings.
+-- member, so each of these constraints names its siblings.
 --
 -- `environments.kind` is the one column called `kind` that has no CHECK: it has held
 -- 'development' or 'production' since chapter 2.1 (FR-TEN-04) and cannot refuse a typo.
