@@ -16,7 +16,7 @@ import {
 } from "../db/repository";
 import { mintUserToken } from "../auth/user-token";
 
-// What the cap costs at the door (chapter 3.11, , NFR-PERF-01).
+// What the cap costs at the door (NFR-PERF-01).
 //
 // COMMITTED RATHER THAN AD-HOC, because chapter 3.10's T033 measured with a
 // script that lived nowhere, reported regressions of 273% to 411%, and sent two

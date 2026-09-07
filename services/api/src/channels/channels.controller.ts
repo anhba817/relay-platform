@@ -64,7 +64,7 @@ export class ChannelsController {
     // For resolving a user token's subject to a row id. The service takes an id
     // because the repository's membership lookup is keyed on it.
     private readonly repo: Repository,
-    // THE CONTROLLER, NOT THE SERVICE (chapter 3.20, FR-004). `ChannelsService`'s
+    // THE CONTROLLER, NOT THE SERVICE (FR-004). `ChannelsService`'s
     // constructor takes only the `Repository`, so it holds no request id and no
     // logger — and FR-015's failure line needs both. `messages.controller.ts` puts
     // the fan-out publish at this same layer for this same reason.
@@ -95,7 +95,7 @@ export class ChannelsController {
     };
   }
 
-  /** One channel by id (chapter 3.15, FR-003a).
+  /** One channel by id (FR-003a).
    *
    * THIS ROUTE DID NOT EXIST, and three artifacts assumed it did: SC-001 named
    * "read by id" as one of four verbs a non-member must not reach, FR-003 said
@@ -140,7 +140,7 @@ export class ChannelsController {
     };
   }
 
-  /** Archive and unarchive (chapter 3.15, FR-020, FR-020a).
+  /** Archive and unarchive (FR-020, FR-020a).
    *
    * ACTION-STYLE, and a pair rather than a `PATCH` with a boolean: "archive this"
    * and "unarchive this" are two things a customer does, and a body carrying
@@ -161,7 +161,7 @@ export class ChannelsController {
     return this.channels.setArchived(channelId, false);
   }
 
-  /** One member's role (chapter 3.15, FR-011, FR-011a).
+  /** One member's role (FR-011, FR-011a).
    *
    * The tenant's route: an application credential decides who moderates. A member
    * cannot promote themselves, which is why this is not `@Accepts("user")` like
@@ -176,7 +176,7 @@ export class ChannelsController {
     return this.channels.setMemberRole(channelId, userExternalId, body.role);
   }
 
-  /** Remove members, up to a hundred, reporting each (chapter 3.15, FR-006, FR-007).
+  /** Remove members, up to a hundred, reporting each (FR-006, FR-007).
    *
    * AN ACTION-STYLE `POST`, NOT `DELETE` WITH A BODY. A body on `DELETE` is legal
    * and unreliable — proxies and some clients drop it — and this feature already
@@ -239,7 +239,7 @@ export class ChannelsController {
     });
   }
 
-  /** The user-initiated half of FR-CHN-03 (chapter 3.15).
+  /** The user-initiated half of FR-CHN-03.
    *
    * `@Accepts("user")` AT THE METHOD, overriding the class's `"application"`. This
    * is the caller joining, not the tenant adding someone, so an application key has

@@ -79,7 +79,7 @@ describe("the slot registry, without a broker", () => {
 
   // ---- ARM 5 and ARM 11: the registry cannot be reached -----------------
 
-  it("returns unenforced rather than zero when Redis is unreachable (FR-016 (3.22))", async () => {
+  it("returns unenforced rather than zero when Redis is unreachable (FR-016)", async () => {
     // ARM 5 and ARM 11. A port nothing listens on, so every command rejects.
     //
     // `null` MEANS COULD NOT ASK, and the distinction is the requirement: FR-016
@@ -106,7 +106,7 @@ describe("the slot registry, without a broker", () => {
 
   // ---- FR-009 and FR-002: the numbers, and where they live --------------
 
-  it("keeps the heartbeat strictly inside the bound, three to one (FR-009 (3.22))", async () => {
+  it("keeps the heartbeat strictly inside the bound, three to one (FR-009)", async () => {
     // THE RATIO, NOT THE VALUES. A test pinning 20_000 and 60_000 goes red on a
     // deliberate re-derivation and says nothing about the property. What FR-009
     // requires is that two consecutive missed renewals cannot free a live
@@ -117,7 +117,7 @@ describe("the slot registry, without a broker", () => {
     expect(DEFAULT_HEARTBEAT_MS).not.toBe(30_000);
   });
 
-  it("states the maximum in exactly one place (FR-002 (3.22))", async () => {
+  it("states the maximum in exactly one place (FR-002)", async () => {
     // The requirement is about DRIFT, not about the value. `policy.ts` derived
     // `connect: 3_000` from "ten thousand divided by five" and shipped a third
     // number; a second literal five in this module is how the same thing starts.

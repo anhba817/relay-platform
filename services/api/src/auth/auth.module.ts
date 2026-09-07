@@ -7,7 +7,7 @@ import { AUTH_DB, AuthenticateMiddleware } from "./authenticate.middleware";
 import { CredentialGuard } from "./credential.guard";
 import { DevTokenController } from "./dev-token.controller";
 
-// Authentication's home (chapter 3.2), beside messages/, internal/ and
+// Authentication's home, beside messages/, internal/ and
 // tenancy/. It lives in the api and not in a package or a new service for one
 // reason: authentication is a question about data — which key is this, which
 // environment signs that token — and the api owns the data (ADR-04). The
@@ -17,7 +17,7 @@ import { DevTokenController } from "./dev-token.controller";
 // runs BEFORE any tenant scope exists, and borrowing the request-scoped
 // machinery 2.2 built would invert the order it needs.
 @Module({
-  // Chapter 3.8: the failed-authentication counter. Imported rather than built
+  // The failed-authentication counter. Imported rather than built
   // here, because the counter store is one client with one lifecycle and two
   // consumers — this module and the tenant limiter's middleware.
   imports: [LimitsModule],

@@ -46,7 +46,7 @@ export type Authentication =
        * connect. The gateway puts it on the ack and does nothing else with it — it never
        * learns what a client holds, so it cannot be wrong about it. */
       channelRevisions: Record<string, number>;
-      /** Chapter 3.8. The environment's two socket allowances, read from
+      /** The environment's two socket allowances, read from
        * Postgres by the api and carried on the same response — the gateway has
        * no database client and R12 spent its whole argument on keeping it that
        * way. */
@@ -54,7 +54,7 @@ export type Authentication =
     }
   | { outcome: "refused" }
   | { outcome: "unavailable"; error: string }
-  /** Chapter 3.11. The api answered, and the answer was "this environment has
+  /** The api answered, and the answer was "this environment has
    * spent its month". Carries the api's own message, because the resume date is
    * in it and a close reason string has nowhere to put one. */
   | { outcome: "over_quota"; message: string }

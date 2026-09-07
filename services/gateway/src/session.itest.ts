@@ -18,7 +18,7 @@ import { createMembership, type Membership } from "./membership.js";
 import { createConnections, type Connections } from "./connections.js";
 import { attachSessions } from "./session.js";
 
-// The socket's credential cases (chapter 3.2), against a REAL api.
+// The socket's credential cases, against a REAL api.
 //
 // The unit suite stubs the api, which is right for the ordering and framing
 // questions it asks — but it cannot prove the thing this chapter changed: that
@@ -81,8 +81,8 @@ interface Seeder {
       name?: string,
     ) => Promise<{ id: string }>;
     addMember: (channelId: string, userId: string) => Promise<boolean>;
-    /** Chapter 3.18. An application credential may send only as a bot user
-     * (chapter 3.17), so a REST send needs one to exist — and `createUser`
+    /** An application credential may send only as a bot user
+     *, so a REST send needs one to exist — and `createUser`
      * makes a person. Widening this type rather than reaching around it: the
      * shape here is a hand-written mirror of the real repository, and a member
      * it does not name is a member this suite cannot call. */
@@ -106,7 +106,7 @@ async function waitForHealth(url: string, why?: () => string): Promise<void> {
       // not up yet
     }
     if (Date.now() > deadline) {
-      // CHAPTER 3.21. **The child has already said why and nobody was
+      // **The child has already said why and nobody was
       // listening.** This file spawns with `stdio: ["ignore", "pipe", "pipe"]`
       // and never read either pipe, so an api that died took its reason with it —
       // which is the entire reason chapter 3.20's `gaps.md` item 19a has four
@@ -204,7 +204,7 @@ async function startApi(
   });
   const repo = new seeder.Repository(db, environment.id);
   const user = await repo.createUser("tuan", "Tuan");
-  // Chapter 3.18: the sender a REST send names. ADDITIVE to this fixture — the
+  // The sender a REST send names. ADDITIVE to this fixture — the
   // tests above assert on "tuan" and a second user changes nothing for them,
   // which is the difference between adding a capability and repurposing one.
   await repo.upsertUser("delivery-bot", {
@@ -212,7 +212,7 @@ async function startApi(
     kind: "bot",
     description: "sends over REST so a socket can receive it",
   });
-  // CHAPTER 3.23: two PEOPLE in the channel, because FR-005's property is "every
+  // Two PEOPLE in the channel, because FR-005's property is "every
   // connected member" and one socket cannot show it. ADDITIVE, on chapter 3.18's
   // precedent recorded just above — the tests that assert on "tuan" are unaffected by
   // two more members of a public channel, and T033 is the only test that names these.
@@ -232,13 +232,13 @@ async function startApi(
   });
 
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
-    // Chapter 3.3: no outbox relay in this child. This suite is about the
+    // No outbox relay in this child. This suite is about the
     // socket's credentials; a background loop draining a table that chapter
     // 3.3's suite is asserting on turns two unrelated test files into a race.
     env: { ...process.env, PORT: pinned, RELAY_OUTBOX_RELAY: "off",
-      // Chapter 3.8: nor the notification relay, for the same reason.
+      // Nor the notification relay, for the same reason.
       RELAY_NOTIFICATION_RELAY: "off",
-      // Chapter 3.11: its own failed-authentication keyspace. Chapter 3.8's auth
+      // Its own failed-authentication keyspace. Chapter 3.8's auth
       // limiter counts failures per SOURCE ADDRESS in Redis, every suite in this
       // lane is 127.0.0.1, and vitest runs the files in parallel — so ten
       // failures a minute across ALL of them turns a neighbour's expected 401
@@ -302,7 +302,7 @@ async function firstFrame(socket: WebSocket, type: string): Promise<unknown> {
   });
 }
 
-describe("the socket's credentials (chapter 3.2)", () => {
+describe("the socket's credentials", () => {
   let api: ApiUnderTest;
   let server: Server;
   let url: string;
@@ -415,7 +415,7 @@ describe("the socket's credentials (chapter 3.2)", () => {
     expect(socket.readyState).toBe(WebSocket.OPEN);
   }, 20_000);
 
-  // T022c and T020a (chapter 3.24). THE SOCKET DOOR, WHICH IS THE ONE THAT DROPS THINGS.
+  // T022c and T020a. THE SOCKET DOOR, WHICH IS THE ONE THAT DROPS THINGS.
   //
   // Every other send test in this chapter walks the REST door, and the REST door was never
   // at risk: it validates with `sendMessageBodySchema` and hands a typed body straight to
@@ -423,7 +423,7 @@ describe("the socket's credentials (chapter 3.2)", () => {
   // an error — `session.ts`'s inbound destructure, `internal.controller.ts`'s named build,
   // and `session.ts`'s outbound payload — and a message that commits without its
   // attachments is acked as though it worked.
-  it("refuses eleven at the GATEWAY, naming the field (FR-005 (3.24))", async () => {
+  it("refuses eleven at the GATEWAY, naming the field (FR-005)", async () => {
     // NAME THE LAYER AND THE CODE. The bound is on `messageSendSchema`, so the gateway
     // refuses the frame before the api sees it and the client gets `invalid_frame` —
     // not the api's `invalid_request`. Two doors, two refusals, one bound, and a test
@@ -501,7 +501,7 @@ describe("the socket's credentials (chapter 3.2)", () => {
     expect(await firstFrame(socket, "message.ack")).toBeDefined();
   }, 20_000);
 
-  it("refuses a media_id and SAYS hosted media is unavailable (FR-003a (3.24))", async () => {
+  it("refuses a media_id and SAYS hosted media is unavailable (FR-003a)", async () => {
     // THE MESSAGE, BECAUSE THE CODE IS THE SAME ONE EVERY MALFORMED FRAME GETS. A one-arm
     // union would also refuse this — with "Invalid discriminator value. Expected 'url'",
     // which is the sentence FR-003a forbids by name. This assertion is the only thing
@@ -529,7 +529,7 @@ describe("the socket's credentials (chapter 3.2)", () => {
     expect(refusal.payload.message).toMatch(/hosted media is not available/i);
   }, 20_000);
 
-  it("commits TWO attachments sent over the socket, in order (FR-001 (3.24), FR-006 (3.24))", async () => {
+  it("commits TWO attachments sent over the socket, in order (FR-001, FR-006)", async () => {
     const socket = connect(await mintToken("tuan", 3600));
     await firstFrame(socket, "connection.ack");
     socket.send(
@@ -579,7 +579,7 @@ describe("the socket's credentials (chapter 3.2)", () => {
     ]);
   }, 20_000);
 
-  it("accepts an attachments-only message and refuses one with neither (FR-019 (3.24), FR-019b (3.24))", async () => {
+  it("accepts an attachments-only message and refuses one with neither (FR-019, FR-019b)", async () => {
     const socket = connect(await mintToken("tuan", 3600));
     await firstFrame(socket, "connection.ack");
 
@@ -645,7 +645,7 @@ describe("the socket's credentials (chapter 3.2)", () => {
   });
 });
 
-describe("the cap at the door (chapter 3.11, US3)", () => {
+describe("the cap at the door (US3)", () => {
   let api: ApiUnderTest;
   let server: Server;
   let url: string;
@@ -773,7 +773,7 @@ describe("the cap at the door (chapter 3.11, US3)", () => {
 //
 // So this adds a capability instead: a real spawned api, a real gateway, real
 // sockets, and a fan-out wired in. Delivery lives here from now on.
-describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => {
+describe("the socket's delivery, with a fan-out attached", () => {
   let api: ApiUnderTest;
   let server: Server;
   let url: string;
@@ -783,7 +783,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
    * subscriber under test must not be the publisher, or the test proves only
    * that an object can call itself. */
   let publisher: Fanout;
-  /** Chapter 3.20. **Its dependency injection is three hundred lines above the test
+  /** **Its dependency injection is three hundred lines above the test
    * that needs it**, and without this line the inversion below simply fails: this
    * describe injected no `presence`, no `limits` and no `membership`, so the gateway
    * under it never learned of a removal. */
@@ -941,7 +941,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     }
   });
 
-  // T028b, T030 and T029a (chapter 3.24). THE TWO DELIVERY DOORS AND THE ACK.
+  // T028b, T030 and T029a. THE TWO DELIVERY DOORS AND THE ACK.
   const twoAttachments = [
     { type: "url", kind: "image", url: "https://example.test/deliver-first.png" },
     { type: "url", kind: "audio", url: "https://example.test/deliver-second.mp3" },
@@ -949,7 +949,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
   const urlsOf = (payload: { attachments: Array<{ url?: string }> }) =>
     payload.attachments.map((a) => a.url);
 
-  it("delivers attachments SOCKET to SOCKET, in order (FR-008 (3.24), SC-001 (3.24))", async () => {
+  it("delivers attachments SOCKET to SOCKET, in order (FR-008, SC-001)", async () => {
     // ONE MEMBER SENDS OVER ITS SOCKET AND ANOTHER RECEIVES. The REST delivery test below
     // cannot see this path: the api builds the fan-out payload for a REST send and the
     // GATEWAY builds it for a socket send, so they are two constructions of one frame.
@@ -998,7 +998,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     ]);
   }, 20_000);
 
-  it("delivers a deletion with NO attachment field at all (FR-013 (3.24))", async () => {
+  it("delivers a deletion with NO attachment field at all (FR-013)", async () => {
     // AN EXACT KEY SET, NOT `payload.attachments === undefined`. An absent key and an
     // undefined value are the same to a truthiness check and different to a contract —
     // and the contract is the point: `message.deleted` carries no text because a payload
@@ -1045,7 +1045,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     ]);
   }, 20_000);
 
-  it("carries only `seq` on the sender's ack (FR-008 (3.24))", async () => {
+  it("carries only `seq` on the sender's ack (FR-008)", async () => {
     // THE ACK HAS NEVER CARRIED A MESSAGE AND THIS CHAPTER DOES NOT WIDEN IT. A sender
     // learns its attachments landed from the `message.created` frame the fan-out returns
     // to it, not from the ack — so the ack's exact key set is the assertion.
@@ -1078,7 +1078,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
     // hand.
     //
     // `user` is required and must name a bot: an application credential may
-    // speak only as software (chapter 3.17). `idempotency_key` must be a UUID on
+    // speak only as software. `idempotency_key` must be a UUID on
     // this route, where the socket frame takes any string.
     const frames = record(connect(await mintToken()));
     await waitFor(frames, (f) => f.type === "connection.ack", "connection.ack");
@@ -1096,7 +1096,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
           text,
           user: "delivery-bot",
           idempotency_key: randomUUID(),
-          // T030 (chapter 3.24). TWO, because one cannot show an order.
+          // T030. TWO, because one cannot show an order.
           attachments: twoAttachments,
         }),
       },
@@ -1608,7 +1608,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
       seq: 1,
       user: "tuan",
       text: "forged",
-      // Chapter 3.24: WELL-FORMED IS THE POINT. `messageSchema` requires
+      // WELL-FORMED IS THE POINT. `messageSchema` requires
       // attachments, and a forged frame missing them is refused for its SHAPE —
       // `invalid_frame` — a phase before the direction check this suite is about.
       attachments: [],
@@ -1782,7 +1782,7 @@ describe("the socket's delivery, with a fan-out attached (chapter 3.18)", () => 
   });
 });
 
-describe("the connection cap at the door (chapter 3.22, US1)", () => {
+describe("the connection cap at the door (US1)", () => {
   // ITS OWN FIXTURE, AND THE REASON IS A DEFECT T042d CAUSED. That task wired the
   // module into chapter 3.11's "cap at the door" describe, whose five quota tests
   // share the user "tuan" — so the cap bit them and two went red:
@@ -1867,7 +1867,7 @@ describe("the connection cap at the door (chapter 3.22, US1)", () => {
   // `expect.fail` is deliberate over `it.fails`: the assertion below states the
   // requirement, and a reader of a red run should see the count that was allowed
   // rather than "this test was expected to throw".
-  it("refuses a sixth connection for one user (FR-RTM-09 (3.22))", async () => {
+  it("refuses a sixth connection for one user (FR-RTM-09)", async () => {
     // A user this test alone uses. The api's seed created "tuan"; a dev token for
     // any name works, and a name of its own is what keeps five places to itself.
     const token = await mintToken("tuan");

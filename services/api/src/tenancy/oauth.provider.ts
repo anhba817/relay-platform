@@ -5,7 +5,7 @@ import {
   type Profile,
 } from "./oauth.schema";
 
-// The authorization-code flow, by hand (chapter 3.1).
+// The authorization-code flow, by hand.
 //
 // No Passport, no strategy plugin. The flow is three steps and this chapter
 // exists to teach them; a library would hide exactly the part the reader came

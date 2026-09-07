@@ -115,7 +115,7 @@ describe("integrating with Relay from the outside", () => {
   });
 
   it("creates a PRIVATE channel, which the route began accepting in chapter 3.15", async () => {
-    // THIS TEST WAS RED FOR TWO CHAPTERS AND NOBODY SAW IT (chapter 3.17, T065).
+    // THIS TEST WAS RED FOR TWO CHAPTERS AND NOBODY SAW IT (T065).
     //
     // It asserted `400` with `field: "type"`, which was true when it was written: the
     // create route took `public` only. Chapter 3.15 (`43899e3`, "the private type decides
@@ -308,7 +308,7 @@ describe("integrating with Relay from the outside", () => {
     socket.close();
   });
 
-  /** T033 (chapter 3.24). ATTACHMENTS THROUGH THE SHIPPED BINARY.
+  /** T033. ATTACHMENTS THROUGH THE SHIPPED BINARY.
    *
    * This file is the only instrument in the repository that boots what customers run and
    * drives it the way they do — Node's global `WebSocket`, no workspace import, the REST
@@ -453,7 +453,7 @@ describe("integrating with Relay from the outside", () => {
    * `docs/08-error-reference.md` tells a customer *"send `message.send` … Do not
    * send events; receive them."* **Nothing had ever checked what happens when they
    * do.** This is that correction in bytes rather than in prose. */
-  it("holds five connections and is refused a sixth with 4004 (FR-RTM-09 (3.22))", async () => {
+  it("holds five connections and is refused a sixth with 4004 (FR-RTM-09)", async () => {
     // CHAPTER 3.22, T048. **THE ONLY INSTRUMENT THAT BOOTS THE SHIPPED BINARY**,
     // and the reason this task is a plan requirement rather than a polish item.
     //

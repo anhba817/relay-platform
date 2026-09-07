@@ -19,7 +19,7 @@ import {
 } from "../db/repository";
 import type { Publisher } from "../outbox/publisher";
 
-// The second relay (chapter 3.5, research R13).
+// The second relay (research R13).
 //
 // This is the moment chapter 3.3's outbox stops being a thing that moves EVENTS
 // and becomes a shape: `SELECT … FOR UPDATE SKIP LOCKED`, publish, mark, for any
@@ -151,7 +151,7 @@ export function createDeliveryRelay({
     });
   }
 
-  /** The auto-disable sweep, riding this loop (chapter 3.6, research R1).
+  /** The auto-disable sweep, riding this loop (research R1).
    *
    * Here rather than in a scheduler of its own because this worker is already
    * awake, already owns a database connection, and already runs in the one service

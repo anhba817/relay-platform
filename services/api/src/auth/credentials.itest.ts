@@ -37,7 +37,7 @@ function withoutRequestId(body: unknown): unknown {
 }
 
 
-// The refusals, over real HTTP against the compose Postgres (chapter 3.2).
+// The refusals, over real HTTP against the compose Postgres.
 // Invariants 1-7, 9 and 11 of contracts/credentials.md live here; 8 and 12 are
 // pure and live in the unit lane; 10 needs a socket and lives in the gateway's
 // session.itest.ts.
@@ -105,7 +105,7 @@ describe("credentials", () => {
   };
 
   beforeAll(async () => {
-    // Chapter 3.8. This suite submits bad credentials ON PURPOSE — that is what
+    // This suite submits bad credentials ON PURPOSE — that is what
     // it is for — and the failed-authentication limiter counts them all against
     // one loopback address. The default is ten a minute.
     //
@@ -138,7 +138,7 @@ describe("credentials", () => {
     channelId = (await repo.createChannel("general", "public")).id;
     await repo.createUser("tuan", "Tuan");
 
-    // A BOT IN EACH ENVIRONMENT (chapter 3.17). A key send names one, and the FOREIGN
+    // A BOT IN EACH ENVIRONMENT. A key send names one, and the FOREIGN
     // key must name a bot of ITS OWN tenant — otherwise the attack below would be
     // refused for naming an unresolvable sender (400) rather than for reaching a channel
     // it cannot see (404), and the test would stop attacking what it attacked.
@@ -463,7 +463,7 @@ describe("credentials", () => {
     const repo = new Repository(db, first.environment.id);
     const channel = await repo.createChannel("signup-key", "public");
     // A THIRD ENVIRONMENT, seeded by signup rather than by this file's `beforeAll` — so
-    // it needs its own bot (chapter 3.17).
+    // it needs its own bot.
     await repo.upsertUser("cred-bot", {
       kind: "bot",
       description: "the freshly signed-up tenant's own software",
@@ -562,7 +562,7 @@ describe("credentials", () => {
     });
   });
 
-  // ══ FR-USR-02: A USER ROW ON FIRST AUTHENTICATION (chapter 3.15) ════════════
+  // ══ FR-USR-02: A USER ROW ON FIRST AUTHENTICATION ════════════
   //
   // FR-039a and FR-039b arrived from research after the spec's nine stories were
   // written, so these have no story label — their coverage is two edge cases and SC-020.

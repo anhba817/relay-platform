@@ -305,7 +305,7 @@ export async function plant(
     [s.environmentId, s.organisationId, s.deliveryEndpointId, BAIT_ROWS],
   );
 
-  // bait 5: the four usage tables, ONE ROW EACH (chapter 3.13, FR-036).
+  // bait 5: the four usage tables, ONE ROW EACH (FR-036).
   //
   // Chapter 3.12 added these four to the trigger array, and being in the array is
   // not the same as being watched: with no sentinel row in a table, the trigger
@@ -354,7 +354,7 @@ export async function plant(
     [s.usageNotificationId, s.environmentId, s.organisationId],
   );
 
-  // bait 6: `read_positions`, the guard's tenth table (chapter 3.16).
+  // bait 6: `read_positions`, the guard's tenth table.
   //
   // One row, for the same reason as bait 5: the trigger fires on the first
   // sentinel row a statement touches, so one is enough for it, and the reader

@@ -111,7 +111,7 @@ describe("tenant isolation is structural (FR-TEN-05)", () => {
   });
 });
 
-describe("the database refuses a bot with no description (chapter 3.17, FR-003)", () => {
+describe("the database refuses a bot with no description (FR-003)", () => {
   // TWO GUARANTEES, NOT ONE, AND THIS IS THE SECOND (T023). Zod refuses a bot with no
   // description at the boundary and that covers every request; this covers every
   // WRITER — a migration, a backfill, a psql session, a future route nobody has
@@ -255,7 +255,7 @@ describe("a private channel refuses a non-member's send (FR-001)", () => {
     // be stated rather than assumed, and the assumption is that a private channel
     // is not private FROM ITS OWNER.
     const channel = await repoA.createChannel("private-app", "private");
-    // A BOT, AND THAT IS THE WHOLE POINT NOW (chapter 3.17, FR-019a). This test is the
+    // A BOT, AND THAT IS THE WHOLE POINT NOW (FR-019a). This test is the
     // repository-level twin of `messages.itest.ts`'s "accepts an application key's send
     // to the same private channel". Before this chapter the send carried no user at all
     // and skipped the membership check for that reason; now the check is gated on the
@@ -362,7 +362,7 @@ describe("members_role_check names the channel's three (FR-011, R8)", () => {
 // driver-exempt list (the layer under test IS the query layer); the route suite is
 // not, and adding a setter to the repository so it could reach one would have put a
 // method in production code whose only caller is a test.
-describe("the listing's keyset survives a shared last_activity_at (chapter 3.15)", () => {
+describe("the listing's keyset survives a shared last_activity_at", () => {
   it("returns each tied channel exactly once across pages", async () => {
     const user = await repoA.createUser("tie-lister", "Tie Lister");
     const shared = new Date("2026-08-20T12:00:00.000Z");
@@ -432,7 +432,7 @@ describe("the listing's keyset survives a shared last_activity_at (chapter 3.15)
 // reached the wire, and **nothing in the platform wrote either**. The comment here said
 // so, in the present tense.
 //
-// **CHAPTER 3.23 BUILT THE WRITER** (`repository.deleteMessage`, FR-006 (3.23)), so the
+// **CHAPTER 3.23 BUILT THE WRITER** (`repository.deleteMessage`, FR-006), so the
 // sentence stopped being true — the class of decay this repository keeps paying for, and
 // the reason `specs/041-chapter-3-23/check-prose.py` fails on the old wording. What that
 // chapter did NOT do is rewrite these tests to use the writer: a hand-planted fixture and
@@ -445,7 +445,7 @@ describe("the listing's keyset survives a shared last_activity_at (chapter 3.15)
 // The listing's rule was implemented and tested here before its writer existed, which
 // 3.15 said was so that "the day FR-MSG-08's chapter ships, the count and the preview
 // already agree." They did.
-describe("the listing's tombstone rule and its clamp (chapter 3.15)", () => {
+describe("the listing's tombstone rule and its clamp", () => {
   it("reports a tombstoned last message with a null text, and still counts it", async () => {
     const user = await repoA.createUser("tomb-reader", "Tomb Reader");
     const channel = await repoA.createChannel("tombstoned", "public");
@@ -477,7 +477,7 @@ describe("the listing's tombstone rule and its clamp (chapter 3.15)", () => {
 
   // ── T009 (chapter 3.23): THE READER, TESTED BEFORE THE WRITER EXISTS ────────
   //
-  // FR-011 (3.23) and SC-003 (3.23). The history read must return a tombstone in its
+  // FR-011 and SC-003. The history read must return a tombstone in its
   // original position so a client sees no gap in the ordering.
   //
   // **THIS PASSES AGAINST UNCHANGED CODE, AND THAT IS THE POINT.** `listMessages` has
@@ -490,7 +490,7 @@ describe("the listing's tombstone rule and its clamp (chapter 3.15)", () => {
   // day FR-MSG-08's chapter ships, the count and the preview already agree."* History
   // never got one. A test written after the writer proves the writer; this one proves
   // the reader was already right.
-  it("returns a tombstone in its original position, with the run unbroken (FR-011 (3.23), SC-003 (3.23))", async () => {
+  it("returns a tombstone in its original position, with the run unbroken (FR-011, SC-003)", async () => {
     const user = await repoA.createUser("hist-tomb", "History Tombstone");
     const channel = await repoA.createChannel("hist-tombstoned", "public");
     await repoA.addMember(channel.id, user.id);
@@ -590,7 +590,7 @@ describe("the listing's tombstone rule and its clamp (chapter 3.15)", () => {
 // through the gateway's api CHILD PROCESS, whose coverage is not attributable. Chapter 3.5
 // added six operations to this file the same way and branches went 85.91% → 78.22% on the
 // next run: the instrument was right and the code was untested.
-describe("the repository's own refusals (chapter 3.15)", () => {
+describe("the repository's own refusals", () => {
   it("returns false when deleting a user that does not exist", async () => {
     expect(await repoA.deleteUser("00000000-0000-4000-8000-000000000000")).toBe(false);
   });
@@ -639,7 +639,7 @@ describe("the repository's own refusals (chapter 3.15)", () => {
     const reader = await repoA.createUser("arm-no-author", "Reader");
     const channel = await repoA.createChannel("arm-unattributed", "public");
     await repoA.addMember(channel.id, reader.id);
-    // PLANTED, BECAUSE NOTHING CAN WRITE ONE ANY MORE (chapter 3.17, T014a, FR-014).
+    // PLANTED, BECAUSE NOTHING CAN WRITE ONE ANY MORE (T014a, FR-014).
     //
     // The subject of this test IS a senderless row, so the repository can no longer
     // produce its own fixture: `sendMessage` requires a sender as of FR-MSG-15, which
@@ -647,7 +647,7 @@ describe("the repository's own refusals (chapter 3.15)", () => {
     // is inserted directly, the way chapter 3.12's read-position clamp is planted a few
     // hundred lines above — the only way a branch that no writer can reach is covered.
     //
-    // THE ARM IS NOT DEAD, AND ITS SUBJECT HAS CHANGED (chapter 3.17, T055, FR-014).
+    // THE ARM IS NOT DEAD, AND ITS SUBJECT HAS CHANGED (T055, FR-014).
     //
     // Chapter 3.16 wrote this arm for a state the public route produced on every
     // key-authenticated send. It now covers LEGACY ROWS ONLY: 121,250 of the 394,808
@@ -675,8 +675,8 @@ describe("the repository's own refusals (chapter 3.15)", () => {
 });
 
 
-// ══ EDITING A MESSAGE (chapter 3.23, US1) ═══════════════════════════════════
-describe("editMessage (chapter 3.23)", () => {
+// ══ EDITING A MESSAGE (US1) ═══════════════════════════════════
+describe("editMessage", () => {
   it("keeps the sequence, the channel, the author and the creation time (FR-002)", async () => {
     // A THING NOT DONE LEAVES NO TRACE TO ASSERT ON, so this asserts the VALUES rather
     // than the absence of an assignment. `editMessage`'s `SET` list is the guarantee —
@@ -767,7 +767,7 @@ describe("editMessage (chapter 3.23)", () => {
 
   it("an edit does not move the channel in the activity ordering (FR-015)", async () => {
     // Two channels, one edited afterwards. The listing orders by most recent activity
-    // and FR-014 (3.15) decided what that means: a message. Correcting a typo is not a
+    // and FR-014 decided what that means: a message. Correcting a typo is not a
     // new message, so the order must not change.
     const user = await repoA.createUser("t034-user", "User");
     const older = await repoA.createChannel("t034-older", "public");
@@ -861,7 +861,7 @@ describe("editMessage (chapter 3.23)", () => {
     await repoA.deleteUser(author.id);
 
     // `message_edits` references the MESSAGE, and both of those operations keep their
-    // rows — the archive sets a timestamp (FR-020 (3.15)) and a user deletion is a
+    // rows — the archive sets a timestamp (FR-020) and a user deletion is a
     // tombstone too (FR-USR-05). A cascade on either would take the history with it.
     const edits = await repoA.listMessageEdits(channel.id, sent.id);
     expect(edits.map((e) => e.prior_text)).toEqual(["before"]);
@@ -883,8 +883,8 @@ describe("editMessage (chapter 3.23)", () => {
 });
 
 
-// ══ DELETING A MESSAGE (chapter 3.23, US2) ══════════════════════════════════
-describe("deleteMessage (chapter 3.23)", () => {
+// ══ DELETING A MESSAGE (US2) ══════════════════════════════════
+describe("deleteMessage", () => {
   /** The columns as the database holds them, read raw. Every assertion below is about
    * what COMMITTED rather than what the method returned — a method that returned the
    * right object and wrote something else would pass a return-value test. */
@@ -1118,9 +1118,9 @@ describe("deleteMessage (chapter 3.23)", () => {
   });
 });
 
-// T004 (3.24) — THE READER TEST, RUN AGAINST UNCHANGED CODE.
+// T004 — THE READER TEST, RUN AGAINST UNCHANGED CODE.
 //
-// FR-019 (3.24) decides that an attachments-only message stores `text = ""` rather than
+// FR-019 decides that an attachments-only message stores `text = ""` rather than
 // a null, so chapter 3.23's tombstone predicate is untouched. That decision rests on a
 // claim about code this chapter has not written yet: every read path already treats an
 // empty string as a live message. **This test must pass today.** If it fails, the
@@ -1134,7 +1134,7 @@ describe("deleteMessage (chapter 3.23)", () => {
 // NULL, which is a VALID value (data-model.md: NULL and `[]` are different and NULL means
 // no attachments): the read paths do not re-validate, so a malformed array planted here
 // would surface as a 1011 socket close in some later phase rather than as a failure here.
-describe("an empty text is a live message on every read path (FR-019 (3.24))", () => {
+describe("an empty text is a live message on every read path (FR-019)", () => {
   it("reads back as live through history both ways, the listing's preview, and the tombstone predicate", async () => {
     const user = await repoA.createUser("t004-reader", "Reader");
     const channel = await repoA.createChannel("t004", "public");
@@ -1200,12 +1200,12 @@ describe("an empty text is a live message on every read path (FR-019 (3.24))", (
   });
 });
 
-// T023 and T024 (chapter 3.24). THE WRITER, AND THE EMPTY TEXT IT NOW ACCEPTS.
+// T023 and T024. THE WRITER, AND THE EMPTY TEXT IT NOW ACCEPTS.
 //
 // T004 above proved the READ paths already treat `text = ''` as live, against a row
 // planted by hand. These two prove the WRITE path produces such a row and that the
 // round trip keeps what it was given, in the order it was given.
-describe("sendMessage writes attachments (FR-001 (3.24), FR-006 (3.24))", () => {
+describe("sendMessage writes attachments (FR-001, FR-006)", () => {
   const url = (name: string) => ({
     type: "url" as const,
     kind: "image" as const,
@@ -1261,7 +1261,7 @@ describe("sendMessage writes attachments (FR-001 (3.24), FR-006 (3.24))", () => 
     expect(page.find((m) => m.id === sent.id)!.attachments).toEqual([]);
   });
 
-  it("stores the same url twice as two attachments (FR-021 (3.24))", async () => {
+  it("stores the same url twice as two attachments (FR-021)", async () => {
     const user = await repoA.createUser("t023-dup", "Dup");
     const channel = await repoA.createChannel("t023-dup", "public");
     await repoA.addMember(channel.id, user.id);
@@ -1277,7 +1277,7 @@ describe("sendMessage writes attachments (FR-001 (3.24), FR-006 (3.24))", () => 
   });
 });
 
-describe("an attachments-only message is written and is not a tombstone (FR-019 (3.24))", () => {
+describe("an attachments-only message is written and is not a tombstone (FR-019)", () => {
   it("stores text = '' and reads back live, with the deletion path still available", async () => {
     const user = await repoA.createUser("t024-sender", "Sender");
     const channel = await repoA.createChannel("t024", "public");
@@ -1327,13 +1327,13 @@ describe("an attachments-only message is written and is not a tombstone (FR-019 
   });
 });
 
-// T030a (chapter 3.24). BOTH BRANCHES OF `listMessages`, WHICH IS A TERNARY.
+// T030a. BOTH BRANCHES OF `listMessages`, WHICH IS A TERNARY.
 //
 // `listMessages` is not one query with a direction flag — it is a conditional over two
 // separate builder chains, one ordered `desc` for a backward page and one `asc` for a
 // forward one, and `attachments` had to be added to the column list they share. A
 // single-direction test covers one branch and reports on both.
-describe("listMessages returns attachments on BOTH branches (FR-009 (3.24))", () => {
+describe("listMessages returns attachments on BOTH branches (FR-009)", () => {
   it("carries them in order through the backward page and the forward one", async () => {
     const user = await repoA.createUser("t030a-user", "User");
     const channel = await repoA.createChannel("t030a", "public");
@@ -1362,7 +1362,7 @@ describe("listMessages returns attachments on BOTH branches (FR-009 (3.24))", ()
     }
   });
 
-  it("returns [] and not null on both branches for a message with none (FR-007 (3.24))", async () => {
+  it("returns [] and not null on both branches for a message with none (FR-007)", async () => {
     const user = await repoA.createUser("t030a-none", "None");
     const channel = await repoA.createChannel("t030a-none", "public");
     await repoA.addMember(channel.id, user.id);
@@ -1383,7 +1383,7 @@ describe("listMessages returns attachments on BOTH branches (FR-009 (3.24))", ()
   });
 });
 
-// T053 (chapter 3.24). THE READ SHAPES THAT DO NOT CHANGE, ASSERTED.
+// T053. THE READ SHAPES THAT DO NOT CHANGE, ASSERTED.
 //
 // `data-model.md` names six read shapes and two of them gained the column. The plan said
 // four would not change; it is THREE, because `editMessage`'s internal read gained it at
@@ -1394,7 +1394,7 @@ describe("listMessages returns attachments on BOTH branches (FR-009 (3.24))", ()
 // A RECORD SAYS "DECIDED"; ONLY AN ASSERTION TELLS THE NEXT READER THAT FROM "FORGOTTEN".
 // Chapter 3.23 left four sentences that had stopped being true because nothing compared
 // them with the code.
-describe("the read shapes that do NOT carry attachments (FR-009 (3.24))", () => {
+describe("the read shapes that do NOT carry attachments (FR-009)", () => {
   it("the channel listing's preview has no attachments field", async () => {
     const user = await repoA.createUser("t053-user", "User");
     const channel = await repoA.createChannel("t053", "public");

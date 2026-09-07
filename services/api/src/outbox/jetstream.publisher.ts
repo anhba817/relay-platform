@@ -11,7 +11,7 @@ import { ALL_ANALYTICS_SUBJECT, ANALYTICS_STREAM } from "@relay/protocol";
 
 import type { Publisher, PublishedMessage } from "./publisher";
 
-// The one adapter that knows what a broker is (chapter 3.3, ADR-02).
+// The one adapter that knows what a broker is (ADR-02).
 //
 // Everything upstream of this file speaks in subjects and payloads; swapping
 // JetStream for something else means writing another file like this one and
@@ -43,7 +43,7 @@ const SECOND_NS = 1_000_000_000;
  * weekend. */
 const MAX_AGE_NS = 7 * 24 * 60 * 60 * SECOND_NS;
 
-/** The analytics stream's own bound (chapter 3.6). The same seven days as
+/** The analytics stream's own bound. The same seven days as
  * `EVENTS`, for a different reason: there it absorbs a consumer outage without
  * losing a tenant's events, here it absorbs an ingester outage without letting
  * the stream become a database. Named separately so the two can diverge when
@@ -103,7 +103,7 @@ export async function ensureStream(nc: NatsConnection): Promise<void> {
   await jsm.streams.update(STREAM, { ...existing.config, ...mutable });
 }
 
-/** The ANALYTICS stream (chapter 3.6, constitution III).
+/** The ANALYTICS stream (constitution III).
  *
  * A THIRD stream rather than a third use of `EVENTS`, and the reasons are all
  * about the difference between an operational event and an analytical one

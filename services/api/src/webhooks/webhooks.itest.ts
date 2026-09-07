@@ -10,7 +10,7 @@ import { createApiKey, createEnvironment } from "../db/repository";
 import { MAX_ENDPOINTS_PER_ENVIRONMENT } from "./webhooks.service";
 
 // The webhook management surface, over real HTTP against the compose Postgres
-// (chapter 3.5). Invariants 1, 2, 3 and 6 of contracts/dispatcher.md live here.
+//. Invariants 1, 2, 3 and 6 of contracts/dispatcher.md live here.
 //
 // Every environment is minted in this file. Two suites sharing one would let a
 // foreign key see another's endpoints, which is the very thing invariant 3

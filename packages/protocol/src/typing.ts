@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Typing's own fabric: one subject shape and the payload that crosses it
- * (chapter 3.21, FR-RTM-05, FR-RTM-08).
+ * (FR-RTM-05, FR-RTM-08).
  *
  * WHY THIS IS NOT IN `fanout.ts`, `presence.ts` OR `membership.ts`. Each fabric
  * owns its subject grammar in its own file — `internal.ts` established that for

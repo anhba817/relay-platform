@@ -29,13 +29,13 @@ import {
 // 3.3 and is at the bottom of this file. `message_edits` ARRIVED IN 3.23 and
 // is below `messages` — the list above said "edit chapter" and this is it.
 
-// The tenancy hierarchy (chapter 3.1). Everything from here to `members`
+// The tenancy hierarchy. Everything from here to `members`
 // below sits ABOVE the environment boundary: these rows say who owns a
 // platform account, and they are the only tables in this file without an
 // environment_id. Everything below the boundary carries one and is scoped by
 // the repository (constitution I).
 //
-// DECISION (chapter 3.1): SAD §6.1 defines `environments` and everything under
+// DECISION: SAD §6.1 defines `environments` and everything under
 // it, but never defines the containers above — the gap 2.1 papered over with a
 // one-column `applications` stub. These three tables are derived from the SRS
 // (FR-TEN-01/02/03/04/07), not quoted from the SAD, and that is why they carry
@@ -145,7 +145,7 @@ export const environments = pgTable(
     // one in a field named for the other would collapse in the schema what the
     // prose spends a chapter drawing (research R31).
     quotaConfig: jsonb("quota_config").notNull().default({}),
-    // Chapter 3.8: per-environment rate limits (FR-RTL-04, FR-RTL-04).
+    // Per-environment rate limits (FR-RTL-04, FR-RTL-04).
     //
     // NULLABLE, AND NULL IS NOT ZERO. Null means "no override, use the
     // documented default", resolved at read time. Zero means "refuse
@@ -184,7 +184,7 @@ export const environments = pgTable(
   ],
 );
 
-// DECISION (chapter 3.2): the SRS states the requirements this table serves
+// DECISION: the SRS states the requirements this table serves
 // (FR-AUT-01…05, NFR-SEC-02) but no source document defines a key table —
 // SAD §6.1 does not have one. Its shape is a chapter derivation, recorded here
 // the way 2.1 recorded `members` and 3.1 recorded the tenancy containers.
@@ -242,7 +242,7 @@ export const users = pgTable(
     avatarUrl: text("avatar_url"),
     metadata: jsonb("metadata").notNull().default({}),
     bannedAt: timestamp("banned_at", { withTimezone: true }),
-    // A DELETED USER KEEPS THIS ROW (chapter 3.15, FR-USR-05, research R7).
+    // A DELETED USER KEEPS THIS ROW (FR-USR-05, research R7).
     //
     // This column is in no SRS clause. It arrived from designing the deletion path:
     // `messages.user_id`, `members.user_id` and `usage_active_users.user_id` all
@@ -260,7 +260,7 @@ export const users = pgTable(
     // presenting the same external id again reuses this row and clears the marker
     // (FR-030) rather than creating a second identity.
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
-    // WHAT KIND OF THING THIS USER IS (chapter 3.17, FR-USR-07).
+    // WHAT KIND OF THING THIS USER IS (FR-USR-07).
     //
     // A stored property on the row a customer already knows about, not a second table.
     // Every reader built since chapter 3.15 reads `users`; a `bots` table would have
@@ -274,7 +274,7 @@ export const users = pgTable(
     // compare it to the stored row, and telling those two apart is what makes a
     // promotion reportable (FR-002b).
     kind: text("kind").notNull().default("person"),
-    // WHAT THE SOFTWARE IS, AND WHY IT POSTS (chapter 3.17, FR-USR-07).
+    // WHAT THE SOFTWARE IS, AND WHY IT POSTS (FR-USR-07).
     //
     // NOT PROFILE DATA, and `deleteUser` must not clear it (FR-004a). FR-027 clears
     // `display_name`, `avatar_url` and `metadata` on deletion; clearing this one would
@@ -343,7 +343,7 @@ export const channels = pgTable(
       .notNull()
       .default(0),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
-    // WHEN THIS CHANNEL LAST TOOK A MESSAGE (chapter 3.15, FR-014).
+    // WHEN THIS CHANNEL LAST TOOK A MESSAGE (FR-014).
     //
     // A denormalised value, and the 145× is why. FR-CHN-08 wants a user's channels
     // ordered by most recent activity. `last_sequence` above cannot do it — it is a
@@ -414,7 +414,7 @@ export const messages = pgTable(
   ],
 );
 
-// WHAT A MESSAGE USED TO SAY (chapter 3.23, FR-MSG-07). Published in SAD §6.1
+// WHAT A MESSAGE USED TO SAY (FR-MSG-07). Published in SAD §6.1
 // since the SAD was written and built here — the absence note above named this
 // chapter as its arrival.
 //
@@ -432,7 +432,7 @@ export const messages = pgTable(
 // two entries claiming the same instant, which is a silent wrong answer where
 // this is a loud refusal. The published constraint stands (Constitution VII).
 //
-// APPEND ONLY (FR-004, chapter 3.23). Nothing updates or deletes a row here. A
+// APPEND ONLY (FR-004). Nothing updates or deletes a row here. A
 // second edit appends a second row; the current text lives on `messages`.
 //
 // NO `environment_id`, exactly like `messages` above. The tenant is reached
@@ -471,7 +471,7 @@ export const members = pgTable(
     joinedAt: timestamp("joined_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-    // A USER'S ROLE IN A CHANNEL (chapter 3.15, FR-CHN-04), default `member`.
+    // A USER'S ROLE IN A CHANNEL (FR-CHN-04), default `member`.
     //
     // The default is what lets chapter 3.13's `addMember` keep working unchanged and
     // gives every existing row a value the CHECK accepts.
@@ -491,7 +491,7 @@ export const members = pgTable(
   ],
 );
 
-// HOW FAR EACH USER HAS READ IN EACH CHANNEL (chapter 3.15, FR-017, research R6).
+// HOW FAR EACH USER HAS READ IN EACH CHANNEL (FR-017, research R6).
 //
 // The only entity in this feature with no storage before it. Verified absent: no
 // `last_read`, `read_at` or equivalent column anywhere in this file.
@@ -558,7 +558,7 @@ export const readPositions = pgTable(
   ],
 );
 
-// The outbox (chapter 3.3, ADR-06). For the first time in Part 3 this table is
+// The outbox (ADR-06). For the first time in Part 3 this table is
 // QUOTED rather than derived: SAD §6.1 defines it column-for-column, so nothing
 // about its shape is a chapter invention.
 //
@@ -575,7 +575,7 @@ export const readPositions = pgTable(
 // is done, and there is no third state to get stuck in.
 //
 // No attempts or last_error. Retry accounting belongs to webhook delivery
-// (FR-WHK-03/06, chapter 3.5). This relay retries by not marking a row done.
+// (FR-WHK-03/06). This relay retries by not marking a row done.
 export const outbox = pgTable(
   "outbox",
   {
@@ -588,7 +588,7 @@ export const outbox = pgTable(
     publishedAt: timestamp("published_at", { withTimezone: true }),
   },
   (t) => [
-    // DECISION (chapter 3.3): SAD §6.1 defines this table but no index for it.
+    // DECISION: SAD §6.1 defines this table but no index for it.
     // The relay's only query is "the oldest rows with published_at IS NULL",
     // and without an index that degrades into a full scan over a table which is
     // 99.9% published rows. The predicate is PARTIAL on purpose: the index
@@ -601,9 +601,9 @@ export const outbox = pgTable(
   ],
 );
 
-// The consumer's deduplication ledger (chapter 3.4).
+// The consumer's deduplication ledger.
 //
-// DECISION (chapter 3.4): no source document defines a table for this. SAD risk
+// DECISION: no source document defines a table for this. SAD risk
 // R5 requires the BEHAVIOUR — "consumer template with dedup built in", so that
 // "a future consumer forgets to dedupe → double webhooks / double metering"
 // cannot happen — and leaves the shape open. This is therefore a chapter
@@ -636,9 +636,9 @@ export const consumedEvents = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// Webhooks (chapter 3.5). Three tables, and all three carry `environment_id`.
+// Webhooks. Three tables, and all three carry `environment_id`.
 //
-// DECISION (chapter 3.5): 3.3's `outbox` and 3.4's `consumed_events` each
+// DECISION: 3.3's `outbox` and 3.4's `consumed_events` each
 // omitted the tenant column and each recorded it as a deliberate exception. Two
 // exceptions in consecutive chapters is a pattern, and a pattern without a
 // stated rule is how a third chapter gets it wrong by resemblance. THE RULE: a
@@ -660,12 +660,12 @@ export const consumedEvents = pgTable(
 // ordinal does.
 // ---------------------------------------------------------------------------
 
-// DECISION (chapter 3.5): no source document defines this table. FR-WHK-01 and
+// DECISION: no source document defines this table. FR-WHK-01 and
 // FR-WHK-08 require the behaviour — up to five endpoints per environment, each
 // with an independently rotatable signing secret — and leave the shape open.
 //
 // The secret is stored ENCRYPTED, not hashed, and the difference is the point.
-// An API key (3.2) is VERIFIED: a caller presents it, we hash what arrived and
+// An API key is VERIFIED: a caller presents it, we hash what arrived and
 // compare. A signing secret is USED: we must compute an HMAC with it, which
 // needs the secret itself. A hash cannot be used, only compared. NFR-SEC-02
 // permits "salted hashes OR envelope encryption" and this is the branch that
@@ -690,7 +690,7 @@ export const webhookEndpoints = pgTable(
     // named here, and the prediction held: automatic disablement added a rule and
     // four columns, and did not have to change this one.
     enabled: boolean("enabled").notNull().default(true),
-    // THE FAILURE RUN (chapter 3.6, FR-006). The current unbroken sequence of
+    // THE FAILURE RUN (FR-006). The current unbroken sequence of
     // failures, and nothing more — history is the attempt event stream, not this.
     //
     // Two columns rather than a table, because a run is one row per endpoint BY
@@ -723,7 +723,7 @@ export const webhookEndpoints = pgTable(
   },
   (t) => [
     index("webhook_endpoints_environment_idx").on(t.environmentId),
-    // The SWEEP's only query (chapter 3.6, research R1): enabled endpoints with
+    // The SWEEP's only query (research R1): enabled endpoints with
     // an open failure run, so the one that has outrun the hour can be found
     // without reading every endpoint in the platform. Partial, for the reason
     // 3.3's outbox index and 3.5's delivery index are partial — a healthy
@@ -752,7 +752,7 @@ export const webhookEndpoints = pgTable(
 
 // The retry schedule — and it is chapter 3.3's outbox with one more column.
 //
-// DECISION (chapter 3.5, research R1, MEASURED): the obvious implementation is
+// DECISION (research R1, MEASURED): the obvious implementation is
 // to let the broker hold the delay between attempts. It was measured against a
 // real broker and disqualified: a delayed redelivery survives a restart to
 // within 3 ms, but a message waiting out its delay HOLDS AN ACKNOWLEDGEMENT
@@ -791,7 +791,7 @@ export const webhookDeliveries = pgTable(
     // scheduled. The relay's claim, in the shape `outbox.published_at` has.
     dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
     state: text("state").notNull().default("pending"),
-    // WHAT THE ENDPOINT ACTUALLY SAID on the most recent attempt (chapter 3.6).
+    // WHAT THE ENDPOINT ACTUALLY SAID on the most recent attempt.
     //
     // Chapter 3.5 recorded an attempt by MOVING the delivery — state, attempt,
     // next_attempt_at — and threw the answer away, which was enough while the
@@ -812,7 +812,7 @@ export const webhookDeliveries = pgTable(
     lastStatus: integer("last_status"),
     lastError: text("last_error"),
     lastLatencyMs: integer("last_latency_ms"),
-    // A TEST EVENT's delivery (chapter 3.6, FR-013). Three decisions branch on
+    // A TEST EVENT's delivery (FR-013). Three decisions branch on
     // it — no retry schedule, no failure-run update, and delivery even to a
     // disabled endpoint — which is why it is a column and not a `payload->>'type'`
     // comparison against a customer-visible document. It also keeps the marker
@@ -840,7 +840,7 @@ export const webhookDeliveries = pgTable(
   ],
 );
 
-// DECISION (chapter 3.5): FR-WHK-04 requires exhausted events to be retained
+// DECISION: FR-WHK-04 requires exhausted events to be retained
 // for seven days, inspectable and replayable, and leaves the shape open.
 //
 // This is the first store in the platform whose PURPOSE is retaining data that
@@ -872,7 +872,7 @@ export const webhookDeadLetters = pgTable(
   (t) => [index("webhook_dead_letters_environment_idx").on(t.environmentId)],
 );
 
-// DECISION (chapter 3.6, FR-011, research R7): one row per automatic
+// DECISION (FR-011, research R7): one row per automatic
 // disablement — an OUTBOUND OBLIGATION the platform has not yet met.
 //
 // `deliveredAt` is the honest column, and it exists in this chapter solely in

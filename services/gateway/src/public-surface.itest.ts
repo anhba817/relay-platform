@@ -378,7 +378,7 @@ describe("a channel, a member and a message, all over the public API", () => {
     expect(liveTexts).toEqual([first, second]);
     live.socket.close();
 
-    // AND ON RESUME IT NOW ARRIVES — WHICH IS HALF OF THE GAP CLOSING (chapter 3.17).
+    // AND ON RESUME IT NOW ARRIVES — WHICH IS HALF OF THE GAP CLOSING.
     //
     // This block asserted `[]`, and the comment said why: "the page came back and every
     // row in it was dropped for having no sender." That was true, and it is the reason

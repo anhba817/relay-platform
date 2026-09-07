@@ -41,31 +41,31 @@ export function createServer(logger?: Logger) {
   // here, and no instance knows how many others exist (ADR-07). Scaling
   // out is adding a process.
   const fanout = createFanout({ logger: log });
-  // Chapter 3.8. A SECOND Redis client, not fanout's — one of fanout's two is a
+  // A SECOND Redis client, not fanout's — one of fanout's two is a
   // subscriber, and a connection in subscribe mode cannot run `INCR`. It is
   // created here rather than inside `attachSessions` so the tests that call
   // that function directly stay Redis-free, and so its close has an owner.
   const limits = createGatewayLimits();
-  // Chapter 3.19. The FOURTH and FIFTH Redis clients, and the reason is chapter
+  // The FOURTH and FIFTH Redis clients, and the reason is chapter
   // 3.8's verbatim: a connection in subscribe mode cannot run `SET` or `EXISTS`,
   // so presence needs a subscriber and a command client of its own. Created here
   // rather than inside `attachSessions` so the tests that call that function
   // directly stay Redis-free, and so its close has an owner.
   const presence = createPresence({ logger: log });
-  // Chapter 3.20. The SIXTH Redis client, and only one where presence needed two:
+  // The SIXTH Redis client, and only one where presence needed two:
   // this module subscribes and never runs a command, so there is nothing a
   // subscriber-mode connection would refuse. Created here rather than inside
   // `attachSessions` so the tests that call that function directly stay Redis-free,
   // and so its close has an owner.
   const membership = createMembership({ logger: log });
-  // Chapter 3.21: the SEVENTH and EIGHTH Redis clients. Chapter 3.20 closed at
+  // The SEVENTH and EIGHTH Redis clients. Chapter 3.20 closed at
   // six, and this module needs two of its own — a publisher and a subscriber —
   // because it is the first fabric this service both publishes to and consumes
   // from. `fanout.ts:33` states why they cannot be one client: a subscribed
   // connection cannot issue ordinary commands, and PUBLISH is one.
   const typing = createTyping({ logger: log });
   const connections = createConnections({ logger: log });
-  // Chapter 3.11. THE FIRST SECRET THIS SERVICE HAS EVER HELD, and it is not a
+  // THE FIRST SECRET THIS SERVICE HAS EVER HELD, and it is not a
   // signing secret: chapter 3.2's claim that "the gateway holds no signing
   // secret" is untouched, because this one verifies nothing and signs nothing.
   // It only says which service is talking, on the one call that is the

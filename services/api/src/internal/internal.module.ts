@@ -34,12 +34,12 @@ import { UsageController } from "./usage.controller";
     InternalController,
     BackfillController,
     SessionController,
-    // Chapter 3.20. Registered here for the reason the comment below `UsageController`
+    // Registered here for the reason the comment below `UsageController`
     // gives: a controller nobody registers is a route that does not exist, and chapter
     // 3.10's third analysis pass found exactly that.
     MembershipsController,
     DispatchController,
-    // Chapter 3.11. Registered HERE and not in `app.module.ts`, which carries
+    // Registered HERE and not in `app.module.ts`, which carries
     // only `HealthController` and already imports this module — a controller
     // nobody registers is a route that does not exist, and chapter 3.10's third
     // analysis pass found exactly that.
@@ -51,7 +51,7 @@ import { UsageController } from "./usage.controller";
       useFactory: (): Db => createDb(createPool()),
       scope: Scope.DEFAULT,
     },
-    // Chapter 3.6: the attempt record's way onto the analytical path. Its own
+    // The attempt record's way onto the analytical path. Its own
     // publisher, ensuring its own stream — see ANALYTICS_PUBLISHER's note.
     //
     // The connection is LAZY, as every broker client in this workspace is, and

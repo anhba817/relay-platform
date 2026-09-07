@@ -22,7 +22,7 @@ export const sendMessageBodySchema = z
     // time (FR-SDK-06), optional because server-originated messages may not
     // carry one. The partial unique index (DR-03) ignores NULLs.
     idempotency_key: z.string().uuid().optional(),
-    /** WHO IS SENDING (chapter 3.17, FR-MSG-15, FR-008).
+    /** WHO IS SENDING (FR-MSG-15, FR-008).
      *
      * OPTIONAL HERE AND REQUIRED FOR ONE CREDENTIAL CLASS, which zod cannot express
      * because it cannot see who is calling. A user token's send is attributed to the
@@ -52,7 +52,7 @@ export const sendMessageBodySchema = z
 
 export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
 
-/** The edit body (chapter 3.23, FR-001).
+/** The edit body (FR-001).
  *
  * THE SAME MAXIMUM AS THE SEND BODY'S `text` AND A DIFFERENT FLOOR, which is the whole
  * history of this field in one line. FR-MSG-01 fixes the maximum for a message and an
@@ -80,7 +80,7 @@ export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
  *                         history row. FR-021 already says the platform does not compare
  *                         texts, so there is nothing here for a key to deduplicate that
  *                         the customer has not asked to happen. */
-/** The edit body (chapter 3.23, FR-001). ITS OWN BOUND, AND NO LONGER THE SEND'S.
+/** The edit body (FR-001). ITS OWN BOUND, AND NO LONGER THE SEND'S.
  *
  * This read `sendMessageBodySchema.shape.text` until chapter 3.24, which was correct
  * while the two agreed. Then FR-019 removed `.min(1)` from the send so an

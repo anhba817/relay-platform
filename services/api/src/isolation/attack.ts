@@ -1,6 +1,6 @@
 import { withoutRequestId } from "./compare";
 
-/** The four attacks, one per shape (chapter 3.12, NFR-SEC-09).
+/** The four attacks, one per shape (NFR-SEC-09).
  *
  * THE UNIT OF ASSERTION IS A PAIR, not a request. Constitution I forbids revealing
  * that another tenant's data exists, so the correct answer to a foreign identifier

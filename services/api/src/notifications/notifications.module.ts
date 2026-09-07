@@ -9,7 +9,7 @@ import {
   type NotificationRelay,
 } from "./notification-relay";
 
-// The notification relay's home (chapter 3.8). Same shape as the outbox
+// The notification relay's home. Same shape as the outbox
 // module's, deliberately: a loop that reads a table, does a side effect, and
 // shares no state with the request path — so promoting it out of this service
 // would mean moving this file and nothing else.

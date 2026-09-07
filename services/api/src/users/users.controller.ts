@@ -36,7 +36,7 @@ import {
 } from "./users.schema";
 import { UsersService } from "./users.service";
 
-/** The user surface (chapter 3.15).
+/** The user surface.
  *
  * `@Accepts("application")` AT THE CLASS LEVEL. Every route here is the tenant
  * acting on a user it names in the path — a customer's server listing a user's
@@ -57,7 +57,7 @@ export class UsersController {
     // For its `environment` alone — the tenant this request is scoped to, resolved
     // from a verified credential. See the ban route.
     private readonly repo: Repository,
-    // Chapter 3.20. The controller for the reason `channels.controller.ts` states:
+    // The controller for the reason `channels.controller.ts` states:
     // `UsersService` holds neither a request id nor a logger, and FR-015's failure
     // line needs both.
     @Inject(MEMBERSHIP_PUBLISHER)
@@ -72,7 +72,7 @@ export class UsersController {
     return this.users.listChannels(externalId, query);
   }
 
-  /** A read position for the user the path names (chapter 3.15, FR-017).
+  /** A read position for the user the path names (FR-017).
    *
    * `@Accepts("application", "user")` AT THE METHOD LEVEL, and it is the only route on
    * this controller that takes a user token: a user records their own position, and the
@@ -95,7 +95,7 @@ export class UsersController {
     return this.users.setReadPosition(externalId, channelId, body.sequence);
   }
 
-  /** The profile, read and written (chapter 3.15, FR-023, FR-024).
+  /** The profile, read and written (FR-023, FR-024).
    *
    * TWO OF ITS THREE FIELDS HAVE NEVER BEEN WRITTEN BY ANY ROUTE. `users.avatar_url` and
    * `users.metadata` have been in the schema since chapter 2.1 with no reference outside
@@ -118,7 +118,7 @@ export class UsersController {
     return this.users.updateProfile(externalId, body);
   }
 
-  /** Up to 100 users in one call (chapter 3.15, FR-025).
+  /** Up to 100 users in one call (FR-025).
    *
    * DECLARED BEFORE THE `:externalId` ROUTES. Nest matches in declaration order and
    * `POST /v1/users` and `PATCH /v1/users/:externalId` differ in both method and segment
@@ -135,13 +135,13 @@ export class UsersController {
     return this.users.upsertUsers(body);
   }
 
-  /** Delete a user, keeping their row and their messages (chapter 3.15, FR-027). */
+  /** Delete a user, keeping their row and their messages (FR-027). */
   @Delete(":externalId")
   async deleteUser(@Param("externalId") externalId: string) {
     return this.users.deleteUser(externalId);
   }
 
-  /** The ban pair (chapter 3.15, FR-031).
+  /** The ban pair (FR-031).
    *
    * TWO ROUTES ON ONE PATH RATHER THAN A `PATCH` WITH A BOOLEAN. `POST …/ban` and
    * `DELETE …/ban` say what they do in the method, and a customer's reconciliation loop
@@ -192,7 +192,7 @@ export class UsersController {
    * per-channel shape this contract rules out.
    *
    * Two things already repair it, and the phase that adds the second says so:
-   * reconnecting reads membership at the door (chapter 3.2), and the backstop's
+   * reconnecting reads membership at the door, and the backstop's
    * periodic re-read picks it up within its interval. Both are the mechanism this
    * chapter already builds; a third would be a special case for the rarer half of a
    * rare pair. `chapter-notes.md` records the choice. */

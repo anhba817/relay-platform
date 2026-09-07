@@ -6,7 +6,7 @@ import {
 import type { Logger } from "@relay/service-kit";
 import { Redis } from "ioredis";
 
-// Typing's gateway half (chapter 3.21, FR-RTM-05, FR-RTM-08).
+// Typing's gateway half (FR-RTM-05, FR-RTM-08).
 //
 // A FOURTH FABRIC, AND THE FIRST THIS SERVICE BOTH PUBLISHES AND CONSUMES.
 // `chan:{channel_id}` is published by the api; `presence:{channel_id}` is

@@ -54,7 +54,7 @@ import {
 const PING_INTERVAL_MS = 30_000;
 const MAX_MISSED_PINGS = 2;
 
-/** THE RENEWAL INTERVAL (chapter 3.21, FR-011).
+/** THE RENEWAL INTERVAL (FR-011).
  *
  * **TWO SECONDS AGAINST FR-RTM-08's FIVE, AND THEY ARE TWO QUANTITIES.** Five is
  * the receiving client's expiry and cannot move — it is the clause. Two is this
@@ -68,7 +68,7 @@ const MAX_MISSED_PINGS = 2;
  * ratio here is what keeps these two numbers from becoming one. */
 export const DEFAULT_RENEWAL_INTERVAL_MS = 2_000;
 
-/** THE FRAME TYPES A CLIENT MAY SEND (chapter 3.21, FR-003).
+/** THE FRAME TYPES A CLIENT MAY SEND (FR-003).
  *
  * A SET WITH A NAME, not a second `!==` and not an array inlined at the check.
  * For twenty chapters this was one literal compared with `!==`, and a second
@@ -132,7 +132,7 @@ function send(socket: WebSocket, frame: Frame): void {
  * refused needs to point at that refusal, not at the connection. So callers pass
  * the id of the frame they are answering, and `sendError` mints one only for a
  * frame nobody asked for. */
-/** The handshake refusal (chapter 3.8, FR-RTL-03). Written onto the raw upgrade
+/** The handshake refusal (FR-RTL-03). Written onto the raw upgrade
  * socket by hand, because there is no `res` here — `server.on("upgrade")` hands
  * over the socket and the unparsed head, and anything sent on it has to be a
  * complete HTTP response including the blank line before the body.
@@ -175,7 +175,7 @@ function sendError(
   code: ErrorCode,
   message: string,
   requestId: string = newRequestId(),
-  /** WHICH FIELD, on the socket door (chapter 3.24, FR-005).
+  /** WHICH FIELD, on the socket door (FR-005).
    *
    * `errorFrameSchema` has published this key since chapter 1.3 and no gateway code path
    * had ever set it — the same habit `zod-validation.pipe.ts` ended for the api at
@@ -214,29 +214,29 @@ export interface SessionServerOptions {
    * (chapter 2.7): the degrade branch is a contract, and a test should not
    * have to sit through half a second to see it. */
   resumeDeadlineMs?: number;
-  /** The shared counter (chapter 3.8). Optional for the same reason `fanout`
+  /** The shared counter. Optional for the same reason `fanout`
    * is: 2.5's tests and a single-process dev run have no Redis, and a socket
    * server that refused to start without one would be a worse default than an
    * uncounted one. `main.ts` always supplies it, so the optionality is a test
    * affordance rather than a deployment mode. */
   limits?: GatewayLimits;
-  /** Chapter 3.11. Optional for the reason `limits` and `fanout` are: 2.5's
+  /** Optional for the reason `limits` and `fanout` are: 2.5's
    * tests and a single-process dev run have no api credential, and a socket
    * server that refused to start without one would be a worse default than an
    * unmetered one. `main.ts` always supplies the interval; the meter itself is
    * built here so its timer has the same owner as the heartbeat's. */
   meterIntervalMs?: number;
-  /** Chapter 3.19. Optional for the same reason `fanout`, `limits` and the meter
+  /** Optional for the same reason `fanout`, `limits` and the meter
    * are: 2.5's tests and a single-process dev run have no Redis, and a socket
    * server that refused to start without one would be a worse default than a
    * presence-less one. `main.ts` always supplies it. */
   presence?: Presence;
-  /** Chapter 3.20. Optional for the same four reasons, and one more that is this
+  /** Optional for the same four reasons, and one more that is this
    * chapter's own: without it a connection's membership is what it was at connect,
    * which is the state FR-RTM-10 has been unmet in since 2.6. A gateway built
    * without this is not broken — it is the gateway this chapter starts from. */
   membership?: Membership;
-  /** Chapter 3.21. Optional for the same reasons as the four above, and its own:
+  /** Optional for the same reasons as the four above, and its own:
    * without it a client's typing signal is refused at the seam rather than
    * published, which is the gateway phase 2 left behind.
    *
@@ -245,7 +245,7 @@ export interface SessionServerOptions {
    * phase, which makes the phase uncommittable — chapter 3.20 paid for that exact
    * task once. Phase 5 destructures it in the same commit that calls it. */
   typing?: Typing;
-  /** Chapter 3.21. Injectable for the reason `meterIntervalMs` above and chapter
+  /** Injectable for the reason `meterIntervalMs` above and chapter
    * 3.20's `rereadIntervalMs` are: **a test that waits out two real seconds pays
    * them in the package that paces the lane**, which has about four seconds of
    * headroom in the whole budget. That chapter's itest builds with 40 to test a
@@ -324,7 +324,7 @@ export function attachSessions({
     string,
     { environmentId: string; user: string; connectionId: string; slot: number }
   >();
-  // Chapter 3.11. A second timer beside the heartbeat, not a second job for it.
+  // A second timer beside the heartbeat, not a second job for it.
   const meter: Meter = createMeter({
     api,
     registry,
@@ -348,7 +348,7 @@ export function attachSessions({
         connection.buffer.push(message);
         continue;
       }
-      // Chapter 3.7. A live connection is not necessarily a connection with
+      // A live connection is not necessarily a connection with
       // nothing to remember: a frame at or below what its backfill already
       // delivered is one it has, however long ago the resume finished. Before
       // this, delivery consulted `phase` and nothing else, and the marks were
@@ -360,7 +360,7 @@ export function attachSessions({
   }
   fanout?.onDelivery(deliver);
 
-  /** An edit or a deletion arriving from the revision fabric (chapter 3.23, ADR-24).
+  /** An edit or a deletion arriving from the revision fabric (ADR-24).
    *
    * **THE KIND COMES FROM THE PAYLOAD, NOT FROM THIS CALL SITE**, and that is the change
    * ADR-24 exists for. `deliver` above stamps `message.created` because everything on
@@ -392,7 +392,7 @@ export function attachSessions({
   }
   fanout?.onRevision(deliverRevision);
 
-  /** A typing signal arriving from its own fabric (chapter 3.21, T043).
+  /** A typing signal arriving from its own fabric (T043).
    *
    * **DO NOT COPY `deliverPresence` BELOW, WHICH IS DELIBERATELY UNFILTERED.**
    * That function walks `subscribersOf` and sends to everyone, so a user sees
@@ -670,7 +670,7 @@ export function attachSessions({
   }
   membership?.onChange(deliverMembership);
 
-  /** The backstop (chapter 3.20, FR-018, constitution IV).
+  /** The backstop (FR-018, constitution IV).
    *
    * **CONSTITUTION IV PERMITS A LOSSY FABRIC** *"precisely because durability and
    * resume live in PostgreSQL sequences and cursors"*, and requires any new delivery
@@ -723,11 +723,11 @@ export function attachSessions({
     }
     const token = url.searchParams.get("token");
     void (async () => {
-      // Chapter 3.2: the api verifies, and answers with the identity AND the
+      // The api verifies, and answers with the identity AND the
       // memberships. This is the same one call the connect path already made —
       // it just asks a better question than "what may this user hear".
       const result = await authenticate(api, token);
-      // Chapter 3.8. THE ESTABLISHMENT LIMIT IS SPENT HERE, before
+      // THE ESTABLISHMENT LIMIT IS SPENT HERE, before
       // `handleUpgrade`, and that placement is the whole difference between
       // this refusal and the one below it.
       //
@@ -918,7 +918,7 @@ export function attachSessions({
     channelRevisions: Record<string, number>,
     url: string,
     sendLimit: number,
-    /** Chapter 3.22. The id the cap claimed a place with, so the connection and
+    /** The id the cap claimed a place with, so the connection and
      * its slot agree — FR-011's "exactly one place for its lifetime". Absent when
      * no `connections` module is wired, which is every fixture that does not opt
      * in and the reason the cap is not enforced there. */
@@ -932,7 +932,7 @@ export function attachSessions({
       id: claimedId ?? randomUUID(),
       identity,
       socket,
-      // Chapter 3.2: memberships arrived with the identity, from the session
+      // Memberships arrived with the identity, from the session
       // call at the door. There is no second lookup to fail here — the api is
       // still the only source of membership (ADR-05), it just answers both
       // questions at once, and a failure now closes the socket before it opens.
@@ -946,7 +946,7 @@ export function attachSessions({
       // succeeds, and leaves it null when it degrades.
       marks: null,
       sendLimit,
-      // Chapter 3.11. Stamped BEFORE the resume and before the ack, because the
+      // Stamped BEFORE the resume and before the ack, because the
       // socket is already open and already costing a minute — a connection that
       // started being metered only once it was fully established would give a
       // reconnect storm a free window on every attempt.
@@ -961,7 +961,7 @@ export function attachSessions({
     const subscribing = Promise.all(
       [...connection.channelIds].flatMap((channelId) => [
         fanout?.subscribe(channelId),
-        // Chapter 3.19. Presence has its own subject per channel, so a channel now
+        // Presence has its own subject per channel, so a channel now
         // carries two subscriptions. `ioredis` takes a variadic `subscribe`, so the
         // count doubles and the round trips do not.
         presence?.subscribe(channelId),
@@ -1208,13 +1208,13 @@ export function attachSessions({
           // there is no `.catch` to add here — `failable()` in `membership.ts` is
           // where that decision lives, and duplicating it would log twice.
           membership?.unsubscribeChannel(channelId),
-          // Chapter 3.21. Like the membership module, `typing.ts` swallows and
+          // Like the membership module, `typing.ts` swallows and
           // logs its own failures in `failable()`, so there is no `.catch` here —
           // adding one would log twice.
           typing?.unsubscribe(channelId),
         ]),
       );
-      // Chapter 3.21: the debounce entry for this whole connection. One of the
+      // The debounce entry for this whole connection. One of the
       // three deletions the map needs; the other two are a revocation dropping a
       // channel, and an elapsed entry deleted on read.
       lastPublished.delete(connection.id);
@@ -1383,7 +1383,7 @@ export function attachSessions({
     });
   }
 
-  /** THE DEBOUNCE (chapter 3.21, T054): the last publish time per (connection,
+  /** THE DEBOUNCE (T054): the last publish time per (connection,
    * channel).
    *
    * **IN THIS CLOSURE, NOT ON `Connection`.** That type lives in `registry.ts`,
@@ -1499,7 +1499,7 @@ export function attachSessions({
       return;
     }
 
-    // Chapter 3.21. THE SECOND INBOUND FRAME, and it leaves before the send
+    // THE SECOND INBOUND FRAME, and it leaves before the send
     // limiter below: a typing signal is not a send and must not spend a send's
     // budget (FR-014). It also never reaches the api — the whole path is this
     // gateway, Redis, and whoever is subscribed.
@@ -1508,7 +1508,7 @@ export function attachSessions({
       return;
     }
 
-    // Chapter 3.8. THE SEND LIMIT IS SPENT ON THE FRAME, not on the api call
+    // THE SEND LIMIT IS SPENT ON THE FRAME, not on the api call
     // it becomes — a socket send and a REST send count against one budget
     // (FR-RTL-01), or a client could double its allowance by opening a socket.
     //
@@ -1548,7 +1548,7 @@ export function attachSessions({
       }
     }
 
-    // A NAMED DESTRUCTURE, AND THAT IS THE POINT (chapter 3.24, FR-001). Widening
+    // A NAMED DESTRUCTURE, AND THAT IS THE POINT (FR-001). Widening
     // `messageSendSchema` puts `attachments` on the wire; without naming it here nothing
     // carries it further, the message commits without attachments, and the client is
     // acked as though it worked. There is no error anywhere in that sequence.
@@ -1596,7 +1596,7 @@ export function attachSessions({
         connection_id: connection.id,
         error: String(error),
       });
-      // Chapter 3.2. A 401 here means the token this connection was opened
+      // A 401 here means the token this connection was opened
       // with has aged out: the socket is still up (FR-AUT-11 says expiry must
       // not terminate it) and still RECEIVES, because delivery never asks the
       // api anything. Writing does. Until FR-AUT-11's second clause exists — a

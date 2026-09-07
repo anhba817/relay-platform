@@ -20,7 +20,7 @@ const metadataSchema = z
 
 export const createChannelBodySchema = z.strictObject({
   external_id: z.string().min(1).max(255),
-  // BOTH, AND ONLY NOW (chapter 3.15, FR-009).
+  // BOTH, AND ONLY NOW (FR-009).
   //
   // Chapter 3.12 pinned this enum to `public` alone with the sharpest edit in that
   // chapter, and the reason it gave was true then: `channels.type` had been a
@@ -53,7 +53,7 @@ export type CreateChannelBody = z.infer<typeof createChannelBodySchema>;
 /** FR-CHN-06's page: at most 100 users in one call. The channel's own ceiling is
  * 1,000 (FR-CHN-07) and is enforced in the service against a counted read — this
  * only bounds the size of a single request. */
-/** FR-CHN-04's three, and NOT `memberships`' three (chapter 3.15, FR-011).
+/** FR-CHN-04's three, and NOT `memberships`' three (FR-011).
  *
  * `memberships.role` is `('owner','admin','member')` — a human's role in an
  * organisation, FR-TEN-07. This is a user's role in a CHANNEL. One word apart, and
@@ -118,7 +118,7 @@ export const CHANNEL_MEMBER_LIMIT = 1000;
 
 export type RemoveMembersBody = z.infer<typeof removeMembersBodySchema>;
 
-/** The `PATCH` body for one member's role (chapter 3.15, FR-011).
+/** The `PATCH` body for one member's role (FR-011).
  *
  * `strictObject` and a required `role`: a PATCH with an empty body would be a
  * request that asks for nothing, and answering it 200 would be a lie about having

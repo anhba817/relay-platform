@@ -172,7 +172,7 @@ interface Reader {
   waitFor: <T = Record<string, unknown>>(type: string, timeoutMs?: number) => Promise<T>;
   frames: () => { type: string }[];
   opened: () => Promise<void>;
-  /** The close code, once it arrives (chapter 3.15, T151). Added because a refusal at
+  /** The close code, once it arrives (T151). Added because a refusal at
    * connect IS a close code — the frame is only the explanation — and asserting the
    * frame alone would pass whether the socket closed 4003, 4001 or not at all. */
   closedWith: (timeoutMs?: number) => Promise<number>;
@@ -798,7 +798,7 @@ function sample(type: string, channel: string, user: string): unknown {
     seq: 1,
     user,
     text: "forged",
-    // Chapter 3.24: WELL-FORMED IS THE POINT. `messageSchema` requires
+    // WELL-FORMED IS THE POINT. `messageSchema` requires
     // attachments, and a forged frame missing them is refused for its SHAPE —
     // `invalid_frame` — a phase before the direction check this suite is about.
     attachments: [],

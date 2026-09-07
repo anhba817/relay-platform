@@ -29,7 +29,7 @@ export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {
       // with dots, which is what a developer reading their own request body sees.
       // An empty path means the whole body failed (a non-object, say), and then
       // there is no field to name and the key is omitted rather than sent empty.
-      /** A SCHEMA MAY NAME ITS OWN REFUSAL (chapter 3.24, FR-003a).
+      /** A SCHEMA MAY NAME ITS OWN REFUSAL (FR-003a).
        *
        * Everything here is `invalid_request` and 400, which is right for a body the
        * contract does not allow. It is wrong for a field the contract DOES publish and

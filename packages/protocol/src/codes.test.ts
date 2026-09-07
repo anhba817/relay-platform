@@ -85,8 +85,8 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
     expect(Object.keys(ERROR_CODES)).toHaveLength(27);
   });
 
-  it("names the non-author refusal separately from the generic 403 (chapter 3.23)", () => {
-    // FR-022 (3.23). The registry's own rule is that a specific code beats the generic
+  it("names the non-author refusal separately from the generic 403", () => {
+    // FR-022. The registry's own rule is that a specific code beats the generic
     // one where the remedy differs, and here it differs absolutely: `forbidden`'s
     // published remedy is a change of credential or of permission, and neither makes a
     // message yours.
@@ -125,7 +125,7 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
       "unknown_frame_type",
       "rate_limited",
       "quota_exceeded",
-      // Chapter 3.16. A banned user is refused at connect, so the socket says this
+      // A banned user is refused at connect, so the socket says this
       // one too — and a non-member's send over a socket answers the same way REST
       // does, which for a private channel is the not-found envelope and not a code
       // of its own.

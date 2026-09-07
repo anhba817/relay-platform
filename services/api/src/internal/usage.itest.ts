@@ -18,7 +18,7 @@ import { mintUserToken } from "../auth/user-token";
 import { periodOf } from "../quotas/period";
 
 // `POST /internal/usage/connections` — who may reach it, and what a refusal
-// leaves behind (chapter 3.11).
+// leaves behind.
 //
 // THE ISOLATION QUESTION HERE IS DIFFERENT IN KIND, and constitution I still
 // asks it. Every endpoint this series has added carries a test that presents

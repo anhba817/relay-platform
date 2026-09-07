@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 
 import { createApiClient } from "./api-client.js";
 
-// The one call the gateway makes for itself (chapter 3.11).
+// The one call the gateway makes for itself.
 //
 // `api-client.itest.ts` does not exist and does not need to: what these tests
 // assert is not what the api answers, it is what the GATEWAY sends — and the

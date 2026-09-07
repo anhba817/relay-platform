@@ -9,7 +9,7 @@ import {
 import type { Mailer } from "../notifications/mailer";
 import { quotaThreshold } from "./quota-email";
 
-// THE OUTBOX PATTERN, A FOURTH TIME (chapter 3.10) — after 3.3's events, 3.5's
+// THE OUTBOX PATTERN, A FOURTH TIME — after 3.3's events, 3.5's
 // deliveries and 3.9's disablement emails. Same shape on purpose: a table whose
 // claim predicate starts null, a loop that reads it, a side effect, and no state
 // shared with the request path.

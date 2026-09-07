@@ -41,7 +41,7 @@ import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 // cross-tenant hole takes.
 @Controller("internal/usage")
 @UseGuards(CredentialGuard)
-// FR-044 (chapter 3.12): the CLASS was never enough. Two platform credentials
+// FR-044: the CLASS was never enough. Two platform credentials
 // exist, `service` said which one answered, and nothing checked it — so the more
 // exposed service set the blast radius for both. Here: metering is the gateway's, and the gateway's only.
 @Accepts({ platform: ["gateway"] })

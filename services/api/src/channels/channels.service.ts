@@ -21,8 +21,7 @@ import {
 // documentation: there was no public way to make a channel to send a message to.
 //
 // This is the minimum that unblocks it. The rest of FR-CHN and all of FR-USR go to
-// chapter 3.13.
-
+// 
 export interface CreatedChannel {
   channel: ChannelRow;
   /** 201 or 200 at the controller. FR-CHN-02 says return the existing channel; it
@@ -43,7 +42,7 @@ export interface MemberResult {
   user_id: string;
   external_id: string;
   status: "added" | "already_a_member";
-  /** Chapter 3.15. What role the member holds AFTER the call — read back, not
+  /** What role the member holds AFTER the call — read back, not
    * echoed, so an `already_a_member` reports the role they already had rather than
    * the one the request asked for. Adding is not changing. */
   role: string;
@@ -64,7 +63,7 @@ export class ChannelsService {
     return { channel, created };
   }
 
-  /** One channel by id, with the caller's membership (chapter 3.15, FR-003a, FR-003).
+  /** One channel by id, with the caller's membership (FR-003a, FR-003).
    *
    * THE ANSWER FOR A PRIVATE CHANNEL THE CALLER CANNOT SEE IS THE NOT-FOUND
    * ENVELOPE, and it has to be byte-identical to the answer for a channel that does
@@ -100,7 +99,7 @@ export class ChannelsService {
     return { channel, isMember };
   }
 
-  /** Remove members by EXTERNAL id, reporting each (chapter 3.15, FR-006, FR-007).
+  /** Remove members by EXTERNAL id, reporting each (FR-006, FR-007).
    *
    * THE CHANNEL IS READ SCOPED FIRST, the same ordering `addMembers` states below
    * and for the same reason: a foreign channel id and one that exists nowhere both
@@ -143,7 +142,7 @@ export class ChannelsService {
     });
   }
 
-  /** Archive and unarchive (chapter 3.15, FR-020, FR-020a).
+  /** Archive and unarchive (FR-020, FR-020a).
    *
    * Both answer 200 whether or not the state changed. "Already archived" is not an
    * error: the customer asked for the channel to be archived and it is. What DOES
@@ -158,7 +157,7 @@ export class ChannelsService {
     return { archived };
   }
 
-  /** Set one member's role by external id (chapter 3.15, FR-011).
+  /** Set one member's role by external id (FR-011).
    *
    * THE CHANNEL FIRST, then the user, then the membership — each refusing with the
    * same not-found so the three cases are one answer from outside. A caller who can
@@ -177,7 +176,7 @@ export class ChannelsService {
     return { external_id: userExternalId, role };
   }
 
-  /** A user joining a channel themselves (chapter 3.15, FR-CHN-03).
+  /** A user joining a channel themselves (FR-CHN-03).
    *
    * FR-CHN-03's exact words are that any authenticated user of the tenant "may read
    * and join" a public channel, and JOIN is the hard half: reading needs no new

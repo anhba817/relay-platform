@@ -1,6 +1,6 @@
 import { createTransport, type Transporter } from "nodemailer";
 
-// The disablement notification (chapter 3.8, FR-WHK-07, FR-WHK-07).
+// The disablement notification (FR-WHK-07, FR-WHK-07).
 //
 // TWO PIECES, SEPARATED ON PURPOSE. `disableNotification` turns facts into a
 // message and touches nothing — no SMTP, no clock, no database — so what the

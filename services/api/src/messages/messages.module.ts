@@ -21,7 +21,7 @@ import { Repository } from "../db/repository";
 import { MessagesController } from "./messages.controller";
 import { MessagesService } from "./messages.service";
 
-/** Chapter 3.18. The api publishes to the live fan-out from the send path, so
+/** The api publishes to the live fan-out from the send path, so
  * the module that owns that path owns the client.
  *
  * PROVIDED AND NOT EXPORTED, and that is the point. `internal.module.ts` imports

@@ -9,7 +9,7 @@ import { authFailureThreshold, WINDOW_MS } from "./policy";
 import { authKey, type CounterStore } from "./store";
 
 // The limiter that counts FAILED AUTHENTICATIONS by source address
-// (chapter 3.8, FR-AUT-12, research R3).
+// (FR-AUT-12, research R3).
 //
 // THE ONE THAT MUST NOT FAIL OPEN, and that is the chapter's whole argument. The
 // tenant limiter serves the request when Redis is gone, because Redis is not a

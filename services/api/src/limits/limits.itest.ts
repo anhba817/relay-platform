@@ -20,7 +20,7 @@ import { environments } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 // The limiter over real HTTP against the compose Postgres and Redis
-// (chapter 3.8). Each `it` mints what it needs; the suite's own environments
+//. Each `it` mints what it needs; the suite's own environments
 // keep it out of every other suite's way — 2.1's isolation property paying for
 // itself again.
 
@@ -51,7 +51,7 @@ describe("the limiter", () => {
     }
     const repo = new Repository(db, env.id);
     const channel = await repo.createChannel("c", "public");
-    // THE BOT IS SEEDED HERE AND NOT IN `send` (chapter 3.17, T060).
+    // THE BOT IS SEEDED HERE AND NOT IN `send` (T060).
     //
     // A key send must name a bot as of FR-MSG-15, and the obvious fix — upserting one
     // inside the send helper — would add an HTTP request per send. **This suite counts
@@ -499,7 +499,7 @@ describe("when the counter store is gone", () => {
     const repo = new Repository(db, env.id);
     channelId = (await repo.createChannel("c", "public")).id;
     // This block seeds its own environment rather than calling `seed()`, so it needs its
-    // own bot (chapter 3.17). Same name, so the send below reads the same as the others.
+    // own bot. Same name, so the send below reads the same as the others.
     await repo.upsertUser("limits-bot", {
       kind: "bot",
       description: "sends while the counter store is gone",

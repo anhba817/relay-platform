@@ -24,7 +24,7 @@ import { WebhooksService } from "./webhooks.service";
 
 export const DELIVERY_RELAY = "DELIVERY_RELAY";
 
-/** The api's SECOND relay (chapter 3.5, research R13), started with the service
+/** The api's SECOND relay (research R13), started with the service
  * exactly as 3.3's is. An event spine that only runs when someone remembers is
  * not a spine, and the same is true of a retry schedule.
  *

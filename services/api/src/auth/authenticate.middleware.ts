@@ -29,7 +29,7 @@ export const AUTH_DB = "AUTH_DB";
  * key; the signature decides whether to believe the claim. Getting that order
  * backwards is how a token from environment A gets accepted for environment B.
  */
-/** The internal platform credentials (chapter 3.5, extended by 3.11).
+/** The internal platform credentials (extended by 3.11).
  * Configuration, never a database row and never tenant data — they authenticate
  * a SERVICE, and services are deployed, not provisioned.
  *
@@ -66,7 +66,7 @@ const PLATFORM_SERVICES = [
 ] as const satisfies ReadonlyArray<readonly [string, string]>;
 
 /** The internal services that exist, DERIVED FROM THE LIST ABOVE rather than
- * retyped beside it (chapter 3.12, FR-044).
+ * retyped beside it (FR-044).
  *
  * `as const` is doing the work: without it `(typeof PLATFORM_SERVICES)[number][1]`
  * widens to `string` and a route could declare a service nobody deploys. With it,

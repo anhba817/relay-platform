@@ -33,7 +33,7 @@ import {
 export class ApiError extends Error {
   readonly status: number;
 
-  /** The api's own error code and message, when it sent an envelope (chapter 3.15).
+  /** The api's own error code and message, when it sent an envelope.
    *
    * THEY WERE THROWN AWAY UNTIL NOW, and it cost more than it looked. The socket's send
    * path forwards a 401 by hand and answers `internal_error` for everything else, so
@@ -67,14 +67,14 @@ export class ApiError extends Error {
 export interface Identity {
   environmentId: string;
   userExternalId: string;
-  /** Chapter 3.2: the token the client presented at connect, carried so the
+  /** The token the client presented at connect, carried so the
    * internal hop can FORWARD it instead of asserting who the caller is. The
    * gateway holds it; it does not verify it and holds no secret that could. */
   token: string;
 }
 
 export interface ApiClient {
-  /** Chapter 3.2: present the token, be told who it belongs to and what it may
+  /** Present the token, be told who it belongs to and what it may
    * hear. Null means the api answered "not valid" — distinct from a throw, which
    * means it could not answer at all, and the two must not close a socket the
    * same way. */
@@ -97,7 +97,7 @@ export interface ApiClient {
     identity: Identity,
     body: InternalSendRequest,
   ): Promise<InternalSendResponse>;
-  /** Chapter 3.11: the one call the gateway makes FOR ITSELF.
+  /** The one call the gateway makes FOR ITSELF.
    *
    * Every other method on this interface takes an `Identity` and forwards the
    * token inside it. This one takes none, and the absence is the design: a usage
@@ -115,7 +115,7 @@ export interface ApiClient {
 
 export function createApiClient(
   baseUrl: string,
-  /** Chapter 3.11. Absent by default and absent in every test that does not
+  /** Absent by default and absent in every test that does not
    * meter, which is the same safe direction the api's side takes: with nothing
    * configured, no report is ever sent and no route is ever reached. */
   serviceCredential?: string,
@@ -174,7 +174,7 @@ export function createApiClient(
       // it. Everything else falls through to `parse`, which throws — the api
       // being unreachable is a different event with a different close code.
       if (res.status === 401 || res.status === 403) return null;
-      // Chapter 3.11. So is 402, and it is a DIFFERENT answer: the credential is
+      // So is 402, and it is a DIFFERENT answer: the credential is
       // good and the month is spent. Without this branch it would fall into
       // `parse`, throw, and close the socket 1011 — "we are broken, retry" —
       // which is wrong about whose fault it is and wrong about whether retrying

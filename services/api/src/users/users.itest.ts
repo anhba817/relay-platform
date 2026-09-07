@@ -17,7 +17,7 @@ import {
   usageFor,
 } from "../db/repository";
 
-// THE LISTING, END TO END (chapter 3.15, FR-013 to FR-015, FR-022, SC-007).
+// THE LISTING, END TO END (FR-013 to FR-015, FR-022, SC-007).
 //
 // Every route in this suite names a user in the path and carries the TENANT's
 // credential, so "the caller" here is the application and never the user named. That
@@ -314,7 +314,7 @@ describe("a user's channel listing", () => {
     expect((await list("doomed")).status).toBe(404);
   });
 
-  // ══ THE UNREAD COUNT (chapter 3.15, FR-016 to FR-018, SC-008) ═══════════════
+  // ══ THE UNREAD COUNT (FR-016 to FR-018, SC-008) ═══════════════
 
   const setRead = (user: string, channelId: string, sequence: number, key = credential) =>
     fetch(`${url}/v1/users/${user}/channels/${channelId}/read`, {
@@ -473,7 +473,7 @@ describe("a user's channel listing", () => {
     expect(res.status).toBe(200);
   });
 
-  // ══ THE PROFILE (chapter 3.15, FR-023, FR-024, SC-011) ══════════════════════
+  // ══ THE PROFILE (FR-023, FR-024, SC-011) ══════════════════════
 
   const profile = (user: string, key = credential) =>
     fetch(`${url}/v1/users/${user}`, { headers: { authorization: `Bearer ${key}` } });
@@ -556,7 +556,7 @@ describe("a user's channel listing", () => {
       metadata: Record<string, unknown>;
     };
     // THE PROFILE GREW TWO FIELDS AND THIS ASSERTION BROKE, WHICH IS WHY IT IS EXACT
-    // (chapter 3.17, T021a). `toEqual` on a whole body is the only assertion that
+    // (T021a). `toEqual` on a whole body is the only assertion that
     // notices a field arriving — a `toMatchObject` would have said nothing, and a
     // reader would have learned about `kind` from the code rather than from a test.
     // Chapter 3.16 made the same trade for `last_message`.
@@ -640,7 +640,7 @@ describe("a user's channel listing", () => {
     expect((await profile("nobody-at-all")).status).toBe(404);
   });
 
-  // ══ A BOT IS A USER (chapter 3.17, US3, FR-004) ═════════════════════════════
+  // ══ A BOT IS A USER (US3, FR-004) ═════════════════════════════
 
   // ── T043: a bot inherits everything keyed on a user ───────────────────────
   it("a bot can be a channel member with a role, and appears in the member list", async () => {
@@ -660,7 +660,7 @@ describe("a user's channel listing", () => {
     // supports, and membership with a role is one of them — nothing about `kind` reaches
     // the members table, so re-adding reports the role it already holds.
     // `addMember` reports an OUTCOME, not a role — the role lives on the HTTP response
-    // (chapter 3.15). What matters here is that a second add of a bot behaves exactly
+    //. What matters here is that a second add of a bot behaves exactly
     // as a second add of a person: nothing about `kind` reaches the members table.
     expect(await repo.addMember(channel.id, bot.id)).toBe("already_a_member");
   });
@@ -761,7 +761,7 @@ describe("a user's channel listing", () => {
       headers: { authorization: `Bearer ${key}` },
     });
 
-  // ══ THE BOT USER (chapter 3.17, FR-USR-07) ══════════════════════════════════
+  // ══ THE BOT USER (FR-USR-07) ══════════════════════════════════
 
   // ── T022: the round trip ────────────────────────────────────────────────────
   it("creates a bot with a description, reads it back, and edits the description", async () => {
@@ -1164,7 +1164,7 @@ describe("a user's channel listing", () => {
     expect(still.status).toBe(200);
   });
 
-  // ══ THE BAN (chapter 3.15, FR-031, FR-032, SC-013) ══════════════════════════
+  // ══ THE BAN (FR-031, FR-032, SC-013) ══════════════════════════
 
   const ban = (user: string, key = credential) =>
     fetch(`${url}/v1/users/${user}/ban`, {

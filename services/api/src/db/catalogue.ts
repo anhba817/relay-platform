@@ -30,7 +30,7 @@ export interface TableClassification {
   /** `null` means the table matches none of the three, which fails the check. */
   path: TenantPath | null;
   /** For `hop`: the `direct` tables its foreign keys reach, following CHAINS of
-   * keys and not only single links (chapter 3.23). Every name here is itself a
+   * keys and not only single links. Every name here is itself a
    * `direct` table, which is the invariant `tenant-scope.itest.ts` asserts. */
   via: string[];
   /** For `spine`: why it has no tenant column. */
@@ -141,7 +141,7 @@ export async function classifyTables(db: Db): Promise<TableClassification[]> {
           AND tc.table_schema = 'public'
           AND tc.table_name <> ccu.table_name
       ),
-      -- REACHABILITY, NOT ADJACENCY (chapter 3.23). The rule this check states
+      -- REACHABILITY, NOT ADJACENCY. The rule this check states
       -- is that every table has A PATH back to one environment, and the query
       -- used to accept only a path of length ONE: a foreign key landing
       -- directly on a table that carries environment_id. That covered every

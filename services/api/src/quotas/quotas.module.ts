@@ -6,7 +6,7 @@ import { createDb, createPool, type Db } from "../db/client";
 import { createMailer } from "../notifications/mailer";
 import { createQuotaRelay, type QuotaRelay } from "./quota-relay";
 
-// The quota relay's home (chapter 3.10). Same shape as the notification
+// The quota relay's home. Same shape as the notification
 // module's, which is the same shape as the outbox module's: a loop that reads a
 // table, does a side effect, and shares no state with the request path.
 

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createFallbackCounter } from "./fallback";
 
 // The in-process counter the auth limiter falls back to when Redis is gone
-// (chapter 3.8, research R3). Pure apart from the map it owns; every call takes
+// (research R3). Pure apart from the map it owns; every call takes
 // the instant it should reason about.
 
 const MINUTE = 60_000;

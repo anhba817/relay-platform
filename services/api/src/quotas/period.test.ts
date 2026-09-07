@@ -51,7 +51,7 @@ describe("the period an instant belongs to", () => {
   });
 });
 
-describe("minuteOf (chapter 3.11)", () => {
+describe("minuteOf", () => {
   it("floors to the minute, so a second is not a bucket", () => {
     expect(minuteOf(new Date("2026-08-22T14:37:00.000Z"))).toBe("2026-08-22T14:37");
     expect(minuteOf(new Date("2026-08-22T14:37:59.999Z"))).toBe("2026-08-22T14:37");
@@ -81,7 +81,7 @@ describe("minuteOf (chapter 3.11)", () => {
   });
 });
 
-describe("periodOfMinute agrees with periodOf (chapter 3.11)", () => {
+describe("periodOfMinute agrees with periodOf", () => {
   it("maps a bucket to the period its instant belongs to", () => {
     for (const iso of [
       "2026-01-01T00:00:00Z", "2026-08-22T14:37:12Z",

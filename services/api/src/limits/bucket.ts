@@ -1,4 +1,4 @@
-// The fixed-window arithmetic (chapter 3.8, research R1).
+// The fixed-window arithmetic (research R1).
 //
 // FIXED WINDOW, NOT A TOKEN BUCKET, and the SAD's own row is why the question
 // arose: §6.3 lists `rl:{env}:{bucket}` as "Token buckets" with a TTL of

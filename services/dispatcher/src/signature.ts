@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 
-// The signature a customer verifies (chapter 3.5, FR-WHK-08).
+// The signature a customer verifies (FR-WHK-08).
 //
 // This is the platform's first contract addressed to code it did not write and
 // cannot read. A REST consumer can retry against a sandbox and read an error

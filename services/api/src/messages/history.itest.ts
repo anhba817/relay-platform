@@ -27,7 +27,7 @@ const pool = createPool();
 const db: Db = createDb(pool);
 let repo: Repository;
 
-// A REAL SENDER FOR THE WHOLE SUITE (chapter 3.17, FR-MSG-15). History is about
+// A REAL SENDER FOR THE WHOLE SUITE (FR-MSG-15). History is about
 // paging and ordering, not about who wrote what, so one row serves every page.
 let sender: string;
 

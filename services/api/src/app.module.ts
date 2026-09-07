@@ -11,7 +11,7 @@ import { HealthController } from "./health.controller";
 import { InternalModule } from "./internal/internal.module";
 import { MessagesModule } from "./messages/messages.module";
 import { ChannelsModule } from "./channels/channels.module";
-// Chapter 3.15. Registered here for the reason `ChannelsModule` is: without this
+// Registered here for the reason `ChannelsModule` is: without this
 // line the module is compiled, exported, imported by nothing, and none of the user
 // routes exist. The file appeared in no task until an enumeration asked which
 // chapter fences it.
@@ -58,7 +58,7 @@ import { RequestContextMiddleware } from "./request-context.middleware";
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     // Order is the chain: the request gets its id first, then its principal,
-    // then its allowance. The limiter is LAST and that is forced (chapter 3.8):
+    // then its allowance. The limiter is LAST and that is forced:
     // it counts per environment and the environment comes from the credential,
     // so nothing earlier in the chain knows which tenant is asking.
     // Chapter 3.2 put authentication HERE rather than in a guard because Nest

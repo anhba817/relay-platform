@@ -2,7 +2,7 @@ import type { Logger } from "@relay/service-kit";
 
 import type { ApiClient } from "./api-client.js";
 
-// Turning an event into deliveries (chapter 3.5).
+// Turning an event into deliveries.
 //
 // The dispatcher does not write the rows. It cannot — constitution IV reserves
 // PostgreSQL writes to the API service — so it asks, and the api does the work

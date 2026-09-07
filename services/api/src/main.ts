@@ -20,19 +20,19 @@ async function bootstrap(): Promise<void> {
   // The relay starts AFTER the server is listening, and starting it cannot
   // fail: the publisher connects lazily, so an unreachable broker leaves events
   // accumulating in Postgres instead of preventing the api from serving writes
-  // (chapter 3.3, research R9).
+  // (research R9).
   app.get(OutboxRelayService).start();
-  // Chapter 3.8: the disablement notifications chapter 3.6 wrote and nothing
+  // The disablement notifications chapter 3.6 wrote and nothing
   // delivered. Its backlog drains on this first start as ordinary undelivered
   // work — no migration and no special case, because `delivered_at IS NULL` was
   // already true of every one of those rows.
   app.get(NotificationRelayService).start();
   app.get(QuotaRelayService).start();
-  // And the second relay (chapter 3.5): the same loop over a different table,
+  // And the second relay: the same loop over a different table,
   // publishing deliveries that have become due. Started here for 3.3's reason —
   // a retry schedule that only runs when someone remembers is not a schedule.
   app.get(DeliveryRelayService).start();
-  // And the first thing that reads what the relay publishes (chapter 3.4).
+  // And the first thing that reads what the relay publishes.
   // Same placement, same reason, same lazy connection: an unreachable broker
   // leaves the api serving writes.
   app.get(EventConsumerService).start();

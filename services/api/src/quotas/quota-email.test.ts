@@ -53,7 +53,7 @@ describe("the threshold email", () => {
   });
 });
 
-describe("the third dimension's copy (chapter 3.11)", () => {
+describe("the third dimension's copy", () => {
   const facts = (over: Partial<CrossingFacts> = {}): CrossingFacts => ({
     environmentName: "Fleet Ops / production",
     period: "2026-08-01",

@@ -1,5 +1,5 @@
 // The in-process counter the AUTH limiter falls back to when Redis is gone
-// (chapter 3.8, research R3).
+// (research R3).
 //
 // THE TENANT LIMITER FAILS OPEN AND THIS ONE MUST NOT, and that asymmetry is the
 // chapter's whole argument. Both are the same mechanism; what differs is what is

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Membership's own fabric: two subject shapes and the payload that crosses them
- * (chapter 3.20, FR-RTM-05, FR-RTM-10).
+ * (FR-RTM-05, FR-RTM-10).
  *
  * WHY THIS IS NOT IN `fanout.ts` AND NOT IN `presence.ts`. Each fabric owns its
  * subject grammar in its own file — `internal.ts` established that for the event

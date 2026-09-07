@@ -27,7 +27,7 @@ import {
 } from "../db/repository";
 import { mintUserToken } from "../auth/user-token";
 
-// The api as a PUBLISHER (chapter 3.18). Everything here asserts on a real Redis
+// The api as a PUBLISHER. Everything here asserts on a real Redis
 // subscriber rather than on a response, because the publish is a second output
 // channel and a response cannot see it — which is also why the isolation
 // gauntlet, whose oracle compares response bodies, cannot grow to cover this.
@@ -72,7 +72,7 @@ describe("the api's fan-out publish", () => {
     (await untilRaw(channel, n, ms)).map((r) => JSON.parse(r) as Message);
 
   /** The public route, as a customer's backend calls it. `user` is required for
-   * an application credential (chapter 3.17) and `idempotency_key` must be a
+   * an application credential and `idempotency_key` must be a
    * UUID on this route, where the socket frame takes any string. */
   const restSend = async (body: { text: string }, channel = channelId) =>
     fetch(`${url}/v1/channels/${channel}/messages`, {
@@ -144,7 +144,7 @@ describe("the api's fan-out publish", () => {
     const user = await repo.createUser("tuan", "Tuan");
     // Two positional arguments, not one object — and `kind: "bot"` requires a
     // `description`, which the database enforces with a check constraint
-    // (chapter 3.17). An application credential may send only as a bot user.
+    //. An application credential may send only as a bot user.
     await repo.upsertUser("publish-bot", {
       display_name: "Publish Bot",
       kind: "bot",
@@ -265,7 +265,7 @@ describe("the api's fan-out publish", () => {
     // THE SAME TEXT DOWN BOTH DOORS, so the only differences left are the ones
     // a send always has: a new id, a new sequence, a new timestamp — and the
     // sender, which CANNOT match by construction. An application credential may
-    // speak only as a bot user (chapter 3.17) and the internal route speaks as
+    // speak only as a bot user and the internal route speaks as
     // the token's person, so demanding one `user` is demanding something the
     // platform forbids. The first version of this test did exactly that and
     // failed on it.
@@ -303,7 +303,7 @@ describe("the api's fan-out publish", () => {
     await watch(channelId);
 
     // 1. A key naming a PERSON. An application credential may speak only as a
-    //    bot of its tenant (chapter 3.17): 403 `sender_not_permitted`.
+    //    bot of its tenant: 403 `sender_not_permitted`.
     const asPerson = await fetch(`${url}/v1/channels/${channelId}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },

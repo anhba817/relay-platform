@@ -69,7 +69,7 @@ import { createApiClient } from "./api-client.js";
 import { createGatewayLimits, type GatewayLimits } from "./limits.js";
 import { attachSessions } from "./session.js";
 
-// The claim no single-process test can make (chapter 3.8): that the api and the
+// The claim no single-process test can make: that the api and the
 // gateway increment ONE counter.
 //
 // Everything else about the limits is provable cheaper. The arithmetic is pure
@@ -202,7 +202,7 @@ async function startApi(): Promise<ApiUnderTest> {
         type: string,
       ) => Promise<{ id: string }>;
       addMember: (channelId: string, userId: string) => Promise<boolean>;
-      /** Chapter 3.17. A key send names a bot, so this file needs one. The gateway
+      /** A key send names a bot, so this file needs one. The gateway
        * declares its own narrow view of the repository (research R12), which is why a
        * new capability costs a line here. */
       upsertUser: (
@@ -222,7 +222,7 @@ async function startApi(): Promise<ApiUnderTest> {
   const channel = await repo.createChannel("fleet", "public");
   await repo.addMember(channel.id, user.id);
   // The REST half of this file's "one counter, two transports" pair sends with a KEY, so
-  // it names a bot (chapter 3.17). Seeded here rather than per send: this suite counts
+  // it names a bot. Seeded here rather than per send: this suite counts
   // requests against a limit, and an extra call per send would move every number in it.
   await repo.upsertUser("limits-courier", {
     kind: "bot",
@@ -231,7 +231,7 @@ async function startApi(): Promise<ApiUnderTest> {
   const key = await seeder.createApiKey(db, { environmentId: environment.id });
 
   // A RANDOM HIGH PORT, and this file is the last one in the lane to get one
-  // (chapter 3.13, FR-041). It bound a fixed 4124, which is the fault
+  // (FR-041). It bound a fixed 4124, which is the fault
   // `session.itest.ts` documents at length and had to learn twice: a previous
   // run's child can still hold the port, the new child exits on EADDRINUSE, the
   // health check gets a 200 from the OLD api — a different environment and a
@@ -248,7 +248,7 @@ async function startApi(): Promise<ApiUnderTest> {
       ...process.env,
       PORT: pinned ?? "0",
       RELAY_OUTBOX_RELAY: "off",
-      // Chapter 3.8: nor the notification relay, for the same reason.
+      // Nor the notification relay, for the same reason.
       RELAY_NOTIFICATION_RELAY: "off",
       RELAY_REDIS_URL: REDIS_URL,
     },
@@ -294,7 +294,7 @@ function firstFrame(socket: WebSocket, type: string): Promise<unknown> {
   });
 }
 
-describe("one counter, two services (chapter 3.8)", () => {
+describe("one counter, two services", () => {
   let api: ApiUnderTest;
   let server: Server;
   let limits: GatewayLimits;

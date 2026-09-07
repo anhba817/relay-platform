@@ -6,7 +6,7 @@ import {
   DEFAULT_MEMBERSHIP_REDIS_URL,
 } from "./publisher";
 
-// The membership publisher, Docker-free (chapter 3.20).
+// The membership publisher, Docker-free.
 //
 // A FAKE AT THE IOREDIS SEAM, which is `fanout/publisher.test.ts`'s shape and for its
 // reason: the contract is "never rejects", so a test that only checks it resolved

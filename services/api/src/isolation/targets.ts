@@ -1,4 +1,4 @@
-/** The gauntlet's target list (chapter 3.12, NFR-SEC-09).
+/** The gauntlet's target list (NFR-SEC-09).
  *
  * A LIST OF CLASSIFICATIONS, NOT A LIST OF TARGETS. The targets themselves are
  * derived from the running application — `app.getHttpAdapter().getInstance().router.stack`
@@ -101,7 +101,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
 
   // ── list ────────────────────────────────────────────────────────────────────
   { method: "GET", path: "/v1/webhooks", accepts: "application", shape: "list" },
-  // Chapter 3.15. A `list` and not a `read`: the attack on a listing is that a
+  // A `list` and not a `read`: the attack on a listing is that a
   // foreign identifier returns somebody else's rows, and the refusal that matters is
   // an EMPTY page rather than an error — a 404 for a foreign user id is right here
   // because the user is named in the path, but the shape's own assertion is that no
@@ -113,7 +113,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     shape: "list",
   },
 
-  // Chapter 3.15. The bulk upsert and the deletion. Both `write`: the upsert's attack is
+  // The bulk upsert and the deletion. Both `write`: the upsert's attack is
   // an entry naming another tenant's user, which must create a NEW row in the caller's
   // environment rather than touch theirs; the deletion's is a foreign external id, which
   // must answer 404 and leave the other tenant's user alive.
@@ -125,7 +125,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     shape: "write",
   },
 
-  // Chapter 3.15. The ban pair, both `write`. The attack is a foreign external id: a
+  // The ban pair, both `write`. The attack is a foreign external id: a
   // tenant must not be able to ban another tenant's user, and the refusal is the 404 a
   // user who does not exist in THIS environment gets — which is what they are.
   {
@@ -141,7 +141,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     shape: "write",
   },
 
-  // Chapter 3.15. The profile pair. `read` for the GET; the PATCH is a `write` whose
+  // The profile pair. `read` for the GET; the PATCH is a `write` whose
   // attack is a foreign external id under an own credential — a tenant must not be able
   // to rename another tenant's user, and the refusal is the same 404 a user who does not
   // exist gets, because in this tenant they do not.
@@ -158,7 +158,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     shape: "write",
   },
 
-  // Chapter 3.15. The route that names TWO tenant-owned identifiers, which is why
+  // The route that names TWO tenant-owned identifiers, which is why
   // T082a attacks it both ways round: a foreign user with an own channel and an own
   // user with a foreign channel are different code paths, and one scoped read can mask
   // the other.

@@ -6,7 +6,7 @@ import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import type { UserPrincipal } from "../auth/principal";
 import { Repository } from "../db/repository";
 
-// `GET /internal/memberships` (chapter 3.20, FR-017) — REVIVED, not invented.
+// `GET /internal/memberships` (FR-017) — REVIVED, not invented.
 //
 // `internalMembershipsResponseSchema` has been exported from
 // `packages/protocol/src/internal.ts` since chapter 3.2 and parsed by nothing. The

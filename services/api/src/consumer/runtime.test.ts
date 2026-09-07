@@ -4,7 +4,7 @@ import type { ClaimResult } from "../db/repository";
 import type { OutboxEvent } from "../outbox/event";
 import { decideOutcome } from "./runtime";
 
-// The decision table, Docker-free (chapter 3.4). Ten of this chapter's twelve
+// The decision table, Docker-free. Ten of this chapter's twelve
 // invariants need a real broker and a real database to mean anything; these two
 // need neither, because the decision is a pure function of what was parsed and
 // what the claim reported. `decideOutcome` takes its claim as an argument for

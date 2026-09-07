@@ -15,7 +15,7 @@ import { ensureStream } from "../outbox/jetstream.publisher";
 import { createConsumerRuntime } from "./runtime";
 import type { EventHandler } from "./handler";
 
-// The consumer, against a real broker and a real database (chapter 3.4).
+// The consumer, against a real broker and a real database.
 //
 // Every durable name here is unique per run. A durable consumer is a POSITION
 // in a shared stream that already holds tens of thousands of events from earlier

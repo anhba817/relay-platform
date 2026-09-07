@@ -8,7 +8,7 @@ import type { Logger } from "@relay/service-kit";
 // A NAMED import: ioredis is CommonJS and this service is ESM.
 import { Redis } from "ioredis";
 
-/** The api's half of the live fan-out (chapter 3.18, FR-004).
+/** The api's half of the live fan-out (FR-004).
  *
  * WHY THE API HAS ITS OWN PUBLISHER instead of reusing the gateway's
  * `createFanout`. Three reasons, in order of how much they cost to learn:

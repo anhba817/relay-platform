@@ -34,7 +34,7 @@ function withoutRequestId(body: unknown): unknown {
 }
 
 
-// Proving an endpoint works again (chapter 3.6, FR-WHK-09, research R8).
+// Proving an endpoint works again (FR-WHK-09, research R8).
 //
 // THIS SUITE PLAYS THE DISPATCHER. `POST /test` creates a real delivery and then
 // watches the row, because the attempt happens in another process — so something

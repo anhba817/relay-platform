@@ -63,7 +63,7 @@ function nextDelivery(
   });
 }
 
-/** The revision fabric's equivalent (chapter 3.23). Separate queue, separate deadline,
+/** The revision fabric's equivalent. Separate queue, separate deadline,
  * because the finding these tests exist to catch is a revision arriving on the OTHER
  * callback — and a helper that watched both could not tell them apart. */
 function nextRevision(

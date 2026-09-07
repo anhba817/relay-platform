@@ -12,7 +12,7 @@ import {
 } from "../db/repository";
 import { encryptSecret, mintSigningSecret } from "./secret";
 
-// The management surface's rules (chapter 3.5). Two of them are worth stating
+// The management surface's rules. Two of them are worth stating
 // here rather than leaving to the controller, because both are the kind of thing
 // that looks like validation and is actually a security boundary.
 
@@ -21,7 +21,7 @@ import { encryptSecret, mintSigningSecret } from "./secret";
  * credential: "too many endpoints" leaves the reader counting. */
 export const MAX_ENDPOINTS_PER_ENVIRONMENT = 5;
 
-/** DECISION (chapter 3.5, research R9): no requirement mandates this check, and
+/** DECISION (research R9): no requirement mandates this check, and
  * without it the dispatcher is a request-forgery primitive pointed at whatever
  * it can reach — a tenant supplies the URL, and the platform fetches it.
  *
@@ -142,7 +142,7 @@ export class WebhooksService {
   }
 
   /** Send one synthetic event to one endpoint and report what it answered
-   * (chapter 3.6, FR-013…FR-016, research R8).
+   * (FR-013…FR-016, research R8).
    *
    * The delivery is REAL: a row on the ordinary schedule, published by the
    * ordinary relay, posted and signed by the ordinary dispatcher, its outcome

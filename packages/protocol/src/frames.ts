@@ -67,7 +67,7 @@ export const messageSchema = z.strictObject({
   seq: z.number().int().positive(),
   user: z.string().min(1),
   text: z.string(),
-  /** REQUIRED, AND NOT OPTIONAL, and that is the whole of FR-022 (3.24).
+  /** REQUIRED, AND NOT OPTIONAL, and that is the whole of FR-022.
    *
    * An optional field parses a payload that omits it, so a construction site
    * nobody widened delivers a message whose attachments are simply absent —
@@ -75,7 +75,7 @@ export const messageSchema = z.strictObject({
    * instead: `pnpm --filter @relay/protocol build`, then `tsc --noEmit` in the
    * api and the gateway, lists four in production and 28 in tests.
    *
-   * FR-007 (3.24): a message with none carries `[]` rather than an absent key,
+   * FR-007: a message with none carries `[]` rather than an absent key,
    * so a reader needs no special case. `?? []` at the read sites, never `?? null`. */
   attachments: z.array(attachmentSchema),
   created_at: z.iso.datetime(), // UTC, RFC 3339 (constitution: timestamps)
@@ -242,7 +242,7 @@ export const typingSchema = z.strictObject({
   }),
 });
 
-/** CLIENT → SERVER: "I am typing in this channel" (chapter 3.21, FR-001).
+/** CLIENT → SERVER: "I am typing in this channel" (FR-001).
  *
  * **`typing.send`, and the name is an argument.** `typing.start` would read as a
  * state machine with a missing `typing.stop` — and `typing.stop` is exactly the
@@ -310,7 +310,7 @@ export const frameSchema = z.discriminatedUnion("type", [
 // The static types ARE the schemas — z.infer, never a hand-written twin.
 export type Cursor = z.infer<typeof cursorSchema>;
 export type Message = z.infer<typeof messageSchema>;
-/** Chapter 3.23. The deleted frame's payload is the one that is NOT a `Message`, so it
+/** The deleted frame's payload is the one that is NOT a `Message`, so it
  * needs a name of its own — otherwise every producer re-declares the shape inline and the
  * schema stops being the single statement of it. */
 export type MessageDeleted = z.infer<typeof messageDeletedPayloadSchema>;

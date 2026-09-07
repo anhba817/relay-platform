@@ -78,7 +78,7 @@ function publishContext(req: RequestWithPrincipal): {
 // boundary, from the same schema family as @relay/protocol.
 //
 // THAT IS NOT THE SAME AS "CANNOT DRIFT", which this comment claimed until
-// chapter 3.24. They are two schemas validated at two controllers — this route
+// They are two schemas validated at two controllers — this route
 // with `sendMessageBodySchema`, every socket send with
 // `internalSendRequestSchema` — and they have drifted three times: `idem_key`
 // against `idempotency_key`, the text bound, and FR-019b's pair rule, which
@@ -92,7 +92,7 @@ function publishContext(req: RequestWithPrincipal): {
 // FR-AUT-10 does not reserve these routes) — and chapter 3.17 made that a DECLARATION
 // rather than a fallback, because a fallback is what let the gateway's credential reach
 // `POST /internal/dispatch/replay` in chapter 3.12.
-// DECLARED, NOT INHERITED FROM A FALLBACK (chapter 3.17, T027a). Until now this class
+// DECLARED, NOT INHERITED FROM A FALLBACK (T027a). Until now this class
 // declared no `@Accepts` and `credential.guard.ts` fell back to `EITHER` — the fallback
 // its own comment names as the thing that let the gateway's credential reach
 // `POST /internal/dispatch/replay` in chapter 3.12. Both classes are genuinely accepted
@@ -104,7 +104,7 @@ export class MessagesController {
   constructor(
     private readonly messages: MessagesService,
     private readonly repo: Repository,
-    // Chapter 3.18. INJECTED HERE AND NOT INTO THE SERVICE, because two callers
+    // INJECTED HERE AND NOT INTO THE SERVICE, because two callers
     // reach `MessagesService.send` — this route and `internal.controller.ts`,
     // which is the gateway's — and the gateway publishes for its own path
     // already. A publish in the service would put every socket-sent message on
@@ -118,7 +118,7 @@ export class MessagesController {
     @Body(new ZodValidationPipe(sendMessageBodySchema)) body: SendMessageBody,
     @Req() req: RequestWithPrincipal,
   ) {
-    // WHO IS SENDING, resolved here (chapter 3.15, FR-001, T031a).
+    // WHO IS SENDING, resolved here (FR-001, T031a).
     //
     // This route called `this.messages.send(channelId, body)` with no user for
     // twenty-three chapters, and the membership check in `sendMessage` is gated on
@@ -146,7 +146,7 @@ export class MessagesController {
     // refusing is the honest answer, and it is the same one the internal route has
     // given since chapter 2.6. FR-039a removes the case entirely by creating the
     // row when the token is minted.
-    // THE SENDER, RESOLVED PER CREDENTIAL CLASS (chapter 3.17, FR-010, FR-008).
+    // THE SENDER, RESOLVED PER CREDENTIAL CLASS (FR-010, FR-008).
     //
     // A user token attributes to its subject and MAY NOT name anybody else: a token is
     // both an authorisation and an attribution, so a body `user` beside one is either a
@@ -269,7 +269,7 @@ export class MessagesController {
        * somebody decides it should, not when it appears on a row. */
       attachments: message.attachments,
       created_at: message.created_at,
-      // THE SENDER IT USED (chapter 3.17, FR-009a). A caller now required to name one
+      // THE SENDER IT USED (FR-009a). A caller now required to name one
       // gets told which was recorded — and for a user token, which it inferred. The
       // internal send has carried this since chapter 2.6; the public one answered five
       // fields and left the caller to assume.
@@ -277,7 +277,7 @@ export class MessagesController {
     };
   }
 
-  /** Change what a message says (chapter 3.23, FR-001, FR-005, FR-013, FR-013a).
+  /** Change what a message says (FR-001, FR-005, FR-013, FR-013a).
    *
    * `@Accepts("user")` ON THE METHOD, AND THE CLASS DECLARES BOTH (:64). A route added
    * here without a declaration INHERITS `("application", "user")` — the guard reads
@@ -385,7 +385,7 @@ export class MessagesController {
     };
   }
 
-  /** Remove what a message says (chapter 3.23, FR-006, FR-007, FR-009, FR-012).
+  /** Remove what a message says (FR-006, FR-007, FR-009, FR-012).
    *
    * NO METHOD-LEVEL `@Accepts`, AND THAT IS THE DECLARATION. This is the one route in
    * the chapter where the class's `("application", "user")` at :64 is what the
@@ -475,7 +475,7 @@ export class MessagesController {
     }
   }
 
-  /** What a message used to say (chapter 3.23, FR-023, FR-023a).
+  /** What a message used to say (FR-023, FR-023a).
    *
    * `@Accepts("application")` ON THE METHOD, AND WITHOUT IT A USER TOKEN READS THIS.
    * The class declares `("application", "user")` at :64 and the guard reads
@@ -518,7 +518,7 @@ export class MessagesController {
     @Req() req: RequestWithPrincipal,
   ) {
     // The same resolution the send handler above does, on the other route of this
-    // controller (chapter 3.15, T041a). Both dropped the caller; the send path was
+    // controller (T041a). Both dropped the caller; the send path was
     // found in one analysis pass and this one in the next, because finding the first
     // did not prompt anyone to ask whether the sibling had the same shape.
     const actingExternalId = actingUser(req);

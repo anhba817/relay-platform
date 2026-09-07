@@ -3,7 +3,7 @@ import { encryptSecret, mintSigningSecret } from "../webhooks/secret";
 
 import type { Db } from "../db/client";
 
-/** Two tenants, so every attack has a victim and an attacker (chapter 3.12).
+/** Two tenants, so every attack has a victim and an attacker.
  *
  * The gauntlet's unit of assertion is a PAIR of requests — another tenant's
  * identifier and an identifier that exists nowhere — and it needs a second tenant
@@ -23,7 +23,7 @@ import type { Db } from "../db/client";
  * webhook routes. */
 export interface Tenant {
   environmentId: string;
-  /** This tenant's own bot (chapter 3.17). A key send must name one. */
+  /** This tenant's own bot. A key send must name one. */
   botExternalId: string;
   /** An `rk_dev_…` credential for this environment, minted the way signup does. */
   credential: string;
@@ -52,7 +52,7 @@ async function seedTenant(db: Db, label: string): Promise<Tenant> {
 
   const userExternalId = `${label}-user`;
   const user = await repo.createUser(userExternalId, `${label} user`);
-  // A BOT PER TENANT (chapter 3.17). Every attack in the gauntlet presents a KEY, and a
+  // A BOT PER TENANT. Every attack in the gauntlet presents a KEY, and a
   // key send names a bot — so each tenant needs one of its own, or an attack would be
   // refused for naming an unresolvable sender rather than for the thing it attacks.
   const bot = (
@@ -132,7 +132,7 @@ export interface SameTenant {
   publicChannelId: string;
   /** A message the member wrote, so a read attack has something to fail to find. */
   messageId: string;
-  /** A bot of this tenant (chapter 3.17). The control's sender: an application
+  /** A bot of this tenant. The control's sender: an application
    * credential may name this one and no other tenant's. */
   bot: { id: string; externalId: string };
   repo: Repository;
@@ -155,7 +155,7 @@ export async function seedSameTenant(db: Db, mintToken: MintToken): Promise<Same
     userExternalId: member.external_id,
   });
   // A BOT, VIA THE UPSERT, because `createUser` cannot set `kind` — a bot needs a
-  // description and the member-add path has nowhere to put one (chapter 3.17).
+  // description and the member-add path has nowhere to put one.
   const bot = (
     await repo.upsertUser(`same-${stamp}-bot`, {
       display_name: "A Bot",

@@ -5,7 +5,7 @@ import { createLogger } from "@relay/service-kit";
 import { createRecorder } from "./recorder";
 import { createConsumerRuntime, type ConsumerRuntime } from "./runtime";
 
-// The consumer's home (chapter 3.4). It runs INSIDE the api service, and that
+// The consumer's home. It runs INSIDE the api service, and that
 // is a constraint rather than a convenience.
 //
 // Its deduplication ledger is a Postgres write, and ADR-04 makes the api the

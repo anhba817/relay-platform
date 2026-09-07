@@ -124,7 +124,7 @@ export async function createEnvironment(
 }
 
 // ---------------------------------------------------------------------------
-// Credentials (chapter 3.2). Part of the ADMIN surface, and that placement is
+// Credentials. Part of the ADMIN surface, and that placement is
 // the interesting bit: authentication has to resolve a tenant BEFORE one is
 // known, so these are the only queries in this file that cannot be scoped by an
 // environment. They are the operations that PRODUCE the scope everything else
@@ -265,7 +265,7 @@ export async function environmentSigningSecret(
 }
 
 /** An environment's rate limits, with nulls resolved to the documented defaults
- * (chapter 3.8, FR-RTL-04, research R26).
+ * (FR-RTL-04, research R26).
  *
  * RESOLVED HERE RATHER THAN AT THE CALL SITE, because "null means use the
  * default" is a property of the column and a caller that had to remember it
@@ -443,7 +443,7 @@ export async function assertConnectionsWithinQuota(
   return { used, caps };
 }
 
-/** Credit a batch of usage reports (chapter 3.11, FR-RTL-05/FR-RTL-05/FR-RTL-05).
+/** Credit a batch of usage reports (FR-RTL-05/FR-RTL-05/FR-RTL-05).
  *
  * A STANDALONE FUNCTION, NOT A `Repository` METHOD, and the reason is the same
  * one `usageFor` below gives: the caller is the platform, not a tenant.
@@ -603,7 +603,7 @@ export async function creditConnectionMinutes(
 }
 
 /** What an environment has consumed in a period, and what it is allowed
- * (chapter 3.10, FR-RTL-05).
+ * (FR-RTL-05).
  *
  * ZEROS FOR A PERIOD WITH NO ROWS, not null and not an error. An environment that
  * has sent nothing has used nothing, and making every caller tell "no usage" apart
@@ -690,7 +690,7 @@ export interface QuotaNotificationRow {
   hardCapInForce: boolean;
 }
 
-/** The outbox drain, a FOURTH time (chapter 3.10) — after 3.3's events, 3.5's
+/** The outbox drain, a FOURTH time — after 3.3's events, 3.5's
  * deliveries and 3.9's disablement emails. Same claim predicate, same
  * per-row error handling, same required batch size.
  *
@@ -748,7 +748,7 @@ export async function drainQuotaNotifications(
 }
 
 // ---------------------------------------------------------------------------
-// The outbox drain (chapter 3.3, ADR-06). Part of the ADMIN surface for the
+// The outbox drain (ADR-06). Part of the ADMIN surface for the
 // same reason the credential lookup is: it runs on behalf of the platform
 // rather than of a tenant, and it is deliberately NOT scoped by environment —
 // one relay drains every environment's events, because an outbox row is work
@@ -820,7 +820,7 @@ export async function drainOutbox(
 }
 
 // ---------------------------------------------------------------------------
-// The disablement notifications (chapter 3.8, FR-WHK-07 to FR-WHK-07). THE OUTBOX A
+// The disablement notifications (FR-WHK-07 to FR-WHK-07). THE OUTBOX A
 // THIRD TIME — after chapter 3.3's events and chapter 3.5's deliveries — and
 // this one needed no migration at all: chapter 3.6 gave the table a
 // `delivered_at` column and left it null throughout, which is a claim predicate
@@ -1002,7 +1002,7 @@ export async function organisationRecipients(
 export const DISPATCHER_CONSUMER = "dispatcher";
 
 /** Turn one event into one delivery per matching endpoint — **in one
- * transaction** (chapter 3.5, research R2).
+ * transaction** (research R2).
  *
  * Admin surface, like `drainOutbox`: one dispatcher serves every environment, so
  * this cannot go through the scoped Repository. It is still safe, because the
@@ -1075,7 +1075,7 @@ export async function expandEventToDeliveries(
 export type DeliveryOutcome = "delivered" | "rescheduled" | "dead_lettered";
 
 /** Record one attempt's result, and decide what happens next — **in one
- * transaction** (chapter 3.5).
+ * transaction**.
  *
  * The three terminal paths are here together on purpose. Splitting "record the
  * failure" from "schedule the next attempt" would allow a delivery marked failed
@@ -1090,7 +1090,7 @@ export type DeliveryOutcome = "delivered" | "rescheduled" | "dead_lettered";
  * SCHEDULE must not advance twice for one attempt or the tiers would collapse.
  */
 /** Open, extend or clear an endpoint's failure run, and disable it if the run has
- * gone on long enough (chapter 3.6, FR-006, FR-007).
+ * gone on long enough (FR-006, FR-007).
  *
  * Runs INSIDE the transaction that records the outcome, and takes
  * `SELECT … FOR UPDATE` on the endpoint row.
@@ -1483,7 +1483,7 @@ export async function recordAttemptOutcome(
   });
 }
 
-/** Create the one delivery a test event needs (chapter 3.6, FR-013, research R8).
+/** Create the one delivery a test event needs (FR-013, research R8).
  *
  * THREE DELIBERATE DEVIATIONS from `expandEventToDeliveries`, each with a reason,
  * and they are the whole difference between a test event and a real one:
@@ -1773,7 +1773,7 @@ export async function deliveryMaterial(
   // The spec's edge case: events already in the retry schedule for a removed
   // endpoint must not be delivered.
   //
-  // A TEST EVENT IS THE EXCEPTION, and it is the only one (chapter 3.6, FR-013).
+  // A TEST EVENT IS THE EXCEPTION, and it is the only one (FR-013).
   // Two requirements meet exactly here and pull opposite ways: invariant 9 says a
   // disabled endpoint receives no attempts, and FR-013 says a customer may test a
   // disabled endpoint — which is how they establish it is fixed BEFORE re-enabling
@@ -1941,7 +1941,7 @@ export async function outboxDepth(db: Db): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// The consumer's deduplication ledger (chapter 3.4, SAD risk R5). Admin surface
+// The consumer's deduplication ledger (SAD risk R5). Admin surface
 // for the same reason the outbox drain is: it runs on behalf of the platform
 // rather than of a tenant, and one consumer reads every environment's events.
 // ---------------------------------------------------------------------------
@@ -2028,7 +2028,7 @@ export interface Provisioned {
   apiKey?: { prefix: string; secret: string };
 }
 
-/** Signup (chapter 3.1, FR-TEN-01/02). The admin surface's second entrance:
+/** Signup (FR-TEN-01/02). The admin surface's second entrance:
  * it mints a tenant, so like createEnvironment it carries no tenant scope —
  * it is the operation that creates one.
  *
@@ -2178,7 +2178,7 @@ export async function provisionOrganisation(
     });
 
     // The first credential, inside the same transaction as the tenant it
-    // belongs to (chapter 3.2). A key written outside this transaction could
+    // belongs to. A key written outside this transaction could
     // outlive a rolled-back organisation and authenticate against nothing.
     // FR-DSH-01 wants a development key on the first screen after signup; this
     // is where it comes from.
@@ -2271,7 +2271,7 @@ export interface MessageRow {
    * null field, and the `?? []` that makes that true belongs at the read, once. */
   attachments: Attachment[];
   created_at: string;
-  /** When it was last edited, or `null` (chapter 3.23, FR-003). Optional on this
+  /** When it was last edited, or `null` (FR-003). Optional on this
    * interface rather than required, because the WRITE paths build a row that has never
    * been edited and would each have to spell `edited_at: null`. The read paths fill it
    * in; `EditedMessageRow` narrows it to a string. */
@@ -2282,7 +2282,7 @@ export interface MessageRow {
   duplicate?: boolean;
 }
 
-/** An edited message, as the edit path returns it (chapter 3.23, FR-001, FR-003).
+/** An edited message, as the edit path returns it (FR-001, FR-003).
  *
  * `edited_at` IS NOT OPTIONAL HERE. Every row this shape describes has just been edited,
  * so a `string | null` would be a type saying the impossible is possible. `MessageRow`'s
@@ -2320,7 +2320,7 @@ export class ChannelNotFoundError extends Error {
   }
 }
 
-/** A write refused because the channel is archived (chapter 3.15, FR-020, FR-021).
+/** A write refused because the channel is archived (FR-020, FR-021).
  *
  * A TYPED DOMAIN ERROR, not a `protocolError` thrown from here. The repository has
  * raised `ChannelNotFoundError` since chapter 2.2 and let the service map it to a
@@ -2334,13 +2334,13 @@ export class ChannelArchivedError extends Error {
   }
 }
 
-/** A write or a connect refused because the user is banned (chapter 3.15, FR-031).
+/** A write or a connect refused because the user is banned (FR-031).
  *
  * FIRST IN FR-021a's ORDER, and the ban check runs BEFORE the channel is read at all —
  * so a banned user gets one answer for every channel id, whether it exists, belongs to
  * somebody else, or was invented. Any other position leaks: check the channel first and
  * a banned user learns which channel ids are real. */
-/** An application credential named a person (chapter 3.17, FR-007, FR-007a).
+/** An application credential named a person (FR-007, FR-007a).
  *
  * ITS OWN CLASS, NOT A `ChannelNotFoundError`, because the two say different things and
  * the service maps them to different codes. Carries the sender's INTERNAL id and never
@@ -2353,7 +2353,7 @@ export class SenderNotPermittedError extends Error {
   }
 }
 
-/** The message id does not name a message of this channel (chapter 3.23, FR-014).
+/** The message id does not name a message of this channel (FR-014).
  *
  * ITS OWN CLASS, SEPARATE FROM `ChannelNotFoundError`, and the separation is not about
  * the wire — both become a bare 404. It is about what the repository can say honestly. A
@@ -2369,7 +2369,7 @@ export class MessageNotFoundError extends Error {
   }
 }
 
-/** The caller did not write this message (chapter 3.23, FR-013, FR-018, FR-022).
+/** The caller did not write this message (FR-013, FR-018, FR-022).
  *
  * ALSO THROWN WHEN THE MESSAGE HAS NO AUTHOR, which is FR-018 and is the arm worth
  * naming: 121,250 rows in the test lane carry a null `user_id`, written before chapter
@@ -2388,7 +2388,7 @@ export class NotMessageAuthorError extends Error {
   }
 }
 
-/** An edit was asked for on a tombstone (chapter 3.23, FR-010).
+/** An edit was asked for on a tombstone (FR-010).
  *
  * REFUSED RATHER THAN DEFINED, and `prior_text TEXT NOT NULL` is why the alternative is
  * not available: a tombstone has no text to preserve, so an edit of one would have to
@@ -2494,7 +2494,7 @@ export class Repository {
   }
 
   // ---------------------------------------------------------------------
-  // Webhook endpoints (chapter 3.5). Scoped like everything else on this class:
+  // Webhook endpoints. Scoped like everything else on this class:
   // the environment comes from the constructor and never from a caller, so a
   // handler cannot ask for another tenant's endpoints even by accident
   // (constitution I).
@@ -2581,7 +2581,7 @@ export class Repository {
       .set({
         enabled,
         // RE-ENABLING CLEARS THE RUN, all four columns, in this one statement
-        // (chapter 3.6, FR-017). The hour is measured from the NEXT failure, not
+        // (FR-017). The hour is measured from the NEXT failure, not
         // resumed from the old one — otherwise a customer who fixed their server
         // and switched it back on would be disabled again by the first failure
         // after that, on the strength of an outage they had already repaired.
@@ -2751,7 +2751,7 @@ export class Repository {
         metadata: {},
         banned_at: null,
         deleted_at: null,
-        // `createUser` CANNOT MAKE A BOT, and that is deliberate (chapter 3.17). Its
+        // `createUser` CANNOT MAKE A BOT, and that is deliberate. Its
         // callers are the member-add and the token mint, where an unknown identifier
         // arrives with nothing but a name; a bot needs a description, so it is created
         // through the upsert where one can be supplied. This is also why `person -> bot`
@@ -2903,7 +2903,7 @@ export class Repository {
    * is the layer's one raw SQL island, permitted by ADR-16 and kept inside
    * the wall like everything else.
    *
-   * THREE OUTCOMES, NOT A BOOLEAN (chapter 3.13, R14a). Until then this returned
+   * THREE OUTCOMES, NOT A BOOLEAN (R14a). Until then this returned
    * `false` for all of: the channel is not yours, the user is not yours, and you
    * asked twice. Conflating the first two is right and is the whole point — a
    * foreign id must be indistinguishable from an absent one. Conflating the third
@@ -2914,7 +2914,7 @@ export class Repository {
    * `not_found` keeps the conflation the isolation property needs. The follow-up
    * read distinguishes it from `already_a_member` — and it is a read, not a
    * check-then-write: the insert already happened. */
-  /** Chapter 3.20. THIS METHOD HAD NO TRANSACTION AND NOW HAS ONE, which is a
+  /** THIS METHOD HAD NO TRANSACTION AND NOW HAS ONE, which is a
    * different change from adding a statement to an existing one.
    *
    * Constitution II: "State changes and their events MUST commit atomically via the
@@ -3015,7 +3015,7 @@ export class Repository {
     });
   }
 
-  /** Archive and unarchive, both idempotent (chapter 3.15, FR-020, FR-020a).
+  /** Archive and unarchive, both idempotent (FR-020, FR-020a).
    *
    * IDEMPOTENT BY THE WRITE, not by a read-then-write: setting `archived_at` on an
    * already-archived channel writes the same state, and a caller who asks twice
@@ -3056,7 +3056,7 @@ export class Repository {
     return updated.length > 0;
   }
 
-  /** Set a member's role (chapter 3.15, FR-011).
+  /** Set a member's role (FR-011).
    *
    * SCOPED THROUGH THE CHANNEL, like every other write to `members`: that table
    * carries no `environment_id`, so the `EXISTS` is what keeps another tenant's rows
@@ -3067,7 +3067,7 @@ export class Repository {
    * schema at the edge still cannot land. R8's trap was a constraint that reused
    * `memberships`' vocabulary — it would accept `admin`, refuse `moderator`, and
    * read as correct in review. */
-  /** Chapter 3.20. **NO OUTBOX ROW, AND NO FABRIC PUBLISH.** `membership.changed`'s
+  /** **NO OUTBOX ROW, AND NO FABRIC PUBLISH.** `membership.changed`'s
    * `change` is an enum of `added` and `removed` — chapter 1.3 published it that way
    * and neither member means "role" — and FR-WHK-02's event names are
    * `channel.member_added` and `channel.member_removed`. A role change is a
@@ -3114,7 +3114,7 @@ export class Repository {
   }
 
   /** Remove members by user id, up to a hundred in one call, reporting each
-   * (chapter 3.15, FR-006, FR-007, FR-008).
+   * (FR-006, FR-007, FR-008).
    *
    * BULK, BECAUSE THE REQUIREMENT ALWAYS WAS. FR-006 says "up to 100 in one
    * request" and FR-007 says the result is reported per user — which is chapter
@@ -3139,7 +3139,7 @@ export class Repository {
    * carries no `environment_id` — the catalogue calls it a `hop` — so the join is
    * what keeps a foreign channel's rows out of reach.
    */
-  /** Chapter 3.20. THIS ONE HAD NO TRANSACTION EITHER, and it was already two
+  /** THIS ONE HAD NO TRANSACTION EITHER, and it was already two
    * statements — the member delete and the read-position delete, with nothing
    * between them. **A crash there left a removed member holding a read position**,
    * which this transaction closes as a side effect of carrying the outbox rows.
@@ -3361,7 +3361,7 @@ export class Repository {
         displayName: profile.display_name ?? null,
         avatarUrl: profile.avatar_url ?? null,
         ...(profile.metadata === undefined ? {} : { metadata: profile.metadata }),
-        // THE DEFAULT APPLIES HERE AND NOWHERE ELSE (chapter 3.17, FR-002b, T019a).
+        // THE DEFAULT APPLIES HERE AND NOWHERE ELSE (FR-002b, T019a).
         // A new row with no `kind` is a person; an existing row with no `kind` is
         // asking for no change, which the update block below is careful about.
         ...(profile.kind === undefined ? {} : { kind: profile.kind }),
@@ -3413,7 +3413,7 @@ export class Repository {
       )
       .limit(1);
 
-    // A KIND CHANGE IS REPORTED, NOT PERFORMED (chapter 3.17, FR-002a, FR-002d).
+    // A KIND CHANGE IS REPORTED, NOT PERFORMED (FR-002a, FR-002d).
     //
     // `person -> bot` is allowed when the row has NEVER SENT A MESSAGE. Without that
     // escape the natural ordering traps a customer: `POST /v1/channels/:id/members`
@@ -3431,7 +3431,7 @@ export class Repository {
     // first hit rather than counting. Measured in `baseline.txt` (T018b) rather than
     // assumed, and no index was added for a question asked once per promotion.
     // A THIRD THROW OF THE SAME CLASS IS WHAT THE RATCHET CAUGHT, AND DELETING IT IS THE
-    // FIX (chapter 3.17). The first version of this branch read the row back and threw if
+    // FIX. The first version of this branch read the row back and threw if
     // it was absent, then returned `kind_conflict` — which is the second statement for one
     // impossible state that the comment forty lines below already argues against. Lines
     // fell to **98.95%** against a pin of 99 and the gate went red, exactly as that
@@ -3489,7 +3489,7 @@ export class Repository {
     };
   }
 
-  /** Ban and unban a user, tenant-wide (chapter 3.15, FR-031, FR-032).
+  /** Ban and unban a user, tenant-wide (FR-031, FR-032).
    *
    * TENANT-SCOPED AND NOT A REMOVAL. A ban stops the user connecting and sending
    * anywhere in the environment; it takes no membership away and hides no history. So
@@ -3505,7 +3505,7 @@ export class Repository {
    *
    * `banned_at` HAD NO WRITER, the same omission `channels.archived_at` had. The column
    * has been in the schema since chapter 2.1 with zero references outside tests. */
-  /** Chapter 3.20. A BAN WRITES ONE `channel.member_removed` PER CHANNEL, and the
+  /** A BAN WRITES ONE `channel.member_removed` PER CHANNEL, and the
    * task list said "one event for the user, not one per channel" until this method
    * was written and the question turned out to have no such answer.
    *
@@ -3581,7 +3581,7 @@ export class Repository {
       );
   }
 
-  /** Delete a user, keeping the row (chapter 3.15, FR-027, FR-028, FR-029).
+  /** Delete a user, keeping the row (FR-027, FR-028, FR-029).
    *
    * WHAT GOES: the profile fields, the memberships, the read positions.
    * WHAT STAYS: the row, the messages, and every `usage_active_users` row.
@@ -3617,7 +3617,7 @@ export class Repository {
       await tx.delete(readPositions).where(eq(readPositions.userId, userId));
       await tx.delete(members).where(eq(members.userId, userId));
       // `description` IS NOT IN THIS `set`, AND ITS ABSENCE IS THE REQUIREMENT
-      // (chapter 3.17, FR-004a, T043b).
+      // (FR-004a, T043b).
       //
       // FR-027 clears profile data on deletion, and a bot's description is not profile
       // data — it says what the software is, which is what makes the messages it already
@@ -3647,7 +3647,7 @@ export class Repository {
     });
   }
 
-  /** Write a user's profile (chapter 3.15, FR-023, FR-024).
+  /** Write a user's profile (FR-023, FR-024).
    *
    * THE FIRST WRITER `users.avatar_url` AND `users.metadata` HAVE EVER HAD. Both columns
    * have been in the schema since chapter 2.1 with zero references outside tests — two of
@@ -3716,7 +3716,7 @@ export class Repository {
     return row === undefined ? null : this.getUserByExternalId(row.externalId);
   }
 
-  /** Record a read position (chapter 3.15, FR-017, FR-018).
+  /** Record a read position (FR-017, FR-018).
    *
    * FORWARDS ONLY, and the clamp is in SQL rather than in a read-then-write. `greatest`
    * on the conflict target means a replayed acknowledgement from a client that fell
@@ -3767,7 +3767,7 @@ export class Repository {
     });
   }
 
-  /** Mark a user deleted, keeping the row (chapter 3.15, FR-017).
+  /** Mark a user deleted, keeping the row (FR-017).
    *
    * THE ROW SURVIVES ON PURPOSE. `ON DELETE SET NULL` on `messages.user_id` would
    * satisfy "messages are preserved" and break delivery: `toFrame` drops a senderless
@@ -3985,7 +3985,7 @@ export class Repository {
       idempotencyKey,
       senderMustBeBot = false,
     }: {
-      /** THE SENDER MUST BE A BOT (chapter 3.17, FR-007, T030, T032).
+      /** THE SENDER MUST BE A BOT (FR-007, T030, T032).
        *
        * A CONSTRAINT, NOT A CREDENTIAL CLASS. Research R5 says the repository must not
        * learn what a credential is, and it does not: it is told that this send's sender
@@ -4015,7 +4015,7 @@ export class Repository {
        * There is no red test for this. Reverting the `?` is what makes the guarantee
        * visible, and the transcript of that revert is SC-003a's evidence (T013a). */
       userId: string;
-      /** Chapter 3.3: the sender as a CONSUMER will see them. Threaded from the
+      /** The sender as a CONSUMER will see them. Threaded from the
        * caller rather than looked up here — the internal route already holds it
        * (it is the token's subject), and an extra SELECT inside the write
        * transaction is a cost every message would pay forever.
@@ -4048,12 +4048,12 @@ export class Repository {
       // channel that exists differs from the refusal for one that does not, and a
       // banned user can enumerate channel ids.
       //
-      // EVERY SEND IS ATTRIBUTED NOW (chapter 3.17, FR-MSG-15). The gate that used to
+      // EVERY SEND IS ATTRIBUTED NOW (FR-MSG-15). The gate that used to
       // stand here — `if (userId !== undefined)` — guarded against a key-authenticated
       // send that carried no user, and `userId` is required as of this chapter, so the
       // condition could no longer be false. **Fourth time this project has met a guard
-      // that stopped meaning anything**: `addMember`'s `rowCount ?? 0` (3.12), and
-      // `upsertUser`'s second throw and `(row.metadata ?? {})` (3.16). Tightening a
+      // that stopped meaning anything**: `addMember`'s `rowCount ?? 0`, and
+      // `upsertUser`'s second throw and `(row.metadata ?? {})`. Tightening a
       // type makes its runtime guards dead; three of the seven `userId` comparisons in
       // this file were dead the moment T012 landed, and two others are in methods where
       // the parameter is optional by design and must not be touched.
@@ -4080,11 +4080,11 @@ export class Repository {
         .select({
           id: channels.id,
           lastSequence: channels.lastSequence,
-          // Chapter 3.15. `channels.type` has been a `"public" | "private"` column
+          // `channels.type` has been a `"public" | "private"` column
           // with a CHECK since chapter 2.1 and nothing decided on it until now — it
           // was returned by the create route and consulted by nothing.
           type: channels.type,
-          // Chapter 3.15. Declared in chapter 2.1 and read by NOTHING until here:
+          // Declared in chapter 2.1 and read by NOTHING until here:
           // zero non-test references, measured rather than assumed (T007).
           archivedAt: channels.archivedAt,
         })
@@ -4134,7 +4134,7 @@ export class Repository {
       // non-member of a private archived channel never learns it exists from
       // `channel_archived`. Both arrive with their own columns' chapters; this is
       // the middle of the three.
-      // THE SENDER ATTRIBUTES; IT DOES NOT AUTHORISE (chapter 3.17, FR-019).
+      // THE SENDER ATTRIBUTES; IT DOES NOT AUTHORISE (FR-019).
       //
       // This gate used to read `channel.type === "private" && userId !== undefined`,
       // and the second half was doing real work: a key-authenticated send carried no
@@ -4162,7 +4162,7 @@ export class Repository {
         if (!membership) throw new ChannelNotFoundError(channelId);
       }
 
-      // THE SENDER'S KIND, LAST OF THE FIVE (chapter 3.17, FR-007, T032).
+      // THE SENDER'S KIND, LAST OF THE FIVE (FR-007, T032).
       //
       // After the ban, the visibility and the archive, because this refusal names a
       // fact about a USER — "that identifier is a person" — and a caller who could not
@@ -4194,7 +4194,7 @@ export class Repository {
       // History stays readable while archived (FR-020). Only the write refuses.
       if (channel.archivedAt !== null) throw new ChannelArchivedError(channelId);
 
-      // THE CAP, CHECKED BEFORE THE MESSAGE IS WRITTEN (chapter 3.10, FR-RTL-08).
+      // THE CAP, CHECKED BEFORE THE MESSAGE IS WRITTEN (FR-RTL-08).
       //
       // Here rather than in middleware, because chapter 3.8's limiter never sees
       // `/internal/messages` — `operationsFor` returns [] for anything outside
@@ -4277,7 +4277,7 @@ export class Repository {
 
       // The sequence is spent only by a message that actually landed.
       //
-      // AND `lastActivityAt` MOVES IN THE SAME STATEMENT (chapter 3.15, FR-014).
+      // AND `lastActivityAt` MOVES IN THE SAME STATEMENT (FR-014).
       // The listing orders a user's channels by their most recent activity, and
       // FR-014's answer to what that means is: a message. Not a join, not a
       // rename, not an archive — a column that moved for those would order by
@@ -4301,7 +4301,7 @@ export class Repository {
 
       const createdAt = toIso(inserted[0]!.createdAt);
 
-      // THE EVENT COMMITS WITH THE MESSAGE (chapter 3.3, ADR-06).
+      // THE EVENT COMMITS WITH THE MESSAGE (ADR-06).
       //
       // This insert is inside the transaction that already guards the write, so
       // the two share a fate: no message without its event, no event without
@@ -4336,7 +4336,7 @@ export class Repository {
         payload: event.payload,
       });
 
-      // THE MONTH'S USAGE COMMITS WITH THE MESSAGE (chapter 3.10, FR-RTL-05).
+      // THE MONTH'S USAGE COMMITS WITH THE MESSAGE (FR-RTL-05).
       //
       // Same argument as the event above it, one requirement further on. A quota
       // is about THIS MONTH and must not forget, so the count cannot live in the
@@ -4365,7 +4365,7 @@ export class Repository {
       // sent this period, which is a read. The row IS the answer, and
       // `ON CONFLICT DO NOTHING` makes the second send of the month free.
       //
-      // EVERY SEND IS ATTRIBUTED, SO EVERY SEND COUNTS (chapter 3.17). The gate here
+      // EVERY SEND IS ATTRIBUTED, SO EVERY SEND COUNTS. The gate here
       // was the twin of the ban check's: it existed because a key-authenticated send
       // carried no `userId`, which chapter 3.3 decided and FR-MSG-15 reverses.
       //
@@ -4465,7 +4465,7 @@ export class Repository {
     });
   }
 
-  /** Change what a message says (chapter 3.23, FR-001, FR-002, FR-003, FR-004).
+  /** Change what a message says (FR-001, FR-002, FR-003, FR-004).
    *
    * ONE TRANSACTION, AND THE HISTORY ROW IS WHY. FR-004 wants the superseded text
    * appended for every edit; a row updated in one statement and a history appended in
@@ -4619,7 +4619,7 @@ export class Repository {
         priorText: row.text,
       });
 
-      // THE EVENT COMMITS WITH THE EDIT (chapter 3.23, FR-019, ADR-06). Same argument
+      // THE EVENT COMMITS WITH THE EDIT (FR-019, ADR-06). Same argument
       // as the send path's and the deletion's: publishing after the commit leaves a
       // window where the row changed and the event never existed, silently, with
       // nothing to reconcile against.
@@ -4671,7 +4671,7 @@ export class Repository {
     });
   }
 
-  /** Turn a message into a tombstone (chapter 3.23, FR-006, FR-006a, FR-009).
+  /** Turn a message into a tombstone (FR-006, FR-006a, FR-009).
    *
    * THE COLUMNS ARE `docs/05-sad.md:342`'s, verbatim: `text = NULL`,
    * `attachments = NULL`, `deleted_at = now()`. Everything else is untouched, and
@@ -4893,7 +4893,7 @@ export class Repository {
     });
   }
 
-  /** A message's edit history, oldest first (chapter 3.23, FR-023).
+  /** A message's edit history, oldest first (FR-023).
    *
    * SCOPED THE SAME WAY `editMessage` IS, through the join rather than through the
    * caller's promise. This read answers for a tenant API key (FR-023a refuses an end
@@ -4929,7 +4929,7 @@ export class Repository {
     }));
   }
 
-  /** Does this message exist in this channel of this tenant (chapter 3.23)?
+  /** Does this message exist in this channel of this tenant?
    *
    * THE EDIT-HISTORY ROUTE NEEDS IT and `listMessageEdits` cannot supply it: an empty
    * list is the correct answer for a message with no edits (FR-023's 200-with-nothing)
@@ -4951,7 +4951,7 @@ export class Repository {
     return rows.length > 0;
   }
 
-  /** Refuse the send if a hard cap is already met (chapter 3.10, FR-RTL-08).
+  /** Refuse the send if a hard cap is already met (FR-RTL-08).
    *
    * Reads the caps and the usage in ONE query, in the transaction that is about to
    * write. Both dimensions, because FR-RTL-06 configures a cap for each.
@@ -4969,11 +4969,11 @@ export class Repository {
   private async assertWithinQuota(
     tx: Db,
     period: string,
-    /** REQUIRED, following `sendMessage`'s parameter (chapter 3.17, T012). Its only
+    /** REQUIRED, following `sendMessage`'s parameter (T012). Its only
      * caller is the send, and the `userId === undefined` disjunct in the ceiling check
      * below became unreachable when that parameter did. */
     userId: string,
-    /** Whether the sender is a person (chapter 3.17, FR-018a, T047b). Threaded from the
+    /** Whether the sender is a person (FR-018a, T047b). Threaded from the
      * ban check's row rather than read again: this method is inside the write
      * transaction, and a second SELECT on `users` here is a query every send would pay
      * to learn something the caller already knows. */
@@ -5220,7 +5220,7 @@ export class Repository {
    * the endpoint dressed that as an empty page. The milestone suite caught
    * the two doors disagreeing about the same resource. */
   /** One channel by its id, scoped, with the two fields the by-id route reports
-   * beyond FR-CHN-01's four (chapter 3.15, FR-003a).
+   * beyond FR-CHN-01's four (FR-003a).
    *
    * SCOPED IN THE WHERE CLAUSE and not filtered afterwards, for the reason
    * `addMembers` states: a foreign id and an absent one must both miss this read,
@@ -5253,7 +5253,7 @@ export class Repository {
     return rows[0] ?? null;
   }
 
-  /** Whether this user is a member of this channel (chapter 3.15).
+  /** Whether this user is a member of this channel.
    *
    * No environment predicate, and that is safe rather than sloppy: `members` has
    * no `environment_id` — it is reached through `channels` and `users`, which is
@@ -5269,7 +5269,7 @@ export class Repository {
     return rows.length > 0;
   }
 
-  /** Whether this channel exists AND this caller may see it (chapter 3.15, FR-003).
+  /** Whether this channel exists AND this caller may see it (FR-003).
    *
    * `channelExists` answers the first half and every read route used it. That was
    * enough while `channels.type` decided nothing; it is not enough now, and the gap
@@ -5326,7 +5326,7 @@ export class Repository {
       beforeSeq,
       afterSeq,
       limit,
-      /** Who is reading (chapter 3.15, FR-002, FR-003).
+      /** Who is reading (FR-002, FR-003).
        *
        * THIS PARAMETER DID NOT EXIST, and its absence is why the history path had
        * nothing to check. The task said "add the same check to the history path" and
@@ -5344,7 +5344,7 @@ export class Repository {
       userId?: string;
     },
   ): Promise<MessageWithSender[]> {
-    // MEMBERSHIP FIRST, WHEN A USER IS READING (chapter 3.15, FR-002, FR-003).
+    // MEMBERSHIP FIRST, WHEN A USER IS READING (FR-002, FR-003).
     //
     // A scoped read below would already exclude another tenant's channel; this is
     // the case inside one tenant, where the channel exists and the reader is not a
@@ -5385,7 +5385,7 @@ export class Repository {
       user: users.externalId,
       text: messages.text,
       created_at: messages.createdAt,
-      // WHEN IT WAS LAST EDITED, OR NULL (chapter 3.23, FR-003). Null for every
+      // WHEN IT WAS LAST EDITED, OR NULL (FR-003). Null for every
       // message that has never been edited, which is the common case and the reason
       // the read shape's version is nullable while `EditedMessageRow`'s is not.
       //

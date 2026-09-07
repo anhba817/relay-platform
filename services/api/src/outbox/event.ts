@@ -3,7 +3,7 @@ import { attachmentSchema, type Attachment } from "@relay/protocol";
 import { subjectFor } from "@relay/protocol";
 import { z } from "zod";
 
-// The event envelope (chapter 3.3). Built in ONE place, complete, inside the
+// The event envelope. Built in ONE place, complete, inside the
 // transaction that caused it — so the relay is a mover of bytes and never an
 // author of them (ADR-04, research R7).
 //
@@ -37,7 +37,7 @@ export interface MessageCreatedData {
   created_at: string;
 }
 
-/** A DELETION as a consumer receives it (chapter 3.23, FR-019, FR-020).
+/** A DELETION as a consumer receives it (FR-019, FR-020).
  *
  * NO `text`, AND NO `text: null` EITHER. The frame `packages/protocol/src/frames.ts`
  * publishes made the same choice for the same reason: a deletion whose payload has a
@@ -57,7 +57,7 @@ export interface MessageDeletedData {
   deleted_at: string;
 }
 
-/** A membership change as a CONSUMER receives it (chapter 3.20, FR-WHK-02).
+/** A membership change as a CONSUMER receives it (FR-WHK-02).
  *
  * `user` IS THE EXTERNAL ID and the type says so, because the repository methods
  * that build this event hold only `users.id`. `MessageCreatedData` above fixes the
@@ -193,7 +193,7 @@ export function messageCreatedEvent({
   };
 }
 
-/** An edit, built inside the transaction that wrote it (chapter 3.23, FR-019).
+/** An edit, built inside the transaction that wrote it (FR-019).
  *
  * THE SAME `MessageCreatedData` PAYLOAD, which is FR-008a as code: *"The message payload
  * used by creation and edit events MUST be left unchanged."* An edited message is a
@@ -311,7 +311,7 @@ export function membershipEvent({
   };
 }
 
-/** The envelope as a CONSUMER receives it (chapter 3.4).
+/** The envelope as a CONSUMER receives it.
  *
  * The producing side builds this object and knows it is well formed; the
  * consuming side reads bytes off a broker and knows nothing. Chapter 2.5 made
@@ -378,7 +378,7 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
       created_at: z.iso.datetime(),
     }),
   }),
-  // CHAPTER 3.23. The union is exhaustive over `OUTBOX_EVENT_TYPES`, and this file's own
+  // The union is exhaustive over `OUTBOX_EVENT_TYPES`, and this file's own
   // comment above says why that matters: `consumer/runtime.ts:163` answers a failed
   // parse with `message.term()`, which stops redelivery for good. A type added to the
   // array with no branch here is a row DESTROYED at the consumer, and the lane cannot

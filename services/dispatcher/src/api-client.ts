@@ -9,7 +9,7 @@ import {
   type InternalExpandResponse,
 } from "@relay/protocol";
 
-// The dispatcher's only road to state (chapter 3.5, constitution IV).
+// The dispatcher's only road to state (constitution IV).
 //
 // "Only the API service writes to PostgreSQL… Other services obtain writes and
 // backfill reads via the API service's internal endpoints." This file is the

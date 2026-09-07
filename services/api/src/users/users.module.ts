@@ -9,7 +9,7 @@ import { UsersController } from "./users.controller";
 import { UsersService } from "./users.service";
 import type { RequestWithTenant } from "../messages/request-with-tenant";
 
-// The channels module's shape, for the channels module's reasons (chapter 3.15).
+// The channels module's shape, for the channels module's reasons.
 //
 // A SEPARATE MODULE AND NOT A ROUTE ON `ChannelsController`. Five SRS clauses need
 // routes whose subject is a user — the listing, the profile read, the upsert, the

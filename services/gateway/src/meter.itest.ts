@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-// What a signal does to a bill (chapter 3.11, US2).
+// What a signal does to a bill (US2).
 //
 // EVERY OTHER TEST IN THIS CHAPTER RUNS THE GATEWAY IN-PROCESS, and that is the
 // right default: `attachSessions` takes its interval as a parameter, so the
@@ -196,7 +196,7 @@ describe("a signal, and what it does to a bill", () => {
 
   /** A gateway of its own per test, because each of these tests ends by killing
    * one and the two signals must not share a victim. */
-  /** CHAPTER 3.21. **`.resume()` DRAINS A STREAM AND KEEPS NOTHING**, which is a
+  /** **`.resume()` DRAINS A STREAM AND KEEPS NOTHING**, which is a
    * third variant of chapter 3.20's `gaps.md` item 19a and the most deceptive of
    * the three: `stdio: "ignore"` never creates the output, a pipe nobody reads
    * leaves it in a kernel buffer, and `.resume()` actively reads it and throws it

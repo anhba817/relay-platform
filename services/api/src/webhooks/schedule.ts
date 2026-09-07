@@ -1,4 +1,4 @@
-// The retry schedule (chapter 3.5, FR-WHK-03).
+// The retry schedule (FR-WHK-03).
 //
 // Seven attempts — one immediate, then FR-WHK-03's six retries — and the delays
 // are data rather than arithmetic. An exponential
@@ -7,7 +7,7 @@
 // shape, not a decision.
 //
 // ---------------------------------------------------------------------------
-// DECISION (chapter 3.5, taken by the author on 2026-08-10): FR-WHK-03 is
+// DECISION (taken by the author on 2026-08-10): FR-WHK-03 is
 // internally inconsistent, and this is the reading taken.
 //
 // It says: "Failed deliveries shall be retried with exponential backoff at

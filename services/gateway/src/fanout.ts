@@ -91,7 +91,7 @@ export function createFanout({
       logger.log("error", "fanout.unparsable", { subject });
       return;
     }
-    // CHAPTER 3.23. TWO SUBJECTS ON ONE SUBSCRIBER, told apart by the prefix rather than
+    // TWO SUBJECTS ON ONE SUBSCRIBER, told apart by the prefix rather than
     // by guessing at the payload. Parsing against both schemas and taking whichever
     // succeeded would make a malformed revision look like a message.
     if (isChannelRevisionSubject(subject)) {

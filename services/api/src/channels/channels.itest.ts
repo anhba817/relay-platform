@@ -40,7 +40,7 @@ describe("the public channel surface", () => {
     const other = await createEnvironment(db, { name: "channels-itest-other" });
     foreignRepo = new Repository(db, other.id);
     foreignChannelId = (await foreignRepo.createChannel("theirs", "public")).id;
-    // Chapter 3.15: a private channel, a member, a non-member of the SAME tenant,
+    // A private channel, a member, a non-member of the SAME tenant,
     // and a way to mint their tokens. Created through the repository because
     // `POST /v1/channels` accepts `private` only from this phase's last task.
     privateChannelId = (await repo.createChannel("members-only", "private")).id;
@@ -227,7 +227,7 @@ describe("the public channel surface", () => {
       }
     }, 180_000);
 
-    it("refuses a JOIN that would exceed it, with the same code (chapter 3.15)", async () => {
+    it("refuses a JOIN that would exceed it, with the same code", async () => {
       // T047. The ceiling is chapter 3.13's and it is READ here, not reimplemented:
       // `join` counts members from storage and refuses with the same
       // `channel_member_limit_exceeded` the member-add route uses. A second limit
@@ -651,7 +651,7 @@ describe("the public channel surface", () => {
 
     beforeAll(async () => {
       archived = (await repo.createChannel("archivable", "public")).id;
-      // A key send names a bot (chapter 3.17). The refusal under test is the ARCHIVE's,
+      // A key send names a bot. The refusal under test is the ARCHIVE's,
       // so the sender must resolve or the test would be measuring a 400 about `user`.
       await repo.upsertUser("archive-bot", {
         kind: "bot",

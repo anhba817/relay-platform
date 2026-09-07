@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 
-// The CSRF binding for the OAuth flow (chapter 3.1).
+// The CSRF binding for the OAuth flow.
 //
 // `state` exists to prove that the callback belongs to the browser that
 // started the flow. A signed-but-stateless state proves the SERVER minted it

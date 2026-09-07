@@ -9,7 +9,7 @@ import type { Logger } from "@relay/service-kit";
 // esModuleInterop a default import of a CJS module hands you the namespace object.
 import { Redis } from "ioredis";
 
-// The membership fabric's api half (chapter 3.20, FR-004).
+// The membership fabric's api half (FR-004).
 //
 // SHAPED ON `fanout/publisher.ts` AND NOT ON `createFanout`. Chapter 3.18 built that
 // publisher against the same problems this one has — a store that may be down on a

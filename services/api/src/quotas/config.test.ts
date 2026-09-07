@@ -67,7 +67,7 @@ describe("reading a dimension's caps out of quota_config", () => {
   });
 });
 
-describe("the third dimension, and the two gates it has to pass (3.11)", () => {
+describe("the third dimension, and the two gates it has to pass", () => {
   it("reads a connection_minutes cap", () => {
     const { caps, error } = capsFor(
       { connection_minutes: { hard: 50_000, soft: 40_000 } },

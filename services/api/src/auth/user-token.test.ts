@@ -8,7 +8,7 @@ import {
   verifyUserToken,
 } from "./user-token";
 
-// End-user tokens (chapter 3.2), Docker-free. The environment's signing secret
+// End-user tokens, Docker-free. The environment's signing secret
 // is just a string here; where it comes from is the repository's business.
 
 const SECRET = "environment-signing-secret-for-the-unit-lane";

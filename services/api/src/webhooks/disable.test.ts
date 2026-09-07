@@ -9,7 +9,7 @@ import {
   shouldDisable,
 } from "./disable";
 
-// The decision to switch off a paying customer's endpoint (chapter 3.6).
+// The decision to switch off a paying customer's endpoint.
 //
 // Pinned at 100% branches in `vitest.coverage.config.mts`, because constitution VI
 // names idempotency logic and this is the predicate the at-most-once disable rests

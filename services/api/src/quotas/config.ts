@@ -30,7 +30,7 @@ export const quotaConfigSchema = z
   .object({
     messages: capsSchema.optional(),
     active_users: capsSchema.optional(),
-    // Chapter 3.11. This is the key the comment below predicted, and adding it
+    // This is the key the comment below predicted, and adding it
     // costs what the comment said plus three clauses in the migration's CHECK
     // rather than one line — 0010 counts the difference.
     connection_minutes: capsSchema.optional(),

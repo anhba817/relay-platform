@@ -266,7 +266,7 @@ async function startRedisProxy(): Promise<{
 const settle = (ms = 300): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-describe("a typing signal on its way out (chapter 3.21)", () => {
+describe("a typing signal on its way out", () => {
   const open: Array<() => Promise<void>> = [];
   const sockets: WebSocket[] = [];
 
@@ -961,7 +961,7 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
               seq: 9,
               user: "tuan",
               text: "backfilled",
-              // Chapter 3.24: this payload goes onto the fabric as JSON and the gateway
+              // This payload goes onto the fabric as JSON and the gateway
               // PARSES it, so `tsc` never saw the construction — `JSON.stringify` takes
               // anything. Required means the parse refuses it without the field.
               attachments: [],
@@ -1235,7 +1235,7 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
         seq: 4_242,
         user: "tuan",
         text: "one message",
-        // Chapter 3.24: this payload goes onto the fabric as JSON and the gateway
+        // This payload goes onto the fabric as JSON and the gateway
         // PARSES it, so `tsc` never saw the construction — `JSON.stringify` takes
         // anything. Required means the parse refuses it without the field.
         attachments: [],
@@ -1291,7 +1291,7 @@ describe("a typing signal on its way out (chapter 3.21)", () => {
  * ratchet has removed code five times rather than covered it. They are reachable
  * and nothing had reached them.
  */
-describe("createTyping's own arms (chapter 3.21)", () => {
+describe("createTyping's own arms", () => {
   const built: Typing[] = [];
 
   afterEach(async () => {

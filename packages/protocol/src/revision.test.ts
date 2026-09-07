@@ -7,7 +7,7 @@ import {
 } from "./revision.js";
 import { subjectForChannel } from "./fanout.js";
 
-// T018d (chapter 3.23). THE SUBJECT STRING AND THE PAYLOAD'S EXACT KEYS, on
+// T018d. THE SUBJECT STRING AND THE PAYLOAD'S EXACT KEYS, on
 // `codes.test.ts`'s precedent: an exact set is what makes a change to either a decision
 // rather than an accident.
 //
@@ -21,7 +21,7 @@ const message = {
   seq: 7,
   user: "tuan",
   text: "corrected",
-  // Chapter 3.24. THE COMPILER DID NOT FIND THIS ONE: `revisionFabricSchema.parse`
+  // THE COMPILER DID NOT FIND THIS ONE: `revisionFabricSchema.parse`
   // takes `unknown`, so a fixture handed to it is invisible to `tsc` no matter what
   // the schema requires. T014a's instrument named 33 construction sites and this was
   // not among them — the unit lane found it.
@@ -37,7 +37,7 @@ const tombstone = {
   deleted_at: "2026-09-03T00:00:00.000Z",
 };
 
-describe("the revision subject (chapter 3.23, ADR-24)", () => {
+describe("the revision subject (ADR-24)", () => {
   it("is `revision:{channelId}`", () => {
     expect(subjectForChannelRevision("c1")).toBe("revision:c1");
   });
@@ -65,7 +65,7 @@ describe("the revision subject (chapter 3.23, ADR-24)", () => {
   });
 });
 
-describe("the revision fabric payload (chapter 3.23)", () => {
+describe("the revision fabric payload", () => {
   it("takes an edit as a whole message", () => {
     const parsed = revisionFabricSchema.parse({ kind: "updated", message });
     expect(parsed.kind).toBe("updated");

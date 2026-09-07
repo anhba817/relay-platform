@@ -31,7 +31,7 @@ const pool = createPool();
 const db: Db = createDb(pool);
 let env: Environment;
 let repo: Repository;
-// A REAL SENDER, BECAUSE `sendMessage` REQUIRES ONE (chapter 3.17, FR-MSG-15).
+// A REAL SENDER, BECAUSE `sendMessage` REQUIRES ONE (FR-MSG-15).
 //
 // One row for the whole suite, created here rather than a `userId: "x"` at each call
 // site. A fixture that invents an id to satisfy a compiler is a test that stopped
@@ -82,7 +82,7 @@ describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
     expect(retry.duplicate).toBe(true);
   });
 
-  it("a retry returns the original's attachments and writes no second row (FR-011 (3.24))", async () => {
+  it("a retry returns the original's attachments and writes no second row (FR-011)", async () => {
     const channel = await repo.createChannel("idem-attachments", "public");
     const key = randomUUID();
     const attachments = [
@@ -120,7 +120,7 @@ describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
     expect(rows.filter((m) => m.text === "sent once")).toHaveLength(1);
   });
 
-  it("recovers a TOMBSTONE with an empty list and nothing published (FR-011 (3.24), FR-012 (3.24))", async () => {
+  it("recovers a TOMBSTONE with an empty list and nothing published (FR-011, FR-012)", async () => {
     // THE CASE CHAPTER 3.18 GUARDED FOR TEXT, NOW WITH AN ATTACHMENT LIST. A message is
     // sent with a key, deleted, and the same key is retried: the idempotency index still
     // recognises it, so the retry returns the ORIGINAL row — which is now a tombstone.

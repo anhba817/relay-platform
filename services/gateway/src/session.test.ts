@@ -41,7 +41,7 @@ function committed(seq: number): InternalSendResponse {
 
 function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
-    // Chapter 3.2: the api verifies tokens, so the stub is what decides which
+    // The api verifies tokens, so the stub is what decides which
     // credential is good. That inversion is the point — the gateway holds no
     // secret and cannot check a signature, so there is nothing left here to
     // fake except the ANSWER.
@@ -50,7 +50,7 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
         ? {
             environment_id: "env-1",
             user: "tuan",
-            // Chapter 3.15: the api now reports whether the user is banned, and a stub
+            // The api now reports whether the user is banned, and a stub
             // that does not say is a stub that has not thought about it.
             banned: false,
             channel_ids: [CHANNEL],
@@ -58,7 +58,7 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
             // none, so every channel reports zero — the pre-feature behaviour, and what a
             // client that stores the counts will compare against next time.
             channel_revisions: {},
-            // Chapter 3.8. The limits ride the session response because the
+            // The limits ride the session response because the
             // gateway has no database to read them from — so the stub supplies
             // them, exactly as the api would. Generous by default: every test
             // above this line is about something else.
@@ -67,7 +67,7 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
         : null,
     backfill: async () => ({}),
     sendMessage: async () => committed(42),
-    // Chapter 3.11. Null is what a gateway with no metering credential gets, and
+    // Null is what a gateway with no metering credential gets, and
     // it is the right default here: every test in this file is about the socket,
     // and a meter that reported would only add a call nobody asserts on.
     reportUsage: async () => null,
@@ -129,14 +129,14 @@ function stubFanout(): Fanout & {
    * the api stub calls it from inside the backfill, so "a message published
    * during the backfill window" is a line of code, not a stress loop. */
   emit: (message: Message) => void;
-  /** Chapter 3.23. The same injection for a revision: an edit or a deletion arriving from
+  /** The same injection for a revision: an edit or a deletion arriving from
    * another instance at a moment the test chooses. */
   emitRevision: (revision: RevisionFabric) => void;
 } {
   const published: unknown[] = [];
   const subjects: string[] = [];
   let deliver: (channelId: string, message: Message) => void = () => {};
-  // CHAPTER 3.23. The stub gained these because the interface did, and the typecheck is
+  // The stub gained these because the interface did, and the typecheck is
   // what said so: widening `Fanout` broke every fake that did not implement it, which is
   // the compile-time half of chapter 3.21's lesson about a module built and never passed.
   let deliverRevision: (channelId: string, revision: RevisionFabric) => void = () => {};
@@ -176,7 +176,7 @@ function stubFanout(): Fanout & {
   };
 }
 
-/** A counter with no Redis in it (chapter 3.8). The arithmetic is unit-tested
+/** A counter with no Redis in it. The arithmetic is unit-tested
  * in `limits.test.ts`; what these tests need is control over the ANSWER, so a
  * refusal is a line of code instead of three thousand sockets. */
 function stubLimits(
@@ -851,10 +851,10 @@ describe("the socket (chapter 2.5)", () => {
   });
 });
 
-// Chapter 3.8. The socket's two limits — one at the door, one on every frame —
+// The socket's two limits — one at the door, one on every frame —
 // and the two shapes a refusal takes, which are different because a handshake
 // has an HTTP response to write headers onto and a frame does not.
-describe("the socket's limits (chapter 3.8)", () => {
+describe("the socket's limits", () => {
   let harness: Harness | undefined;
   afterEach(async () => {
     await harness?.close();
@@ -989,7 +989,7 @@ describe("the socket's limits (chapter 3.8)", () => {
         session: async () => ({
           environment_id: "env-1",
           user: "tuan",
-          // Chapter 3.15: the api now reports whether the user is banned, and a stub
+          // The api now reports whether the user is banned, and a stub
           // that does not say is a stub that has not thought about it.
           banned: false,
           channel_ids: [CHANNEL],
@@ -1029,7 +1029,7 @@ describe("the socket's limits (chapter 3.8)", () => {
         session: async () => ({
           environment_id: "env-1",
           user: "tuan",
-          // Chapter 3.15: the api now reports whether the user is banned, and a stub
+          // The api now reports whether the user is banned, and a stub
           // that does not say is a stub that has not thought about it.
           banned: false,
           channel_ids: [CHANNEL],
@@ -1079,7 +1079,7 @@ describe("the socket's limits (chapter 3.8)", () => {
     reconnected.close();
   });
 
-  it("emits 4008 for a quota, and 4009 from nowhere (chapter 3.11)", async () => {
+  it("emits 4008 for a quota, and 4009 from nowhere", async () => {
     // CHAPTER 3.8 WROTE THIS TEST INVERTED, and said why:
     //
     //   4008 reads "quota exhausted". There is no quota yet — quotas are a
@@ -1121,7 +1121,7 @@ describe("the socket's limits (chapter 3.8)", () => {
     expect(CLOSE_CODES[4009]).toBeDefined();
   });
 
-  /** T049a, SC-008 (chapter 3.23) — FR-RTM-05's SIX KINDS ALL HAVE A PRODUCER.
+  /** T049a, SC-008 — FR-RTM-05's SIX KINDS ALL HAVE A PRODUCER.
    *
    * *"The system shall emit real-time events for message creation, edit, deletion,
    * membership change, presence change, and typing."* Six, and until this chapter two
@@ -1183,7 +1183,7 @@ describe("the socket's limits (chapter 3.8)", () => {
 // accident. The same argument applies harder here — **the inbound seam is where a
 // protocol is attacked**, and a third member arriving unnoticed is the failure
 // this file exists to prevent.
-describe("INBOUND_FRAME_TYPES (chapter 3.21)", () => {
+describe("INBOUND_FRAME_TYPES", () => {
   it("has exactly two members", () => {
     expect(INBOUND_FRAME_TYPES.size).toBe(2);
   });

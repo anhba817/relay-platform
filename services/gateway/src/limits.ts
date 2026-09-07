@@ -1,6 +1,6 @@
 import { Redis } from "ioredis";
 
-// The gateway's counter (chapter 3.8, research R12, R20).
+// The gateway's counter (research R12, R20).
 //
 // ITS OWN CLIENT, not fanout's, and that is forced rather than preferred.
 // `Fanout` is a closed interface — `onDelivery`, `publish`, `subscribe`,

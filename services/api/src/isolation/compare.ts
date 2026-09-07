@@ -1,4 +1,4 @@
-/** The indistinguishability oracle (chapter 3.12).
+/** The indistinguishability oracle.
  *
  * LIFTED FROM `messages/messages.itest.ts`, WHERE IT WAS WRITTEN AND WHERE IT WAS
  * RIGHT. Chapter 2.2's suite needed to prove that a foreign channel answers exactly

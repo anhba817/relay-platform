@@ -11,7 +11,7 @@ import {
   subjectFor,
 } from "./event";
 
-// The envelope (chapter 3.3), Docker-free. What a consumer eventually receives
+// The envelope, Docker-free. What a consumer eventually receives
 // is decided here and nowhere else — the relay moves bytes, it does not author
 // them (ADR-04, research R7).
 
@@ -22,7 +22,7 @@ const MESSAGE = {
   seq: 1,
   user: "tuan",
   text: "B2, north ramp",
-  // Chapter 3.24. TWO, because FR-006 says order holds on every path that returns a
+  // TWO, because FR-006 says order holds on every path that returns a
   // message and a consumer's webhook is one — a single-attachment fixture could not see
   // an order at all.
   attachments: [
@@ -108,7 +108,7 @@ describe("messageCreatedEvent", () => {
   });
 });
 
-describe("a legacy senderless message in the webhook payload (chapter 3.17)", () => {
+describe("a legacy senderless message in the webhook payload", () => {
   // THE ONE PATH THAT LEAVES THE PLATFORM. FR-WHK-02 delivers `message.created` to a
   // customer's own HTTPS endpoint and FR-WHK-03 retries a failed delivery for up to two
   // hours — so an event for a legacy senderless row can be delivered, and REdelivered,
@@ -137,7 +137,7 @@ describe("a legacy senderless message in the webhook payload (chapter 3.17)", ()
   });
 });
 
-// Chapter 3.20. The second and third event types FR-WHK-02 names, and the boundary
+// The second and third event types FR-WHK-02 names, and the boundary
 // that decides what a customer's webhook can contain.
 
 const MEMBERSHIP = {
@@ -145,7 +145,7 @@ const MEMBERSHIP = {
   user: "tuan",
 };
 
-/** A tombstone as a consumer receives it (chapter 3.23). No `text` key — that is
+/** A tombstone as a consumer receives it. No `text` key — that is
  * FR-020, and `strictObject` refuses one. */
 const DELETED = {
   id: MESSAGE.id,
@@ -234,7 +234,7 @@ describe("the outbox event type set", () => {
   });
 });
 
-describe("messageUpdatedEvent and messageDeletedEvent (chapter 3.23)", () => {
+describe("messageUpdatedEvent and messageDeletedEvent", () => {
   /** A creation built HERE, because `build` two describes up is out of scope — and the
    * comparison below needs both events from one place to mean anything. */
   const created = () =>
@@ -266,7 +266,7 @@ describe("messageUpdatedEvent and messageDeletedEvent (chapter 3.23)", () => {
     expect(deleted().subject).toBe(`events.msg.deleted.${ENV}`);
   });
 
-  it("leaves the edit's payload identical to a creation's (FR-008a, FR-015 (3.24))", () => {
+  it("leaves the edit's payload identical to a creation's (FR-008a, FR-015)", () => {
     // FR-008a in one assertion: *"The message payload used by creation and edit events
     // MUST be left unchanged."* Compared as SETS, so a field added to one and not the
     // other fails here rather than in a customer's consumer.
@@ -290,7 +290,7 @@ describe("messageUpdatedEvent and messageDeletedEvent (chapter 3.23)", () => {
     );
   });
 
-  it("carries the attachments themselves, in order, on both (FR-006 (3.24))", () => {
+  it("carries the attachments themselves, in order, on both (FR-006)", () => {
     // KEY SETS CANNOT SEE VALUES. Two payloads both carrying `[]` have identical key
     // sets, so the set comparison above answers FR-015's "one shape" and says nothing
     // about FR-006's "in the order they were submitted" — which holds on every path that
@@ -481,7 +481,7 @@ describe("outboxEventSchema — what a CONSUMER will accept", () => {
   });
 
   it.each(["message.created", "message.updated"] as const)(
-    "reads a %s written before this chapter and yields an empty list (FR-007 (3.24))",
+    "reads a %s written before this chapter and yields an empty list (FR-007)",
     (type) => {
       // THE EVENT SPINE IS DURABLE, so on the deploy that ships this chapter the
       // consumer reads bytes the previous binary wrote — and those have no

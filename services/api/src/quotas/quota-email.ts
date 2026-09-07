@@ -16,13 +16,13 @@ export interface CrossingFacts {
 const NOUN: Record<string, string> = {
   messages: "messages",
   active_users: "active users",
-  // Chapter 3.11. Hyphenated, as the customer-facing name — the column is
+  // Hyphenated, as the customer-facing name — the column is
   // `connection_minutes` and nobody reads a bill in snake case.
   connection_minutes: "connection-minutes",
 };
 
 /** What stops when THIS dimension's hard cap is reached, in the words a reader
- * needs (chapter 3.11).
+ * needs.
  *
  * "Sends are now being refused" is right for two dimensions and wrong for the
  * third: a connection-minutes cap refuses CONNECTS, and everything the tenant
@@ -57,7 +57,7 @@ function resumesOn(period: string): string {
 }
 
 /** What an organisation's admins are told when usage crosses a threshold
- * (chapter 3.10, FR-RTL-07).
+ * (FR-RTL-07).
  *
  * NO SECRET, NO KEY, NO MESSAGE TEXT. Chapter 3.9 established that this is
  * verified by reading what the mail server received rather than by asserting on

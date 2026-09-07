@@ -1,6 +1,6 @@
 import type { OutboxEvent } from "../outbox/event";
 
-// What a handler is, and — more importantly — what it is not (chapter 3.4).
+// What a handler is, and — more importantly — what it is not.
 //
 // SAD risk R5: "a future consumer forgets to dedupe → double webhooks / double
 // metering", mitigated by a "consumer template with dedup built in". The way to

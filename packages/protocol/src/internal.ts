@@ -56,7 +56,7 @@ export const internalSendResponseSchema = z.strictObject({
    * 2.7's resume path reads back out of Postgres. */
   user: z.string().min(1),
   text: z.string().nullable(),
-  /** REQUIRED, because this payload carries a message and FR-022 (3.24) says every
+  /** REQUIRED, because this payload carries a message and FR-022 says every
    * such payload has the field.
    *
    * THIS SCHEMA IS A `strictObject` AND `services/gateway/src/api-client.ts:248`
@@ -123,7 +123,7 @@ export const internalBackfillResponseSchema = z.strictObject({
 });
 
 // ---------------------------------------------------------------------------
-// Event subjects (chapter 3.4, ADR-02).
+// Event subjects (ADR-02).
 //
 // The grammar is `events.{domain}.{action}.{env}` — ADR-02's, verbatim. It lived
 // inside the api's outbox module in 3.3 because nothing else needed it. A
@@ -218,7 +218,7 @@ export const internalSessionResponseSchema = z.strictObject({
    * which is the pre-chapter behaviour and the safe direction to be wrong in for one
    * deploy window. */
   banned: z.boolean().default(false),
-  /** Chapter 3.8. The two limits the gateway enforces, resolved from the
+  /** The two limits the gateway enforces, resolved from the
    * environment's policy with nulls already turned into defaults.
    *
    * THEY RIDE THIS RESPONSE BECAUSE THE GATEWAY HAS NO DATABASE, and must not
@@ -237,7 +237,7 @@ export const internalSessionResponseSchema = z.strictObject({
   }),
 });
 
-/** The deliveries stream (chapter 3.5), and its subject grammar.
+/** The deliveries stream, and its subject grammar.
  *
  * Here rather than in either service, for the reason chapter 3.4 moved the event
  * grammar here: a consumer that assembles its own subject filter receives
@@ -260,7 +260,7 @@ export function deliverySubjectFor(environmentId: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Analytical events (chapter 3.6, constitution III).
+// Analytical events (constitution III).
 //
 // The THIRD grammar in this file, and it is here for the reason the other two
 // are: a consumer that assembles its own subject filter receives nothing the day
@@ -320,7 +320,7 @@ export function webhookAttemptSubject(environmentId: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// The dispatch contract (chapter 3.5, constitution IV).
+// The dispatch contract (constitution IV).
 //
 // The dispatcher owns no database. "Only the API service writes to PostgreSQL…
 // Other services obtain writes and backfill reads via the API service's internal
@@ -409,7 +409,7 @@ export type InternalDeliveryOutcomeResponse = z.infer<
   typeof internalDeliveryOutcomeResponseSchema
 >;
 
-/** The usage report (chapter 3.11, FR-RTL-05).
+/** The usage report (FR-RTL-05).
  *
  * THE ONE CALL THE GATEWAY MAKES FOR ITSELF. Its other three —
  * `/internal/session`, `/internal/backfill`, `/internal/messages` — forward the

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { remaining, resetAt, windowStart } from "./bucket";
 
-// The fixed-window arithmetic (chapter 3.8, research R1). Pure: no store, no
+// The fixed-window arithmetic (research R1). Pure: no store, no
 // clock of its own — every function takes the instant it should reason about,
 // which is what lets a boundary be tested rather than waited for.
 

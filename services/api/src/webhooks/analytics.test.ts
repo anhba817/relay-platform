@@ -5,7 +5,7 @@ import { createLogger, type Logger } from "@relay/service-kit";
 import type { PublishedMessage, Publisher } from "../outbox/publisher";
 import { publishAttempt, type AttemptRecord } from "./analytics";
 
-// The attempt record's SHAPE and its SILENCE (chapter 3.6).
+// The attempt record's SHAPE and its SILENCE.
 //
 // Two claims are worth a unit test, and both are about what the payload is not.
 // FR-004 says an attempt record carries identifiers, statuses and durations and

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { createGatewayLimits, decide, overLimit, windowStartFor } from "./limits.js";
 
-// The gateway's share of the arithmetic (chapter 3.8). Pure, so a window
+// The gateway's share of the arithmetic. Pure, so a window
 // boundary is a test rather than a wait.
 
 const MINUTE = 60_000;

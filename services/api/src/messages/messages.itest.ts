@@ -25,7 +25,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
   let app: INestApplication;
   let url: string;
   let env: { id: string };
-  // Chapter 3.2: the tenant arrives as a CREDENTIAL now, not as a header. The
+  // The tenant arrives as a CREDENTIAL now, not as a header. The
   // suite mints its own key the same way signup does — through the repository's
   // admin surface — so nothing here needs a test-only route to exist.
   let credential: string;
@@ -91,7 +91,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
     await app.close();
   });
 
-  // KEY SENDS NAME `courier`, THE TENANT'S BOT (chapter 3.17, T059). Each caller passes
+  // KEY SENDS NAME `courier`, THE TENANT'S BOT (T059). Each caller passes
   // its own body, so the sender is added per call rather than defaulted here — a default
   // would hide which tests are about the sender and which merely need one.
   const send = (body: unknown, channel = channelId, key = credential) =>
@@ -120,7 +120,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
     expect(typeof body.docs_url).toBe("string");
   });
 
-  // T035 through T040 (chapter 3.24). THE BOUND, THE KINDS, THE SCHEMES, AND THE ONE
+  // T035 through T040. THE BOUND, THE KINDS, THE SCHEMES, AND THE ONE
   // REFUSAL THAT NEEDED A CODE OF ITS OWN.
   describe("the refusals, through the route (US2)", () => {
     const png = (n: number) => ({
@@ -129,7 +129,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       url: `https://example.test/${n}.png`,
     });
 
-    it("refuses eleven and writes no row (FR-005 (3.24), SC-002 (3.24))", async () => {
+    it("refuses eleven and writes no row (FR-005, SC-002)", async () => {
       const before = await fetch(`${url}/v1/channels/${channelId}/messages?limit=200`, {
         headers: { authorization: `Bearer ${credential}` },
       });
@@ -155,7 +155,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(((await after.json()) as { messages: unknown[] }).messages.length).toBe(countBefore);
     });
 
-    it("accepts exactly ten and returns all ten (FR-005 (3.24))", async () => {
+    it("accepts exactly ten and returns all ten (FR-005)", async () => {
       // A BOUND TESTED ONLY FROM ABOVE IS A BOUND THAT COULD BE NINE.
       const res = await send({
         text: "ten",
@@ -167,7 +167,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(created.attachments).toHaveLength(10);
     });
 
-    it("stores the same url twice, twice (FR-021 (3.24))", async () => {
+    it("stores the same url twice, twice (FR-021)", async () => {
       // THE SPEC ASKED THIS AS AN OPEN QUESTION AND ANSWERED IT: two identical links are
       // two attachments, because the platform does not compare them — the same argument
       // chapter 3.23 made for not comparing message texts to decide whether an edit
@@ -183,7 +183,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(created.attachments[0]!.url).toBe(created.attachments[1]!.url);
     });
 
-    it("refuses a kind outside the three (FR-002 (3.24))", async () => {
+    it("refuses a kind outside the three (FR-002)", async () => {
       const res = await send({
         text: "a spreadsheet",
         user: "courier",
@@ -198,7 +198,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       ["data:", "data:image/png;base64,iVBORw0KGgo="],
       ["file:", "file:///etc/passwd"],
       ["vbscript:", "vbscript:msgbox(1)"],
-    ])("refuses %s through the route (T038, FR-004 (3.24), SC-004 (3.24))", async (_label, bad) => {
+    ])("refuses %s through the route (T038, FR-004, SC-004)", async (_label, bad) => {
       // THROUGH THE ROUTE, NOT ONLY AT THE SCHEMA. `attachments.test.ts` proves the rule
       // exists; this proves it FIRES on the path a caller takes — a schema nobody wired
       // in refuses nothing. Research R7 measured `z.url()` accepting all four.
@@ -211,7 +211,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(((await res.json()) as { field: string }).field, bad).toBe("attachments.0.url");
     });
 
-    it("answers a media_id with its own code and a 422 (FR-003a (3.24))", async () => {
+    it("answers a media_id with its own code and a 422 (FR-003a)", async () => {
       const res = await send({
         text: "hosted media",
         user: "courier",
@@ -236,8 +236,8 @@ describe("POST /v1/channels/:channelId/messages", () => {
     });
   });
 
-  // T029, T031 and T032a (chapter 3.24). THE REST DOOR, END TO END.
-  describe("attachments through the send and history routes (SC-001 (3.24))", () => {
+  // T029, T031 and T032a. THE REST DOOR, END TO END.
+  describe("attachments through the send and history routes (SC-001)", () => {
     const png = (n: string) => ({
       type: "url",
       kind: "image",
@@ -277,7 +277,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       ]);
     });
 
-    it("reads back an empty list, not an absent field (FR-007 (3.24))", async () => {
+    it("reads back an empty list, not an absent field (FR-007)", async () => {
       const posted = await send({ text: "no pictures", user: "courier" });
       const created = (await posted.json()) as { seq: number };
       const res = await fetch(`${url}/v1/channels/${channelId}/messages?limit=10`, {
@@ -292,7 +292,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(read).toHaveProperty("attachments", []);
     });
 
-    it("shows a non-member nothing, and therefore no attachment (FR-014 (3.24))", async () => {
+    it("shows a non-member nothing, and therefore no attachment (FR-014)", async () => {
       // WHAT THIS DOES NOT PROVE, said here rather than left to be assumed: the attachment
       // adds no second surface BY CONSTRUCTION, not by this assertion. `channelVisibleTo`
       // runs as a gate before the read, so a non-member's answer contains no message and
@@ -330,7 +330,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
     });
   });
 
-  // T020b (chapter 3.24). THE REFUSAL'S `field`, NOT ONLY ITS CODE.
+  // T020b. THE REFUSAL'S `field`, NOT ONLY ITS CODE.
   //
   // The three sibling refusals measured together, so they cannot drift apart. The api's
   // pipe joins zod's `path` with dots into `field`, and a rule with no path produces a
@@ -339,7 +339,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
   //     neither text nor attachments   field = text
   //     eleven attachments             field = attachments
   //     a bad kind at index 3          field = attachments.3.kind
-  describe("the refusals name a field (FR-019b (3.24))", () => {
+  describe("the refusals name a field (FR-019b)", () => {
     const png = (n: number) => ({
       type: "url",
       kind: "image",
@@ -357,7 +357,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(body.field).toBe("text");
     });
 
-    it("names `attachments` when there are eleven (FR-005 (3.24))", async () => {
+    it("names `attachments` when there are eleven (FR-005)", async () => {
       const res = await send({
         text: "eleven",
         user: "courier",
@@ -368,7 +368,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(body.field).toBe("attachments");
     });
 
-    it("names the index and the key for a bad kind at position 3 (FR-002 (3.24))", async () => {
+    it("names the index and the key for a bad kind at position 3 (FR-002)", async () => {
       const attachments = [png(0), png(1), png(2), { ...png(3), kind: "spreadsheet" }];
       const res = await send({ text: "a bad kind", user: "courier", attachments });
       expect(res.status).toBe(400);
@@ -425,7 +425,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
   // test proves a check exists; only a route test proves it fires.
   describe("a private channel over the public route (FR-001, SC-002)", () => {
   
-  // ══ THE SENDER (chapter 3.17, US2) ══════════════════════════════════════════
+  // ══ THE SENDER (US2) ══════════════════════════════════════════
 
   // ── T033: the four outcomes for an application credential ──────────────────
   it("accepts a key's send naming a bot, and echoes the sender it used", async () => {
@@ -515,7 +515,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
     const token = await tokenFor("outsider");
     const res = await sendAs(token, privateChannelId);
     // 404, not 403: a private channel a caller cannot see answers as if absent
-    // (chapter 3.15, FR-019b).
+    // (FR-019b).
     expect(res.status).toBe(404);
   });
 
@@ -707,13 +707,13 @@ describe("POST /v1/channels/:channelId/messages", () => {
 });
 
 
-// ══ EDITING A MESSAGE (chapter 3.23, US1) ═══════════════════════════════════
+// ══ EDITING A MESSAGE (US1) ═══════════════════════════════════
 //
 // T024 WROTE THESE RED, and the route answering 404 is what "red for the right reason"
 // means here: `PATCH` on a path Nest has no handler for is a 404 from the router, not
 // from the visibility predicate, and the two are indistinguishable from outside. Every
 // test below therefore asserts something a 404 cannot satisfy.
-describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () => {
+describe("PATCH /v1/channels/:channelId/messages/:messageId", () => {
   let app: INestApplication;
   let url: string;
   let env: { id: string };
@@ -1280,14 +1280,14 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
     expect(rows[0]!["edited_at"]).toBeNull();
   });
 
-  // T043, T045, T046b and T047 (chapter 3.24). THE TOMBSTONE AND THE EDIT.
+  // T043, T045, T046b and T047. THE TOMBSTONE AND THE EDIT.
   describe("attachments through deletion and editing (US3)", () => {
     const two = [
       { type: "url", kind: "image", url: "https://example.test/keep-one.png" },
       { type: "url", kind: "audio", url: "https://example.test/keep-two.mp3" },
     ];
 
-    it("leaves attachments untouched through an edit, in order (FR-016 (3.24))", async () => {
+    it("leaves attachments untouched through an edit, in order (FR-016)", async () => {
       // THE FAILURE THIS CATCHES IS SILENT. An `UPDATE … SET text = ?, attachments = ?`
       // written without care drops the photograph and answers 200 — there is no error
       // anywhere in that sequence, which is why T046 falsifies it from the other side.
@@ -1318,7 +1318,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
       ]);
     });
 
-    it("reports the same two on the edit's own answers, in order (FR-015 (3.24))", async () => {
+    it("reports the same two on the edit's own answers, in order (FR-015)", async () => {
       // T045 ASSERTS THE DATABASE KEPT THEM; THIS ASSERTS WHAT THE EDIT REPORTS. Neither
       // implies the other — an empty array on either answer passes T045 and fails this.
       //
@@ -1348,7 +1348,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
       expect(read.attachments.map((a) => a.url)).toEqual(expected);
     });
 
-    it("says nothing about attachments in the edit history (FR-016 (3.24))", async () => {
+    it("says nothing about attachments in the edit history (FR-016)", async () => {
       // `message_edits` HAS THREE COLUMNS AND THE SAD PUBLISHES THREE. Chapter 3.23 built
       // that table to a published DDL, and an attachment column would be a fourth nobody
       // published — so the edit history records what the text WAS and says nothing about
@@ -1369,7 +1369,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId (chapter 3.23)", () 
       expect(Object.keys(edits[0]!).sort()).toEqual(["edited_at", "prior_text"]);
     });
 
-    it("returns a tombstone as an empty list through the history route (FR-012 (3.24), SC-003 (3.24))", async () => {
+    it("returns a tombstone as an empty list through the history route (FR-012, SC-003)", async () => {
       // THE SIX READ SHAPES `data-model.md` NAMES, and the assertion differs by shape
       // because the shapes do. Two carry the field and get `[]`; four never carried it
       // and the field stays ABSENT — which is the stronger answer, not a weaker one.

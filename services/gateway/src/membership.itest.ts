@@ -1893,7 +1893,7 @@ describe("a ban revokes everything at once (US4)", () => {
     // per-channel shape the fabric contract rules out.
     //
     // Two mechanisms already repair it. This asserts the one that exists now:
-    // reconnecting reads membership at the door (chapter 3.2). The other is the
+    // reconnecting reads membership at the door. The other is the
     // backstop's periodic re-read, which the next phase adds — and when it does, the
     // first assertion here becomes true only within the re-read interval.
     const { users, channels, sender } = await seed(["tuan", "linh"], 1);

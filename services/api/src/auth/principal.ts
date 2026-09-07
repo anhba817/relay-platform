@@ -1,4 +1,4 @@
-// What authentication produces (chapter 3.2). Never persisted, never sent —
+// What authentication produces. Never persisted, never sent —
 // this is the shape the rest of a request reasons about instead of reading a
 // header somebody asserted.
 //
@@ -21,7 +21,7 @@ export interface UserPrincipal {
   userExternalId: string;
 }
 
-/** The platform acting for itself (chapter 3.5).
+/** The platform acting for itself.
  *
  * The dispatcher is the first caller of the internal seam that is neither a
  * tenant's software nor an end user: it consumes every environment's events and
@@ -61,7 +61,7 @@ export type PrincipalKind = Principal["kind"];
  * principal is optional at the type level for one honest reason: a request that
  * presented nothing has none, and pre-credential routes (signup) are reached
  * exactly that way. */
-/** Chapter 3.8. Set by `AuthenticateMiddleware` when this address has already
+/** Set by `AuthenticateMiddleware` when this address has already
  * spent its failed-authentication allowance, and read by `CredentialGuard`,
  * which throws the 429.
  *
@@ -75,11 +75,11 @@ export const OVER_AUTH_THRESHOLD = Symbol.for("relay:over-auth-threshold");
 export interface RequestWithPrincipal {
   headers: Record<string, string | string[] | undefined>;
   principal?: Principal;
-  /** Chapter 3.18: the id `RequestContextMiddleware` generated for this request.
+  /** The id `RequestContextMiddleware` generated for this request.
    * A handler that logs on its own — the fan-out publish does — needs it, and
    * NFR-OBS-01 requires it in every structured line. */
   requestId?: string;
-  /** Chapter 3.8: set when this source address has spent its
+  /** Set when this source address has spent its
    * failed-authentication allowance. See `OVER_AUTH_THRESHOLD` above. */
   [OVER_AUTH_THRESHOLD]?: boolean;
 }

@@ -34,7 +34,7 @@ describe("POST /internal/backfill", () => {
   let quietChannelId: string;
   let leftChannelId: string;
   let tuan: { id: string };
-  /** Chapter 3.2: the gateway forwards the user's own token now, so the suite
+  /** The gateway forwards the user's own token now, so the suite
    * mints one per subject rather than asserting a name in a header. */
   let tokenFor: (user: string) => Promise<string>;
 
@@ -112,7 +112,7 @@ describe("POST /internal/backfill", () => {
     });
   });
 
-  it("replays two attachments in the order they were sent (FR-010 (3.24), SC-005 (3.24))", async () => {
+  it("replays two attachments in the order they were sent (FR-010, SC-005)", async () => {
     // SC-005: A CLIENT THAT WAS AWAY ENDS WITH THE SAME VIEW AS ONE THAT STAYED. The
     // replay is a different code path from delivery — it maps rows out of the database
     // rather than passing a payload along — so a field threaded correctly through every
@@ -138,7 +138,7 @@ describe("POST /internal/backfill", () => {
     ]);
   });
 
-  it("replays a message with none as an empty list (FR-007 (3.24))", async () => {
+  it("replays a message with none as an empty list (FR-007)", async () => {
     const sent = await say(channelId, "nothing attached");
     const body = await parsed(await ask({ [channelId]: sent.seq - 1 }));
     const frame = body.channels[channelId]!.messages.find((m) => m.seq === sent.seq)!;
@@ -206,7 +206,7 @@ describe("POST /internal/backfill", () => {
   it("skips a message no frame can be built from, rather than inventing one", async () => {
     const orphans = (await repo.createChannel("orphans", "public")).id;
     await repo.addMember(orphans, tuan.id);
-    // PLANTED, BECAUSE NOTHING CAN WRITE ONE ANY MORE (chapter 3.17, T014a, FR-014).
+    // PLANTED, BECAUSE NOTHING CAN WRITE ONE ANY MORE (T014a, FR-014).
     //
     // This is the SECOND test whose subject is a senderless row, and T014a named only
     // the first — `repository.itest.ts`'s `last_message.user` arm. Both had to stop
@@ -235,7 +235,7 @@ describe("POST /internal/backfill", () => {
     expect(page.messages.map((m) => m.seq)).not.toContain(anonymous.seq);
   });
 
-  // ══ WHAT A CLIENT THAT WAS AWAY CAN AND CANNOT LEARN (chapter 3.23, US4) ══
+  // ══ WHAT A CLIENT THAT WAS AWAY CAN AND CANNOT LEARN (US4) ══
   //
   // **THESE TESTS MOVED HERE FROM `services/gateway/src/resume.itest.ts`**, which the
   // task list named. That file boots the gateway against a **stubbed** api: its

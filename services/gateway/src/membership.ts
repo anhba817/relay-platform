@@ -8,7 +8,7 @@ import {
 import type { Logger } from "@relay/service-kit";
 import { Redis } from "ioredis";
 
-// Membership's gateway half (chapter 3.20, FR-RTM-10).
+// Membership's gateway half (FR-RTM-10).
 //
 // A THIRD FABRIC, AND THE FIRST ADDRESSED TO A PRINCIPAL. `chan:{channel_id}` carries
 // messages and `presence:{channel_id}` carries transitions, and both assume the

@@ -9,7 +9,7 @@ import {
   type UserProfileBody,
 } from "./users.schema";
 
-/** The user surface (chapter 3.15, FR-013 and the clauses after it).
+/** The user surface (FR-013 and the clauses after it).
  *
  * EVERY ROUTE HERE NAMES ITS USER IN THE PATH, and the credential is the tenant's.
  * So "the caller" on these routes is the application, never the user named — a
@@ -54,7 +54,7 @@ export class UsersService {
       avatar_url: user.avatar_url,
       metadata: user.metadata,
       // `kind` ON EVERY USER, AND THAT IS FR-003 BEING SATISFIED RATHER THAN
-      // DOCUMENTED (chapter 3.17). A client that had to infer personhood from a null
+      // DOCUMENTED. A client that had to infer personhood from a null
       // description would be inferring it from an absence, and the clause asks for a
       // stored property. `description` is null for a person because the schema refuses
       // to give one, not because nobody has set it yet.
@@ -116,7 +116,7 @@ export class UsersService {
     };
   }
 
-  /** Record a read position for the user the path names (chapter 3.15, FR-017, FR-018).
+  /** Record a read position for the user the path names (FR-017, FR-018).
    *
    * THE MEMBERSHIP THIS REFUSAL TALKS ABOUT IS THE PATH'S USER, NOT THE CALLER. Under an
    * application credential the caller has no membership at all — it is the tenant — so
@@ -166,7 +166,7 @@ export class UsersService {
     return { sequence: written.sequence };
   }
 
-  /** Up to 100 users in one call, reported per entry (chapter 3.15, FR-025, FR-026).
+  /** Up to 100 users in one call, reported per entry (FR-025, FR-026).
    *
    * SEQUENTIAL AND NOT A SINGLE MULTI-ROW STATEMENT. Each entry is its own upsert because
    * each carries its own partial profile: a bulk `INSERT ... ON CONFLICT DO UPDATE` has one
@@ -183,7 +183,7 @@ export class UsersService {
   async upsertUsers(body: UpsertUsersBody): Promise<{
     data: Array<{
       external_id: string;
-      /** A FOURTH STATUS, IN A 200 (chapter 3.17, FR-002a). `kind_conflict` says the
+      /** A FOURTH STATUS, IN A 200 (FR-002a). `kind_conflict` says the
        * entry asked to change what kind of thing a user is and the change was refused
        * — a promotion whose row has already sent a message, or any demotion.
        *
@@ -218,7 +218,7 @@ export class UsersService {
     return { data };
   }
 
-  /** Delete a user (chapter 3.15, FR-027 to FR-029).
+  /** Delete a user (FR-027 to FR-029).
    *
    * IDEMPOTENT AT 200 AND 404 FOR A USER WHO NEVER EXISTED. `requireUser` cannot be used
    * here — it 404s a user who is already deleted, and deleting twice is the ordinary
@@ -231,7 +231,7 @@ export class UsersService {
     return { external_id: externalId, deleted: true };
   }
 
-  /** Ban and unban, tenant-wide (chapter 3.15, FR-031, FR-032).
+  /** Ban and unban, tenant-wide (FR-031, FR-032).
    *
    * BOTH IDEMPOTENT AND BOTH 200. Banning a banned user and unbanning an unbanned one
    * are the ordinary outcomes of a retry, and the caller's intent is satisfied either

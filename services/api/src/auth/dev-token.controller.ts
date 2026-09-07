@@ -100,7 +100,7 @@ export class DevTokenController {
     // an existing row — its own comment is about refusing to rename anybody — so
     // `banned_at` and `deleted_at` survive a mint. `upsertUser` is the route that
     // clears state, and it clears only `deleted_at`, because FR-030 asks it to.
-    // A BOT CANNOT OBTAIN A TOKEN (chapter 3.17, FR-005, T040, T041).
+    // A BOT CANNOT OBTAIN A TOKEN (FR-005, T040, T041).
     //
     // `createUser` still creates a PERSON for an unknown identifier — FR-005a, and the
     // paragraph above is why that matters — so this refusal is only ever about a row

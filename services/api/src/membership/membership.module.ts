@@ -8,7 +8,7 @@ import {
   type MembershipPublisher,
 } from "./publisher";
 
-// ONE MODULE, TWO IMPORTERS (chapter 3.20).
+// ONE MODULE, TWO IMPORTERS.
 //
 // `ChannelsModule` and `UsersModule` both publish membership changes, and registering
 // the factory in each would open two Redis connections for one job. A module they

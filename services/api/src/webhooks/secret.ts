@@ -4,9 +4,9 @@ import {
   randomBytes,
 } from "node:crypto";
 
-// Webhook signing secrets at rest (chapter 3.5).
+// Webhook signing secrets at rest.
 //
-// DECISION (chapter 3.5): envelope encryption, not the salted hash chapter 3.2
+// DECISION: envelope encryption, not the salted hash chapter 3.2
 // used for API keys. NFR-SEC-02 permits either — "salted hashes or under
 // envelope encryption" — and this is the branch that applies, for a reason worth
 // stating because the two credentials look so alike:

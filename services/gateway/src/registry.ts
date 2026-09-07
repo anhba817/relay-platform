@@ -40,7 +40,7 @@ export interface Connection {
   /** Set when the buffer hit its ceiling. The frames are gone, so the
    * client must be told to page history instead of trusting the stream. */
   overflowed: boolean;
-  /** Chapter 3.7. Per channel, the highest sequence this connection's backfill
+  /** Per channel, the highest sequence this connection's backfill
    * delivered — kept for the connection's life so that a frame the fabric
    * announces AFTER the resume has finished can still be recognised as one the
    * client already holds.
@@ -58,7 +58,7 @@ export interface Connection {
    * 42. Bounded instead by `MAX_RESUME_CHANNELS`, which already caps the cursors
    * these are scoped to. */
   marks: Record<string, number> | null;
-  /** Chapter 3.8. The environment's send allowance, as it stood when this socket
+  /** The environment's send allowance, as it stood when this socket
    * connected — carried on the session response because the gateway has no
    * database and must not gain one (research R12).
    *
@@ -68,7 +68,7 @@ export interface Connection {
    * the hot path of the thing the limit protects. Beside `marks` for the same
    * reason — it describes one socket and dies with it. */
   sendLimit: number;
-  /** Chapter 3.11. When this socket opened, and which environment owes for it.
+  /** When this socket opened, and which environment owes for it.
    *
    * The meter needs both and the registry is where they belong, beside `marks`
    * and `sendLimit` and for the same reason: this describes one socket and dies
@@ -101,7 +101,7 @@ export class Registry {
     return [...this.byId.values()].filter((c) => c.channelIds.has(channelId));
   }
 
-  /** Chapter 3.19. Every local connection this user holds — the question presence
+  /** Every local connection this user holds — the question presence
    * asks at a close: "was that the last one on this instance?"
    *
    * A FILTER RATHER THAN A SECOND INDEX. `subscribersOf` above is the same shape

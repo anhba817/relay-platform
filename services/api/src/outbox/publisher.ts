@@ -1,4 +1,4 @@
-// The port (chapter 3.3). ADR-06's quieter payoff is that the outbox is "the
+// The port. ADR-06's quieter payoff is that the outbox is "the
 // abstraction seam that makes ADR-02 reversible": every event originates in a
 // Postgres table with a subject and a payload, and *which broker* is a relay
 // configuration detail. That sentence is only true if the seam exists in the

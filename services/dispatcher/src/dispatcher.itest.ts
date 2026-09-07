@@ -13,7 +13,7 @@ import { subjectFor } from "@relay/protocol";
 import { ACK_WAIT_MS, createDispatcher, type Dispatcher } from "./main.js";
 
 // The dispatcher against a real api, a real broker and a real customer endpoint
-// (chapter 3.5). Invariant 7 lives here; 11, 13, 15 and 16 join it.
+//. Invariant 7 lives here; 11, 13, 15 and 16 join it.
 //
 // The api runs as a CHILD PROCESS, not in-process — the same choice the
 // gateway's socket suite made in 3.2 and for the same reason. The dispatcher's
@@ -151,7 +151,7 @@ function spawnApi(pinned: string, credential: string): ChildProcess {
       // Chapter 3.3's finding 4, for the third time: this suite drives the relay
       // explicitly, so a background copy draining the same table would race it.
       RELAY_OUTBOX_RELAY: "off",
-      // Chapter 3.8: nor the notification relay, for the same reason.
+      // Nor the notification relay, for the same reason.
       RELAY_NOTIFICATION_RELAY: "off",
       RELAY_EVENT_CONSUMER: "off",
       RELAY_DELIVERY_RELAY: "off",
@@ -407,7 +407,7 @@ describe("the dispatcher", () => {
     second = customerEndpoint();
     secondUrl = await second.listen();
 
-    // A RANDOM HIGH PORT (chapter 3.13, T077). This bound a fixed 4131, which is
+    // A RANDOM HIGH PORT (T077). This bound a fixed 4131, which is
     // the second instance of the fault CLAUDE.md names only for
     // `limits.itest.ts` — the audit is what found it. The integration lane runs
     // one package at a time, so nothing races this file WITHIN a run; what does
@@ -835,7 +835,7 @@ describe("the dispatcher", () => {
     // Not JSON at all. `msg.json()` throws, and the consumer must TERMINATE
     // rather than leave it unacknowledged — the same bytes fail the same way
     // every time, so redelivering them spends the broker's attempt budget to
-    // reach a conclusion that was available on the first pass (chapter 3.4).
+    // reach a conclusion that was available on the first pass.
     await publishEvent(
       subjectFor("message.created", seeded.environmentId),
       encoder.encode("{ this is not json"),

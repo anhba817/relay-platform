@@ -8,7 +8,7 @@ import {
 } from "../db/repository";
 import { disableNotification, type Mailer } from "./mailer";
 
-// The notification relay (chapter 3.8, FR-WHK-07 to FR-WHK-07).
+// The notification relay (FR-WHK-07 to FR-WHK-07).
 //
 // THE OUTBOX A THIRD TIME, and deliberately the same shape as chapter 3.3's:
 // claim undelivered rows oldest-first with `FOR UPDATE SKIP LOCKED`, do the

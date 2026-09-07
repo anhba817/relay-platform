@@ -35,7 +35,7 @@ describe("the internal surface", () => {
   let env: { id: string };
   let channelId: string;
   let privateChannelId: string;
-  /** Chapter 3.2: the gateway forwards the END USER'S token instead of
+  /** The gateway forwards the END USER'S token instead of
    * asserting two identity headers, so this suite mints tokens the same way the
    * dev-token endpoint does — with the environment's own signing secret. */
   let tokenFor: (user: string) => Promise<string>;
@@ -47,7 +47,7 @@ describe("the internal surface", () => {
     const user = await repo.createUser("tuan", "Tuan");
     channelId = (await repo.createChannel("fleet", "public")).id;
     await repo.addMember(channelId, user.id);
-    // Chapter 3.15: the socket's route reaches the same `sendMessage`, so the
+    // The socket's route reaches the same `sendMessage`, so the
     // membership check has to hold here too — this is the caller R1 counted and
     // the one that always supplied a user.
     privateChannelId = (await repo.createChannel("fleet-private", "private")).id;

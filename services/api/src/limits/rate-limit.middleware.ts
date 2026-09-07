@@ -17,7 +17,7 @@ import { authKey, counterKey, type CounterStore } from "./store";
 /** Read once per call site so a test that freezes time sees one instant. */
 const now0 = (): number => Date.now();
 
-// The tenant limiter (chapter 3.8, FR-RTL-01…04).
+// The tenant limiter (FR-RTL-01…04).
 //
 // MIDDLEWARE, NOT A GUARD, for two reasons. Chapter 3.2's: Nest constructs
 // request-scoped providers before the enhancer chain, so a guard cannot be the

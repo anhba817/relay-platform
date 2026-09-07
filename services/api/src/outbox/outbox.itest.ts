@@ -16,7 +16,7 @@ import { createJetStreamPublisher } from "./jetstream.publisher";
 import { createRelay } from "./relay";
 import type { Publisher, PublishedMessage } from "./publisher";
 
-// The outbox, against the real database (chapter 3.3). Invariants 1-4, 7-8 and
+// The outbox, against the real database. Invariants 1-4, 7-8 and
 // 11 live here; the crash cases (5, 6, 10) and the broker outage (9) are added
 // below, because both need a process to kill or a container to stop.
 //
@@ -292,7 +292,7 @@ describe("the outbox", () => {
     expect(messages.rows[0]!.n).toBeGreaterThan(0);
 
     const owed = (await db.execute(
-      // SCOPED TO THE MESSAGE'S EVENT (chapter 3.20). This counted every row in the
+      // SCOPED TO THE MESSAGE'S EVENT. This counted every row in the
       // environment, which was the same question while `message.created` was the only
       // type. The walk's own seed calls `addMember`, and that writes a
       // `channel.member_added` row now — a correctly written one, for a state change
@@ -517,13 +517,13 @@ async function outboxDepthFor(db: Db, environmentId: string): Promise<number> {
   return result.rows[0]?.pending ?? 0;
 }
 
-// Chapter 3.20. The membership rows, and the transaction that has to hold them.
+// The membership rows, and the transaction that has to hold them.
 //
 // THIS PHASE SHIPS BEFORE ANY PUBLISH EXISTS, which is the ordering constitution II
 // forces: "publish-after-commit without the outbox is forbidden". A phase that built
 // the fabric first would ship the violation and then repair it, and the repair would
 // read as a refactor rather than as the fix it is.
-describe("the membership rows (chapter 3.20, FR-WHK-02)", () => {
+describe("the membership rows (FR-WHK-02)", () => {
   let db: Db;
   let repo: Repository;
   let envId: string;

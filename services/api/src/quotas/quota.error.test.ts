@@ -39,7 +39,7 @@ describe("the refusal a developer reads", () => {
   });
 });
 
-describe("the message names the right noun and the right operation (3.11)", () => {
+describe("the message names the right noun and the right operation", () => {
   const at = (dimension: Dimension) =>
     new QuotaExceededError({
       dimension,

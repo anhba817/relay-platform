@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
-// The API key as a string, and the arithmetic behind it (chapter 3.2).
+// The API key as a string, and the arithmetic behind it.
 // Framework-free on purpose: this is where the credential's rules live, and
 // they are testable without a server, a database or a request.
 //

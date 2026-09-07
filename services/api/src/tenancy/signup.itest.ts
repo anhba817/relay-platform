@@ -12,7 +12,7 @@ import { createDb, createPool } from "../db/client";
 import { provisionOrganisation, Repository } from "../db/repository";
 import { STATE_COOKIE } from "./state-cookie";
 
-// Signup against the real database (chapter 3.1) — invariants 1–4 and 7.
+// Signup against the real database — invariants 1–4 and 7.
 //
 // The OAuth provider is a stand-in served from this file: a token endpoint and
 // a user endpoint, on a real port. Nothing about the flow is stubbed except who
@@ -297,7 +297,7 @@ describe("signup", () => {
       const text = await res.text();
       expect(text).not.toContain("organisation");
     }
-    // Chapter 3.2: there is no header left to forge here. The property is
+    // There is no header left to forge here. The property is
     // unchanged — no route but signup creates a tenant — and a credential-free
     // internal call is now refused before it reaches a handler, which is a
     // stronger form of the same guarantee.

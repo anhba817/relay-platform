@@ -4,7 +4,7 @@ import type { Logger } from "@relay/service-kit";
 import type { ApiClient } from "./api-client.js";
 import type { Connection, Registry } from "./registry.js";
 
-// Connection-minutes, from the service that cannot write them (chapter 3.11).
+// Connection-minutes, from the service that cannot write them.
 //
 // The api can count messages and distinct users because both are already rows.
 // It cannot count a connection: nothing records one, and the only process that
@@ -125,7 +125,7 @@ export interface MeterOptions {
   now?: () => Date;
 }
 
-/** The meter (chapter 3.11).
+/** The meter.
  *
  * WHAT IT SENDS IS A TOTAL, NOT AN INCREMENT, and everything else here follows
  * from that. A lost report is repaired by the next one; a repeated one credits

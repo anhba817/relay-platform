@@ -45,7 +45,7 @@ function frame(seq: number): Message {
 
 const VALID_TOKEN = "token-for-tuan";
 
-/** Chapter 3.2: the gateway holds no signing secret, so a test token is an
+/** The gateway holds no signing secret, so a test token is an
  * opaque string the stubbed api agrees to recognise. What this suite proves —
  * the resume race against a real broker — never depended on the signature. */
 function token(): Promise<string> {
@@ -127,7 +127,7 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
-        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
@@ -135,7 +135,7 @@ describe("resume across a real fabric", () => {
         // none, so every channel reports zero — the pre-feature behaviour, and what a
         // client that stores the counts will compare against next time.
         channel_revisions: {},
-        // Chapter 3.8: the limits ride the session response now. Generous, and
+        // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
       }),
@@ -149,7 +149,7 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
-      // Chapter 3.20. Agrees with `session` above: this file is about the resume,
+      // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
       memberships: async () => [CHANNEL],
@@ -172,7 +172,7 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
-        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
@@ -180,7 +180,7 @@ describe("resume across a real fabric", () => {
         // none, so every channel reports zero — the pre-feature behaviour, and what a
         // client that stores the counts will compare against next time.
         channel_revisions: {},
-        // Chapter 3.8: the limits ride the session response now. Generous, and
+        // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
       }),
@@ -192,7 +192,7 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
-      // Chapter 3.20. Agrees with `session` above: this file is about the resume,
+      // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
       memberships: async () => [CHANNEL],
@@ -211,7 +211,7 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
-        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
@@ -219,7 +219,7 @@ describe("resume across a real fabric", () => {
         // none, so every channel reports zero — the pre-feature behaviour, and what a
         // client that stores the counts will compare against next time.
         channel_revisions: {},
-        // Chapter 3.8: the limits ride the session response now. Generous, and
+        // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
       }),
@@ -229,7 +229,7 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
-      // Chapter 3.20. Agrees with `session` above: this file is about the resume,
+      // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
       memberships: async () => [CHANNEL],
@@ -268,7 +268,7 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
-        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
@@ -276,7 +276,7 @@ describe("resume across a real fabric", () => {
         // none, so every channel reports zero — the pre-feature behaviour, and what a
         // client that stores the counts will compare against next time.
         channel_revisions: {},
-        // Chapter 3.8: the limits ride the session response now. Generous, and
+        // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
       }),
@@ -286,7 +286,7 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
-      // Chapter 3.20. Agrees with `session` above: this file is about the resume,
+      // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
       memberships: async () => [CHANNEL],
@@ -318,7 +318,7 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
-        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
@@ -326,7 +326,7 @@ describe("resume across a real fabric", () => {
         // none, so every channel reports zero — the pre-feature behaviour, and what a
         // client that stores the counts will compare against next time.
         channel_revisions: {},
-        // Chapter 3.8: the limits ride the session response now. Generous, and
+        // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
       }),
@@ -336,7 +336,7 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
-      // Chapter 3.20. Agrees with `session` above: this file is about the resume,
+      // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
       memberships: async () => [CHANNEL],
@@ -431,7 +431,7 @@ describe("resume across a real fabric", () => {
       session: async () => ({
         environment_id: "env-1",
         user: "tuan",
-        // Chapter 3.15: the api now reports whether the user is banned, and a stub
+        // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
@@ -439,7 +439,7 @@ describe("resume across a real fabric", () => {
         // none, so every channel reports zero — the pre-feature behaviour, and what a
         // client that stores the counts will compare against next time.
         channel_revisions: {},
-        // Chapter 3.8: the limits ride the session response now. Generous, and
+        // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
         limits: { connect: 3_000, send: 600 },
       }),
@@ -449,7 +449,7 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
-      // Chapter 3.20. Agrees with `session` above: this file is about the resume,
+      // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
       memberships: async () => [CHANNEL],
@@ -608,7 +608,7 @@ describe("the revision count rides every ack (feature 044, FR-004, FR-007a)", ()
 // half where a REAL api publishes lives in `session.itest.ts`, which spawns one.
 // Neither fixture does both, and `chapter-notes.md` says so rather than letting
 // the pair imply it.
-describe("two instances on one fabric (chapter 3.18)", () => {
+describe("two instances on one fabric", () => {
   const OTHER_CHANNEL = randomUUID();
   let member: Harness | undefined;
   let bystander: Harness | undefined;
@@ -640,7 +640,7 @@ describe("two instances on one fabric (chapter 3.18)", () => {
     sendMessage: async () => {
       throw new Error("not used");
     },
-    // Chapter 3.20. The same list `session` answers with, so the backstop confirms
+    // The same list `session` answers with, so the backstop confirms
     // what the connect already established and changes nothing.
     memberships: async () => channels,
   });

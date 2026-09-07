@@ -1,5 +1,5 @@
 // The limit policy: what each environment is allowed, and what each number rests
-// on (chapter 3.8, research R26).
+// on (research R26).
 //
 // R4 chose all four of these by judgement and checked none of them against a
 // document stating this platform's scale. The fourteenth analysis pass read the

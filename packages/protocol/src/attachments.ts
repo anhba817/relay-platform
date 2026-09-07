@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** THE ATTACHMENT SHAPE (chapter 3.24, FR-MSG-11's P2 half).
+/** THE ATTACHMENT SHAPE (FR-MSG-11's P2 half).
  *
  * Its own module, following `presence.ts`, `typing.ts` and `revision.ts`: a shape both
  * doors import, plus the constants that bound it. Two schemas that happen to agree are

@@ -19,7 +19,7 @@ import { periodOf } from "./period";
 import { createQuotaRelay } from "./quota-relay";
 import { QuotaExceededError } from "./quota.error";
 
-// Connection-minutes, credited (chapter 3.11, US1 and US2).
+// Connection-minutes, credited (US1 and US2).
 //
 // EVERY TEST HERE DRIVES A CLOCK. The unit is a calendar minute and the
 // scenarios are written in them — three boundaries, a socket that lives inside

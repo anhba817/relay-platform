@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { boot, type System } from "./harness.js";
 
-// Invariant 14, first half (chapter 3.5): with the dispatcher absent, end users
+// Invariant 14, first half: with the dispatcher absent, end users
 // are served exactly as before.
 //
 // This is the journey that shows what the service split BOUGHT. Inside the api,

@@ -10,7 +10,7 @@ import {
   secretMatches,
 } from "./api-key";
 
-// The credential's own rules (chapter 3.2), Docker-free: format, prefix,
+// The credential's own rules, Docker-free: format, prefix,
 // hashing, comparison. Everything here is pure — the database appears in
 // credentials.itest.ts, not in this file.
 

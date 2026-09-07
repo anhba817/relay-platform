@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { classifyRow, SPINE_TABLES } from "./catalogue";
 
 // The classification's four arms, driven with rows made up here rather than with
-// rows a database happens to hold (chapter 3.12, FR-040).
+// rows a database happens to hold (FR-040).
 //
 // The one that matters is `null`. It executes only when somebody adds a table with
 // no tenant path — which is the state `tenant-scope.itest.ts` exists to prevent —

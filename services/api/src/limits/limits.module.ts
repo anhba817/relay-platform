@@ -4,7 +4,7 @@ import { createDb, createPool, type Db } from "../db/client";
 import { apiLogger, LOGGER } from "../logger";
 import { createCounterStore, type CounterStore } from "./store";
 
-// The counter store's home (chapter 3.8).
+// The counter store's home.
 //
 // It is a module for one reason: the client has to be closed. Every long-lived
 // resource in this api closes through `OnModuleDestroy` — the outbox relay, the

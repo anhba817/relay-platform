@@ -2,7 +2,7 @@ import { Redis } from "ioredis";
 
 import { WINDOW_MS } from "./policy";
 
-// The counter store (chapter 3.8, research R1).
+// The counter store (research R1).
 //
 // THE ONLY MODULE IN THE API PERMITTED TO HOLD A REDIS CLIENT, enforced by
 // `no-restricted-imports` in `eslint.config.mjs` — the same confinement the

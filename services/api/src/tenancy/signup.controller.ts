@@ -26,7 +26,7 @@ import {
   statesMatch,
 } from "./state-cookie";
 
-// Signup (chapter 3.1, FR-TEN-01/02). Two routes, both necessarily
+// Signup (FR-TEN-01/02). Two routes, both necessarily
 // unauthenticated: they exist to establish who somebody is, and no tenant
 // exists yet for a header to name. Note what is absent — the
 // EnvironmentContextGuard every other controller carries (2.2). The guard is

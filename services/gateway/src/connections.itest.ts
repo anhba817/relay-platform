@@ -300,7 +300,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
     for (const instance of open.splice(0)) await instance.close();
   });
 
-  it("accepts five and refuses the sixth with 4004 (FR-001 (3.22), FR-003, SC-002)", async () => {
+  it("accepts five and refuses the sixth with 4004 (FR-001, FR-003, SC-002)", async () => {
     const channel = randomUUID();
     const instance = await boot({ user, channels: [channel], cap: {} });
     open.push(instance);
@@ -345,7 +345,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
     await fanout.close();
   }, 40_000);
 
-  it("frees a slot on close, reusable with NO waiting period (FR-010 (3.22), SC-003)", async () => {
+  it("frees a slot on close, reusable with NO waiting period (FR-010, SC-003)", async () => {
     const channel = randomUUID();
     const instance = await boot({ user, channels: [channel], cap: {} });
     open.push(instance);
@@ -367,7 +367,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
     expect(count(replacement, "connection.ack")).toBe(1);
   }, 40_000);
 
-  it("logs the refusal with the user, the environment and the count, and no credential (FR-015 (3.22), SC-008)", async () => {
+  it("logs the refusal with the user, the environment and the count, and no credential (FR-015, SC-008)", async () => {
     const channel = randomUUID();
     const lines: Record<string, unknown>[] = [];
     const instance = await boot({ user, channels: [channel], cap: {}, lines });
@@ -394,7 +394,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
     expect(JSON.stringify(rejected)).not.toContain("rk_");
   }, 40_000);
 
-  it("delivers a message to both of one user's connections, each exactly once (FR-014 (3.22), SC-001)", async () => {
+  it("delivers a message to both of one user's connections, each exactly once (FR-014, SC-001)", async () => {
     const channel = randomUUID();
     const instance = await boot({ user, channels: [channel] });
     open.push(instance);
@@ -431,7 +431,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
     await fanout.close();
   }, 30_000);
 
-  it("delivers a membership change to both of one user's connections (FR-014 (3.22))", async () => {
+  it("delivers a membership change to both of one user's connections (FR-014)", async () => {
     const channel = randomUUID();
     const instance = await boot({ user, channels: [channel] });
     open.push(instance);
@@ -466,7 +466,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
     await publisher.quit();
   }, 30_000);
 
-  it("keeps delivering to a live connection when an EARLIER one is gone (FR-014 (3.22))", async () => {
+  it("keeps delivering to a live connection when an EARLIER one is gone (FR-014)", async () => {
     const channel = randomUUID();
     const instance = await boot({ user, channels: [channel] });
     open.push(instance);
@@ -607,7 +607,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     for (const instance of open.splice(0)) await instance.close();
   });
 
-  it("counts five across two instances and refuses the sixth on either (FR-006 (3.22), SC-004)", async () => {
+  it("counts five across two instances and refuses the sixth on either (FR-006, SC-004)", async () => {
     // CON-02 AS A TEST. Two gateways, two registry modules, one Redis, and a cap
     // that neither instance can compute on its own: three places on A and two on
     // B is five, and the sixth has nowhere to go whichever door it knocks on.
@@ -633,7 +633,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     });
   }, 40_000);
 
-  it("frees a dead instance's slots after the bound (FR-007 (3.22), SC-005)", async () => {
+  it("frees a dead instance's slots after the bound (FR-007, SC-005)", async () => {
     // AN INJECTED BOUND, the way `presence.itest.ts` injects `graceMs`. The
     // wall-clock version — sixty seconds of waiting — belongs in `quickstart.md`,
     // and it is what proves this injected one is telling the truth.
@@ -662,7 +662,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     expect(count(replacement, "connection.ack")).toBe(1);
   }, 40_000);
 
-  it("still refuses BEFORE the bound elapses (FR-007 (3.22), SC-005)", async () => {
+  it("still refuses BEFORE the bound elapses (FR-007, SC-005)", async () => {
     // **THE HALF USUALLY SKIPPED**, and the two halves were measured to be
     // independent rather than assumed to be. Dropping the `PX` from the claim
     // turns the test above red and this one green; making the `PX` 1 ms turns this
@@ -698,7 +698,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     });
   }, 40_000);
 
-  it("frees the slots IMMEDIATELY on a clean shutdown (FR-011a (3.22), SC-013)", async () => {
+  it("frees the slots IMMEDIATELY on a clean shutdown (FR-011a, SC-013)", async () => {
     // FOUND BY BUILDING `traceability.md` DURING PLANNING: one task wrote
     // `releaseAll()`, another asserted `connections.close()` was *registered* in
     // `main.ts`, and nothing asserted anything was released. The crash test above
@@ -731,7 +731,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     expect(count(reconnected, "connection.ack")).toBe(1);
   }, 40_000);
 
-  it("keeps a heartbeating connection's slot across three bounds (FR-008 (3.22), SC-006)", async () => {
+  it("keeps a heartbeating connection's slot across three bounds (FR-008, SC-006)", async () => {
     // CHAPTER 3.19 SHIPPED A PRESENCE BUG BY ARMING A CHECK AT EXACTLY ITS OWN
     // GRACE PERIOD — two deadlines on one instant, reached by two clocks, and the
     // losing side stranded a user online for ever. This is the test that would
@@ -762,7 +762,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     expect(lines.filter((l) => l["msg"] === "connection.rejected")).toEqual([]);
   }, 40_000);
 
-  it("counts each environment separately for one user (FR-012 (3.22))", async () => {
+  it("counts each environment separately for one user (FR-012)", async () => {
     // CONSTITUTION I. The key carries the environment, so the same person in a
     // customer's staging and production environments has two allowances rather
     // than one shared between them.
@@ -791,7 +791,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     });
   }, 40_000);
 
-  it("does not resurrect an expired slot on renewal (FR-011 (3.22))", async () => {
+  it("does not resurrect an expired slot on renewal (FR-011)", async () => {
     // THE KEY IS DELETED RATHER THAN WAITED OUT, so the state is exact and no
     // sleep is being trusted to be longer than a TTL.
     //
@@ -820,7 +820,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     expect(reclaimed[0]?.["slot"]).toBe(0);
   }, 40_000);
 
-  it("refuses to renew a slot another connection took, rather than overwriting it (FR-011 (3.22))", async () => {
+  it("refuses to renew a slot another connection took, rather than overwriting it (FR-011)", async () => {
     // A DIFFERENT STATE FROM THE TEST ABOVE, and the one FR-011's second sentence
     // was written for: the slot did not just expire, somebody else has it.
     //
@@ -864,7 +864,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     expect(await raw.get(slotKey(1))).toBeTruthy();
   }, 40_000);
 
-  it("keeps the connection working on a NEW slot after a re-claim (FR-011b (3.22), SC-014)", async () => {
+  it("keeps the connection working on a NEW slot after a re-claim (FR-011b, SC-014)", async () => {
     // THE BRANCH A DESIGN THAT CLOSES ON ANY REFUSED RENEWAL GETS WRONG, and the
     // one that happens after every brief outage: the slot expired, nothing else
     // took it, and the user is under the limit. Closing here would cost somebody
@@ -904,7 +904,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     await fanout.close();
   }, 40_000);
 
-  it("never admits a sixth under many simultaneous claims (FR-013 (3.22))", async () => {
+  it("never admits a sixth under many simultaneous claims (FR-013)", async () => {
     // **THE RACE IS OBSERVABLE, AND T058'S FIRST ANSWER WAS THAT IT WAS NOT.**
     // Replacing `SET NX` with a `GET` followed by a `SET` — check-then-act, which
     // is exclusive when the calls are sequential and racy in the window between the
@@ -956,7 +956,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
     );
   }, 40_000);
 
-  it("closes the connection when the cap is genuinely full at renewal (FR-011b (3.22), SC-014)", async () => {
+  it("closes the connection when the cap is genuinely full at renewal (FR-011b, SC-014)", async () => {
     // THE OTHER BRANCH, and it has to close: the place is gone, all five are held
     // by other connections, and leaving this one open is six against a count of
     // five. FR-005 is not in tension with this — it governs a REFUSAL, where
@@ -1031,7 +1031,7 @@ describe("the cap fails open, and says so (US4)", () => {
     for (const instance of open.splice(0)) await instance.close();
   });
 
-  it("logs that the cap was not enforced when the registry is unreachable (FR-016 (3.22), SC-011)", async () => {
+  it("logs that the cap was not enforced when the registry is unreachable (FR-016, SC-011)", async () => {
     // THE LOG LINE, NOT THE ACCEPTANCE. `expect(acked).toBe(true)` here would pass
     // against a build with no cap at all, against one whose claim always succeeds,
     // and against this one. It says nothing.
@@ -1061,7 +1061,7 @@ describe("the cap fails open, and says so (US4)", () => {
     expect(JSON.stringify(unenforced[0])).not.toContain("rk_");
   }, 40_000);
 
-  it("tells 'not enforced' apart from 'enforced and under the limit' (FR-016a (3.22), SC-014)", async () => {
+  it("tells 'not enforced' apart from 'enforced and under the limit' (FR-016a, SC-014)", async () => {
     // BOTH DIRECTIONS, because one alone is satisfied by a line that always says
     // the same thing. A single "accepted" satisfies neither.
     const channel = randomUUID();
@@ -1094,7 +1094,7 @@ describe("the cap fails open, and says so (US4)", () => {
     expect(seeing.some((l) => l["msg"] === "connection.cap_unenforced")).toBe(false);
   }, 40_000);
 
-  it("does NOT fall back to counting this instance's own connections (FR-016b (3.22))", async () => {
+  it("does NOT fall back to counting this instance's own connections (FR-016b)", async () => {
     // THE SPEC'S Q2, REJECTED EXPLICITLY. Falling back to
     // `registry.connectionsFor(user)` looks like defence and is not: five per
     // instance across four gateways is an effective cap of twenty wearing the
@@ -1167,7 +1167,7 @@ describe("the slot registry, against a real broker", () => {
     expect(second).toEqual({ kind: "claimed", slot: 1, held: 1 });
   });
 
-  it("refuses when every slot is held, and says five (FR-001 (3.22))", async () => {
+  it("refuses when every slot is held, and says five (FR-001)", async () => {
     for (let i = 0; i < MAX_CONNECTIONS_PER_USER; i += 1) {
       expect((await registry.claim(ENV, user, randomUUID())).kind).toBe("claimed");
     }
@@ -1178,7 +1178,7 @@ describe("the slot registry, against a real broker", () => {
     });
   });
 
-  it("counts each environment separately for one user identifier (FR-012 (3.22))", async () => {
+  it("counts each environment separately for one user identifier (FR-012)", async () => {
     const other = `env-${randomUUID()}`;
     for (let i = 0; i < MAX_CONNECTIONS_PER_USER; i += 1) {
       await registry.claim(ENV, user, randomUUID());
@@ -1188,7 +1188,7 @@ describe("the slot registry, against a real broker", () => {
 
   // ---- ARM 3 and ARM 9: the renewal, and the re-claim --------------------
 
-  it("renews a slot it still holds (FR-008 (3.22))", async () => {
+  it("renews a slot it still holds (FR-008)", async () => {
     const id = randomUUID();
     const claimed = await registry.claim(ENV, user, id);
     if (claimed.kind !== "claimed") throw new Error("expected a slot");
@@ -1197,7 +1197,7 @@ describe("the slot registry, against a real broker", () => {
     });
   });
 
-  it("re-claims when its slot is GONE and nothing else took it (FR-011b (3.22))", async () => {
+  it("re-claims when its slot is GONE and nothing else took it (FR-011b)", async () => {
     // ARM 3 then ARM 9. A short-lived registry so the bound elapses inside a test
     // rather than in a minute: the boundMs option exists for exactly this, the way
     // `membership.ts`'s reread interval does — sixty seconds does not fit in a
@@ -1220,7 +1220,7 @@ describe("the slot registry, against a real broker", () => {
 
   // ---- ARM 4 and ARM 10: the hijack, and the cap genuinely full ----------
 
-  it("refuses to renew a slot ANOTHER connection now holds (FR-011 (3.22))", async () => {
+  it("refuses to renew a slot ANOTHER connection now holds (FR-011)", async () => {
     // ARM 4, and the one test in the chapter that catches `IFEQ` being replaced by
     // `XX`. `XX` tests existence and not ownership — measured on 8.10.0,
     // `SET k B XX` against a key holding `A` returns OK — so under `XX` this
@@ -1246,7 +1246,7 @@ describe("the slot registry, against a real broker", () => {
 
   // ---- ARM 6, ARM 7 and ARM 8: the release ------------------------------
 
-  it("frees a slot it holds, and the slot is reusable at once (FR-010 (3.22))", async () => {
+  it("frees a slot it holds, and the slot is reusable at once (FR-010)", async () => {
     const id = randomUUID();
     const claimed = await registry.claim(ENV, user, id);
     if (claimed.kind !== "claimed") throw new Error("expected a slot");
@@ -1274,7 +1274,7 @@ describe("the slot registry, against a real broker", () => {
     expect(again.slot, "a released slot cost more than one place").toBeLessThanOrEqual(1);
   });
 
-  it("claims a slot whose tombstone has NOT expired (FR-010 (3.22))", async () => {
+  it("claims a slot whose tombstone has NOT expired (FR-010)", async () => {
     // A HALF-SECOND TOMBSTONE, so the window is a window rather than a coin flip.
     // With the shipped one-millisecond value this test would pass against the
     // broken walk about half the time, which is how the defect survived: two of six
@@ -1296,7 +1296,7 @@ describe("the slot registry, against a real broker", () => {
     await slow.close();
   });
 
-  it("accepts a claim immediately after releaseAll frees all five (FR-011a (3.22))", async () => {
+  it("accepts a claim immediately after releaseAll frees all five (FR-011a)", async () => {
     // THE CASE THAT WAS ACTUALLY BROKEN, and it is a deploy. One slot tombstoned is
     // one slot skipped; five tombstoned is a walk that finds nothing free and
     // reports `full` — so a client reconnecting to the new instance is refused with
@@ -1323,7 +1323,7 @@ describe("the slot registry, against a real broker", () => {
     await slow.close();
   });
 
-  it("does NOT free a slot another connection now holds (FR-010 (3.22))", async () => {
+  it("does NOT free a slot another connection now holds (FR-010)", async () => {
     // ARM 6, and the reason the release is conditional. Under a plain `DEL` this
     // would delete the new owner's key and hand out a place that is in use — the
     // same ownership hole `IFEQ` closed on the renewal, on the path that fix
@@ -1344,7 +1344,7 @@ describe("the slot registry, against a real broker", () => {
     await brief.close();
   });
 
-  it("releases every slot this instance holds (FR-011a (3.22))", async () => {
+  it("releases every slot this instance holds (FR-011a)", async () => {
     const held = [];
     for (let i = 0; i < 3; i += 1) {
       const id = randomUUID();

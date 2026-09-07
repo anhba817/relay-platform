@@ -53,12 +53,12 @@ export class MessagesService {
      * "A key-authenticated public send is unattributed" was the old bound and it
      * described the whole route; now it describes one of its two credentials. */
     userId?: string,
-    /** Chapter 3.3: the same person as a CONSUMER will see them. The event
+    /** The same person as a CONSUMER will see them. The event
      * envelope carries external ids, and the internal route already holds this
      * one — it is the token's subject — so threading it costs nothing where a
      * lookup inside the write transaction would cost a query per message. */
     userExternalId?: string,
-    /** Whether the caller is an application credential (chapter 3.17, FR-007, T030).
+    /** Whether the caller is an application credential (FR-007, T030).
      *
      * A BOOLEAN, NOT THE PRINCIPAL. The service needs one fact to apply the bot rule and
      * has no business holding the request; the controller is what knows about credential
@@ -67,7 +67,7 @@ export class MessagesService {
     senderMustBeBot = false,
   ): Promise<MessageRow> {
     try {
-      // THE SENDER IS RESOLVED BEFORE HERE (chapter 3.17, FR-008). The controller does
+      // THE SENDER IS RESOLVED BEFORE HERE (FR-008). The controller does
       // it per credential class and refuses an absent or unresolvable one with a 400
       // naming `user`, so by this line there is a sender and it exists in this tenant.
       // What remains is the narrowing the compiler needs.
@@ -99,7 +99,7 @@ export class MessagesService {
       // about the CALLER, not about the channel, so saying so reveals nothing about what
       // channels exist — and a client that cannot tell "you are banned" from "no such
       // channel" retries for ever against a wall.
-      // 403 `sender_not_permitted`, AND NOT `forbidden` (chapter 3.17, FR-007a, T032a).
+      // 403 `sender_not_permitted`, AND NOT `forbidden` (FR-007a, T032a).
       //
       // `ProtocolErrorFilter` maps a bare 403 to `forbidden`, and this is the only code
       // in the chapter that collides with the ladder — so it is named here, the way
@@ -144,7 +144,7 @@ export class MessagesService {
         throw new NotFoundException("channel not found");
       }
       if (error instanceof QuotaExceededError) {
-        // ONE THROW, AND IT IS THE ONLY ONE (chapter 3.10, FR-RTL-08).
+        // ONE THROW, AND IT IS THE ONLY ONE (FR-RTL-08).
         //
         // Both send routes reach this method — `internal.controller.ts` calls
         // `messages.send`, the public controller calls it too — so there is one
@@ -177,7 +177,7 @@ export class MessagesService {
     }
   }
 
-  /** Change what a message says (chapter 3.23, FR-001, FR-013, FR-014).
+  /** Change what a message says (FR-001, FR-013, FR-014).
    *
    * THE VISIBILITY CHECK FIRST, AND IT IS THE SAME ONE `history` MAKES. `channelVisibleTo`
    * is the predicate chapter 3.15 built after finding `channelExists` answering only half
@@ -250,7 +250,7 @@ export class MessagesService {
     }
   }
 
-  /** Turn a message into a tombstone (chapter 3.23, FR-006, FR-009, FR-012, FR-013).
+  /** Turn a message into a tombstone (FR-006, FR-009, FR-012, FR-013).
    *
    * `userId` OPTIONAL, UNLIKE `edit`'s, and the asymmetry is FR-013a. FR-MOD-02 grants a
    * tenant key deletion of any message and is silent on editing; silence is read as
@@ -315,7 +315,7 @@ export class MessagesService {
   async history(
     channelId: string,
     { cursor, direction, limit }: HistoryQuery,
-    /** Who is reading (chapter 3.15, FR-002). Threaded for the same reason `send`
+    /** Who is reading (FR-002). Threaded for the same reason `send`
      * threads it: the membership check lives in the repository, and a check gated
      * on a parameter no caller fills in is a check that never fires. This route
      * dropped the caller for twenty-three chapters — the same defect as the send
@@ -332,7 +332,7 @@ export class MessagesService {
     // same — but it leaves a client unable to tell "no such conversation"
     // from "no messages yet", and it made one resource answer two ways
     // depending on the verb.
-    // VISIBILITY, NOT EXISTENCE (chapter 3.15, FR-003). `channelExists` answered
+    // VISIBILITY, NOT EXISTENCE (FR-003). `channelExists` answered
     // only the first half, and the difference was a leak: an absent channel gave
     // 404 while a private channel a non-member read gave 200 with an empty page.
     // One predicate now produces both refusals, so the two answers cannot diverge.

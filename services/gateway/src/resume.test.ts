@@ -138,7 +138,7 @@ describe("withDeadline", () => {
   });
 });
 
-// Chapter 3.7. `flushable` decides what a resuming connection may hand over from
+// `flushable` decides what a resuming connection may hand over from
 // its buffer; `suppressed` decides what a LIVE connection must still refuse. The
 // two comparisons are the same and the second one did not exist, which is the
 // whole of the defect.

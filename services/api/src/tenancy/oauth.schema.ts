@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// What a provider is allowed to say back (chapter 3.1). Two responses cross
+// What a provider is allowed to say back. Two responses cross
 // this boundary — the token exchange and the profile fetch — and both are
 // parsed, not assumed.
 //

@@ -101,7 +101,7 @@ export function serve(options: ServeOptions): Server {
         code: "not_found",
         message: `no route for ${req.method ?? "?"} ${path}`,
         docs_url: notFoundDocsUrl,
-        // Chapter 3.8: the fourth field constitution V has asked for since 1.3.
+        // The fourth field constitution V has asked for since 1.3.
         // Everywhere, not only on the rate-limit error — four fields on one
         // status and three on the others is worse than either consistent answer.
         request_id: requestId,

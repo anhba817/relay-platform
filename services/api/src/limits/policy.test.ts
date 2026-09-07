@@ -8,7 +8,7 @@ import {
 } from "./policy";
 
 // The numbers, and what happens when someone fat-fingers the one that is
-// configurable (chapter 3.8).
+// configurable.
 
 describe("authFailureThreshold", () => {
   const previous = process.env["RELAY_AUTH_FAILURES_PER_MINUTE"];

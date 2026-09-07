@@ -6,7 +6,7 @@ import { createDb, createPool, type Db } from "../db/client";
 import { createJetStreamPublisher } from "./jetstream.publisher";
 import { createRelay, type Relay } from "./relay";
 
-// The relay's home (chapter 3.3). It lives INSIDE the api service because
+// The relay's home. It lives INSIDE the api service because
 // ADR-06 put it there — "a small loop inside the API service initially,
 // promotable to its own deployment if outbox depth alarms fire". Promoting it
 // would mean moving this file and nothing else: the loop reads a table and

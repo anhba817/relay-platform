@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// THE USER SURFACE'S BODIES AND QUERIES (chapter 3.15, FR-013, FR-016, FR-017).
+// THE USER SURFACE'S BODIES AND QUERIES (FR-013, FR-016, FR-017).
 //
 // `strictObject` throughout, the same as `channels.schema.ts` and
 // `messages.schema.ts`: constitution VI rejects unknown fields on a write endpoint,
@@ -8,7 +8,7 @@ import { z } from "zod";
 // writes `Limit` instead of `limit` finds out on the first call.
 
 /** 4 KB, and FR-USR-03 names that number the way FR-CHN-01 names 8 KB for a channel
- * (chapter 3.15, FR-024). Two bounds, half an order of magnitude apart, and the SRS chose
+ * (FR-024). Two bounds, half an order of magnitude apart, and the SRS chose
  * both — but "the SRS says so" is not a reason, so here is the one that holds.
  *
  * **THE BOUND TRACKS ROW CARDINALITY.** Measured on the test lane: 94,144 users against
@@ -33,7 +33,7 @@ const userMetadataSchema = z
     { message: `metadata must be at most ${USER_METADATA_BYTES} bytes of JSON` },
   );
 
-/** The profile body (chapter 3.15, FR-023, FR-024).
+/** The profile body (FR-023, FR-024).
  *
  * A PATCH, so every field is optional — and `strictObject`, so a misspelled one is a
  * refusal. An empty body is accepted and changes nothing: unlike the member-role PATCH,
@@ -90,7 +90,7 @@ export const userProfileBodySchema = z.strictObject({
   display_name: z.string().min(1).max(255).nullable().optional(),
   avatar_url: avatarUrl.nullable().optional(),
   metadata: userMetadataSchema.optional(),
-  /** A bot's description, editable here (chapter 3.17, FR-004).
+  /** A bot's description, editable here (FR-004).
    *
    * **NOT `.nullable()`, AND THIS COMMENT IS WHY IT STAYS THAT WAY.** Every field above
    * is nullable on purpose and the paragraph above says what that means: `null` clears.
@@ -113,7 +113,7 @@ export const userProfileBodySchema = z.strictObject({
 
 export type UserProfileBody = z.infer<typeof userProfileBodySchema>;
 
-/** An entry in the bulk upsert (chapter 3.15, FR-025, FR-026).
+/** An entry in the bulk upsert (FR-025, FR-026).
  *
  * THE PROFILE FIELDS, NOT JUST AN ID. FR-026 says an entry naming an existing user
  * **updates** it, so the entry carries what there is to update. An entry that was only an
@@ -128,7 +128,7 @@ export const upsertUserEntrySchema = z
     display_name: z.string().min(1).max(255).nullable().optional(),
     avatar_url: avatarUrl.nullable().optional(),
     metadata: userMetadataSchema.optional(),
-    /** What kind of thing this user is (chapter 3.17, FR-USR-07).
+    /** What kind of thing this user is (FR-USR-07).
      *
      * NO `.default("person")`, AND THAT IS THE REQUIREMENT (FR-002b). A schema default
      * would make "absent" indistinguishable from "person" before anything can compare
@@ -273,7 +273,7 @@ export const listingQuerySchema = z.strictObject({
 
 export type ListingQuery = z.infer<typeof listingQuerySchema>;
 
-/** The read-position body (chapter 3.15, FR-017).
+/** The read-position body (FR-017).
  *
  * `strictObject` and a required non-negative integer. Zero is legal and means "I have
  * read nothing", which is also what a missing row means — a client that wants to reset

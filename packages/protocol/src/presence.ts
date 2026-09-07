@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Presence's own fabric: a subject grammar and the payload that crosses it
- * (chapter 3.19, ADR-19).
+ * (ADR-19).
  *
  * WHY THIS IS NOT IN `fanout.ts`. The fan-out's subject grammar lives there and
  * presence's could have joined it, three lines below `subjectForChannel`. It does

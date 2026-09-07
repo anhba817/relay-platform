@@ -133,7 +133,7 @@ describe("the isolation gauntlet", () => {
         body: JSON.stringify({
           text: "the control writes",
           // The attacking credential is a KEY, so it names a bot of its own tenant
-          // (chapter 3.17). The control must keep proving the credential works.
+          //. The control must keep proving the credential works.
           user: tenants.attacker.botExternalId,
         }),
       });
@@ -479,14 +479,14 @@ describe("the isolation gauntlet", () => {
       });
     });
 
-    // ══ THE SENDER (chapter 3.17, T035, T036, SC-005) ════════════════════════
+    // ══ THE SENDER (T035, T036, SC-005) ════════════════════════
     //
     // HAND-WRITTEN, AND `attack.ts` NEEDS NO FIFTH SHAPE. The sender is a new DIMENSION
     // on a route already classified `write` and already attacked with a foreign channel
     // id — not a new kind of target. A generated shape would have to know that this
     // body field names a user in the caller's own tenant, which is one route's
     // knowledge and not the gauntlet's.
-    describe("a foreign bot and a bot that exists nowhere (chapter 3.17)", () => {
+    describe("a foreign bot and a bot that exists nowhere", () => {
       // ── T036: THE CONTROL FIRST ───────────────────────────────────────────
       //
       // Chapter 3.12's fourteen green tests compared two refusals and meant nothing,

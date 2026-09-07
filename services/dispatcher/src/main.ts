@@ -16,7 +16,7 @@ import { createApiClient, type ApiClient } from "./api-client.js";
 import { ATTEMPT_TIMEOUT_MS, deliverOnce, type DeliveryJob } from "./deliver.js";
 import { expandOnce } from "./expand.js";
 
-// The dispatcher (chapter 3.5) — the first service in this platform that exists
+// The dispatcher — the first service in this platform that exists
 // because of constitution IV rather than in spite of it.
 //
 // TWO CONSUMERS, and they do different jobs on purpose:

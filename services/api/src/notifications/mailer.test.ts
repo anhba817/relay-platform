@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { disableNotification, type DisableFacts } from "./mailer";
 
-// What the message SAYS, decided without a server (chapter 3.8, FR-WHK-07). The
+// What the message SAYS, decided without a server (FR-WHK-07). The
 // integration suite proves the same properties about what Mailpit received; this
 // one is where the wording is designed.
 

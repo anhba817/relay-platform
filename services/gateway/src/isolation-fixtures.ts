@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Two tenants and a user token each, for the socket half of the gauntlet
- * (chapter 3.12, FR-007).
+ * (FR-007).
  *
  * WHY THE GATEWAY LANE AND NOT `packages/e2e`. A socket needs a real gateway, and
  * this lane has spawned a live api child since chapter 3.2 — so the gateway runs
@@ -40,7 +40,7 @@ interface Seeder {
       channelId: string,
       input: { text: string; userId?: string; userExternalId?: string },
     ) => Promise<{ id: string; seq: number }>;
-    /** Chapter 3.17. The gateway declares its own narrow view of the repository —
+    /** The gateway declares its own narrow view of the repository —
      * it has no database and must not gain one (research R12) — so a new fixture
      * capability means one more line here. */
     upsertUser: (
@@ -56,14 +56,14 @@ export interface SocketTenant {
   userExternalId: string;
   channelId: string;
   /** A private channel in the same environment that this tenant's user is NOT a
-   * member of (chapter 3.15). */
+   * member of. */
   privateChannelId: string;
   /** That private channel's history, read with the APPLICATION key — which sees
    * private channels (FR-005) — so a refused send can be checked against the
    * rows rather than against its own error frame. */
   privateHistory: () => Promise<string>;
   /** A DISPOSABLE user of this tenant, with its own token, that a test may destroy
-   * (chapter 3.17, T040b).
+   * (T040b).
    *
    * NOT the tenant's own user. Promoting that one to a bot makes it unable to connect
    * for the rest of the file, and every test after it — including the control — fails.
@@ -76,7 +76,7 @@ export interface SocketTenant {
   archiveOwnChannel: () => Promise<void>;
   unarchiveOwnChannel: () => Promise<void>;
   /** A user and a channel nobody else in the suite touches, with one attributed message
-   * already in it (chapter 3.15, T144).
+   * already in it (T144).
    *
    * ITS OWN FIXTURE BECAUSE THE TEST DESTROYS IT. T144 deletes the user, and the first
    * version deleted the shared `victim` — which took the membership with it and made a
@@ -139,7 +139,7 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
     const user = await repo.createUser(userExternalId, `${label} user`);
     const channel = await repo.createChannel(`${label}-channel`, "public");
     await repo.addMember(channel.id, user.id);
-    // Chapter 3.15: a PRIVATE channel in the same tenant, and this user is NOT a
+    // A PRIVATE channel in the same tenant, and this user is NOT a
     // member of it. The four cross-tenant shapes all attack with another tenant's
     // identifiers; a non-member of your own tenant is a different fixture, and the
     // socket needs one too because `message.send` reaches the same check.
@@ -155,7 +155,7 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
       token,
       say: (text: string) =>
         repo.sendMessage(channel.id, { text, userId: user.id, userExternalId }),
-      /** Turn this tenant's own user into a bot (chapter 3.17, T040b). Exposed rather
+      /** Turn this tenant's own user into a bot (T040b). Exposed rather
        * than done in the test, because the fixture owns the repository handle and the
        * test has no database of its own. */
       disposable: async () => {

@@ -14,7 +14,7 @@ import { outboxEventSchema, type OutboxEvent } from "../outbox/event";
 import { DEFAULT_NATS_URL, ensureStream } from "../outbox/jetstream.publisher";
 import type { EventHandler } from "./handler";
 
-// The consumer runtime (chapter 3.4). Fetch, decide, acknowledge — and
+// The consumer runtime. Fetch, decide, acknowledge — and
 // deduplicate, so that a handler cannot forget to.
 //
 // SAD risk R5 is the whole reason this file exists rather than a page of

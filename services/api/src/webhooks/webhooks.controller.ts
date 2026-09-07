@@ -13,7 +13,7 @@ import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import { WebhooksService } from "./webhooks.service";
 import type { CreateEndpointInput } from "./webhooks.service";
 
-// The webhook management surface (chapter 3.5, FR-WHK-01 and FR-WHK-08).
+// The webhook management surface (FR-WHK-01 and FR-WHK-08).
 //
 // `Accepts("application")` and nothing else: configuring where a tenant's events
 // are delivered is the tenant's software acting for itself, not an end user
@@ -68,7 +68,7 @@ export class WebhooksController {
   }
 
   /** Send a synthetic event to this endpoint and report what it answered
-   * (chapter 3.6, FR-013, FR-016).
+   * (FR-013, FR-016).
    *
    * ALWAYS 200 when the test ran, whatever the endpoint said. A non-2xx from the
    * customer's server is reported as `delivered: false` with the status, because

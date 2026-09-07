@@ -8,7 +8,7 @@ import {
 import type { Logger } from "@relay/service-kit";
 import { Redis } from "ioredis";
 
-// Presence (chapter 3.19, ADR-19): who is online, and who is allowed to know.
+// Presence (ADR-19): who is online, and who is allowed to know.
 //
 // A SECOND FABRIC BESIDE THE FAN-OUT, NOT A SECOND PAYLOAD ON IT. The message path
 // is typed to messages at three points: `publish(message: Message)` and a

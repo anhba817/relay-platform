@@ -83,7 +83,7 @@ interface Seeder {
     db: unknown,
     input: { name: string },
   ) => Promise<{ id: string }>;
-  /** Chapter 3.2: the suite needs a real credential now, and it mints one the
+  /** The suite needs a real credential now, and it mints one the
    * same way signup does. There is still no admin API for keys — that is the
    * dashboard's chapter — so this stays a test-only seam with a named
    * retirement, exactly like the rest of this interface. */
@@ -308,14 +308,14 @@ export interface System {
   seedConversation: () => Promise<{
     environmentId: string;
     /** An API key for that environment — the credential the REST assertions
-     * present now that the asserted header is gone (chapter 3.2). */
+     * present now that the asserted header is gone. */
     credential: string;
     channel: string;
     dispatcher: Client;
     tuan: Client;
   }>;
   seedForeignTenant: () => Promise<{ channel: string; text: string }>;
-  /** Set an environment's quota policy (chapter 3.10).
+  /** Set an environment's quota policy.
    *
    * Here rather than in the test, because `packages/e2e` may not import `pg` —
    * the driver restriction chapter 2.5 added, and this package is not on its
@@ -395,17 +395,17 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       "RELAY_POSTGRES_PORT",
       "RELAY_REDIS_URL",
       "RELAY_REDIS_PORT",
-      // Chapter 3.3: the api's relay needs the broker's address. Forwarded,
+      // The api's relay needs the broker's address. Forwarded,
       // never composed here — a harness that invents a URL becomes a second
       // source of truth, which is exactly how this suite first failed.
       "RELAY_NATS_URL",
       "RELAY_NATS_PORT",
-      // Chapter 3.5: the api decrypts webhook signing secrets and authenticates
+      // The api decrypts webhook signing secrets and authenticates
       // the dispatcher. Both are configuration, and a child that invents either
       // would be a second source of truth for a credential.
       "RELAY_WEBHOOK_SECRET_KEY",
       "RELAY_INTERNAL_CREDENTIAL",
-      // Chapter 3.8: the failed-authentication threshold and the counter's key
+      // The failed-authentication threshold and the counter's key
       // prefix. Forwarded for the reason this list exists at all — turbo runs
       // tasks in STRICT env mode, so an undeclared variable reaches a child as
       // `undefined` and the `??` behind it silently wins. A suite that raised the
@@ -418,22 +418,22 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       // confidently to a port nothing is listening on.
       "RELAY_SMTP_URL",
     ),
-    // Chapter 3.3: the api children run WITHOUT the outbox relay. This journey
+    // The api children run WITHOUT the outbox relay. This journey
     // asserts message delivery, and a background loop draining the outbox while
     // 3.3's own suite asserts on that same table is a race between two test
     // files, not a property of the system. The relay has its own suite, which
     // drives it explicitly.
     RELAY_OUTBOX_RELAY: "off",
-    // Chapter 3.8: and no notification relay either, for the same reason. This
+    // And no notification relay either, for the same reason. This
     // journey asserts message delivery; a loop marking rows delivered while
     // 3.8's own suite asserts on that column is a race between test files.
     RELAY_NOTIFICATION_RELAY: "off",
-    // Chapter 3.4: no event consumer in these children either, for the reason
+    // No event consumer in these children either, for the reason
     // the line above exists — this journey asserts message delivery, and a
     // background consumer writing to a table 3.4's suite asserts on is a race
     // between test files rather than a property of the system.
     RELAY_EVENT_CONSUMER: "off",
-    // Chapter 3.5: nor the delivery relay, for the third time and the same
+    // Nor the delivery relay, for the third time and the same
     // reason. Three background loops now share tables that other suites assert
     // on, and each one had to be silenced here the moment it existed — which is
     // the general form of 3.3's finding 4 rather than a coincidence.
@@ -488,7 +488,7 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     return new seeder.Repository(db, created.id);
   };
 
-  /** Chapter 3.2: the harness cannot sign a token any more, and that is the
+  /** The harness cannot sign a token any more, and that is the
    * point — nothing outside the api holds a signing secret. It asks the api's
    * development endpoint instead, with the environment's own key, which is
    * exactly the path a reader follows to get their first token (FR-AUT-09). */
@@ -534,7 +534,7 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       say(`seeded one channel with two members in ${primaryEnvironment}`);
       return {
         environmentId: primaryEnvironment,
-        // Chapter 3.2: the REST assertions present a credential, not a header.
+        // The REST assertions present a credential, not a header.
         credential: await keyFor(primaryEnvironment),
         channel: channel.id,
         dispatcher: new Client(

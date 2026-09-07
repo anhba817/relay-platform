@@ -1,4 +1,4 @@
-// When to stop trying (chapter 3.6, FR-007).
+// When to stop trying (FR-007).
 //
 // This file is the chapter's only arithmetic, and it is separated from both places
 // that call it deliberately. One trigger runs inside a database transaction and

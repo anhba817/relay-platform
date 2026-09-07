@@ -1,6 +1,6 @@
 import { SignJWT, decodeJwt, jwtVerify } from "jose";
 
-// End-user tokens (chapter 3.2, FR-AUT-06/07/08). HS256 over the
+// End-user tokens (FR-AUT-06/07/08). HS256 over the
 // environment's own signing secret, verified by `jose` rather than by hand.
 //
 // WHY a dependency here, when 3.1 went out of its way to add none: hand-rolled

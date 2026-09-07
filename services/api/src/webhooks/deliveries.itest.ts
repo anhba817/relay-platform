@@ -21,7 +21,7 @@ import { createDeliveryRelay } from "./delivery-relay";
 import { MAX_ATTEMPTS, RETRY_TIERS_MS } from "./schedule";
 import { encryptSecret, mintSigningSecret } from "./secret";
 
-// The delivery schedule (chapter 3.5). Invariant 8 lives here; 9, 10 and 12
+// The delivery schedule. Invariant 8 lives here; 9, 10 and 12
 // join it as the tiers and the dead-letter path arrive.
 //
 // Every environment is minted in this file — the drain is global, so a
@@ -846,7 +846,7 @@ describe("the outcome of an attempt, off the happy path", () => {
   });
 });
 
-// The failure run and automatic disablement (chapter 3.6, FR-006…FR-012).
+// The failure run and automatic disablement (FR-006…FR-012).
 //
 // Invariants 6, 7, 8, 9, 10, 11 and 12 of contracts/webhooks.md live here. The
 // policy's arithmetic is pure and lives in `disable.test.ts`; what these need a
@@ -1367,7 +1367,7 @@ describe("the failure run", () => {
   }, 60_000);
 });
 
-// The sweep as the RELAY runs it (chapter 3.6, T033's reason for existing).
+// The sweep as the RELAY runs it (T033's reason for existing).
 //
 // Everything above calls `sweepDisabledEndpoints` directly, which leaves the
 // wrapper around it — the flag, the count log, the swallowed failure — measured by
@@ -1539,7 +1539,7 @@ describe("the sweep, through the relay that runs it", () => {
   }, 120_000);
 });
 
-// What the LOCK protects, as opposed to what the predicate protects (chapter 3.6).
+// What the LOCK protects, as opposed to what the predicate protects.
 //
 // These two tests exist because the sabotage battery contradicted a comment. The
 // claim was that `SELECT … FOR UPDATE` on the endpoint row is what stops a
@@ -1658,7 +1658,7 @@ describe("the failure run under concurrency", () => {
   }, 60_000);
 });
 
-// That the LOOP calls the sweep (chapter 3.6, T026).
+// That the LOOP calls the sweep (T026).
 //
 // Also a finding of the sabotage battery: deleting the `await sweepOnce()` line
 // from the relay's `run()` loop broke nothing, because every test above calls

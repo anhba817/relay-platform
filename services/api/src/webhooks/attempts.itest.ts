@@ -39,7 +39,7 @@ function withoutRequestId(body: unknown): unknown {
 }
 
 
-// The attempt record, against a real broker and a real api (chapter 3.6).
+// The attempt record, against a real broker and a real api.
 //
 // Invariants 1, 2, 3 and 5 of contracts/attempts.md live here. Invariant 4 is the
 // swallowed publish failure and is pure, so it lives in analytics.test.ts.

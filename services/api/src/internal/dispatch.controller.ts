@@ -33,7 +33,7 @@ import { LOGGER } from "../logger";
 import { ANALYTICS_PUBLISHER, publishAttempt } from "../webhooks/analytics";
 import type { Publisher } from "../outbox/publisher";
 
-// The dispatcher's only road to state (chapter 3.5, constitution IV).
+// The dispatcher's only road to state (constitution IV).
 //
 // "Only the API service writes to PostgreSQL… Other services obtain writes and
 // backfill reads via the API service's internal endpoints." The dispatcher owns
@@ -48,7 +48,7 @@ import type { Publisher } from "../outbox/publisher";
 // ignoring a tenant scope is the shape a cross-tenant hole takes.
 @Controller("internal/dispatch")
 @UseGuards(CredentialGuard)
-// FR-044 (chapter 3.12): the CLASS was never enough. Two platform credentials
+// FR-044: the CLASS was never enough. Two platform credentials
 // exist, `service` said which one answered, and nothing checked it — so the more
 // exposed service set the blast radius for both. Here: delivery is the dispatcher's; the gateway has no business replaying a dead letter.
 @Accepts({ platform: ["dispatcher"] })
@@ -116,7 +116,7 @@ export class DispatchController {
       });
 
       // THE ATTEMPT RECORD, and everything about this call's POSITION is the
-      // decision (chapter 3.6, research R5, constitution III).
+      // decision (research R5, constitution III).
       //
       // AFTER the transaction, not inside it: `recordAttemptOutcome` has already
       // returned, so its row locks are released and its work is durable. A publish

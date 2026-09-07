@@ -14,7 +14,7 @@ import {
   statesMatch,
 } from "./state-cookie";
 
-// Invariants 5 and 6 (chapter 3.1), in the Docker-free lane: the CSRF binding
+// Invariants 5 and 6, in the Docker-free lane: the CSRF binding
 // and the provider contract. Neither needs a database, and neither should wait
 // for one — this is the lane a reader runs on every save (2.1's gate).
 

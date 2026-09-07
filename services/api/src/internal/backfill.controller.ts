@@ -30,7 +30,7 @@ import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 // gateway needs frames, and this is the boundary where one becomes the
 // other (the same division of labour 2.6 settled for the public send).
 @Controller("internal")
-// Chapter 3.2: the end user's own token, forwarded by the gateway, rather than
+// The end user's own token, forwarded by the gateway, rather than
 // two headers the gateway asserted. Same trust boundary, narrower claim.
 @Accepts("user")
 @UseGuards(CredentialGuard)
@@ -85,7 +85,7 @@ export class BackfillController {
  *     that frame.** This sentence promised it would, and it was written before the
  *     decision existed.
  *
- *     FR-016a (3.23) settled it the other way: resume stays ordered by the channel
+ *     FR-016a settled it the other way: resume stays ordered by the channel
  *     sequence alone, so a client receiving a message for the first time is not also
  *     told that something it has never seen has changed. A tombstone above the cursor
  *     is DROPPED, exactly as this function has always dropped it, and the client
@@ -96,7 +96,7 @@ export class BackfillController {
  *     replays no event stream; Matrix takes the other shape, an append-only timeline
  *     where a redaction is an event of its own, and IMAP's CONDSTOOR/QRESYNC puts a
  *     `MODSEQ` beside the sequence so a client can ask "what changed since". This
- *     platform is already the first shape, and FR-016b (3.23) asks for that to be
+ *     platform is already the first shape, and FR-016b asks for that to be
  *     documented as a property of a cursor rather than a limitation.
  *
  * The client is not left guessing: sequence numbers are contiguous per

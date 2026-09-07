@@ -57,7 +57,7 @@ describe("subjectFor builds ADR-02's `events.{domain}.{action}.{env}`", () => {
   });
 });
 
-// The analytics grammar (chapter 3.6). Held for the same reason as the one above
+// The analytics grammar. Held for the same reason as the one above
 // — Part 4's ingester will filter on it and does not exist yet — plus one this
 // grammar has and that one does not: the environment id becomes a SUBJECT TOKEN,
 // and a subject token is parsed by the broker rather than escaped by it.
@@ -116,7 +116,7 @@ describe("analyticsSubjectFor builds `analytics.{domain}.{action}.{env}`", () =>
   });
 });
 
-describe("the usage report (chapter 3.11)", () => {
+describe("the usage report", () => {
   const entry = (over: Record<string, unknown> = {}) => ({
     connection_id: "0f9c8b7a-6d5e-4c3b-8a19-8f7e6d5c4b3a",
     environment_id: "8b21c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",

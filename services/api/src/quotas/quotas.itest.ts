@@ -93,7 +93,7 @@ describe("the month's usage", () => {
   }, 30_000);
 
   it("counts a bot's send toward messages AND toward active users", async () => {
-    // THIS TEST'S SUBJECT NO LONGER EXISTS (chapter 3.17). It read "counts an
+    // THIS TEST'S SUBJECT NO LONGER EXISTS. It read "counts an
     // unattributed send toward messages and toward no user" and asserted
     // `activeUsers === 0`, because a key-authenticated send carried no user —
     // unattributed by design since chapter 3.3, which FR-MSG-15 reverses. There is no
@@ -141,7 +141,7 @@ describe("the month's usage", () => {
   }, 30_000);
 
   it("counts a bot's send toward messages AND toward active users", async () => {
-    // THIS TEST'S SUBJECT NO LONGER EXISTS (chapter 3.17). It read "counts an
+    // THIS TEST'S SUBJECT NO LONGER EXISTS. It read "counts an
     // unattributed send toward messages and toward no user" and asserted
     // `activeUsers === 0`, because a key-authenticated send carried no user —
     // unattributed by design since chapter 3.3, which FR-MSG-15 reverses. There is no

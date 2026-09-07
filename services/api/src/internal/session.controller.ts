@@ -21,7 +21,7 @@ import { connectPolicy, Repository } from "../db/repository";
 import { periodOf } from "../quotas/period";
 import { QuotaExceededError } from "../quotas/quota.error";
 
-// `POST /internal/session` (chapter 3.2) — the route that replaced
+// `POST /internal/session` — the route that replaced
 // `GET /internal/memberships`.
 //
 // It answers the gateway's only question at connect: who is this, and what may
@@ -60,7 +60,7 @@ export class SessionController {
     }
 
     const user = await this.repo.getUserByExternalId(principal.userExternalId);
-    // A BOT MAY NOT OPEN A SOCKET EITHER (chapter 3.17, FR-005b, T040a).
+    // A BOT MAY NOT OPEN A SOCKET EITHER (FR-005b, T040a).
     //
     // REFUSING AT THE MINT IS NOT ENOUGH, and the window is the reason. A token lives
     // up to 24 hours (FR-AUT-07), so a user promoted to a bot at 09:00 holds a valid
@@ -79,11 +79,11 @@ export class SessionController {
     // error: it is a user with no channels. The gateway's job is delivery, not
     // identity forensics — 2.5's rule, and the reason a first connect from a
     // brand-new user works before anything is seeded.
-    // Chapter 3.8: the gateway's limits, resolved here because the gateway has no
+    // The gateway's limits, resolved here because the gateway has no
     // database and must not gain one (research R12). Null columns are already
     // defaults by the time they leave the repository, so the gateway never has to
     // know that "no override" is a state.
-    // Chapter 3.11. THE CAP IS ENFORCED AT THE DOOR, because a connection is the
+    // THE CAP IS ENFORCED AT THE DOOR, because a connection is the
     // operation that consumes connection-minutes.
     //
     // ONE READ FOR BOTH, and the plan said two. Research R7 chose a second call

@@ -3,7 +3,7 @@ import type { Logger } from "@relay/service-kit";
 import type { ApiClient } from "./api-client.js";
 import { signatureHeaders } from "./signature.js";
 
-// Posting to a machine the platform does not own (chapter 3.5).
+// Posting to a machine the platform does not own.
 //
 // THE ORDER IS THE ARGUMENT: post, then report, then acknowledge.
 //

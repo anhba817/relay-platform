@@ -4,7 +4,7 @@ import type { Db } from "../db/client";
 import { drainOutbox } from "../db/repository";
 import { publishPending, type Publisher } from "./publisher";
 
-// The relay (chapter 3.3, ADR-06): the loop that moves committed events to the
+// The relay (ADR-06): the loop that moves committed events to the
 // broker. It owns no state of its own — its entire progress is visible in the
 // table it drains, which is what makes "promotable to its own deployment" true
 // rather than aspirational.

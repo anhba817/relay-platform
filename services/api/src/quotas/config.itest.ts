@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, createPool, type Db } from "../db/client";
 import { createEnvironment } from "../db/repository";
 
-// The CHECK constraint, against a live database (chapter 3.11, T010a).
+// The CHECK constraint, against a live database (T010a).
 //
 // `config.test.ts` beside this file tests the PARSER. This tests the other gate,
 // and the two are not the same: the constraint is what stops a bad cap being

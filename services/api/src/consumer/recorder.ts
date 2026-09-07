@@ -2,11 +2,11 @@ import type { Logger } from "@relay/service-kit";
 
 import type { EventHandler } from "./handler";
 
-// The first consumer (chapter 3.4) — and it is a SCAFFOLD, with a named
+// The first consumer — and it is a SCAFFOLD, with a named
 // retirement, not a feature.
 //
 // Every consumer the SAD names belongs to a later chapter: the webhook
-// dispatcher (3.5), the analytics ingester and the media worker (Part 4), the
+// dispatcher, the analytics ingester and the media worker (Part 4), the
 // dashboard's live stream (Part 5). Giving this one a job would mean either
 // stealing 3.5's subject or inventing product nobody asked for, and Principle
 // VII forbids the second.

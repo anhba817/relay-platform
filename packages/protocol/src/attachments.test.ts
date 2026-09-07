@@ -9,7 +9,7 @@ import {
   refineTextAndAttachments,
 } from "./attachments.js";
 
-// T010 (chapter 3.24). THE EXACT KEY SET AND EVERY REFUSAL, on `codes.test.ts`'s
+// T010. THE EXACT KEY SET AND EVERY REFUSAL, on `codes.test.ts`'s
 // precedent: pinning the set is what makes a change to it a decision rather than an
 // accident.
 //
@@ -24,7 +24,7 @@ const url = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-describe("the attachment shape (FR-002 (3.24), FR-003b (3.24), FR-020 (3.24))", () => {
+describe("the attachment shape (FR-002, FR-003b, FR-020)", () => {
   it("accepts the url arm and pins its exact key set", () => {
     const parsed = attachmentSchema.parse(url());
     expect(Object.keys(parsed).sort()).toEqual(["kind", "type", "url"]);
@@ -36,7 +36,7 @@ describe("the attachment shape (FR-002 (3.24), FR-003b (3.24), FR-020 (3.24))", 
     expect(attachmentSchema.safeParse(url({ caption: "hi" })).success).toBe(false);
   });
 
-  it("accepts the three kinds and refuses a fourth (FR-002 (3.24))", () => {
+  it("accepts the three kinds and refuses a fourth (FR-002)", () => {
     for (const kind of ["image", "audio", "video"]) {
       expect(attachmentSchema.safeParse(url({ kind })).success, kind).toBe(true);
     }
@@ -46,7 +46,7 @@ describe("the attachment shape (FR-002 (3.24), FR-003b (3.24), FR-020 (3.24))", 
   });
 });
 
-describe("the scheme rule is not z.url() (FR-004 (3.24), R7)", () => {
+describe("the scheme rule is not z.url() (FR-004, R7)", () => {
   it("accepts http and https", () => {
     for (const u of ["https://example.test/a.png", "http://example.test/a.png"]) {
       expect(attachmentSchema.safeParse(url({ url: u })).success, u).toBe(true);
@@ -76,12 +76,12 @@ describe("the scheme rule is not z.url() (FR-004 (3.24), R7)", () => {
     expect(attachmentSchema.safeParse(url({ url: "//example.test/a.png" })).success).toBe(false);
   });
 
-  it("publishes the allowed set, so a caller can read it (FR-004 (3.24))", () => {
+  it("publishes the allowed set, so a caller can read it (FR-004)", () => {
     expect([...ATTACHMENT_SCHEMES]).toEqual(["http:", "https:"]);
   });
 });
 
-describe("the bounds (FR-005 (3.24), FR-023 (3.24))", () => {
+describe("the bounds (FR-005, FR-023)", () => {
   it("pins ten and 2,048", () => {
     // The numbers, not just their behaviour: both doors import these and a silent
     // change to either is a contract change.
@@ -97,7 +97,7 @@ describe("the bounds (FR-005 (3.24), FR-023 (3.24))", () => {
     );
   });
 
-  it("accepts exactly ten in a list and refuses eleven (FR-005 (3.24))", () => {
+  it("accepts exactly ten in a list and refuses eleven (FR-005)", () => {
     // The list bound belongs to whichever schema carries the array, so this asserts the
     // constant does what the send schemas will ask of it.
     const list = z.array(attachmentSchema).max(MAX_ATTACHMENTS);
@@ -106,7 +106,7 @@ describe("the bounds (FR-005 (3.24), FR-023 (3.24))", () => {
   });
 });
 
-describe("the media arm refuses and SAYS SO (FR-003 (3.24), FR-003a (3.24))", () => {
+describe("the media arm refuses and SAYS SO (FR-003, FR-003a)", () => {
   it("names hosted media rather than calling the field invalid", () => {
     const result = attachmentSchema.safeParse({ type: "media", media_id: "m_1" });
     expect(result.success).toBe(false);
@@ -117,7 +117,7 @@ describe("the media arm refuses and SAYS SO (FR-003 (3.24), FR-003a (3.24))", ()
     expect(result.error!.issues[0]!.message).toMatch(/hosted media is not available/i);
   });
 
-  it("leaves room for §4.14 rather than requiring a new discriminator (FR-020 (3.24))", () => {
+  it("leaves room for §4.14 rather than requiring a new discriminator (FR-020)", () => {
     // The arm exists, so §4.14 replaces its body. What this pins is that `type` already
     // accepts the string: a future accept is a change to one arm and not to the union's
     // shape.
@@ -126,12 +126,12 @@ describe("the media arm refuses and SAYS SO (FR-003 (3.24), FR-003a (3.24))", ()
   });
 });
 
-describe("the text-and-attachments pair rule (FR-019 (3.24), FR-019b (3.24))", () => {
+describe("the text-and-attachments pair rule (FR-019, FR-019b)", () => {
   const schema = z
     .object({ text: z.string(), attachments: z.array(attachmentSchema).optional() })
     .superRefine(refineTextAndAttachments);
 
-  it("accepts an attachments-only message with an empty text (FR-019 (3.24))", () => {
+  it("accepts an attachments-only message with an empty text (FR-019)", () => {
     expect(schema.safeParse({ text: "", attachments: [url()] }).success).toBe(true);
   });
 
@@ -139,7 +139,7 @@ describe("the text-and-attachments pair rule (FR-019 (3.24), FR-019b (3.24))", (
     expect(schema.safeParse({ text: "words" }).success).toBe(true);
   });
 
-  it("refuses neither text nor attachments, and names a field (FR-019b (3.24))", () => {
+  it("refuses neither text nor attachments, and names a field (FR-019b)", () => {
     for (const value of [
       { text: "" },
       { text: "", attachments: [] },

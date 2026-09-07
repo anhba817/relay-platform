@@ -53,14 +53,14 @@ export const ERROR_CODES = {
   unknown_frame_type: "the type discriminator names no known frame",
   unauthorized: "the connection is not authorized for this action",
   rate_limited: "too many frames; slow down and retry",
-  // Chapter 3.2. The SRS singles this out as the most common first-integration
+  // The SRS singles this out as the most common first-integration
   // failure, so it gets its own code instead of a generic `unauthorized`: the
   // response has to say which class was presented and which the route wanted.
   // The MESSAGE names the class and never the credential — "the key rk_dev_abc…
   // is invalid" is how a live secret reaches a support ticket (NFR-SEC-06).
   wrong_credential_type:
     "the credential class presented cannot use this route; the message names presented and expected",
-  // Chapter 3.11. The socket's half of a quota refusal: an error frame carrying
+  // The socket's half of a quota refusal: an error frame carrying
   // the dimension, the figures and the resume date, sent immediately before
   // close code 4008.
   //
@@ -71,7 +71,7 @@ export const ERROR_CODES = {
   // the call site.
   quota_exceeded:
     "a monthly quota is exhausted; the message names the dimension, the figures and the date it resumes",
-  // Chapter 3.12. The refusal beside `wrong_credential_type`, one dimension over:
+  // The refusal beside `wrong_credential_type`, one dimension over:
   // the class presented is RIGHT and the service is not. Two platform credentials
   // exist — the dispatcher's and the gateway's — and until this chapter a route
   // could say which class may call it and not which service, so the gateway's
@@ -86,7 +86,7 @@ export const ERROR_CODES = {
   // (NFR-SEC-06).
   wrong_credential_service:
     "the credential's service is not permitted on this route; the message names the service presented and the services allowed",
-  // Chapter 3.17. THE THIRD IN THE SAME FAMILY, one dimension further over. Its two
+  // THE THIRD IN THE SAME FAMILY, one dimension further over. Its two
   // siblings are directly above: `wrong_credential_type` is the wrong CLASS,
   // `wrong_credential_service` the wrong SERVICE, and this one is the right class
   // holding the right service naming the wrong KIND OF USER — an application key
@@ -104,7 +104,7 @@ export const ERROR_CODES = {
   // would be an enumeration endpoint with a 403 in front of it.
   sender_not_permitted:
     "an application credential may send only as a bot user; name one in `user`",
-  // Chapter 3.12. FR-CHN-07's ceiling: a channel holds at most 1,000 members and
+  // FR-CHN-07's ceiling: a channel holds at most 1,000 members and
   // an add that would cross it is refused with 422 and this code.
   //
   // The SRS names this code in its own worked example for EIR-API-04, which is
@@ -137,7 +137,7 @@ export const ERROR_CODES = {
   // the rest of the table keeps.
   not_a_member:
     "the user is not a member of this channel; the message names neither the channel's contents nor its members",
-  // Chapter 3.15. Archiving prevents new messages and preserves history, and this
+  // Archiving prevents new messages and preserves history, and this
   // is the refusal a send gets.
   //
   // ONLY ONCE THE CALLER CAN SEE THE CHANNEL. FR-021a fixes the order at ban, then
@@ -146,7 +146,7 @@ export const ERROR_CODES = {
   // FR-003 forbids.
   channel_archived:
     "the channel is archived and accepts no new messages; history is still readable",
-  // Chapter 3.16. A ban is tenant-scope: no connecting and no sending anywhere in
+  // A ban is tenant-scope: no connecting and no sending anywhere in
   // the environment, while the banned user's history stays readable by others.
   //
   // CHECKED BEFORE THE CHANNEL IS RESOLVED, so a banned user gets the same answer
@@ -202,7 +202,7 @@ export const ERROR_CODES = {
   //                        and neither un-deletes a message.
   //   not_message_author   false. The author of a tombstone IS its author, and telling
   //                        them otherwise sends them to look for a permission problem.
-  //   not_found            a lie with a witness. FR-011 (3.23) keeps deleted messages in
+  //   not_found            a lie with a witness. FR-011 keeps deleted messages in
   //                        history in their original position, so a client would be
   //                        holding the message while being told it does not exist.
   //   a bare 409           `ProtocolErrorFilter` derives a code from the status for 400,
@@ -221,7 +221,7 @@ export const ERROR_CODES = {
   // see exists.
   message_deleted:
     "this message has been deleted; its text cannot be changed, and its history is unaffected",
-  /** MEDIA THAT DOES NOT EXIST YET, AND ITS OWN CODE (chapter 3.24, FR-003, FR-003a).
+  /** MEDIA THAT DOES NOT EXIST YET, AND ITS OWN CODE (FR-003, FR-003a).
    *
    * FR-MSG-11 publishes two ways to attach: an external URL and a `media_id` naming
    * something the platform hosts. This chapter builds the first. **A customer reading
@@ -307,7 +307,7 @@ export const ERROR_CODES = {
 
 export type ErrorCode = keyof typeof ERROR_CODES;
 
-/** Whether a string the api sent is a code this registry defines (chapter 3.15).
+/** Whether a string the api sent is a code this registry defines.
  *
  * FOR FORWARDING, and forwarding is the only thing that needs it. The gateway's socket
  * send relays the api's refusal code to the client — `user_banned`, `channel_archived` —
@@ -327,7 +327,7 @@ export function isErrorCode(value: string): value is ErrorCode {
  * THE DEBT THIS CLOSES. `docs_url` has been in the error envelope since chapter
  * 1.3 and constitution V calls it a reachable-page promise. Six construction sites
  * built it with a template literal against `https://relay.example`, a host that
- * does not resolve, and two codes — `rate_limited` (3.8) and `quota_exceeded`
+ * does not resolve, and two codes — `rate_limited` and `quota_exceeded`
  * (3.10, 3.11) — shipped links to pages that did not exist even in principle.
  * Chapter 3.11 declined to add a third instance and named the debt; a chapter whose
  * exit criterion is "integrates on public documentation alone" cannot ship a
