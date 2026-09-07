@@ -138,7 +138,7 @@ export function createPresence({
 
   // THE STATED REASON FOR THESE LISTENERS IS NOT THE ONE THE LIMITER GIVES.
   // `limits.ts` says a missing listener means "the gateway would die"; chapter
-  // 3.18 measured that against ioredis 6.0.0 by reproducing the exact client, and
+  // The fan-out chapter measured that against ioredis 6.0.0 by reproducing the exact client, and
   // the process STAYS ALIVE — ioredis prints `[ioredis] Unhandled error event: …`
   // itself and continues. Seven lines in four seconds against a dead port.
   //

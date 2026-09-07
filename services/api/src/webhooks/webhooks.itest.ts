@@ -110,7 +110,7 @@ describe("webhook endpoints", () => {
     // bare 422s. A customer reading `code` was told the platform had failed.
     //
     // Asserting the code is the only thing that could have caught it, which is why this
-    // has been open since chapter 3.5.
+    // has been open since the webhook dispatcher chapter.
     const cases: [Record<string, unknown>, string][] = [
       [{ url: "not-a-url" }, "webhook_url_invalid"],
       [{ url: "http://example.test/hook" }, "webhook_url_insecure"],

@@ -64,7 +64,7 @@ export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
  * `sendMessageBodySchema.shape.text` — and that is what broke: FR-019 removed the send's
  * `.min(1)` so an attachments-only message could carry empty text, and the edit's floor
  * went with it silently, because the types are identical either way. An edit has no
- * attachments field to justify empty text. 3.24 separated them into two literals; this
+ * attachments field to justify empty text. The attachments chapter separated them into two literals; this
  * feature shares the number they agree on and leaves the rule they do not.
  *
  * ONE FIELD, AND THE ABSENCES ARE DECISIONS:
@@ -82,7 +82,7 @@ export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
  *                         the customer has not asked to happen. */
 /** The edit body (FR-001). ITS OWN BOUND, AND NO LONGER THE SEND'S.
  *
- * This read `sendMessageBodySchema.shape.text` until chapter 3.24, which was correct
+ * This read `sendMessageBodySchema.shape.text` until the attachments chapter, which was correct
  * while the two agreed. Then FR-019 removed `.min(1)` from the send so an
  * attachments-only message could carry no caption — and the edit inherited the
  * relaxation through this reference. **An edit has no attachments field**, so the pair

@@ -181,7 +181,7 @@ describe("idempotency must not disarm DR-01 (chapter 2.3)", () => {
   });
 });
 
-// ── A PRIVATE CHANNEL IS PRIVATE (chapter 3.15, FR-001, FR-CHN-05) ────────────
+// ── A PRIVATE CHANNEL IS PRIVATE (FR-001, FR-CHN-05) ────────────
 //
 // `channels.type` has been a `"public" | "private"` column with a CHECK since
 // chapter 2.1, and until this chapter nothing DECIDED on it. It was selected and
@@ -294,7 +294,7 @@ describe("a private channel refuses a non-member's send (FR-001)", () => {
 
 // ── THE ROLE CHECK IS IN THE DATABASE, NOT ONLY AT THE EDGE ───────────────────
 //
-// Chapter 3.15, T068. `channels.itest.ts` proves the zod enum refuses `admin` at
+// T068. `channels.itest.ts` proves the zod enum refuses `admin` at
 // the boundary. That is the wrong layer to trust: R8's trap is a CONSTRAINT that
 // reused the organisation's vocabulary — `memberships.role` is
 // `('owner','admin','member')`, one word apart from FR-CHN-04's three — and such a
@@ -353,7 +353,7 @@ describe("members_role_check names the channel's three (FR-011, R8)", () => {
   });
 });
 
-// ── T113: THE TIE AT A PAGE BOUNDARY (chapter 3.15, FR-013) ───────────────────
+// ── T113: THE TIE AT A PAGE BOUNDARY (FR-013) ───────────────────
 //
 // HERE AND NOT IN `users.itest.ts`, because constructing the tie takes a raw UPDATE:
 // `last_activity_at` is written from the message's `created_at`, `now()` is the
@@ -423,7 +423,7 @@ describe("the listing's keyset survives a shared last_activity_at", () => {
   });
 });
 
-// ── THE TOMBSTONE, AND THE CLAMP (chapter 3.15, FR-016, FR-019) ───────────────
+// ── THE TOMBSTONE, AND THE CLAMP (FR-016, FR-019) ───────────────
 //
 // THE TOMBSTONES BELOW ARE STILL PLANTED BY HAND, and that is now a choice rather than a
 // necessity. These tests were written in the channel-control chapter against a state the platform could
@@ -443,7 +443,7 @@ describe("the listing's keyset survives a shared last_activity_at", () => {
 // The clamp's fixture below is still genuinely unreachable through the API.
 //
 // The listing's rule was implemented and tested here before its writer existed, which
-// 3.15 said was so that "the day FR-MSG-08's chapter ships, the count and the preview
+// The channel-control chapter said was so that "the day FR-MSG-08's chapter ships, the count and the preview
 // already agree." They did.
 describe("the listing's tombstone rule and its clamp", () => {
   it("reports a tombstoned last message with a null text, and still counts it", async () => {
@@ -475,7 +475,7 @@ describe("the listing's tombstone rule and its clamp", () => {
     expect(row.unread).toBe(2);
   });
 
-  // ── T009 (chapter 3.23): THE READER, TESTED BEFORE THE WRITER EXISTS ────────
+  // ── T009: THE READER, TESTED BEFORE THE WRITER EXISTS ────────
   //
   // FR-011 and SC-003. The history read must return a tombstone in its
   // original position so a client sees no gap in the ordering.
@@ -578,7 +578,7 @@ describe("the listing's tombstone rule and its clamp", () => {
   });
 });
 
-// ── THE ARMS THE ROUTES CANNOT REACH (chapter 3.15, T174a, T174b) ─────────────
+// ── THE ARMS THE ROUTES CANNOT REACH (T174a, T174b) ─────────────
 //
 // Every one of these is a repository function answering "no" to something its own route
 // answers first. `deleteUser` on an id that does not exist, `updateUserProfile` on a
@@ -587,7 +587,7 @@ describe("the listing's tombstone rule and its clamp", () => {
 // reachable one layer down.
 //
 // IN-PROCESS ON PURPOSE (T174b). Five of this feature's tests drive new repository code
-// through the gateway's api CHILD PROCESS, whose coverage is not attributable. Chapter 3.5
+// through the gateway's api CHILD PROCESS, whose coverage is not attributable. The webhook dispatcher chapter
 // added six operations to this file the same way and branches went 85.91% → 78.22% on the
 // next run: the instrument was right and the code was untested.
 describe("the repository's own refusals", () => {
@@ -633,7 +633,7 @@ describe("the repository's own refusals", () => {
 
   it("reports a last message with no author as null", async () => {
     // AN UNATTRIBUTED MESSAGE, which is what a key-authenticated REST send writes — no
-    // `userId`, by design since chapter 3.3. The listing's `last_message.user` is then
+    // `userId`, by design since the outbox chapter. The listing's `last_message.user` is then
     // null, and that arm has no route that can reach it: every send through the public
     // channel route now carries a user, and the internal one resolves theirs.
     const reader = await repoA.createUser("arm-no-author", "Reader");
@@ -790,7 +790,7 @@ describe("editMessage", () => {
 
   it("an edit on a row with no author is refused (FR-018)", async () => {
     // PLANTED WITH RAW SQL, because no write path can produce one any more — chapter
-    // 3.17 made `userId` required — and 121,250 of them exist in the lane, written
+    // The sender chapter made `userId` required — and 121,250 of them exist in the lane, written
     // before chapter 2.6 recorded a sender.
     const author = await repoA.createUser("t036-author", "Author");
     const channel = await repoA.createChannel("t036", "public");
@@ -1434,7 +1434,7 @@ describe("the read shapes that do NOT carry attachments (FR-009)", () => {
 
 // A CONCURRENT EDIT AND DELETION OF ONE MESSAGE (feature 043, FR-007).
 //
-// `gaps.md` 3.23-3 has carried this since the revisions chapter built both writes. Neither takes
+// `gaps.md` the revisions chapter-3 has carried this since the revisions chapter built both writes. Neither takes
 // a row lock — no `FOR UPDATE`, following `assertWithinQuota`'s recorded decision to
 // state an overshoot rather than engineer around it — so the two orderings are not
 // symmetrical, and the claim that has never been tested is that **both of them end in a

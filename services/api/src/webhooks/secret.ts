@@ -6,7 +6,7 @@ import {
 
 // Webhook signing secrets at rest.
 //
-// DECISION: envelope encryption, not the salted hash chapter 3.2
+// DECISION: envelope encryption, not the salted hash the credentials chapter
 // used for API keys. NFR-SEC-02 permits either — "salted hashes or under
 // envelope encryption" — and this is the branch that applies, for a reason worth
 // stating because the two credentials look so alike:
@@ -30,7 +30,7 @@ const ALGORITHM = "aes-256-gcm";
 const KEY_BYTES = 32;
 const IV_BYTES = 12; // 96 bits, the size GCM is specified for
 const TAG_BYTES = 16;
-const SECRET_BYTES = 32; // 256 bits, the budget 3.2 gave an API key secret
+const SECRET_BYTES = 32; // 256 bits, the budget the credentials chapter gave an API key secret
 
 /** The stored value is `iv | tag | ciphertext`, base64. One column, no schema
  * for the reader to decode, and no second place for the IV to drift out of sync

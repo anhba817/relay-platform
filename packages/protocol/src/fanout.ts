@@ -2,7 +2,7 @@
  *
  * MOVED HERE IN the fan-out chapter, and the reason is the same one the broker chapter gave
  * when it moved the event spine's `subjectFor` into this package: a subject
- * grammar belongs where every party that uses it can agree on it. Until 3.18
+ * grammar belongs where every party that uses it can agree on it. Until the fan-out chapter
  * the gateway was the only publisher, so the grammar could live beside the
  * client that spoke it. The api publishes now too, and the api cannot import
  * from a service.

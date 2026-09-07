@@ -1,6 +1,6 @@
 import type { QuotaConfig } from "./config";
 
-/** The dimensions a quota is measured in. `connection_minutes` is chapter 3.11. */
+/** The dimensions a quota is measured in. `connection_minutes` is the connection-metering chapter's. */
 export type Dimension = keyof QuotaConfig;
 
 /** What each dimension is called to a customer, and what stops when it runs out.

@@ -77,7 +77,7 @@ export class DevTokenController {
       throw new NotFoundException("Cannot POST /auth/dev-token");
     }
 
-    // ── THE USER ROW, CREATED IF ABSENT (chapter 3.15, FR-039a, FR-039b) ────
+    // ── THE USER ROW, CREATED IF ABSENT (FR-039a, FR-039b) ────
     //
     // FR-USR-02: "a user record shall be created implicitly on first
     // authentication if it does not exist." Nothing did it, and the gap had a
@@ -86,7 +86,7 @@ export class DevTokenController {
     // message that names the caller rather than the cause, which is exactly what
     // implicit creation exists to prevent.
     //
-    // CHAPTER 3.13'S IDEMPOTENT `createUser`, and that is the whole implementation.
+    // The channel-endpoints chapter'S IDEMPOTENT `createUser`, and that is the whole implementation.
     // It is `ON CONFLICT DO NOTHING` on `(environment_id, external_id)`, so
     // authentication and membership converge on one row for one identifier no
     // matter which arrives first, and a second mint creates nothing.

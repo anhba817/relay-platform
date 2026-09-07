@@ -26,7 +26,7 @@ import {
 // column-for-column, constraints and DR citations included. Deliberately
 // absent, with named arrivals: emoji/media tables (their parts), messages
 // partitioning (SAD growth note -> retention chapter). The outbox arrived in
-// 3.3 and is at the bottom of this file. `message_edits` ARRIVED IN 3.23 and
+// The outbox chapter and is at the bottom of this file. `message_edits` ARRIVED IN THE REVISIONS CHAPTER and
 // is below `messages` — the list above said "edit chapter" and this is it.
 
 // The tenancy hierarchy. Everything from here to `members`
@@ -133,11 +133,11 @@ export const environments = pgTable(
     signingSecret: text("signing_secret").notNull(),
     retentionDays: integer("retention_days"),
     // DECLARED IN 2.1 AND STILL EMPTY. Named in SRS §6.1's Environment entity
-    // and SAD §338, read by nothing in seventeen chapters. Chapter 3.8
+    // and SAD §338, read by nothing in seventeen chapters. The rate-limit chapter
     // deliberately did NOT put rate-limit policy here: the column is named for
     // quotas, quotas are a later chapter, and the distinction between a limit
-    // that may be lost and a quota that is money is the thing 3.8 is about.
-    // (Deliberately not a chapter NUMBER: 3.7 renumbered quotas once already,
+    // that may be lost and a quota that is money is the thing the rate-limit chapter is about.
+    // (Deliberately not a chapter NUMBER: the deduplication chapter renumbered quotas once already,
     // and a comment in a file fenced byte-exact into a published page goes stale
     // silently. The deduplication chapter's rule — cite what a thing is, never where it will
     // be. A grep for forward references is the gate, so this comment must not
@@ -187,7 +187,7 @@ export const environments = pgTable(
 // DECISION: the SRS states the requirements this table serves
 // (FR-AUT-01…05, NFR-SEC-02) but no source document defines a key table —
 // SAD §6.1 does not have one. Its shape is a chapter derivation, recorded here
-// the way 2.1 recorded `members` and 3.1 recorded the tenancy containers.
+// the way 2.1 recorded `members` and the tenancy chapter recorded the tenancy containers.
 //
 // It sits BELOW the environment boundary, so it carries an environment_id like
 // every other table down here. The credential is two parts: `public_id` is an
@@ -542,7 +542,7 @@ export const readPositions = pgTable(
     // WRITTEN BY EVERY POSITION WRITE AND READ BY NOTHING, and that is a decision rather
     // than an oversight (the user-surface chapter's `gaps.md` §5).
     //
-    // Chapters 3.15 and 3.16 exist because five columns had no reader, so leaving a sixth
+    // the channel-control chapter and the user-surface chapter exist because five columns had no reader, so leaving a sixth
     // behind needs a sentence or it becomes the next feature's finding. The two options
     // were a reader — an operations view answering "when did this user last catch up" —
     // or a migration dropping it. Kept, on the expectation that the reader arrives.
@@ -607,13 +607,13 @@ export const outbox = pgTable(
 // R5 requires the BEHAVIOUR — "consumer template with dedup built in", so that
 // "a future consumer forgets to dedupe → double webhooks / double metering"
 // cannot happen — and leaves the shape open. This is therefore a chapter
-// derivation, recorded here the way 2.1 recorded `members`, 3.2 recorded
-// `api_keys` and 3.3 recorded the outbox's index.
+// derivation, recorded here the way 2.1 recorded `members`, the credentials chapter recorded
+// `api_keys` and the outbox chapter recorded the outbox's index.
 //
 // The PRIMARY KEY is the deduplication. Not a SELECT-then-INSERT: the insert
 // itself is the check, so two instances fetching the same message concurrently
 // cannot both decide they were first. 2.3 learned that on idempotency keys and
-// 3.1 learned it again on signup.
+// The tenancy chapter learned it again on signup.
 //
 // Keyed per CONSUMER, not globally. The dispatcher and the ingester must each
 // receive every event; one ledger shared between them would let whichever
@@ -686,7 +686,7 @@ export const webhookEndpoints = pgTable(
     // accepting either is correct throughout (contracts/webhooks.md §Rotation).
     secretPreviousCiphertext: text("secret_previous_ciphertext"),
     secretRotatedAt: timestamp("secret_rotated_at", { withTimezone: true }),
-    // An owner can pause an endpoint. The retry-and-disable chapter is the follow-on chapter 3.5
+    // An owner can pause an endpoint. The retry-and-disable chapter is the follow-on the webhook dispatcher chapter
     // named here, and the prediction held: automatic disablement added a rule and
     // four columns, and did not have to change this one.
     enabled: boolean("enabled").notNull().default(true),
@@ -807,7 +807,7 @@ export const webhookDeliveries = pgTable(
     //     cause unknown" is the notification a support engineer receives.
     //
     // `lastLatencyMs` is the third thing in this chapter to pick `latency_ms` up
-    // off the floor: it has crossed the internal seam on every attempt since 3.5
+    // off the floor: it has crossed the internal seam on every attempt since the webhook dispatcher chapter
     // and been discarded (research R6).
     lastStatus: integer("last_status"),
     lastError: text("last_error"),
@@ -933,12 +933,12 @@ export const webhookDisableNotifications = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// Chapter 3.10 — monthly usage quotas (FR-RTL-05 to FR-RTL-08).
+// Monthly usage quotas (FR-RTL-05 to FR-RTL-08).
 // ---------------------------------------------------------------------------
 //
 // The POLICY is not here, because it was already here. `environments.quotaConfig`
 // has been declared since chapter 2.1 and read by nothing for eighteen chapters;
-// 3.8 was offered it for rate-limit policy and refused it in prose, on the
+// The rate-limit chapter was offered it for rate-limit policy and refused it in prose, on the
 // grounds that the column is named for quotas and quotas are a later chapter.
 // This is that chapter. `quotas/config.ts` is the only thing that parses it.
 //

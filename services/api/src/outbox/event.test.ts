@@ -158,7 +158,7 @@ const DELETED = {
 describe("the outbox event type set", () => {
   // ASSERTED AS A SET AND AS A COUNT, which is the presence chapter's `codes.test.ts`
   // precedent: either alone lets a fourth type arrive unnoticed. FR-WHK-02 names
-  // eight and FIVE exist since chapter 3.23; the other three arrive with the features
+  // eight and FIVE exist since the revisions chapter; the other three arrive with the features
   // that can produce them.
   //
   // THE ORDER IS THE ARRAY'S, and the two new names sit beside `message.created`
@@ -192,7 +192,7 @@ describe("the outbox event type set", () => {
     ]);
     expect(Object.keys(WEBHOOK_EVENT_TYPES)).toHaveLength(8);
 
-    // AND WHICH ARE UNBUILT, by name. This is the half the review and `gaps.md` 3.23-1
+    // AND WHICH ARE UNBUILT, by name. This is the half the review and `gaps.md` the revisions chapter-1
     // both got wrong: they recommend validating subscriptions against the EMITTED set,
     // and 741 stored subscriptions name `channel.created` — declared here, not emitted,
     // and not a customer's mistake.
@@ -203,7 +203,7 @@ describe("the outbox event type set", () => {
   });
 
   it("agrees with the declared eight's emitted flags, member for member", () => {
-    // ONE LIST, NOT TWO. `gaps.md` 3.23-4 records the two-lists-that-must-agree defect
+    // ONE LIST, NOT TWO. `gaps.md` the revisions chapter-4 records the two-lists-that-must-agree defect
     // about `targets.ts`, and `eslint.config.mjs` says *MUST AGREE* with nothing
     // comparing them.
     //
@@ -271,7 +271,7 @@ describe("messageUpdatedEvent and messageDeletedEvent", () => {
     // MUST be left unchanged."* Compared as SETS, so a field added to one and not the
     // other fails here rather than in a customer's consumer.
     //
-    // SEVEN SINCE CHAPTER 3.24, and both events gained the field together because both
+    // SEVEN SINCE THE ATTACHMENTS CHAPTER, and both events gained the field together because both
     // are built from one `MessageCreatedData` — which is FR-015 as a type rather than a
     // promise.
     expect(Object.keys(updated().payload.data).sort()).toEqual([

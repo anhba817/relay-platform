@@ -14,7 +14,7 @@ import { createConnections, MAX_CONNECTIONS_PER_USER, type Connections } from ".
 import { createMembership } from "./membership.js";
 import { attachSessions } from "./session.js";
 
-// CHAPTER 3.22 — FR-RTM-09's five-connection cap.
+// FR-RTM-09's five-connection cap.
 //
 // PHASE 2 IS US3 AND IT RUNS AGAINST UNCHANGED CODE, deliberately. FR-RTM-09's
 // second clause — "each shall receive all events independently" — is a property
@@ -96,7 +96,7 @@ async function boot(options: {
    * them — but this file fills all five places on purpose, and a shared identity
    * would leak one test's slots into the next. */
   environment?: string;
-  /** Chapter 3.22, T050a. **ONE MODULE PER INSTANCE, BUILT HERE**, the way
+  /** T050a. **ONE MODULE PER INSTANCE, BUILT HERE**, the way
    * `typing.itest.ts:101` calls `createTyping(...)` inside `boot()`.
    *
    * `releaseAll()` is what makes this correctness rather than style: it frees the
@@ -110,7 +110,7 @@ async function boot(options: {
    * opts in. */
   cap?: { boundMs?: number; heartbeatMs?: number; url?: string };
   /** FR-015's log line is the assertion that carries the requirement, so a test
-   * needs the lines. Chapter 3.18: a publisher that does nothing satisfies "the
+   * needs the lines. The fan-out chapter's finding: a publisher that does nothing satisfies "the
    * send returned 201". */
   lines?: Record<string, unknown>[];
 }): Promise<Instance> {
@@ -1124,7 +1124,7 @@ describe("the cap fails open, and says so (US4)", () => {
 // `.test.ts` and runs in the lane chapter 2.1 built to need no containers; these twelve
 // talk to a real Redis, so with the stack down they reported failures that were correct
 // behaviour and made the lane's exit code answer "does this work HERE, today" instead of
-// "does this work without infrastructure". `gaps.md` 3.23-9 carried that from the day it
+// "does this work without infrastructure". `gaps.md` the revisions chapter-9 carried that from the day it
 // was found by accident.
 //
 // WHICH TWELVE WAS MEASURED. `RELAY_REDIS_URL=redis://127.0.0.1:6399 vitest run

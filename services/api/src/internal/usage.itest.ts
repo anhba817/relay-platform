@@ -356,7 +356,7 @@ describe("POST /internal/usage/connections", () => {
       expect(body.code).toBe("quota_exceeded");
       expect(body.message).toContain("connection-minute");
       expect(body.message).toContain("connections resume on");
-      // Four fields, as every refusal on this contract has since chapter 3.8.
+      // Four fields, as every refusal on this contract has since the rate-limit chapter.
       expect(body.docs_url).toBeTruthy();
       expect(body.request_id).toBeTruthy();
     });

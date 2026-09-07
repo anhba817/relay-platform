@@ -571,7 +571,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
 
   it("notifies both thresholds a single report crossed (FR-RTL-07)", async () => {
     // A cap of 4 and four minutes in one step crosses 50%, 80% AND 100% —
-    // 80% of 4 is 3.2, which the quota chapter got wrong twice before writing it down.
+    // 80% of 4 is the credentials chapter, which the quota chapter got wrong twice before writing it down.
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
     const env = await seed(address);
     await setCap(env, { connection_minutes: { hard: 4 } });

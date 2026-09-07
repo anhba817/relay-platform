@@ -332,7 +332,7 @@ describe("the relay drains only what is due", () => {
 
   /** The same drain, retried until a row this suite owns has settled.
    *
-   * FOUND AT CHAPTER 3.7'S POST-FIX MEASUREMENT, on run 2 of 20: "expected null
+   * FOUND AT the deduplication chapter'S POST-FIX MEASUREMENT, on run 2 of 20: "expected null
    * not to be null" for a delivery that was unambiguously due. The comment above
    * had the principle right and the implementation one call short.
    *
@@ -714,7 +714,7 @@ describe("the material for one attempt", () => {
     // A delta is two reads with a gap. Another suite delivering one of its own
     // rows in that gap moves the second read by one more, and the assertion is a
     // local fact about a global operation with an extra step — the twelfth
-    // occurrence of the fault this lane has been recording since chapter 3.3, and
+    // occurrence of the fault this lane has been recording since the outbox chapter, and
     // the third whose defence was a comment explaining why it was fine.
     //
     // The global function still has a caller, because it is the number an operator

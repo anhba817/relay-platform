@@ -29,7 +29,7 @@ export const DEFAULT_NATS_URL = "nats://localhost:4222";
  *
  * Two of them can never be changed again, and both happen to be right:
  * `retention` and `storage` are immutable on an existing stream (measured, R1).
- * Had 3.3 taken memory storage as a convenience, applying this configuration
+ * Had the outbox chapter taken memory storage as a convenience, applying this configuration
  * would have meant deleting the stream and every event in it. */
 const STREAM = "EVENTS";
 const SUBJECTS = ["events.>"];
@@ -75,7 +75,7 @@ function replicaCount(): number {
  * carried through untouched — attempting to change `retention` or `storage` is
  * an error the broker refuses rather than a difference it reconciles (R1).
  *
- * `duplicate_window` is deliberately left where 3.3 found it. Raising it looks
+ * `duplicate_window` is deliberately left where the outbox chapter found it. Raising it looks
  * like the fix for a republished event and is not: the outbox can republish
  * hours after an outage, no window is a safe guess about the longest one, and a
  * window measured in hours would hold that dedupe index in the broker's memory
@@ -142,7 +142,7 @@ export async function ensureAnalyticsStream(nc: NatsConnection): Promise<void> {
     });
     return;
   }
-  // Retention and storage are immutable on an existing stream — chapter 3.4
+  // Retention and storage are immutable on an existing stream — the broker chapter
   // measured that (its research R1), and the lesson transfers unchanged.
   await jsm.streams.update(ANALYTICS_STREAM, { ...existing.config, ...mutable });
 }

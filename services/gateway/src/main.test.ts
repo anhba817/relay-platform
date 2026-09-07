@@ -68,7 +68,7 @@ describe("gateway skeleton", () => {
     }
   });
 
-  // CHAPTER 3.22, T042b. THE SHUTDOWN SET, NAMED EXPLICITLY AND FAILING ON AN
+  // T042b. THE SHUTDOWN SET, NAMED EXPLICITLY AND FAILING ON AN
   // UNKNOWN MEMBER.
   //
   // Nothing verified the registration before analysis pass 6. `shutdown()` awaits
@@ -76,7 +76,7 @@ describe("gateway skeleton", () => {
   // nothing about which modules closed, so a missing registration leaks one Redis
   // client per gateway — silently and for ever.
   //
-  // THIS IS CHAPTER 3.21'S DEFECT INVERTED. There, awaiting `close()` made lint
+  // THIS IS the typing chapter'S DEFECT INVERTED. There, awaiting `close()` made lint
   // see a used variable and hid a module that was never passed to
   // `attachSessions`. Here, NOT awaiting it is what nothing could see. The two
   // halves need two checks, and this is the second one's.

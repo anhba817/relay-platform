@@ -31,11 +31,11 @@ import {
 // exists yet for a header to name. Note what is absent — the
 // EnvironmentContextGuard every other controller carries (2.2). The guard is
 // applied per controller, so a pre-tenant route simply does not use it, and
-// the seam it guards is untouched by this chapter (3.2 retires it).
+// the seam it guards is untouched by this chapter (the credentials chapter retires it).
 //
 // What these routes do NOT do: issue a session. A session is a credential,
 // credentials are the credentials chapter's subject, and the dashboard that would consume one is
-// Part 5. The callback reports what it created — and, from 3.2, hands over the
+// Part 5. The callback reports what it created — and, from the credentials chapter, hands over the
 // environment's first API key, because with no session nothing else could
 // bootstrap one (research R8).
 

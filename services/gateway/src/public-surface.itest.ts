@@ -267,7 +267,7 @@ describe("a channel, a member and a message, all over the public API", () => {
 
   // A MESSAGE SENT OVER THE PUBLIC REST API CANNOT REACH A SOCKET AT ALL, and
   // that is the platform's behaviour rather than this test's shortcoming. Pinned
-  // here because chapter 3.14's exit criterion is that an outsider integrates on
+  // here because the outsider milestone's exit criterion is that an outsider integrates on
   // the documentation alone, and this is the sentence that documentation has to
   // contain.
   //
@@ -344,13 +344,12 @@ describe("a channel, a member and a message, all over the public API", () => {
       })
     ).json()) as { messages: { seq: number; user: string | null; text: string }[] };
     expect(history.messages.map((m) => m.text)).toEqual([second, first]);
-    // WAS `every((m) => m.user === null)`, AND THAT IS THE CHAPTER (chapter 3.17,
-    // T055's class). This assertion existed to prove the rows were senderless, which was
+    // WAS `every((m) => m.user === null)`, AND THAT IS THE CHAPTER (    // T055's class). This assertion existed to prove the rows were senderless, which was
     // why `toFrame` dropped them. Every REST send now names a sender, so the premise it
     // rested on is gone.
     expect(history.messages.every((m) => m.user === "rest-courier")).toBe(true);
 
-    // LIVE DELIVERY, WHICH THIS BLOCK ASSERTED WAS ABSENT UNTIL CHAPTER 3.18.
+    // LIVE DELIVERY, WHICH THIS BLOCK ASSERTED WAS ABSENT UNTIL THE FAN-OUT CHAPTER.
     //
     // It read `toEqual([])`, and the reason was true when it was written: the only
     // publisher to the fan-out was the gateway's own send handler, so a message a

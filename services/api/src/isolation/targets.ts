@@ -254,7 +254,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   { method: "POST", path: "/internal/session", accepts: "user", shape: "write" },
   { method: "POST", path: "/internal/backfill", accepts: "user", shape: "write" },
 
-  // ── read, internal, end-user token (chapter 3.20) ────────────────────────────
+  // ── read, internal, end-user token ────────────────────────────
   //
   // THE ONLY INTERNAL ROUTE THAT IS NOT A `write`, and the shape is the honest one:
   // the backstop asks what this connection may hear and changes nothing. `session`

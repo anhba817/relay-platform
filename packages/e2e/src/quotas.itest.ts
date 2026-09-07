@@ -4,7 +4,7 @@ import type { Frame } from "@relay/protocol";
 
 import { boot, type Client, type System } from "./harness.js";
 
-// Chapter 3.10 — the cap through the OTHER door, and what it leaves alone.
+// The cap through the OTHER door, and what it leaves alone.
 //
 // The rate-limit chapter's limiter never sees `/internal/messages`: `operationsFor` returns
 // [] for anything outside `/v1`, and that is the route the gateway posts a

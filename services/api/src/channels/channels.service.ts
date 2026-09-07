@@ -15,7 +15,7 @@ import {
 // THE TWO ENDPOINTS PART 3 NEEDED AND NOBODY HAD BUILT (FR-016 to FR-019).
 //
 // `packages/e2e/src/harness.ts` has said since chapter 2.8 that creating a channel
-// and adding a member is "Part 3's tenancy work". Part 3 ends at 3.12, and this
+// and adding a member is "Part 3's tenancy work". Part 3 ends at the isolation gauntlet, and this
 // chapter's exit criterion is that an outsider integrates on public documentation
 // alone — which was unreachable for a reason that had nothing to do with
 // documentation: there was no public way to make a channel to send a message to.

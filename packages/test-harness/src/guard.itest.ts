@@ -161,9 +161,9 @@ describe("an exemption that names one table", () => {
   });
 });
 
-// ── THE FOUR USAGE TABLES (chapter 3.13, FR-038, SC-017) ─────────────────────
+// ── THE FOUR USAGE TABLES (FR-038, SC-017) ─────────────────────
 //
-// Chapters 3.10 and 3.11 added `usage_periods`, `usage_active_users`,
+// the quota chapter and the connection-metering chapter added `usage_periods`, `usage_active_users`,
 // `quota_notifications` and `usage_connections`, and neither added them to
 // `sentinel.sql`'s trigger array. A cross-environment UPDATE or DELETE on any of
 // them passed for two chapters.
@@ -183,7 +183,7 @@ describe("an exemption that names one table", () => {
 // **bait may be claimable only where draining it is database work.** `plant()`
 // plants these already delivered for exactly that reason, and using its rows
 // instead of inventing new ones is also how a refusal keeps naming its owner.
-describe("the four usage tables chapters 3.10 and 3.11 left unguarded", () => {
+describe("the four usage tables the quota chapter and the connection-metering chapter left unguarded", () => {
   const u = sentinelFor("packages/test-harness/src/guard.itest.ts#usage");
 
   beforeAll(async () => {
@@ -237,7 +237,7 @@ describe("the four usage tables chapters 3.10 and 3.11 left unguarded", () => {
     ).rejects.toThrow(new RegExp(`\\(id ${u.usageNotificationId}\\)`));
   });
 
-  // ── THE GUARD'S TENTH TABLE (chapter 3.16, FR-017) ─────────────────────────
+  // ── THE GUARD'S TENTH TABLE (FR-017) ─────────────────────────
   //
   // `read_positions` carries `environment_id` and therefore belongs in the array.
   // `members` does not carry one and is deliberately absent — the catalogue calls
@@ -245,7 +245,7 @@ describe("the four usage tables chapters 3.10 and 3.11 left unguarded", () => {
   // eleventh table has to choose between.
   //
   // Driven rather than asserted from the array, for the reason this whole block
-  // exists: chapters 3.10 and 3.11 put four tables in the array and the guard did
+  // exists: the quota chapter and the connection-metering chapter put four tables in the array and the guard did
   // not watch them, because a trigger with no sentinel row to match is a WHEN
   // clause that never fires. T024 removes this table's name and confirms these
   // three go red.

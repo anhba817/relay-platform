@@ -41,7 +41,7 @@ describe("a signing secret must survive storage, not merely be recognisable", ()
   it("cannot be recovered from the credentials chapter's treatment of the other credential", () => {
     const secret = mintSigningSecret();
 
-    // Hashing is what 3.2 does to an API key, and it is one-way on purpose. The
+    // Hashing is what the credentials chapter does to an API key, and it is one-way on purpose. The
     // digest is not the secret and no amount of care turns it back into one, so
     // an implementation that reached for `hashSecret` here would compile, pass a
     // careless review, and be unable to sign anything.
@@ -90,7 +90,7 @@ describe("minting", () => {
     const b = mintSigningSecret();
 
     expect(a).not.toBe(b);
-    // 256 bits, the same budget 3.2 gave an API key secret.
+    // 256 bits, the same budget the credentials chapter gave an API key secret.
     expect(Buffer.from(a, "base64url").length).toBeGreaterThanOrEqual(32);
   });
 });

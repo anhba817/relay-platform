@@ -19,7 +19,7 @@ import {
 // Redis. It is a `.test.ts`, so it runs in the lane chapter 2.1 built specifically to
 // need no containers — the lane whose whole point is that `pnpm test` is honest on a
 // laptop with nothing running. With the stack down it reported twelve failures that were
-// correct behaviour, and `gaps.md` 3.23-9 has carried that since it was found by
+// correct behaviour, and `gaps.md` the revisions chapter-9 has carried that since it was found by
 // accident.
 //
 // **WHICH FIVE STAY WAS MEASURED, NOT ARGUED.** Run the original against a dead broker

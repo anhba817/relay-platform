@@ -5,7 +5,7 @@ import { z } from "zod";
  *
  * WHY THIS IS NOT IN `fanout.ts`, `presence.ts` OR `membership.ts`. Each fabric
  * owns its subject grammar in its own file — `internal.ts` established that for
- * the event spine, the presence chapter followed it for presence and 3.20 for
+ * the event spine, the presence chapter followed it for presence and the membership-revocation chapter for
  * membership. A new file is a whole-file fence and leaves three chapters' hunks
  * over `fanout.ts` alone.
  *
@@ -48,7 +48,7 @@ export function subjectForTyping(channelId: string): string {
  *
  * `strictObject`, so an unknown field is a rejection rather than a silent ignore:
  * a field added on one side of a rolling deploy fails loudly on the other instead
- * of being dropped. Chapters 3.19 and 3.20 chose the same strictness for the same
+ * of being dropped. the presence chapter and the membership-revocation chapter chose the same strictness for the same
  * reason.
  *
  * **NO `state` FIELD, AND THE ABSENCE IS THE CHAPTER.** There is no "started" or

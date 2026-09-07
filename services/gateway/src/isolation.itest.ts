@@ -23,7 +23,7 @@ import { seedSocketTenants, type SocketTenants } from "./isolation-fixtures.js";
 // verbs — session, send, resume, subscribe — get attacked with another tenant's
 // identifiers.
 //
-// The arrangement is the credentials chapter's and 3.11 kept it for the same reason: the
+// The arrangement is the credentials chapter's and the connection-metering chapter kept it for the same reason: the
 // gateway runs IN PROCESS and the api as a CHILD. In process, because a test that
 // cannot reach the gateway's own state cannot check what it subscribed to; as a
 // child, because importing the api would make this service depend on the api's
@@ -140,7 +140,7 @@ async function startApi(): Promise<{ url: string; stop: () => void }> {
       PORT: "0",
       // Neither relay: this suite asserts on rows and on frames, and a
       // background loop draining the tables another file is asserting on turns
-      // two unrelated suites into a race (chapters 3.3 and 3.8).
+      // two unrelated suites into a race (the outbox chapter and the rate-limit chapter).
       RELAY_OUTBOX_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",
       // Its own failed-authentication keyspace. The rate-limit chapter's auth limiter counts
@@ -268,7 +268,7 @@ describe("the socket gauntlet", () => {
   //
   // REFUSING AT THE MINT IS NOT ENOUGH, and this is the test that says so. A token lives
   // up to 24 hours (FR-AUT-07), so a user promoted to a bot at 09:00 holds a valid token
-  // until 09:00 tomorrow. The session route reads `banned_at` and, until chapter 3.17,
+  // until 09:00 tomorrow. The session route reads `banned_at` and, until the sender chapter,
   // not `kind` — so closing the mint alone would leave a bot able to connect for a day
   // after it became one.
   //
@@ -411,7 +411,7 @@ describe("the socket gauntlet", () => {
     expect(after).not.toContain(text);
   });
 
-  // ── A REMOVED MEMBER'S RECONNECTION (chapter 3.15, SC-004) ──────────────────
+  // ── A REMOVED MEMBER'S RECONNECTION (SC-004) ──────────────────
   //
   // T058. The session is built from `members` — `channelsForUser` selects from that
   // table, and `repository.backfill` joins it per cursor — so removal takes the
@@ -428,7 +428,7 @@ describe("the socket gauntlet", () => {
   //      `fanout?.publish` is a no-op and nothing is ever delivered here. The control
   //      hung for five seconds and timed out.
   //
-  //      STILL TRUE OF THIS SUITE after chapter 3.18. That chapter gave the api a
+  //      STILL TRUE OF THIS SUITE after the fan-out chapter. That chapter gave the api a
   //      publisher and added a THIRD describe to `session.itest.ts` with a fan-out
   //      attached — deliberately a new block rather than a fourth argument to the
   //      existing ones, so blocks like this that want no broker keep none. If a
@@ -471,7 +471,7 @@ describe("the socket gauntlet", () => {
     await tenants.attacker.rejoinSelf();
   });
 
-  // ── AN ARCHIVED CHANNEL AND THE SOCKET (chapter 3.16, FR-022a) ──────────────
+  // ── AN ARCHIVED CHANNEL AND THE SOCKET (FR-022a) ──────────────
   //
   // T078a. FR-022 asks two things and only one of them had a task for eleven
   // analysis passes: whether an archived channel appears in a listing (it does, with
@@ -648,7 +648,7 @@ describe("the socket gauntlet", () => {
   // repository, THIS SUITE attaches no fan-out, and nothing here drains the outbox.
   //
   // THE REASON CHANGED IN the fan-out chapter AND THE FACT DID NOT. This comment used to say
-  // "the api publishes to no fan-out", which was the platform-wide truth chapter 3.12
+  // "the api publishes to no fan-out", which was the platform-wide truth the isolation gauntlet
   // recorded as a finding — a REST-sent message reached no socket, by two independent
   // mechanisms. The sender chapter removed one and the fan-out chapter the other, so the api does
   // publish now; nothing arrives HERE because this suite subscribes to nothing, which is
@@ -711,7 +711,7 @@ describe("the socket gauntlet", () => {
     expect(bare.success).toBe(false);
   });
 
-  // ── THE SAME-TENANT NON-MEMBER, ON THE SOCKET (chapter 3.15, T087) ─────────
+  // ── THE SAME-TENANT NON-MEMBER, ON THE SOCKET (T087) ─────────
   //
   // The protocol's frame union has exactly one inbound member — `message.send` —
   // so there is no "subscribe" frame to attack: what a socket may see is decided at
@@ -774,7 +774,7 @@ const DIRECTIONS: ReadonlyArray<readonly [string, "inbound" | "outbound", string
   ["membership.changed", "outbound", "membership is written through the api, never the socket"],
   ["presence.changed", "outbound", "derived from connections the gateway holds, not claimed"],
   ["typing", "outbound", "server-fanned; a client claiming one could type as anybody"],
-  // CHAPTER 3.21, and the second inbound frame in twenty chapters. It carries no
+  // And the second inbound frame in twenty chapters. It carries no
   // `user` — the connection supplies it — which is what keeps the row above true
   // rather than contradicted: same subject, two frames, and only the server's
   // names a person.
@@ -784,7 +784,7 @@ const DIRECTIONS: ReadonlyArray<readonly [string, "inbound" | "outbound", string
   // `DIRECTIONS.filter(([, d]) => d === "outbound")` — so nothing ever asks for
   // an inbound frame's sample and the case would be dead code a task required.
   // Said here because the next reader adding an inbound type will wonder.
-  ["typing.send", "inbound", "chapter 3.21: a client may say it is typing (session.ts)"],
+  ["typing.send", "inbound", "a client may say it is typing (session.ts)"],
   ["error", "outbound", "the server's refusal shape"],
 ];
 
@@ -861,7 +861,7 @@ describe("every frame in the union is classified, in both directions", () => {
 
   it("derives all eleven members from the union itself", () => {
     // ELEVEN with the typing chapter's `typing.send`. **The title carries the number
-    // too**, and updating the assertion without the title is how chapter 3.19
+    // too**, and updating the assertion without the title is how the presence chapter
     // shipped a good test under a false name.
     expect(members.length).toBe(11);
   });

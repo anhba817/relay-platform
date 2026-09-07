@@ -55,7 +55,7 @@ export interface Fanout {
    * A SECOND CALLBACK ON THE SAME MODULE, not a second module. The revision subject's
    * subscription lifetime is IDENTICAL to the message subject's: the same channels, the
    * same reference counts, subscribed and dropped at the same moments. A module of its own
-   * would duplicate that counting and add two more Redis clients to a service chapter 3.21
+   * would duplicate that counting and add two more Redis clients to a service the typing chapter
    * took to eight. */
   onRevision(handler: (channelId: string, revision: RevisionFabric) => void): void;
   /** Publish an edit or a deletion to its channel's revision subject. Same failure

@@ -295,10 +295,9 @@ export async function environmentLimits(
   };
 }
 
-/** Write a row for each threshold a usage increase crossed (chapter 3.10,
- * FR-RTL-07), and the organisation to tell about it.
+/** Write a row for each threshold a usage increase crossed ( * FR-RTL-07), and the organisation to tell about it.
  *
- * STANDALONE SINCE CHAPTER 3.11, and the reason is the same one `usageFor` and
+ * STANDALONE SINCE THE CONNECTION-METERING CHAPTER, and the reason is the same one `usageFor` and
  * `creditConnectionMinutes` give: `Repository` closes over an `environmentId` by
  * construction, and the caller that now needs this is the usage report route,
  * which holds a PLATFORM principal and therefore no environment at all. The
@@ -365,8 +364,7 @@ export async function organisationOf(
   return row?.organisationId ?? null;
 }
 
-/** Everything the connect path needs, in ONE round trip (chapter 3.11,
- * FR-RTL-05, FR-RTL-06).
+/** Everything the connect path needs, in ONE round trip ( * FR-RTL-05, FR-RTL-06).
  *
  * ENFORCED AT THE DOOR, because that is the operation this dimension meters. The
  * messages cap refuses sends; the connection-minutes cap refuses connects. A cap
@@ -458,7 +456,7 @@ export async function assertConnectionsWithinQuota(
  * without a database, because those two lines are the whole protocol.
  *
  * THE LOCK the quota chapter WANTED AND COULD NOT HAVE. Crediting is read-then-write,
- * so it takes `SELECT … FOR UPDATE` on the accounting row. 3.10 needed the same
+ * so it takes `SELECT … FOR UPDATE` on the accounting row. The quota chapter needed the same
  * lock on the usage row and hit `FOR UPDATE cannot be applied to the nullable
  * side of an outer join`, because its caps and usage had become one joined read.
  * Here the lock is a single table by primary key and Postgres allows it — the
@@ -567,8 +565,7 @@ export async function creditConnectionMinutes(
       });
     }
 
-    // THE CROSSINGS, IN THE SAME TRANSACTION AS THE CREDIT (chapter 3.11,
-    // FR-RTL-07/FR-RTL-07). The report knows the figure before and after, so it knows
+    // THE CROSSINGS, IN THE SAME TRANSACTION AS THE CREDIT (    // FR-RTL-07/FR-RTL-07). The report knows the figure before and after, so it knows
     // which thresholds it crossed — which is why this chapter has no periodic
     // sweep either, for the second chapter running (research R5).
     //
@@ -826,7 +823,7 @@ export async function drainOutbox(
 // `delivered_at` column and left it null throughout, which is a claim predicate
 // already written down.
 //
-// The backlog 3.6 accumulated therefore drains on the first run with NO SPECIAL
+// The backlog the retry-and-disable chapter accumulated therefore drains on the first run with NO SPECIAL
 // HANDLING. By the predicate's own definition those rows are undelivered work,
 // and code that treated them as a migration would be code asserting they are
 // different when they are not (FR-WHK-07).
@@ -969,7 +966,7 @@ export async function drainDisableNotifications(
  * the notification precisely so this lookup could not follow the endpoint's
  * CURRENT owner. An application that moved between organisations after the
  * disablement must not silently retarget an obligation already owed to somebody
- * else — 3.6 wrote the reason down and this is the first code to depend on it.
+ * else — the retry-and-disable chapter wrote the reason down and this is the first code to depend on it.
  *
  * `humans.email` is nullable, so this can legitimately return nothing. That is a
  * branch the caller has to handle, not a case that cannot arise.
@@ -1320,7 +1317,7 @@ export async function recordAttemptOutcome(
     status?: number;
     error?: string;
     /** How long the customer took to answer. Carried across the internal seam on
-     * every attempt since the webhook dispatcher chapter and discarded until 3.6 wanted it (research
+     * every attempt since the webhook dispatcher chapter and discarded until the retry-and-disable chapter wanted it (research
      * R6). Optional only so that callers written before it existed still compile;
      * every real caller has it. */
     latencyMs?: number;
@@ -1595,8 +1592,7 @@ export async function testDeliveryResult(
   };
 }
 
-/** Disable every endpoint whose failure run has outrun the hour (chapter 3.6,
- * research R1, contract invariant 12).
+/** Disable every endpoint whose failure run has outrun the hour ( * research R1, contract invariant 12).
  *
  * THE SECOND TRIGGER, and it is not belt-and-braces. The on-outcome check catches
  * every endpoint that is still receiving attempts, and research R1 measured that
@@ -2020,7 +2016,7 @@ export interface Provisioned {
   environment: { id: string; kind: Environment["kind"] };
   human: { id: string; provider: string; provider_account_id: string };
   created: boolean;
-  /** Chapter 3.2, research R8: the environment's FIRST key, present only when
+  /** Research R8: the environment's FIRST key, present only when
    * this call created the tenant. With no console session, nothing else can
    * bootstrap a credential — a brand-new organisation cannot authenticate a
    * request to ask for one. A returning owner gets no key, because the old
@@ -2257,7 +2253,7 @@ export interface MessageRow {
   channel_id: string;
   seq: number;
   text: string | null;
-  /** Chapter 3.24 (FR-001, FR-007). **REQUIRED, unlike `edited_at` below**, and the
+  /** (FR-001, FR-007). **REQUIRED, unlike `edited_at` below**, and the
    * contrast is the decision.
    *
    * `edited_at?` is optional so write paths need not spell `edited_at: null`, and that
@@ -2717,7 +2713,7 @@ export class Repository {
   }
 
   /** IDEMPOTENT, for `createChannel`'s reason and found the same way (chapter
-   * 3.12). This was a plain insert too, and the members endpoint creates a user
+   * The isolation gauntlet). This was a plain insert too, and the members endpoint creates a user
    * on first membership — so a second identical request would have raised against
    * `users_environment_id_external_id_unique` and answered `internal_error`. R14a
    * named `addMember` and `createChannel`; this is the third function on the same
@@ -2813,7 +2809,7 @@ export class Repository {
 
   /** IDEMPOTENT ON THE CUSTOMER'S OWN IDENTIFIER (FR-017, FR-CHN-02).
    *
-   * This was a plain insert until chapter 3.13, which is fine for a fixture and
+   * This was a plain insert until the channel-endpoints chapter, which is fine for a fixture and
    * cannot back an endpoint: a repeated `external_id` raises against
    * `channels_environment_id_external_id_unique`, and `ProtocolErrorFilter`
    * renders a unique violation as `internal_error`. The second call in an
@@ -3278,7 +3274,7 @@ export class Repository {
   /** The channels a user belongs to, each with its revision count (feature 044, FR-014).
    *
    * ONE QUERY, NOT TWO. The count could have come from a second call, and giving each
-   * caller its own is the two-lists-that-must-agree defect `gaps.md` 3.23-4 records about
+   * caller its own is the two-lists-that-must-agree defect `gaps.md` the revisions chapter-4 records about
    * `targets.ts` — two things that must match, maintained separately, with nothing
    * comparing them. The join costs nothing: `members` is already reached and `channels` is
    * one hop from it on a primary key.
@@ -3310,8 +3306,7 @@ export class Repository {
       );
   }
 
-  /** Upsert a user by external id, updating the profile fields present (chapter 3.15,
-   * FR-025, FR-026).
+  /** Upsert a user by external id, updating the profile fields present (   * FR-025, FR-026).
    *
    * NOT `createUser`, AND THE DIFFERENCE IS THE POINT. `createUser` is deliberately not an
    * update: its comment says so — "the display name of the existing row wins; quietly
@@ -3338,7 +3333,7 @@ export class Repository {
       display_name?: string | null | undefined;
       avatar_url?: string | null | undefined;
       metadata?: Record<string, unknown> | undefined;
-      /** Chapter 3.17 (FR-002b). ABSENT MEANS "NO CHANGE", NOT "PERSON" — the column
+      /** (FR-002b). ABSENT MEANS "NO CHANGE", NOT "PERSON" — the column
        * default handles a new row and this method must not apply it to an existing
        * one, or an entry updating a bot's description would silently demote it. */
       kind?: "person" | "bot" | undefined;
@@ -3798,7 +3793,7 @@ export class Repository {
   }
 
   /** A user's channels, most recently active first, keyset-paginated (chapter
-   * 3.15, FR-013, FR-CHN-08).
+   * The channel-control chapter, FR-013, FR-CHN-08).
    *
    * `id` IS PART OF THE KEY AND NOT DECORATION. `last_activity_at` is not unique:
    * two channels can take a message in the same millisecond, and a keyset on a
@@ -4005,7 +4000,7 @@ export class Repository {
        * Every read converts NULL to `[]` on the way out (FR-007), once. */
       attachments?: Attachment[] | undefined;
       senderMustBeBot?: boolean;
-      /** REQUIRED SINCE CHAPTER 3.17 (FR-MSG-15, FR-006), and required is the whole
+      /** REQUIRED SINCE THE SENDER CHAPTER (FR-MSG-15, FR-006), and required is the whole
        * mechanism. SC-003 asks that no write path be able to produce a senderless
        * message; a runtime check would be a test somebody has to remember, and this
        * is a compile error. `exactOptionalPropertyTypes` means a caller cannot pass
@@ -4098,8 +4093,7 @@ export class Repository {
         .for("update");
       if (!channel) throw new ChannelNotFoundError(channelId);
 
-      // MEMBERSHIP, FOR A PRIVATE CHANNEL, WHEN A USER IS SENDING (chapter 3.15,
-      // FR-001, FR-CHN-05).
+      // MEMBERSHIP, FOR A PRIVATE CHANNEL, WHEN A USER IS SENDING (      // FR-001, FR-CHN-05).
       //
       // HERE AND NOT IN A HANDLER, because constitution I says isolation is
       // enforced in data access. Two controllers reach this function and neither
@@ -4116,7 +4110,7 @@ export class Repository {
       // supply a user. It called `messages.send(channelId, body)` with none, and
       // `MessagesController` declared no `@Accepts` at the time — so the guard fell
       // back to `EITHER` and a user token was accepted there. The sender chapter declared it;
-      // the third of three copies of this sentence, all corrected in 3.23. A check gated on a parameter
+      // the third of three copies of this sentence, all corrected in the revisions chapter. A check gated on a parameter
       // no caller fills in is a check that never fires, and this one did not, on
       // the only send path a customer's own client uses.
       //
@@ -4175,7 +4169,7 @@ export class Repository {
         throw new SenderNotPermittedError(userId);
       }
 
-      // ARCHIVE, AFTER VISIBILITY AND NOT BEFORE (chapter 3.15, FR-020, FR-021,
+      // ARCHIVE, AFTER VISIBILITY AND NOT BEFORE (FR-020, FR-021,
       // FR-021a).
       //
       // The order is the requirement, not an implementation detail. Put this check
@@ -4512,7 +4506,7 @@ export class Repository {
           text: messages.text,
           seq: messages.sequence,
           createdAt: messages.createdAt,
-          /** Chapter 3.24 (FR-015, FR-016). THIS READ CHANGES, AND T053's LIST OF FOUR
+          /** (FR-015, FR-016). THIS READ CHANGES, AND T053's LIST OF FOUR
            * BECOMES THREE.
            *
            * An edit does not change attachments — T045 and T046 prove that from both
@@ -4567,7 +4561,7 @@ export class Repository {
       // set — **a row one filter calls deleted and another calls alive**, and a
       // deletion that returned successfully undone by an edit already in flight.
       //
-      // `gaps.md` 3.23-3 recorded the opposite — *"both interleavings end in a
+      // `gaps.md` the revisions chapter-3 recorded the opposite — *"both interleavings end in a
       // tombstone… there is no order of the two that leaves a message saying something
       // nobody wrote"* — and the test that item asked for is what disproved it: three
       // of five runs, and four incoherent rows left behind in the lane.
@@ -5056,7 +5050,7 @@ export class Repository {
     // FR-018b requires the count to exclude bots as well — Phase 5's T047b, because
     // doing only the first leaves a bot's row displacing a person and the bot's own
     // send passing makes it look fixed.
-    // A BOT IS EXEMPT FROM THE CEILING, AND THAT IS HALF OF IT (chapter 3.17, FR-018a,
+    // A BOT IS EXEMPT FROM THE CEILING, AND THAT IS HALF OF IT (FR-018a,
     // FR-RTL-05 as amended). The clause now caps "unique active PERSONS"; FR-ANL-05
     // still meters "unique active users" and the insert above still counts a bot, which
     // is what makes a bot billed and exempt at the same time.
@@ -5121,8 +5115,7 @@ export class Repository {
     return { caps: { messages: messages_, active_users: users_ }, sent };
   }
 
-  /** Write a row for each threshold a usage increase crossed (chapter 3.10,
-   * FR-RTL-07, FR-RTL-07).
+  /** Write a row for each threshold a usage increase crossed (   * FR-RTL-07, FR-RTL-07).
    *
    * IN THE SAME TRANSACTION AS THE THING THAT CAUSED IT. The crossing and the
    * message commit together or neither does, which is the same argument the
@@ -5374,7 +5367,7 @@ export class Repository {
       id: messages.id,
       channel_id: messages.channelId,
       seq: messages.sequence,
-      /** Chapter 3.24 (FR-009). A CAST AND NOT A CHECK: `messages.attachments` is a bare
+      /** (FR-009). A CAST AND NOT A CHECK: `messages.attachments` is a bare
        * `jsonb()` with no `.$type<>()`, so drizzle infers `unknown` and this names it.
        * Postgres enforces no shape on the column. */
       attachments: sql<Attachment[] | null>`${messages.attachments}`,

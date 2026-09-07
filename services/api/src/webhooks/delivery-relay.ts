@@ -67,7 +67,7 @@ export async function ensureDeliveriesStream(nc: NatsConnection): Promise<void> 
     });
     return;
   }
-  // Retention and storage are immutable on an existing stream — chapter 3.4
+  // Retention and storage are immutable on an existing stream — the broker chapter
   // measured that (its research R1), and the lesson transfers unchanged.
   await jsm.streams.update(DELIVERIES_STREAM, { ...existing.config, ...mutable });
 }

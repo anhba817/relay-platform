@@ -21,7 +21,7 @@ import type { EventHandler } from "./handler";
 // in a shared stream that already holds tens of thousands of events from earlier
 // chapters — two runs sharing a name would inherit each other's progress, and
 // the second would look mysteriously empty. This is the same lesson 2.6 learned
-// about Redis subjects and 3.3 about the outbox table: a shared store needs a
+// about Redis subjects and the outbox chapter about the outbox table: a shared store needs a
 // per-run handle, because the isolation every other suite gets from a tenant
 // column is not available here.
 
@@ -241,7 +241,7 @@ describe("the consumer", () => {
     expect(c.max_age).toBe(7 * 24 * 60 * 60 * 1_000_000_000);
     expect(c.max_bytes).toBe(1024 * 1024 * 1024);
     expect(c.discard).toBe("old");
-    // Immutable once created, and both already right because 3.3 chose them.
+    // Immutable once created, and both already right because the outbox chapter chose them.
     expect(c.retention).toBe("limits");
     expect(c.storage).toBe("file");
     await nc.drain();
@@ -293,7 +293,7 @@ describe("the consumer", () => {
     // and the ledger is what makes the redelivery safe.
     //
     // A real signal from the parent, not a thrown exception: an exception runs
-    // the error path, and a crash does not (research R7, the shape 3.3 used).
+    // the error path, and a crash does not (research R7, the shape the outbox chapter used).
     const { durable, eventId, environmentId } = await killInTheGap();
 
     // What the kill left behind: handled once, never acknowledged.

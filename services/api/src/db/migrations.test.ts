@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 // THE NEXT CONTRIBUTOR REVERSES BY ACCIDENT (feature 043, FR-023a).
 //
 // Migrations here are hand-written and reviewed against SAD §6.1. That is not this
-// feature's preference — ADR-16 has said it since chapter 3.9: *"migrations remain
+// feature's preference — ADR-16 has said it since the mail-transport chapter: *"migrations remain
 // versioned, forward-only, hand-reviewed SQL"*. A generator's output is none of those
 // things, so the tooling had contradicted the constitution the whole time rather than
 // the other way round.

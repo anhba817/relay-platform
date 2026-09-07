@@ -118,13 +118,13 @@ describe("integrating with Relay from the outside", () => {
     // THIS TEST WAS RED FOR TWO CHAPTERS AND NOBODY SAW IT (T065).
     //
     // It asserted `400` with `field: "type"`, which was true when it was written: the
-    // create route took `public` only. Chapter 3.15 (`43899e3`, "the private type decides
+    // create route took `public` only. The channel-control chapter (`43899e3`, "the private type decides
     // something, on every read") widened the enum to `["public","private"]` and this
     // suite was not run at that chapter's close — `pnpm test:outsider` is its own lane,
     // outside `pnpm test:integration`, so nothing in the twenty-run battery touches it.
     //
     // The one suite that stands for an external developer was wrong about the API for two
-    // chapters. That is chapter 3.14's unmet half showing itself: a sealed suite proves
+    // chapters. That is the outsider milestone's unmet half showing itself: a sealed suite proves
     // nothing about the documentation if nobody runs it.
     const res = await post(
       "/v1/channels",
@@ -376,7 +376,7 @@ describe("integrating with Relay from the outside", () => {
     socket.close();
   });
 
-  /** CHAPTER 3.21, T100a — **the first `socket.send` in this file's history.**
+  /** T100a — **the first `socket.send` in this file's history.**
    *
    * `grep -c "\.send(" packages/outsider/src/integrate.itest.ts` read **0** across
    * eleven tests before this one: ten REST, and one socket test whose title says
@@ -448,13 +448,13 @@ describe("integrating with Relay from the outside", () => {
     ben.socket.close();
   });
 
-  /** CHAPTER 3.21, T100b — the refusal, from outside.
+  /** T100b — the refusal, from outside.
    *
    * `docs/08-error-reference.md` tells a customer *"send `message.send` … Do not
    * send events; receive them."* **Nothing had ever checked what happens when they
    * do.** This is that correction in bytes rather than in prose. */
   it("holds five connections and is refused a sixth with 4004 (FR-RTM-09)", async () => {
-    // CHAPTER 3.22, T048. **THE ONLY INSTRUMENT THAT BOOTS THE SHIPPED BINARY**,
+    // T048. **THE ONLY INSTRUMENT THAT BOOTS THE SHIPPED BINARY**,
     // and the reason this task is a plan requirement rather than a polish item.
     //
     // The typing chapter built a module, awaited its `close()` so lint saw a used
@@ -541,14 +541,14 @@ describe("integrating with Relay from the outside", () => {
     expect(await closed).toBe(4002);
   });
 
-  /** CHAPTER 3.23 — an edit, over the shipped binary, seen on somebody else's socket.
+  /** An edit, over the shipped binary, seen on somebody else's socket.
    *
    * **WRITTEN BECAUSE THIS FILE IS THE ONLY THING THAT BOOTS THE PRODUCT.** CLAUDE.md
    * records what that bought: the typing chapter built a module, awaited its `close()`, never
    * passed it to `attachSessions`, and shipped it inert past 1,174 coverage tests and
    * 174 gateway integration tests. This file found it. The rule it left behind — a
    * chapter that adds an argument to `attachSessions` owes an outsider test — applies
-   * here for the same reason one level out: 3.23 adds a second Redis subject, a second
+   * here for the same reason one level out: the revisions chapter adds a second Redis subject, a second
    * callback on the fan-out and a second frame kind, and every in-workspace test of
    * that path uses a stub fan-out or the `ws` package this file refuses to import.
    *

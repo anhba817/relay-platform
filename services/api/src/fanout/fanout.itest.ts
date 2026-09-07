@@ -431,7 +431,7 @@ describe("the api's fan-out publish", () => {
   });
 });
 
-// ── chapter 3.18: the failure path (Phase 6) ────────────────────────────────
+// ── the failure path (Phase 6) ────────────────────────────────
 //
 // Constitution IV: "Any new delivery mechanism MUST preserve this recovery
 // property." A publish that fails must cost delivery and nothing else — the row

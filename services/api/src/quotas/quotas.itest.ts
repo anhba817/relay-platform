@@ -15,7 +15,7 @@ import { createQuotaRelay } from "./quota-relay";
 import { QuotaExceededError } from "./quota.error";
 import { periodOf } from "./period";
 
-// Chapter 3.10, User Story 1 — the month is counted, and the count survives.
+// User Story 1 — the month is counted, and the count survives.
 //
 // Everything here is about a number. The cap, the refusal and the email are later
 // phases and none of them means anything if the number is wrong.
@@ -38,7 +38,7 @@ describe("the month's usage", () => {
 
   /** A fresh environment with a channel, and a repository scoped to it. Fresh per
    * test, because a usage count that borrowed another test's rows would be the
-   * fault this whole lane has been recording since chapter 3.3. */
+   * fault this whole lane has been recording since the outbox chapter. */
   const seed = async () => {
     const env = await createEnvironment(db, {
       name: `quota-itest-${randomUUID().slice(0, 8)}`,
@@ -96,7 +96,7 @@ describe("the month's usage", () => {
     // THIS TEST'S SUBJECT NO LONGER EXISTS. It read "counts an
     // unattributed send toward messages and toward no user" and asserted
     // `activeUsers === 0`, because a key-authenticated send carried no user —
-    // unattributed by design since chapter 3.3, which FR-MSG-15 reverses. There is no
+    // unattributed by design since the outbox chapter, which FR-MSG-15 reverses. There is no
     // senderless send left to count, so the assertion had no subject rather than a
     // wrong value.
     //
@@ -144,7 +144,7 @@ describe("the month's usage", () => {
     // THIS TEST'S SUBJECT NO LONGER EXISTS. It read "counts an
     // unattributed send toward messages and toward no user" and asserted
     // `activeUsers === 0`, because a key-authenticated send carried no user —
-    // unattributed by design since chapter 3.3, which FR-MSG-15 reverses. There is no
+    // unattributed by design since the outbox chapter, which FR-MSG-15 reverses. There is no
     // senderless send left to count, so the assertion had no subject rather than a
     // wrong value.
     //
@@ -309,7 +309,7 @@ describe("the count survives the counter store", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Chapter 3.10, User Story 2 — running out is predictable.
+// User Story 2 — running out is predictable.
 // ---------------------------------------------------------------------------
 //
 // FR-RTL-08 is unusually specific and the specificity IS the requirement: sends
@@ -478,7 +478,7 @@ describe("running out", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Chapter 3.10, User Story 3 — nobody is surprised.
+// User Story 3 — nobody is surprised.
 // ---------------------------------------------------------------------------
 //
 // Read out of Mailpit rather than asserted on a send call, which is the shape
@@ -591,7 +591,7 @@ describe("nobody is surprised", () => {
     await setCaps(environmentId, { messages: { hard: 4 } });
 
     // 1 of 4 = 25%, 2 = 50%, 3 = 75%, 4 = 100%. THREE crossings, not two: the
-    // fourth message clears 80% and 100% in one step, because 80% of 4 is 3.2
+    // fourth message clears 80% and 100% in one step, because 80% of 4 is the credentials chapter
     // and nothing lands on it. Written as two first, and the lane said three.
     for (const t of ["a", "b", "c", "d"]) {
       await repo.sendMessage(channelId, { text: t, userId });

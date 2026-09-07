@@ -13,7 +13,7 @@ import { z } from "zod";
  *
  * **THE BOUND TRACKS ROW CARDINALITY.** Measured on the test lane: 94,144 users against
  * 27,337 channels, and a user belongs to 1 channel on average while a channel holds 10
- * users. Users outnumber channels 3.4:1 here and the ratio only grows — a channel is a
+ * users. Users outnumber channels the broker chapter:1 here and the ratio only grows — a channel is a
  * conversation a customer creates deliberately, a user row appears for every end user who
  * ever authenticates, implicitly (FR-USR-02). At a million end users, 4 KB each is 4 GB of
  * jsonb that every profile read walks past.
@@ -220,7 +220,7 @@ const LISTING_LIMIT_DEFAULT = 25;
  *
  * DECODED HERE AND NOT IN THE SERVICE, because a malformed cursor is a validation
  * failure with `field: "cursor"` — the shape `ZodValidationPipe` already produces
- * (chapter 3.14 gave every validation error its field). Decoding it downstream would
+ * (the error-registry chapter gave every validation error its field). Decoding it downstream would
  * make it a 500 or a hand-rolled 400 that names nothing.
  *
  * OPAQUE IS NOT SECURITY. Base64 of JSON is readable by anyone who wants to read it;

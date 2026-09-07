@@ -287,7 +287,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       const read = page.messages.find((m) => m["seq"] === created.seq)!;
       // `toHaveProperty` AND NOT `toEqual([])`. An ABSENT key and a `[]` both satisfy
       // `expect(read.attachments).toEqual([])` when the value is undefined — chapter
-      // 3.23 shipped a control test that was green before its field existed for exactly
+      // The revisions chapter shipped a control test that was green before its field existed for exactly
       // this reason. This assertion fails on an absent key.
       expect(read).toHaveProperty("attachments", []);
     });
@@ -352,7 +352,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       const body = (await res.json()) as Record<string, unknown>;
       expect(body.code).toBe("invalid_request");
       // NOT ABSENT. A refusal that says "Invalid input" and no field leaves the caller to
-      // work out which key it was about — chapter 3.14's whole subject, and the reason
+      // work out which key it was about — the error-registry chapter's whole subject, and the reason
       // this assertion is on the field rather than the status.
       expect(body.field).toBe("text");
     });
@@ -411,15 +411,15 @@ describe("POST /v1/channels/:channelId/messages", () => {
     );
   });
 
-  // ── THE ROUTE A CUSTOMER'S CLIENT ACTUALLY CALLS (chapter 3.15, FR-001) ───────
+  // ── THE ROUTE A CUSTOMER'S CLIENT ACTUALLY CALLS (FR-001) ───────
   //
   // The membership check lives in `repository.sendMessage` and is gated on `userId`
   // being present. `repository.itest.ts` proves the check EXISTS by driving that
   // function directly with a user id. Only these tests prove it FIRES, because for
   // twenty-three chapters this controller called `messages.send(channelId, body)`
   // with no user at all — and `MessagesController` declared no `@Accepts` at the time,
-  // so the guard fell back to `EITHER` and a user token was accepted here. Chapter 3.17
-  // declared it; this sentence went on describing its absence until 3.23.
+  // so the guard fell back to `EITHER` and a user token was accepted here. The sender chapter
+  // declared it; this sentence went on describing its absence until the revisions chapter.
   //
   // So the repository test passed while the route it protects was open. A repository
   // test proves a check exists; only a route test proves it fires.

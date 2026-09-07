@@ -75,7 +75,7 @@ const valid: Record<string, unknown> = {
     payload: { user: "u1", state: "online" },
   },
   typing: { type: "typing", payload: { channel: "c1", user: "u1" } },
-  // Chapter 3.21, and the only INBOUND member besides `message.send`. One
+  // And the only INBOUND member besides `message.send`. One
   // field: the connection supplies the user.
   "typing.send": { type: "typing.send", payload: { channel: "c1" } },
   error: {
@@ -186,9 +186,9 @@ describe("malformed frames reject", () => {
 // only field that must NOT be there is the one this frame exists because it cannot fill.
 describe("the message payload's exact key set (FR-022)", () => {
   it("names exactly seven, and attachments is one of them", () => {
-    // SIX UNTIL CHAPTER 3.24, and pinned here for the first time — the frame had no
+    // SIX UNTIL THE ATTACHMENTS CHAPTER, and pinned here for the first time — the frame had no
     // exact-set assertion at all, so `messageSchema` was the one published payload a
-    // silent addition could reach. `codes.test.ts` has pinned its set since 3.2 for the
+    // silent addition could reach. `codes.test.ts` has pinned its set since the credentials chapter for the
     // same reason: an exact set makes a change a decision rather than an accident.
     const parsed = messageSchema.parse(message);
     expect(Object.keys(parsed).sort()).toEqual([

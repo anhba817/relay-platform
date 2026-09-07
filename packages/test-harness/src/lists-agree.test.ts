@@ -22,7 +22,7 @@ const CONFIG = new URL("../../../eslint.config.mjs", import.meta.url);
 
 /** The drain-exempt list as `eslint.config.mjs` declares it.
  *
- * READ FROM THE NAMED CONST, not from a block's inline `ignores`. Chapter 3.12
+ * READ FROM THE NAMED CONST, not from a block's inline `ignores`. The isolation gauntlet
  * restructured that file into three blocks — the two exemption lists are
  * different files and a block has one `ignores`, so the lists became
  * `DRAIN_EXEMPT_TESTS` and `DRIVER_EXEMPT_TESTS` and the blocks spread them.

@@ -29,7 +29,7 @@ export interface UserPrincipal {
  *
  * THE SHORTCUT THAT WOULD HAVE WORKED AND BEEN WRONG: mint the dispatcher an API
  * key. It would authenticate on the first try — and an `application` principal
- * is scoped to exactly ONE environment by construction (3.1, 3.2), so a
+ * is scoped to exactly ONE environment by construction (the tenancy chapter, the credentials chapter), so a
  * dispatcher holding one either cannot serve other tenants or has been quietly
  * granted cross-tenant reach through the credential type whose entire meaning is
  * that it has none. Principle I is a correctness property, and that is the shape

@@ -24,7 +24,7 @@ import {
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 
 // The gateway's only road to a number it can see and cannot write (chapter
-// 3.11, constitution IV).
+// The connection-metering chapter, constitution IV).
 //
 // A SEPARATE CONTROLLER FROM THE OTHER `/internal` ROUTES, and the reason is the
 // decorator two lines below. `/internal/session`, `/internal/backfill` and

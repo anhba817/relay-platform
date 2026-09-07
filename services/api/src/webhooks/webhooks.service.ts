@@ -232,7 +232,7 @@ export class WebhooksService {
 
   /** FR-016. Validate against the DECLARED eight, not the emitted five.
    *
-   * THE REVIEW AND `gaps.md` 3.23-1 BOTH RECOMMEND `OUTBOX_EVENT_TYPES`, AND BOTH ARE
+   * THE REVIEW AND `gaps.md` the revisions chapter-1 BOTH RECOMMEND `OUTBOX_EVENT_TYPES`, AND BOTH ARE
    * WRONG. That array holds the five types the platform emits; FR-WHK-02 declares eight.
    * Measured before this was written: **741 stored subscriptions name
    * `channel.created`**, which is declared and not yet built. Comparing against the

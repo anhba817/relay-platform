@@ -5,7 +5,7 @@ import { subjectForChannel } from "./fanout.js";
 // THIS ASSERTION USED TO LIVE IN `services/gateway/src/fanout.itest.ts:150`,
 // inside a suite that needs a running Redis. It is a pure string test: it needs
 // no broker, no container and no lane. It moved here with the function in
-// chapter 3.18, and it exists before the old copy is deleted so the property is
+// And it exists before the old copy is deleted so the property is
 // never untested for the length of a commit.
 describe("the fan-out subject grammar", () => {
   it("names one subject per channel", () => {

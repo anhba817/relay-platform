@@ -39,7 +39,7 @@ export class ApiError extends Error {
    * path forwards a 401 by hand and answers `internal_error` for everything else, so
    * every refusal the api can give a socket send — `user_banned` this chapter,
    * **`channel_archived` since this feature's archive phase** — reached the client as
-   * "send failed". Chapter 3.14 built thirteen codes and one registry precisely so a
+   * "send failed". The error-registry chapter built thirteen codes and one registry precisely so a
    * client could tell refusals apart, and one hop discarded all of it.
    *
    * `undefined` when the response carried no envelope: a proxy's HTML 502, a timeout, a

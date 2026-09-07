@@ -171,7 +171,7 @@ describe("the internal surface", () => {
     expect(res.status).toBe(401);
   });
 
-  // ── THE BACKSTOP'S ROUTE (chapter 3.20, FR-017) ─────────────────────────────
+  // ── THE BACKSTOP'S ROUTE (FR-017) ─────────────────────────────
   //
   // `GET /internal/memberships` is the one question a periodic re-read has. It was
   // exercised end to end from the gateway's suite the moment it shipped — and the
@@ -222,7 +222,7 @@ describe("the internal surface", () => {
     expect(res.status).toBe(404);
   });
 
-  // ── THE SOCKET'S ROUTE INHERITS THE CHECK (chapter 3.15, FR-001) ────────────
+  // ── THE SOCKET'S ROUTE INHERITS THE CHECK (FR-001) ────────────
   //
   // `POST /internal/messages` resolves the user from the forwarded token and then
   // calls the same `messages.send` the public route does, so one check in

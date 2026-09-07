@@ -29,7 +29,7 @@ export const RECORDER_DURABLE = "recorder";
 
 /** On by default: an event spine nobody reads is what the outbox chapter left behind.
  * `RELAY_EVENT_CONSUMER=off` exists for suites that want a quiet database —
- * 3.3 learned the hard way that a background loop mutating a table two other
+ * The outbox chapter learned the hard way that a background loop mutating a table two other
  * test files assert on is a race between test files, not a property. */
 export function consumerEnabled(): boolean {
   return (process.env.RELAY_EVENT_CONSUMER ?? "on").toLowerCase() !== "off";

@@ -39,10 +39,10 @@ import { ZodValidationPipe } from "./zod-validation.pipe";
  *
  * SOFT, unlike `internal.controller.ts`'s `principalUser`, which throws. These two
  * routes accept both credential classes — declared as `@Accepts("application", "user")`
- * since chapter 3.17, rather than inherited from `credential.guard.ts`'s `EITHER`
+ * since the sender chapter, rather than inherited from `credential.guard.ts`'s `EITHER`
  * fallback — and an application key carries no user OF ITS OWN.
  *
- * THIS COMMENT SAID SOMETHING ELSE UNTIL CHAPTER 3.17, and what it said was the reading
+ * THIS COMMENT SAID SOMETHING ELSE UNTIL THE SENDER CHAPTER, and what it said was the reading
  * that made the gap invisible: *"A tenant's own server sending on a customer's behalf is
  * FR-MSG-13, not a mistake."* FR-MSG-13 said the system shall support sending **on behalf
  * of a user**, and this route named nobody — so the clause was cited for eleven chapters
@@ -55,7 +55,7 @@ function actingUser(req: RequestWithPrincipal): string | undefined {
 /** The two fields every publish here has to carry (NFR-OBS-01, NFR-OBS-06).
  *
  * ONE FUNCTION AND NOT THREE COPIES, and the coverage ratchet is what asked. Chapter
- * 3.23 added two more publish sites to this file, each with its own
+ * The revisions chapter added two more publish sites to this file, each with its own
  * `req.requestId ?? "unknown"` and `req.principal?.environmentId ?? "unknown"` — six
  * uncovered branch arms where there had been two, all of them the same two arms written
  * three times. Collapsing them does not make the arms reachable; it stops the count
@@ -82,7 +82,7 @@ function publishContext(req: RequestWithPrincipal): {
 // with `sendMessageBodySchema`, every socket send with
 // `internalSendRequestSchema` — and they have drifted three times: `idem_key`
 // against `idempotency_key`, the text bound, and FR-019b's pair rule, which
-// 3.24 had to be told to carry across. What keeps them together is a shared
+// The attachments chapter had to be told to carry across. What keeps them together is a shared
 // DEFINITION each applies, not a family resemblance.
 //
 // The credentials chapter swapped the guard. `EnvironmentContextGuard` resolved a tenant
@@ -126,7 +126,7 @@ export class MessagesController {
     // customer's own client calls. `MessagesController` declared no `@Accepts` at the
     // time, so the guard fell back to `EITHER` and a user token was accepted here.
     //
-    // PAST TENSE SINCE CHAPTER 3.17, and it took until 3.23 to say so. That chapter
+    // PAST TENSE SINCE THE SENDER CHAPTER, and it took until the revisions chapter to say so. That chapter
     // added `@Accepts("application", "user")` at :64 — twenty-five lines above this
     // sentence — and left three copies of the sentence describing its absence, here, in
     // `messages.itest.ts:161` and in `repository.ts:3999`. Nothing compares a comment
@@ -212,7 +212,7 @@ export class MessagesController {
     // The field list is spelled out rather than spread-minus-`duplicate`,
     // so a new column joins the public response only when someone decides
     // it should.
-    // ── the live fan-out (chapter 3.18, FR-004) ────────────────────────────
+    // ── the live fan-out (FR-004) ────────────────────────────
     //
     // AFTER THE COMMIT, BEFORE THE RESPONSE. `docs/05-sad.md` says the fan-out
     // happens "after the ack", and a socket can do that literally — it writes an
@@ -264,7 +264,7 @@ export class MessagesController {
       channel_id: message.channel_id,
       seq: message.seq,
       text: message.text,
-      /** Chapter 3.24 (FR-001), and SPELLED rather than spread for the reason this
+      /** (FR-001), and SPELLED rather than spread for the reason this
        * response has always been spelled: a new column joins the public surface when
        * somebody decides it should, not when it appears on a row. */
       attachments: message.attachments,
@@ -323,7 +323,7 @@ export class MessagesController {
     }
     const edited = await this.messages.edit(channelId, messageId, body, user.id);
 
-    // ── the live fan-out (chapter 3.23, FR-005, ADR-24) ──────────────────────
+    // ── the live fan-out (FR-005, ADR-24) ──────────────────────
     //
     // AFTER THE COMMIT, BEFORE THE RESPONSE, for the reason the send path states at
     // :199: a request handler has one channel and the response IS the ack, so anything
@@ -438,7 +438,7 @@ export class MessagesController {
       },
     );
 
-    // ── the live fan-out (chapter 3.23, FR-007, FR-009, ADR-24) ──────────────
+    // ── the live fan-out (FR-007, FR-009, ADR-24) ──────────────
     //
     // GUARDED ON `alreadyDeleted`, which is this route's version of the send path's
     // `!duplicate`. Both exist for the same failure: a client retrying on a flaky link

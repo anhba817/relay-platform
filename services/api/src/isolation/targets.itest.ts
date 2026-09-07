@@ -109,7 +109,7 @@ describe("the gauntlet's target list derives from the running application", () =
   //
   // The isolation gauntlet closed at **24** derived targets, recorded in
   // `specs/033-chapter-3-12/baseline.txt` and re-measured at the start of that
-  // feature. Chapters 3.15 and 3.16 add fourteen routes, taking it to 38, and
+  // feature. the channel-control chapter and the user-surface chapter add fourteen routes, taking it to 38, and
   // The membership-revocation chapter revives `GET /internal/memberships` for the membership backstop
   // — one route, so 39.
   //
@@ -124,7 +124,7 @@ describe("the gauntlet's target list derives from the running application", () =
   // sixth, and the first where the route being added was a REVIVAL of one the
   // classification list had never carried.
   //
-  // **AND AGAIN IN 3.23, IN BOTH DIRECTIONS AT ONCE.** That chapter declared its two
+  // **AND AGAIN IN THE REVISIONS CHAPTER, IN BOTH DIRECTIONS AT ONCE.** That chapter declared its two
   // routes in `targets.ts` before writing the second one, so one run named
   // `GET …/:messageId/edits` as an entry matching no derived target — the direction
   // that catches a rename — while the counts named the one that did exist. Two routes

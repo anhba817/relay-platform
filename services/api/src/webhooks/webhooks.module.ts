@@ -50,7 +50,7 @@ export class DeliveryRelayService implements OnModuleDestroy {
   }
 }
 
-// The same wiring chapter 2.2 established and 3.2 re-pointed: the repository is
+// The same wiring chapter 2.2 established and the credentials chapter re-pointed: the repository is
 // the plain class, constructed per request with the environment the middleware
 // resolved from a verified credential. A request cannot name a tenant it has not
 // proved it may act for, and this module adds no new way to try.

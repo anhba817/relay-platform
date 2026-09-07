@@ -126,7 +126,7 @@ export const internalBackfillResponseSchema = z.strictObject({
 // Event subjects (ADR-02).
 //
 // The grammar is `events.{domain}.{action}.{env}` — ADR-02's, verbatim. It lived
-// inside the api's outbox module in 3.3 because nothing else needed it. A
+// inside the api's outbox module in the outbox chapter because nothing else needed it. A
 // consumer needs it now, and the package whose whole job is the shapes both
 // sides share is where a shape shared by both sides belongs (1.3's premise).
 //
@@ -162,7 +162,7 @@ export const internalMembershipsResponseSchema = z.strictObject({
   channel_ids: z.array(z.string().min(1)),
 });
 
-/** api → gateway, chapter 3.2: who the presented token belongs to, and what it
+/** api → gateway: who the presented token belongs to, and what it
  * may hear — in ONE answer.
  *
  * This replaces the memberships response above rather than joining it. The
@@ -195,7 +195,7 @@ export const internalSessionResponseSchema = z.strictObject({
    * The keys here are the ids above.
    *
    * `revisionCountSchema` IMPORTED, NOT RESPELLED. The same shape appears on the ack, and two
-   * records that must agree and are maintained separately is the defect `gaps.md` 3.23-4
+   * records that must agree and are maintained separately is the defect `gaps.md` the revisions chapter-4
    * records about `targets.ts` — one file apart in this case.
    *
    * `.default({})` FOR THE DEPLOY WINDOW, following `banned` below: an api built before this
@@ -339,7 +339,7 @@ export const internalExpandRequestSchema = z.strictObject({
   event_id: z.string().uuid(),
   environment_id: z.string().min(1),
   type: z.string().min(1),
-  /** The envelope as it will be delivered, byte-identical to what 3.3 published.
+  /** The envelope as it will be delivered, byte-identical to what the outbox chapter published.
    * The dispatcher does not author payloads; it moves them. */
   payload: z.unknown(),
 });

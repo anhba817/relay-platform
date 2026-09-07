@@ -16,7 +16,7 @@ import { ACK_WAIT_MS, createDispatcher, type Dispatcher } from "./main.js";
 //. Invariant 7 lives here; 11, 13, 15 and 16 join it.
 //
 // The api runs as a CHILD PROCESS, not in-process — the same choice the
-// gateway's socket suite made in 3.2 and for the same reason. The dispatcher's
+// gateway's socket suite made in the credentials chapter and for the same reason. The dispatcher's
 // whole point is that it reaches state over the internal seam rather than
 // through a database client, and a suite that imported the api's modules would
 // prove that over a function call instead of over HTTP.
@@ -425,7 +425,7 @@ describe("the dispatcher", () => {
     // the production durable would hand this suite every delivery every earlier
     // run left behind — and a batch of twenty-five is quickly all backlog, which
     // is exactly how this suite first failed. Chapter 2.1 did the same for
-    // environments, 2.6 for subjects, 3.4 for its own durables.
+    // environments, 2.6 for subjects, the broker chapter for its own durables.
     const run = randomUUID().slice(0, 8);
     durables = { expand: `itest-expand-${run}`, deliver: `itest-deliver-${run}` };
     dispatcher = createDispatcher({

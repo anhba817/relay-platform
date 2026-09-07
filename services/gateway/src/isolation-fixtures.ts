@@ -6,13 +6,13 @@ import { fileURLToPath } from "node:url";
  * (FR-007).
  *
  * WHY THE GATEWAY LANE AND NOT `packages/e2e`. A socket needs a real gateway, and
- * this lane has spawned a live api child since chapter 3.2 — so the gateway runs
+ * this lane has spawned a live api child since the credentials chapter — so the gateway runs
  * in process, which is what lets a test drive its clock and read its state. The
  * e2e package is excluded from the coverage run by name, so a suite living only
  * there could not contribute to the branch figures FR-040 measures (research R1).
  *
  * SEEDING GOES THROUGH THE API'S BUILD OUTPUT, which is the test-only seam chapter
- * 2.8 opened and 3.2 widened, for the reason it gave: there is no admin API for
+ * 2.8 opened and the credentials chapter widened, for the reason it gave: there is no admin API for
  * environments or keys, and inventing one for a test would be inventing product.
  * The isolation gauntlet narrows that seam for channels and members — those get public
  * endpoints in Phase 6 — and leaves environments and keys where they were, so this
@@ -83,8 +83,7 @@ export interface SocketTenant {
    * later test's profile PATCH answer 404. Phase 7 hit the same class twice: a test that
    * mutates a shared fixture breaks whichever test runs after it, and the fix is a
    * fixture of its own rather than an ordering constraint nobody can see. */
-  /** Ban and unban this tenant's own user through the public route (chapter 3.15,
-   * T153). */
+  /** Ban and unban this tenant's own user through the public route (   * T153). */
   banSelf: () => Promise<void>;
   unbanSelf: () => Promise<void>;
   seedDeletable: () => Promise<{

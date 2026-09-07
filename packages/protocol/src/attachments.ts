@@ -36,7 +36,7 @@ export const MAX_ATTACHMENTS = 10;
 
 /** FR-023. FR-MSG-11 states no length, so this is the chapter's own bound and it takes
  * the platform's only precedent for a stored URL: `users.avatar_url`, capped at 2,048
- * since chapter 3.16. A second number for the same kind of value would be two limits a
+ * since the user-surface chapter. A second number for the same kind of value would be two limits a
  * customer has to remember. */
 export const ATTACHMENT_URL_MAX = 2048;
 

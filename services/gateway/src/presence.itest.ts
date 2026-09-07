@@ -31,7 +31,7 @@ import {
 } from "./presence.js";
 import { attachSessions } from "./session.js";
 
-// CHAPTER 3.19, PHASE 1 — THE FAILING STATE, OBSERVED.
+// PHASE 1 — THE FAILING STATE, OBSERVED.
 //
 // `presence.changed` has been in the protocol union since chapter 1.3. Its states
 // are `online` and `offline`, `frames.test.ts` asserts its shape and rejects
@@ -1114,7 +1114,7 @@ describe("presence: who is allowed to see it (FR-RTM-07, FR-CHN-05)", () => {
 //
 // EVERY TEST HERE COULD PASS AGAINST A MODULE THAT DOES NOTHING. "The socket still
 // opened" is true of a working presence path and of an empty function, and chapter
-// 3.18 recorded that trap against its own publisher: its `publish` swallows errors
+// The fan-out chapter recorded that trap against its own publisher: its `publish` swallows errors
 // and resolves, so a 201 with Redis down proves nothing. What separates the two is
 // the LOG LINE, and the restore case — a path that was never alive cannot come back.
 describe("presence: when Redis is gone (FR-023, FR-024)", () => {

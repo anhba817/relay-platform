@@ -130,7 +130,7 @@ describe("the membership publisher", () => {
 
   it("survives an ioredis `error` event instead of dying on it", async () => {
     // The fan-out chapter's test by name. The listener's stated reason is NFR-OBS-01 —
-    // unstructured, unbounded output — rather than process death, which 3.18
+    // unstructured, unbounded output — rather than process death, which the fan-out chapter
     // measured against ioredis 6.0.0 and found false.
     const { lines, logger } = sink();
     createMembershipPublisher({ url: "redis://x", logger });

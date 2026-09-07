@@ -142,7 +142,7 @@ describe("the api's fan-out publisher", () => {
   });
 
   it("publishes a revision to the revision subject, not the channel's", async () => {
-    // T018h, chapter 3.23. THE SUBJECT IS THE ASSERTION. A `publishRevision` that reached
+    // THE SUBJECT IS THE ASSERTION. A `publishRevision` that reached
     // for `subjectForChannel` would deliver an edit to a subscriber that parses arrivals
     // as `Message` — and the `updated` arm IS a `Message`, so it would be accepted and
     // shown to every member as a brand new message.

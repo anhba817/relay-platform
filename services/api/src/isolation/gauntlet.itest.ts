@@ -263,7 +263,7 @@ describe("the isolation gauntlet", () => {
   });
 
   // ── T031a: the three internal routes that take an end-user token ────────────
-  // ── Chapter 3.12's own two routes, attacked on the build that added them ────
+  // ── This suite's own two routes, attacked on the build that added them ─────
   //
   // FR-021: a chapter that adds an endpoint attacks it in the same chapter. The
   // derivation found these before this file mentioned them — `targets.itest.ts`
@@ -328,7 +328,7 @@ describe("the isolation gauntlet", () => {
     });
   });
 
-  // ── THE SAME-TENANT NON-MEMBER (chapter 3.15, FR-034, SC-015) ──────────────
+  // ── THE SAME-TENANT NON-MEMBER (FR-034, SC-015) ──────────────
   //
   // Every attack above crosses a tenant boundary. This block does not, and that is
   // the case constitution I's suite never had: the channel is in the caller's own
@@ -553,7 +553,7 @@ describe("the isolation gauntlet", () => {
     });
   });
 
-  // ── THE IDENTIFIER COLLISION (chapter 3.15, FR-034a) ───────────────────────
+  // ── THE IDENTIFIER COLLISION (FR-034a) ───────────────────────
   //
   // The same `external_id` in two environments, `public` in one and `private` in the
   // other. `seedTenant` label-prefixes every id, so the pair it mints can never

@@ -32,7 +32,7 @@ export function createServer(logger?: Logger) {
     }),
     logger: log,
     // The registry owns the URL; `service-kit` owns no dependencies. So the URL
-    // crosses the boundary as data (chapter 3.14, FR-027, R9).
+    // crosses the boundary as data (the error-registry chapter, FR-027, R9).
     notFoundDocsUrl: docsUrl("not_found"),
   });
   // The socket server rides the SAME listener as health — one port, two
@@ -92,7 +92,7 @@ export function createServer(logger?: Logger) {
     limits,
     presence,
     membership,
-    // CHAPTER 3.21, AND THIS LINE HAD NO OWNER UNTIL THE SEALED CLIENT ASKED FOR
+    // AND THIS LINE HAD NO OWNER UNTIL THE SEALED CLIENT ASKED FOR
     // IT. Phase 3's task deferred the destructuring in `session.ts` to keep that
     // phase committable — `no-unused-vars` rejects a binding whose first consumer
     // is a later phase — and recorded the wiring as a later task's job. No later
@@ -105,7 +105,7 @@ export function createServer(logger?: Logger) {
     // a silent no-op. **The feature was inert in the product and green in every
     // test**, because every test injects this option directly.
     typing,
-    // CHAPTER 3.22, T042. **THIS LINE IS THE ONE the typing chapter FORGOT.** That
+    // T042. **THIS LINE IS THE ONE the typing chapter FORGOT.** That
     // chapter built its module, awaited its `close()` in `shutdown()` — so lint
     // saw a used variable — and never passed it here. The feature was inert in
     // the product while 1,174 coverage tests and 174 gateway integration tests

@@ -761,7 +761,7 @@ describe("the cap at the door (US3)", () => {
   });
 });
 
-// ── chapter 3.18: the same harness, WITH a fan-out ──────────────────────────
+// ── the same harness, WITH a fan-out ──────────────────────────
 //
 // A THIRD DESCRIBE RATHER THAN A FOURTH ARGUMENT TO THE OTHER TWO. Both blocks
 // above call `attachSessions({ server, api, logger })` with no `fanout`, so
@@ -1638,7 +1638,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
         return { type, payload: message };
       // The revisions chapter SPLIT THIS CASE OFF, and the failure that forced it is the point
       // of the test. `message.deleted` shared `message` — a `Message` with a `text` —
-      // until 3.23 gave the frame a payload of its own with no text and a
+      // until the revisions chapter gave the frame a payload of its own with no text and a
       // `deleted_at`. The forged frame then failed the SHAPE check and came back
       // `invalid_frame`, so the test asserting `unknown_frame_type` went red.
       //
@@ -1676,7 +1676,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
     }
   };
 
-  /** CHAPTER 3.21, T034 — T009 INVERTED, and the same shape on purpose.
+  /** T034 — T009 INVERTED, and the same shape on purpose.
    *
    * The send is byte-identical to the one that got `unknown_frame_type` and a
    * 4002 in phase 2. Only the seam moved, so a pass here means the seam moved —
@@ -1848,7 +1848,7 @@ describe("the connection cap at the door (US1)", () => {
     api?.stop();
   });
 
-  // CHAPTER 3.22, T011. RED ON PURPOSE, and the phase commit says so.
+  // T011. RED ON PURPOSE, and the phase commit says so.
   //
   // FR-RTM-09 permits five concurrent connections per user and nothing counts
   // them, so all six of these are accepted today. This test asserts the sixth is

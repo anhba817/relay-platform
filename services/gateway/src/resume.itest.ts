@@ -378,7 +378,7 @@ describe("resume across a real fabric", () => {
    * **THE ABSENCE IS THE ASSERTION.** A resume that carried `message.updated` for a
    * message the client is receiving for the first time would be telling it that
    * something it has never seen has changed. */
-  it("chapter 3.23: replays an edited message as message.created with its current text, and no message.updated", async () => {
+  it("replays an edited message as message.created with its current text, and no message.updated", async () => {
     harness = await boot({
       session: async () => ({
         environment_id: "env-1",
@@ -593,7 +593,7 @@ describe("the revision count rides every ack (feature 044, FR-004, FR-007a)", ()
   });
 });
 
-// ── chapter 3.18: two instances, one fabric (US2) ───────────────────────────
+// ── two instances, one fabric (US2) ───────────────────────────
 //
 // `boot()` IS UNTOUCHED. It is called six times above and each call builds its
 // own `createFanout` and its own server, so two calls already give two gateway

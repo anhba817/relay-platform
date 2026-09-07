@@ -29,7 +29,7 @@ export const AUTH_DB = "AUTH_DB";
  * key; the signature decides whether to believe the claim. Getting that order
  * backwards is how a token from environment A gets accepted for environment B.
  */
-/** The internal platform credentials (extended by 3.11).
+/** The internal platform credentials (extended by the connection-metering chapter).
  * Configuration, never a database row and never tenant data — they authenticate
  * a SERVICE, and services are deployed, not provisioned.
  *
@@ -172,7 +172,7 @@ export class AuthenticateMiddleware implements NestMiddleware {
   ): Promise<void> {
     const credential = bearerCredential(req.headers);
     if (credential !== null) {
-      // Chapter 3.8 (FR-AUT-12). The failure is observable HERE — credential
+      // (FR-AUT-12). The failure is observable HERE — credential
       // present, principal null — so this is where it is counted. It is not where
       // it is refused: this middleware never throws, and `CredentialGuard` raises
       // the 429 from the flag below (research R18).

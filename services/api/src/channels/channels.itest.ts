@@ -114,7 +114,7 @@ describe("the public channel surface", () => {
     // the enum may offer it.
     //
     // The `field` half of that test survives intact and is worth keeping: EIR-API-04
-    // has carried `field` since chapter 1.3 and nothing set it until chapter 3.14.
+    // has carried `field` since chapter 1.3 and nothing set it until the error-registry chapter.
     // A third type still names the key it refused.
     it("refuses a type outside the two, naming the field (FR-009)", async () => {
       const res = await create({ external_id: "secret-attempt", type: "secret" });
@@ -259,7 +259,7 @@ describe("the public channel surface", () => {
     });
   });
 
-  // ── THE PRIVATE TYPE, MADE TO MEAN SOMETHING (chapter 3.15) ────────────────
+  // ── THE PRIVATE TYPE, MADE TO MEAN SOMETHING ────────────────
   //
   // `channels.type` has been a column with a CHECK since chapter 2.1 and until this
   // chapter no conditional anywhere branched on it. It was selected and returned by
@@ -391,12 +391,12 @@ describe("the public channel surface", () => {
     });
   });
 
-  // ── REMOVAL, BULK, BECAUSE THE REQUIREMENT ALWAYS WAS (chapter 3.15) ────────
+  // ── REMOVAL, BULK, BECAUSE THE REQUIREMENT ALWAYS WAS ────────
   //
   // FR-006 says "up to 100 in one request" and FR-007 says the result is reported
   // per user — the channel-endpoints chapter's add shape in both halves. The contract specified a
   // single-user `DELETE` for ten analysis passes, having read "the shape chapter
-  // 3.13 chose" as *named outcomes* and dropped *bulk*. Every pass compared
+  // The channel-endpoints chapter chose" as *named outcomes* and dropped *bulk*. Every pass compared
   // requirements to tasks, both said "removal", and identifier coverage read 100%.
   // Comparing US2's scenario 4 — which names a hundred users — to the route's path,
   // which named one, is what found it.
@@ -519,7 +519,7 @@ describe("the public channel surface", () => {
     });
   });
 
-  // ── MEMBER ROLES (chapter 3.15, FR-CHN-04, FR-011) ─────────────────────────
+  // ── MEMBER ROLES (FR-CHN-04, FR-011) ─────────────────────────
   //
   // The clause has asked for these since the SRS was written, and `members` was
   // `(channel_id, user_id, joined_at)` the whole time. The isolation gauntlet's traceability
@@ -554,7 +554,7 @@ describe("the public channel surface", () => {
       // where the member holds a role nobody chose. Analysis pass eleven found that
       // by comparing the scenario to the routes.
       //
-      // Mixed forms in one request, because the entry is a union: chapter 3.13
+      // Mixed forms in one request, because the entry is a union: the channel-endpoints chapter
       // shipped `{"user_ids": ["a", "b"]}` and a customer's server sends that today.
       const res = await addMembers(roleChannel, {
         user_ids: ["bare-string", { user: "with-role", role: "owner" }],
@@ -582,7 +582,7 @@ describe("the public channel surface", () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as { code: string; field?: string };
       expect(body.code).toBe("invalid_request");
-      // The field name is in the envelope only because chapter 3.14 stopped
+      // The field name is in the envelope only because the error-registry chapter stopped
       // `ZodValidationPipe` discarding `issues[0].path`.
       expect(body.field).toBe("role");
     });
@@ -621,7 +621,7 @@ describe("the public channel surface", () => {
     });
   });
 
-  // ── ARCHIVING (chapter 3.15, FR-020, FR-021, FR-021a) ──────────────────────
+  // ── ARCHIVING (FR-020, FR-021, FR-021a) ──────────────────────
   //
   // `channels.archived_at` was declared in chapter 2.1 and had ZERO non-test
   // references until this chapter — measured, not assumed (T007). Archiving stops

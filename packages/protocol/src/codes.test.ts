@@ -7,7 +7,7 @@ import { CLOSE_CODES, ERROR_CODES, docsUrl, DEFAULT_DOCS_BASE_URL } from "./code
 // collide or go blank as chapters add to the registry.
 
 describe("close codes cover EIR-WS-06's four classes", () => {
-  // AND ONE MORE THAN FOUR, SINCE CHAPTER 3.15. `4003` is a ban, which is none of
+  // AND ONE MORE THAN FOUR, SINCE THE CHANNEL-CONTROL CHAPTER. `4003` is a ban, which is none of
   // EIR-WS-06's classes: the token verifies, names a real user and is in date, and the
   // user is refused anyway. Reusing 4001 would tell a client to re-authenticate, which
   // succeeds at minting a token and fails again at connect.
@@ -42,7 +42,7 @@ describe("error codes stay unique and described", () => {
   });
 });
 
-// ── THE PLATFORM HALF OF THE CLOSURE CHECK (chapter 3.14, FR-025, SC-011) ─────
+// ── THE PLATFORM HALF OF THE CLOSURE CHECK (FR-025, SC-011) ─────
 //
 // Every code the platform can emit is in `ERROR_CODES`. The tutorial repository
 // holds the other half — that every code has a section in the published reference,
@@ -63,7 +63,7 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
     // A number, so adding one is a visible edit rather than a silent widening. The
     // count is here and not in a comment because a comment does not fail.
     //
-    // Thirteen until chapters 3.15 and 3.16 added `not_a_member`,
+    // Thirteen until the channel-control chapter and the user-surface chapter added `not_a_member`,
     // `channel_archived` and `user_banned` — three refusals a client acts on
     // differently, which is the test this registry sets.
     //

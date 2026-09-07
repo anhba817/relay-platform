@@ -21,7 +21,7 @@ export interface MessageCreatedData {
   seq: number;
   user: string | null;
   text: string | null;
-  /** Chapter 3.24 (FR-015, FR-017). ON `message.created` AND `message.updated` AT ONCE,
+  /** (FR-015, FR-017). ON `message.created` AND `message.updated` AT ONCE,
    * because both events carry this one interface — FR-015 asks that a consumer need one
    * shape for both, and the type is where that stops being a promise.
    *
@@ -85,7 +85,7 @@ export interface MembershipChangedData {
  * FR-016).
  *
  * TWO LISTS THAT MUST AGREE AND ARE MAINTAINED SEPARATELY IS THE DEFECT. `gaps.md`
- * 3.23-4 records it about `targets.ts`, and `eslint.config.mjs`'s own comment says *MUST
+ * The revisions chapter-4 records it about `targets.ts`, and `eslint.config.mjs`'s own comment says *MUST
  * AGREE* with nothing comparing them. The declared eight and the emitted five were
  * exactly that pair: FR-WHK-02 names eight, this array named five, and the only thing
  * connecting them was somebody remembering.
@@ -97,7 +97,7 @@ export interface MembershipChangedData {
  *
  * THE THREE FALSE ONES ARE NOT OVERSIGHTS. `channel.created`, `user.connected` and
  * `user.disconnected` are declared by FR-WHK-02 and unbuilt, and **741 stored
- * subscriptions name `channel.created`**. The review and `gaps.md` 3.23-1 both recommend
+ * subscriptions name `channel.created`**. The review and `gaps.md` the revisions chapter-1 both recommend
  * validating subscriptions against the EMITTED set; doing that would refuse those rows,
  * and those customers made no mistake. */
 export const WEBHOOK_EVENT_TYPES = {
@@ -231,8 +231,7 @@ export function messageUpdatedEvent({
   };
 }
 
-/** A deletion, built inside the transaction that wrote the tombstone (chapter 3.23,
- * FR-019, FR-020).
+/** A deletion, built inside the transaction that wrote the tombstone ( * FR-019, FR-020).
  *
  * ITS OWN PAYLOAD TYPE, and `MessageDeletedData`'s docstring argues why the text is
  * absent rather than null. This function cannot put a text on the wire because it has
@@ -357,7 +356,7 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
       seq: z.number().int().positive(),
       user: z.string().nullable(),
       text: z.string().nullable(),
-      // Chapter 3.24 (FR-015). BOTH BRANCHES, and restated rather than shared for the
+      // (FR-015). BOTH BRANCHES, and restated rather than shared for the
       // reason the comment above gives: FR-015 is the requirement that they not drift,
       // which is only meaningful if a change to one is visible in the other's absence.
       //
@@ -396,7 +395,7 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
       seq: z.number().int().positive(),
       user: z.string().nullable(),
       text: z.string().nullable(),
-      // Chapter 3.24 (FR-015). BOTH BRANCHES, and restated rather than shared for the
+      // (FR-015). BOTH BRANCHES, and restated rather than shared for the
       // reason the comment above gives: FR-015 is the requirement that they not drift,
       // which is only meaningful if a change to one is visible in the other's absence.
       //

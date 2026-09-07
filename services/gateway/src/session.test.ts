@@ -546,7 +546,7 @@ describe("the socket (chapter 2.5)", () => {
     socket.close();
   });
 
-  it("chapter 3.7: a frame at the mark, arriving after the resume, is not delivered", async () => {
+  it("a frame at the mark, arriving after the resume, is not delivered", async () => {
     // The same property `resume.itest.ts` proves against a real broker, held here
     // against a stubbed one so it fails fast and without Redis. This is the wiring
     // rather than the predicate: that `deliver()` consults the marks at all.
@@ -573,7 +573,7 @@ describe("the socket (chapter 2.5)", () => {
     socket.close();
   });
 
-  it("chapter 3.7: a frame above the mark, arriving after the resume, IS delivered", async () => {
+  it("a frame above the mark, arriving after the resume, IS delivered", async () => {
     // The half that stops a duplicate fix becoming a gap (FR-RTM-03 is one
     // property, not two: no gap AND no double).
     const fanout = stubFanout();
@@ -598,7 +598,7 @@ describe("the socket (chapter 2.5)", () => {
     socket.close();
   });
 
-  it("chapter 3.7: a connection that never resumed suppresses nothing", async () => {
+  it("a connection that never resumed suppresses nothing", async () => {
     // A fresh connect presents no cursor, so it holds no marks and behaves
     // exactly as chapter 2.6 left it.
     const fanout = stubFanout();
@@ -638,7 +638,7 @@ describe("the socket (chapter 2.5)", () => {
     socket.close();
   });
 
-  // ── chapter 3.23: the revision fabric reaches a socket ─────────────────
+  // ── the revision fabric reaches a socket ─────────────────
   //
   // ADR-24's whole point, tested at the seam where it would be invisible: the KIND now
   // comes from the payload. Before this chapter `session.ts` stamped `message.created` at
@@ -653,7 +653,7 @@ describe("the socket (chapter 2.5)", () => {
     deleted_at: "2026-09-03T00:00:00.000Z",
   });
 
-  it("chapter 3.23: an edit on the fabric arrives as message.updated, not message.created", async () => {
+  it("an edit on the fabric arrives as message.updated, not message.created", async () => {
     const fanout = stubFanout();
     harness = await boot(stubApi({}), undefined, fanout);
     const socket = new WebSocket(`${harness.url}?token=${await token()}`);
@@ -673,7 +673,7 @@ describe("the socket (chapter 2.5)", () => {
     socket.close();
   });
 
-  it("chapter 3.23: a deletion arrives as message.deleted, with no text on it", async () => {
+  it("a deletion arrives as message.deleted, with no text on it", async () => {
     const fanout = stubFanout();
     harness = await boot(stubApi({}), undefined, fanout);
     const socket = new WebSocket(`${harness.url}?token=${await token()}`);
@@ -697,7 +697,7 @@ describe("the socket (chapter 2.5)", () => {
     socket.close();
   });
 
-  it("chapter 3.23: a buffering connection is sent no revision at all", async () => {
+  it("a buffering connection is sent no revision at all", async () => {
     // Not an oversight — FR-016a. A resuming connection is about to be handed the CURRENT
     // state of every message above its cursor, so an edit arriving mid-resume is already
     // inside what it is being sent. Delivering it as well would show an update to a
@@ -1130,7 +1130,7 @@ describe("the socket's limits", () => {
    * **READ AS TEXT, because nothing else can see a producer.** A zod union knows its
    * members and knows nothing about what emits them; coverage sees a line execute and
    * cannot see a line that was never written. `main.test.ts` established this shape in
-   * chapter 3.22 — it parses `main.ts` and asserts every module it builds is closed —
+   * It parses `main.ts` and asserts every module it builds is closed —
    * and CLAUDE.md records why it had to: the defect that chapter shipped was an
    * ARGUMENT THAT WAS NOT THERE, and every line around it executed.
    *

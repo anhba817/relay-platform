@@ -92,7 +92,7 @@ export class CredentialGuard implements CanActivate {
     const req = context.switchToHttp().getRequest<RequestWithPrincipal>();
     const principal = req.principal;
 
-    // Chapter 3.8 (FR-AUT-12, FR-RTL-02, research R18). The refusal for an
+    // (FR-AUT-12, FR-RTL-02, research R18). The refusal for an
     // over-threshold address is thrown HERE and not in the middleware that
     // counted it, because `AuthenticateMiddleware` never throws by documented
     // design — pre-credential routes reach their handlers by having no principal.

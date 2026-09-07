@@ -165,7 +165,7 @@ function refuseUpgrade(socket: Duplex, decision: Decision): void {
   socket.destroy();
 }
 
-/** `ErrorCode`, not `string` (chapter 3.14, FR-025). Every code this function is
+/** `ErrorCode`, not `string` (the error-registry chapter, FR-025). Every code this function is
  * given becomes a `docs_url`, so a typo used to ship a link to a page that could
  * not exist — and the gateway is the surface where nobody sees a 404 until a
  * customer clicks it. Narrowing the parameter is what makes the registry the
@@ -179,7 +179,7 @@ function sendError(
    *
    * `errorFrameSchema` has published this key since chapter 1.3 and no gateway code path
    * had ever set it — the same habit `zod-validation.pipe.ts` ended for the api at
-   * chapter 3.14, whose comment cites THIS schema while fixing only its own side.
+   * The error-registry chapter, whose comment cites THIS schema while fixing only its own side.
    *
    * Omitted when there is no path, exactly as the pipe does: an empty path means the
    * whole frame failed and there is no field to name. */
@@ -462,7 +462,7 @@ export function attachSessions({
   }
   presence?.onTransition(deliverPresence);
 
-  /** A membership change arriving from its own fabric (chapter 3.20, FR-RTM-05,
+  /** A membership change arriving from its own fabric (FR-RTM-05,
    * FR-RTM-10).
    *
    * `deliverPresence`'s path rather than `deliver`'s, for its reason exactly: a
@@ -580,7 +580,7 @@ export function attachSessions({
           fanout?.subscribe(change.channel),
           presence?.subscribe(change.channel),
           membership?.subscribeChannel(change.channel),
-          // Chapter 3.21 (T043a). **Without this a user added mid-connection
+          // (T043a). **Without this a user added mid-connection
           // receives messages and presence but no typing**, and FR-004 is silently
           // false for exactly the case the previous chapter built. Found by
           // analysis pass 2 reading this function rather than the feature's own
@@ -642,7 +642,7 @@ export function attachSessions({
           });
         }),
         membership?.unsubscribeChannel(change.channel),
-        // Chapter 3.21 (T043b). A revoked channel leaves `channelIds`, and its
+        // (T043b). A revoked channel leaves `channelIds`, and its
         // reference count has to follow it — otherwise this instance keeps a
         // subscription for a channel it holds no member of.
         typing?.unsubscribe(change.channel),
@@ -764,7 +764,7 @@ export function attachSessions({
           return;
         }
       }
-      // CHAPTER 3.22, T037. THE CAP IS CHECKED HERE, after `authenticate` and
+      // T037. THE CAP IS CHECKED HERE, after `authenticate` and
       // after the establishment limiter, and both orderings are reasons rather
       // than habits. After authenticate because the environment and the user are
       // not known before it — the comment above says the same of the rate limit.
@@ -868,7 +868,7 @@ export function attachSessions({
           return;
         }
         if (result.outcome === "over_quota") {
-          // Chapter 3.11, and this is the 4001 path's SHAPE for the 4001 path's
+          // And this is the 4001 path's SHAPE for the 4001 path's
           // REASON. The handshake completes so that a close code has a socket to
           // arrive on — EIR-WS-05 asks that of a bad token and EIR-WS-06 asks the
           // same of quota exhaustion, and `CLOSE_CODES[4008]` has read "quota
@@ -965,14 +965,14 @@ export function attachSessions({
         // carries two subscriptions. `ioredis` takes a variadic `subscribe`, so the
         // count doubles and the round trips do not.
         presence?.subscribe(channelId),
-        // Chapter 3.20, and the third. Without this line the membership fabric has
+        // And the third. Without this line the membership fabric has
         // no receiver at all — the publisher publishes, the module parses nothing,
         // and every test of the revocation path fails for a reason that looks like a
         // broken fabric. **No task owned it**: T054 covers the release on a
         // revocation and T079 covers the user's own subject, and the ordinary open
         // path fell between them.
         membership?.subscribeChannel(channelId),
-        // Chapter 3.21, and the fourth. A channel now carries four subscriptions
+        // And the fourth. A channel now carries four subscriptions
         // on one instance, all reference-counted, all released by the last member
         // to leave. **This line and the two release sites below are what the
         // previous chapter's own note warned about**: its equivalent had no task,
@@ -1031,7 +1031,7 @@ export function attachSessions({
       connection.missedPings = 0;
     });
     socket.on("message", (raw) => void handle(connection, raw.toString()));
-    // CHAPTER 3.22, T040 and T040a. ONE RENEWAL TIMER PER CONNECTION, and it is
+    // T040 and T040a. ONE RENEWAL TIMER PER CONNECTION, and it is
     // cleared on close below — an interval that outlives its connection refreshes
     // a place nobody holds, which the `IFEQ` guard cannot fix on its own because
     // the value would still be this connection's id.
@@ -1115,7 +1115,7 @@ export function attachSessions({
     if (renewal !== undefined) renewal.unref();
 
     socket.on("close", (code) => {
-      // Chapter 3.11, and the ORDER MATTERS. The meter is told first, because
+      // And the ORDER MATTERS. The meter is told first, because
       // the line below removes this connection from the registry the meter walks
       // — and a socket that opened and closed between two reports would
       // otherwise be counted zero. That is not a rounding error: it is the one
@@ -1124,7 +1124,7 @@ export function attachSessions({
       // Handing over totals rather than reporting them. This handler is already
       // documented as the last place that should throw, and a mass disconnect
       // would turn one event into a burst of HTTP requests.
-      // CHAPTER 3.22, T041. The timer first, then the place. An interval that
+      // T041. The timer first, then the place. An interval that
       // outlives its connection renews a slot nobody holds.
       //
       // NO 4009 DRAIN PATH IS ADDED HERE, and that is deliberate:
@@ -1143,7 +1143,7 @@ export function attachSessions({
       }
       meter?.closed(connection, new Date());
       registry.remove(connection.id);
-      // Chapter 3.19, AND THIS HANDLER NOW CARRIES THREE ORDERING CONSTRAINTS, not
+      // AND THIS HANDLER NOW CARRIES THREE ORDERING CONSTRAINTS, not
       // one. The meter is told BEFORE `registry.remove` — a socket that opened and
       // closed between two reports would otherwise be counted zero, which is the one
       // thing the wall-clock-minute unit was chosen to charge. Presence is told
@@ -1387,7 +1387,7 @@ export function attachSessions({
    * channel).
    *
    * **IN THIS CLOSURE, NOT ON `Connection`.** That type lives in `registry.ts`,
-   * which chapters 3.7, 3.8, 3.11 and 3.19 all fence — a field there is four
+   * which the deduplication chapter, the rate-limit chapter, the connection-metering chapter and the presence chapter all fence — a field there is four
    * chapters' diffs regenerated for a value with a two-second lifetime. A closure
    * map needs no fenced type and has a clearer end: it dies with `attachSessions`.
    *
@@ -1407,7 +1407,7 @@ export function attachSessions({
    * stale entry is pure weight: the next signal republishes regardless. */
   const lastPublished = new Map<string, Map<string, number>>();
 
-  /** CHAPTER 3.21 (T033): a client's typing signal, on its way out.
+  /** (T033): a client's typing signal, on its way out.
    *
    * **THREE THINGS THE CLIENT DOES NOT GET TO DECIDE**, and each is one line:
    *
@@ -1612,7 +1612,7 @@ export function attachSessions({
         );
         return;
       }
-      // ── THE API'S OWN REFUSAL, FORWARDED (chapter 3.15) ────────────────────
+      // ── THE API'S OWN REFUSAL, FORWARDED ────────────────────
       //
       // A 4xx from the api is a fact about this request, and the api already named it:
       // `user_banned` for a banned sender, `channel_archived` for a closed channel,
@@ -1622,7 +1622,7 @@ export function attachSessions({
       //
       // ONLY 4xx, AND ONLY A REGISTERED CODE. A 5xx is not the client's business and its
       // body is not a contract; an unregistered string would put a code on the wire that
-      // `codes.ts` does not define, which is the thing chapter 3.14's registry exists to
+      // `codes.ts` does not define, which is the thing the error-registry chapter's registry exists to
       // prevent. Anything that fails either test stays `internal_error`.
       if (
         error instanceof ApiError &&

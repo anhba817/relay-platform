@@ -3,7 +3,7 @@ import type { Logger } from "@relay/service-kit";
 
 import type { Publisher } from "../outbox/publisher";
 
-// The attempt record, on its way to the analytical path (chapter 3.6, FR-001,
+// The attempt record, on its way to the analytical path (FR-001,
 // constitution III).
 //
 // This file is small and its whole subject is one decision, so the decision is

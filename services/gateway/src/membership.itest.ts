@@ -45,7 +45,7 @@ import {
 import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
 
-// Chapter 3.20, phase 3 — the fabric, and ONLY the fabric.
+// Phase 3 — the fabric, and ONLY the fabric.
 //
 // **THE ARMS THAT `session.ts` CANNOT REACH, WRITTEN NOW.** The presence chapter met its
 // equivalents at close-out and its record is the price: six arms of `presence.ts`
@@ -1073,7 +1073,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
   });
 
   it("keeps the socket open — no close code, no error frame (FR-013)", async () => {
-    // Close code 4009 exists and this is not it, which is the refusal chapter 3.8
+    // Close code 4009 exists and this is not it, which is the refusal the rate-limit chapter
     // made by name. A revocation is not a protocol violation.
     const { users, channels } = await seed(["tuan"], 1);
     const socket = await connect(one, users["tuan"]!);
@@ -1632,7 +1632,7 @@ describe("a member added mid-connection starts receiving (US3)", () => {
   });
 
   it("makes the new member's presence visible to that channel's members", async () => {
-    // **CHAPTER 3.19'S `gaps.md` ITEM 2, CLOSING.** Presence subscriptions were
+    // **The presence chapter'S `gaps.md` ITEM 2, CLOSING.** Presence subscriptions were
     // fixed at connect exactly as delivery was, so a user added afterwards was
     // invisible to their new channel's members until they reconnected. The
     // `presence?.subscribe` in the added branch is what closes it, and this test is

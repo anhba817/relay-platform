@@ -37,7 +37,7 @@ export const CLOSE_CODES = {
   //
   // EIR-WS-06 names four classes to distinguish — authentication, quota, shutdown,
   // protocol violation — and a concurrency cap is none of them, exactly as a ban
-  // was none of them. Numbered here, in the space chapters 1.3 and 3.15 drew from.
+  // was none of them. Numbered here, in the space chapters 1.3 and the channel-control chapter drew from.
   4004: "connection limit reached",
   4008: "quota exhausted",
   4009: "server shutdown (drain)",
@@ -118,7 +118,7 @@ export const ERROR_CODES = {
   channel_member_limit_exceeded:
     "the channel already holds its maximum members; the message names the limit and the channel",
 
-  // ── CHAPTERS 3.15 AND 3.16 (FR-021, FR-031, research R11) ────────────────────
+  // ── THE CHANNEL-CONTROL AND USER-SURFACE CHAPTERS (FR-021, FR-031, R11) ─────
   //
   // Three refusals a client acts on differently, which is the test this registry
   // sets: `channel_member_limit_exceeded` above is separate from `quota_exceeded`
@@ -155,8 +155,7 @@ export const ERROR_CODES = {
   user_banned:
     "the user is banned in this environment and can neither connect nor send; their existing messages remain",
 
-  // ── THE FIVE THE PLATFORM HAS ALWAYS SENT AND NEVER REGISTERED (chapter 3.14,
-  // FR-024) ────────────────────────────────────────────────────────────────────
+  // ── THE FIVE THE PLATFORM HAS ALWAYS SENT AND NEVER REGISTERED (  // FR-024) ────────────────────────────────────────────────────────────────────
   //
   // `ProtocolErrorFilter` maps a status to a code when the thrower names none,
   // and those codes went out on the wire for twenty-two chapters without being in
@@ -170,7 +169,7 @@ export const ERROR_CODES = {
   invalid_request:
     "the request body, query or path failed validation; `field` names the first offending key",
   forbidden: "the credential is valid and is not permitted to do this",
-  // CHAPTER 3.23, AND **NOT** `forbidden` — the third time this file has made that
+  // AND **NOT** `forbidden` — the third time this file has made that
   // argument, after `wrong_credential_type` and `wrong_credential_service`, and the
   // first time the reason is not about credentials at all.
   //
@@ -191,7 +190,7 @@ export const ERROR_CODES = {
   // pass 3 caught the task whose condition nobody had evaluated.
   not_message_author:
     "the caller did not write this message; only its author may change what it says",
-  // CHAPTER 3.23, AND A SECOND NEW CODE IN ONE CHAPTER — which is one more than the
+  // AND A SECOND NEW CODE IN ONE CHAPTER — which is one more than the
   // plan expected, so it gets the test at the top of this file applied out loud: *"a
   // client that cannot tell them apart retries the wrong one for ever."*
   //
@@ -209,7 +208,7 @@ export const ERROR_CODES = {
   //                        401, 403 and 404 only; everything else becomes
   //                        `internal_error`. An unnamed 409 ships a body calling itself
   //                        an internal error, which is the lie chapter 2.2 fixed for 400
-  //                        and 3.2 for 403.
+  //                        and the credentials chapter for 403.
   //
   // WHAT A CLIENT DOES DIFFERENTLY, which is the whole test: on this code it stops
   // offering an edit control for that message and re-reads history; on
@@ -328,7 +327,7 @@ export function isErrorCode(value: string): value is ErrorCode {
  * 1.3 and constitution V calls it a reachable-page promise. Six construction sites
  * built it with a template literal against `https://relay.example`, a host that
  * does not resolve, and two codes — `rate_limited` and `quota_exceeded`
- * (3.10, 3.11) — shipped links to pages that did not exist even in principle.
+ * (the quota chapter, the connection-metering chapter) — shipped links to pages that did not exist even in principle.
  * The connection-metering chapter declined to add a third instance and named the debt; a chapter whose
  * exit criterion is "integrates on public documentation alone" cannot ship a
  * fourth.

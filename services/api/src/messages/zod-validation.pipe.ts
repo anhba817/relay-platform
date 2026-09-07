@@ -15,14 +15,14 @@ export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {
     const result = this.schema.safeParse(value);
     if (!result.success) {
       const issue = result.error.issues[0];
-      // WHICH FIELD, and chapter 3.14 is where that stopped being optional.
+      // WHICH FIELD, and the error-registry chapter is where that stopped being optional.
       //
       // EIR-API-04's error shape has carried a `field` since chapter 1.3 and
       // `errorFrameSchema` declares it — and nothing in the api had ever set it.
       // Every validation failure in twenty-two chapters said `Invalid input:
       // expected "public"` and left the caller to work out which key that was
       // about. This is the same habit as `request_id`, which was declared in 1.3
-      // and first sent in 3.8: a field in the contract that the code never filled.
+      // and first sent in the rate-limit chapter: a field in the contract that the code never filled.
       //
       // Named here rather than in the filter because only the pipe knows the
       // path. Zod's `path` is an array — `["metadata", "blob"]` — and it joins

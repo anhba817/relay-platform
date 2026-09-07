@@ -32,7 +32,7 @@ describe("reading a dimension's caps out of quota_config", () => {
 
   it("keeps ZERO distinct from absent", () => {
     // Zero means refuse everything and must stay expressible — an environment can
-    // be switched off deliberately (FR-RTL-06). This is the distinction chapter 3.8
+    // be switched off deliberately (FR-RTL-06). This is the distinction the rate-limit chapter
     // needed nullable columns for, and it survives the move to jsonb.
     expect(capsFor({ messages: { hard: 0 } }, "messages").caps.hard).toBe(0);
     expect(capsFor({ messages: {} }, "messages").caps.hard).toBeNull();
@@ -51,7 +51,7 @@ describe("reading a dimension's caps out of quota_config", () => {
     // operator believes in and nothing enforces, which is worse than a refusal
     // to parse.
     //
-    // THIS TEST NAMED `connection_minutes` UNTIL CHAPTER 3.11, with the comment
+    // THIS TEST NAMED `connection_minutes` UNTIL THE CONNECTION-METERING CHAPTER, with the comment
     // "until then". This is then — the dimension is implemented and the same
     // assertion would now be asserting the opposite of the truth. It moves to
     // `media_bytes`, which FR-MED-12 folds into quota enforcement in Part 4 and

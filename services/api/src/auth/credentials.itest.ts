@@ -314,7 +314,7 @@ describe("credentials", () => {
     ).toBe(401);
   });
 
-  // ── T042: the mint's three cases (chapter 3.17, FR-005, FR-005a, SC-006) ──
+  // ── T042: the mint's three cases (FR-005, FR-005a, SC-006) ──
   //
   // DO NOT ASSERT BYTE-IDENTITY WITH THE UNKNOWN CASE. Everywhere else in this chapter a
   // refusal is made indistinguishable from the refusal for an identifier that exists
@@ -474,7 +474,7 @@ describe("credentials", () => {
     ).toBe(201);
   });
 
-  // --- chapter 3.5: the third principal ----------------------------------
+  // --- the third principal ----------------------------------
 
   describe("the internal platform credential", () => {
     // SET, not read. This began as `process.env.RELAY_INTERNAL_CREDENTIAL` with
@@ -501,7 +501,7 @@ describe("credentials", () => {
     });
   });
 
-  // --- chapter 3.11: one credential per service ---------------------------
+  // --- one credential per service ---------------------------
 
   describe("which service presented it", () => {
     // SET, not read, for the reason the block above gives.

@@ -272,7 +272,7 @@ describe("a typing signal on its way out", () => {
 
   afterEach(async () => {
     // Sockets before servers. `afterEach` runs in reverse registration order and
-    // a describe-level teardown that closed servers first cost chapter 3.20
+    // a describe-level teardown that closed servers first cost the membership-revocation chapter
     // seven tests and eighty-three seconds, every failure naming a hook.
     for (const socket of sockets.splice(0)) socket.close();
     for (const close of open.splice(0)) await close();
@@ -807,7 +807,7 @@ describe("a typing signal on its way out", () => {
    * headroom; the membership-revocation chapter tests a sixty-second backstop at 40 ms for the same
    * reason. And the wait below is 120 ms against a 40 ms interval — **never
    * exactly the interval**, which would put two deadlines on one instant reached
-   * by two clocks, the shape that stranded a user online for ever in 3.19. */
+   * by two clocks, the shape that stranded a user online for ever in the presence chapter. */
   it("publishes again after the interval, and not inside it", async () => {
     const channel = randomUUID();
     const instance = await boot({

@@ -24,7 +24,7 @@ export class RequestContextMiddleware implements NestMiddleware {
     // the id existed only here and on the response header, which a handler
     // cannot read without taking over the response.
     (req as { requestId?: string }).requestId = requestId;
-    // `originalUrl` first, and this line was WRONG from chapter 2.2 until 3.8.
+    // `originalUrl` first, and this line was WRONG from chapter 2.2 until the rate-limit chapter.
     // Express rewrites `req.url` relative to the mount point, and this middleware
     // is applied through `forRoutes("{*path}")`, so `req.url` is `/` — every
     // request this api has logged recorded `/` as its path. NFR-OBS-06 asks for
