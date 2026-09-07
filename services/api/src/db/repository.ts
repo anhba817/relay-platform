@@ -565,7 +565,8 @@ export async function creditConnectionMinutes(
       });
     }
 
-    // THE CROSSINGS, IN THE SAME TRANSACTION AS THE CREDIT (    // FR-RTL-07/FR-RTL-07). The report knows the figure before and after, so it knows
+    // THE CROSSINGS, IN THE SAME TRANSACTION AS THE CREDIT (FR-RTL-07/FR-RTL-07).
+    // The report knows the figure before and after, so it knows
     // which thresholds it crossed — which is why this chapter has no periodic
     // sweep either, for the second chapter running (research R5).
     //
@@ -4093,7 +4094,7 @@ export class Repository {
         .for("update");
       if (!channel) throw new ChannelNotFoundError(channelId);
 
-      // MEMBERSHIP, FOR A PRIVATE CHANNEL, WHEN A USER IS SENDING (      // FR-001, FR-CHN-05).
+      // MEMBERSHIP, FOR A PRIVATE CHANNEL, WHEN A USER IS SENDING (FR-001, FR-CHN-05).
       //
       // HERE AND NOT IN A HANDLER, because constitution I says isolation is
       // enforced in data access. Two controllers reach this function and neither

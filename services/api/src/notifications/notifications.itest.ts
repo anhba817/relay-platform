@@ -12,7 +12,8 @@ import { recordAttemptOutcome } from "../db/repository";
 import { createMailer } from "./mailer";
 import { createNotificationRelay } from "./notification-relay";
 
-// The transport the retry-and-disable chapter deferred, against a real mail server (// FR-WHK-07 to FR-WHK-05).
+// The transport the retry-and-disable chapter deferred, against a real mail server
+// (FR-WHK-07 to FR-WHK-05).
 //
 // EVERY ASSERTION READS WHAT MAILPIT RECEIVED, never what the sender passed.
 // FR-WHK-07 is a claim about the contents of an email, and a stub records the same

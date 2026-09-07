@@ -344,7 +344,8 @@ describe("a channel, a member and a message, all over the public API", () => {
       })
     ).json()) as { messages: { seq: number; user: string | null; text: string }[] };
     expect(history.messages.map((m) => m.text)).toEqual([second, first]);
-    // WAS `every((m) => m.user === null)`, AND THAT IS THE CHAPTER (    // T055's class). This assertion existed to prove the rows were senderless, which was
+    // WAS `every((m) => m.user === null)`, AND THAT IS THE SENDER CHAPTER
+    // (T055's class). This assertion existed to prove the rows were senderless, which was
     // why `toFrame` dropped them. Every REST send now names a sender, so the premise it
     // rested on is gone.
     expect(history.messages.every((m) => m.user === "rest-courier")).toBe(true);
