@@ -1,4 +1,4 @@
-# The api (chapter 3.5). The repository's containers arrive with the dispatcher:
+# The api. The repository's containers arrive with the dispatcher:
 # adding one image for the new service alone would have made the newest
 # deployable the only packaged one, which is a distinction nothing justifies.
 #
