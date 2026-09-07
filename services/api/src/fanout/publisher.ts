@@ -73,7 +73,7 @@ export const DEFAULT_FANOUT_REDIS_URL = "redis://localhost:6379";
  * `limits/store.ts`'s `DOWN_WINDOW_MS`, and the reason is that file's: "FAILING
  * OPEN IS NOT FREE IF IT FAILS SLOWLY… each request paid a second or more,
  * twice." The options alone were the slow version; the window is the fix, and
- * the first draft of chapter 3.18's contract copied the options without it. */
+ * the first draft of the fan-out chapter's contract copied the options without it. */
 const DOWN_WINDOW_MS = 5_000;
 
 export interface PublisherOptions {

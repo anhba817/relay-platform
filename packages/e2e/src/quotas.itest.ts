@@ -6,7 +6,7 @@ import { boot, type Client, type System } from "./harness.js";
 
 // Chapter 3.10 — the cap through the OTHER door, and what it leaves alone.
 //
-// Chapter 3.8's limiter never sees `/internal/messages`: `operationsFor` returns
+// The rate-limit chapter's limiter never sees `/internal/messages`: `operationsFor` returns
 // [] for anything outside `/v1`, and that is the route the gateway posts a
 // WebSocket send to. This chapter's enforcement point is `sendMessage`, which
 // both doors reach — and this is the test that proves it rather than the research

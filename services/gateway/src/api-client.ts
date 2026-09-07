@@ -25,7 +25,7 @@ import {
 // the day the api changes a field name, this fails loudly here instead of
 // producing an `undefined` seq in an ack three layers away.
 
-/** A failed internal call, carrying the status. Chapter 3.2 needs the
+/** A failed internal call, carrying the status. The credentials chapter needs the
  * distinction: a 401 from the api means the CONNECTION'S credential is no longer
  * good, which a client can act on by reconnecting, while a 500 means we are
  * broken and it should not. `new Error("send failed")` could not tell them
@@ -81,7 +81,7 @@ export interface ApiClient {
   session(
     token: string,
   ): Promise<InternalSessionResponse | { quotaExceeded: string } | null>;
-  /** Chapter 3.20's backstop: what this connection may hear, now.
+  /** The membership-revocation chapter's backstop: what this connection may hear, now.
    *
    * The one question a periodic re-read has, asked of the route that answers only
    * it. `session()` would answer this too and three other things, one of which can
@@ -120,7 +120,7 @@ export function createApiClient(
    * configured, no report is ever sent and no route is ever reached. */
   serviceCredential?: string,
 ): ApiClient {
-  // Chapter 3.2 retired two headers here. The gateway used to send
+  // The credentials chapter retired two headers here. The gateway used to send
   // an environment header and a user header — values it INVENTED from a token
   // it verified with a shared development secret. It now forwards the token
   // itself and is told who the caller is (research R1). One header instead of
@@ -192,7 +192,7 @@ export function createApiClient(
       return parse(res, internalSessionResponseSchema, "session");
     },
     async memberships(identity) {
-      // Chapter 3.20's backstop. A GET, unlike every other method here: it presents
+      // The membership-revocation chapter's backstop. A GET, unlike every other method here: it presents
       // the token in a header and reads, so there is no body and nothing to POST.
       //
       // NOT `session()`. That route answers identity, memberships, limits AND a
@@ -230,7 +230,7 @@ export function createApiClient(
           "content-type": "application/json",
           // The gateway's OWN credential. Not `headers(identity)` — there is no
           // identity here, and reaching for one would mean picking a user to
-          // speak for, which is exactly the assertion chapter 3.2 removed.
+          // speak for, which is exactly the assertion the credentials chapter removed.
           authorization: `Bearer ${serviceCredential}`,
         },
         body: JSON.stringify(

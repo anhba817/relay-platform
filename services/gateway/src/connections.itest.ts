@@ -208,7 +208,7 @@ interface Recorded {
 }
 
 /** Every frame kept, not just the first matching one. **That distinction is the
- * whole point of T014**: chapter 3.18 already asserts both of a user's sockets
+ * whole point of T014**: the fan-out chapter already asserts both of a user's sockets
  * receive a message, using a `waitFor` that resolves on the first match — so a
  * DUPLICATE passes it unnoticed. Story 3 scenario 1 says "both receive it, and
  * each receives it once", and only a count can say the second half. */
@@ -226,7 +226,7 @@ function record(socket: WebSocket): Recorded {
 /** **THE FAILURE CARRIES WHAT THE SOCKET ACTUALLY GOT**, and the first version of
  * this message did not. `no connection.ack within 5s` was true of a socket that
  * had been refused 4004 half a second earlier, and it took a falsification run and
- * six repeats to find that out — chapter 3.21's rule one level down: a check that
+ * six repeats to find that out — the typing chapter's rule one level down: a check that
  * throws away the evidence costs more than the defect. */
 async function untilAcked(r: Recorded): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -247,7 +247,7 @@ async function untilAcked(r: Recorded): Promise<void> {
 }
 
 /** Polls rather than waits on a single frame. A connection is acked before its
- * SUBSCRIBE has necessarily landed, which cost chapter 3.21 a flake at 315 ms —
+ * SUBSCRIBE has necessarily landed, which cost the typing chapter a flake at 315 ms —
  * the fix there was polling helpers, not a re-run. */
 async function untilCount(
   r: Recorded,
@@ -292,7 +292,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
 
   afterEach(async () => {
     // Sockets before servers. `afterEach` runs in reverse registration order and
-    // a teardown that closed servers first cost chapter 3.20 seven tests and
+    // a teardown that closed servers first cost the membership-revocation chapter seven tests and
     // eighty-three seconds, every failure naming a hook.
     for (const socket of sockets.splice(0)) socket.close();
     // A beat for each close handler to run its release before the client goes.
@@ -449,7 +449,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
     // PUBLISHED RAW, because the `Membership` module has no `publish`: the api
     // publishes a change and the gateway only ever subscribes. `membership.itest.ts`
     // reached for a raw client for the same reason, and counting a publish through
-    // the code that publishes is the shape chapter 3.18 warned about anyway.
+    // the code that publishes is the shape the fan-out chapter warned about anyway.
     const publisher = new Redis(REDIS);
     await publisher.publish(
       subjectForChannelMembership(channel),
@@ -494,7 +494,7 @@ describe("every connection a person holds is a first-class recipient (US3)", () 
     // the registry, not present-and-broken.
     //
     // So the property is real and unobservable through this fixture, which is
-    // chapter 3.20's lesson in its own words — a claim about an observable
+    // The membership-revocation chapter's lesson in its own words — a claim about an observable
     // difference needs falsifying before the test is written. What this test does
     // assert is narrower and still worth having: a surviving connection keeps
     // receiving after an earlier one is gone.
@@ -732,7 +732,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
   }, 40_000);
 
   it("keeps a heartbeating connection's slot across three bounds (FR-008, SC-006)", async () => {
-    // CHAPTER 3.19 SHIPPED A PRESENCE BUG BY ARMING A CHECK AT EXACTLY ITS OWN
+    // The presence chapter SHIPPED A PRESENCE BUG BY ARMING A CHECK AT EXACTLY ITS OWN
     // GRACE PERIOD — two deadlines on one instant, reached by two clocks, and the
     // losing side stranded a user online for ever. This is the test that would
     // have caught the same mistake here: three renewals per bound, so two
@@ -1002,7 +1002,7 @@ describe("the count survives the gateway it was counted on (US2)", () => {
 // FR-016 chooses availability over the cap: a registry the gateway cannot reach
 // must not stop people connecting. The whole difficulty is that this decision is
 // INVISIBLE. An accepted connection is an accepted connection; nothing a client
-// sees says whether five was checked. Chapter 3.18 found the general case — the
+// sees says whether five was checked. The fan-out chapter found the general case — the
 // fan-out's `publish` swallows its errors and resolves, so "the send returned 201
 // while Redis was down" is equally true of a publisher that does nothing at all.
 // The assertion that carries the requirement is the log line.
@@ -1134,7 +1134,7 @@ describe("the cap fails open, and says so (US4)", () => {
 // unchanged and is why they moved rather than being rewritten: the design rests on what
 // `SET … NX` and `SET … IFEQ` do. **A stubbed client would pass with a non-atomic
 // implementation, with an `XX` renewal that hijacks, and with a `DEL` release that frees
-// another connection's place** — all three of which chapter 3.22's analysis found and
+// another connection's place** — all three of which the connection-cap chapter's analysis found and
 // corrected, and it would also pass against a server with no `IFEQ` at all.
 
 describe("the slot registry, against a real broker", () => {

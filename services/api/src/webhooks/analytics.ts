@@ -17,7 +17,7 @@ import type { Publisher } from "../outbox/publisher";
 // cannot both be maximised, and research R5 chose which one wins:
 //
 //   * record every attempt without loss → the record shares a transaction with
-//     the outcome (3.3's outbox), and then a stalled analytics consumer backs up
+//     the outcome (the outbox chapter's outbox), and then a stalled analytics consumer backs up
 //     an operational table;
 //   * guarantee independence → the publish happens after the commit, outside it,
 //     and a crash in that gap loses the record.
@@ -33,7 +33,7 @@ import type { Publisher } from "../outbox/publisher";
 /** The publisher that reaches the ANALYTICS stream, as a DI token.
  *
  * A SECOND publisher rather than a second use of the first. Each
- * `createJetStreamPublisher` ensures exactly one stream, and chapter 3.5 already
+ * `createJetStreamPublisher` ensures exactly one stream, and the webhook dispatcher chapter already
  * learned what happens when a publisher is pointed at a stream it did not create:
  * every publish comes back 503, which is a confusing way to discover that
  * JetStream does not create streams on demand. Declared here, beside the function
@@ -123,7 +123,7 @@ export async function publishAttempt(
     await publisher.publish({
       subject: webhookAttemptSubject(record.environmentId),
       // The broker's deduplication key, and it is `{delivery}:{attempt}` for the
-      // reason chapter 3.5 learned the hard way: the delivery id alone is stable
+      // reason the webhook dispatcher chapter learned the hard way: the delivery id alone is stable
       // across all seven attempts, and using it collapsed every retry into the
       // first attempt's message. That bug cost the platform its entire retry
       // schedule and was found by a walk rather than by a test. Here the same

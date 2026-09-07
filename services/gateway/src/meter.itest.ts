@@ -139,7 +139,7 @@ describe("a signal, and what it does to a bill", () => {
         ...process.env,
         PORT: "0",
         // ITS OWN FAILED-AUTHENTICATION KEYSPACE, and the twenty-run battery is
-        // what found this. Chapter 3.8's auth limiter counts failures per SOURCE
+        // what found this. The rate-limit chapter's auth limiter counts failures per SOURCE
         // ADDRESS in Redis, which the whole lane shares, and the allowance is ten
         // a minute. The last test in this file runs a gateway whose report
         // credential the api does not know — deliberately — and at a 300ms
@@ -147,7 +147,7 @@ describe("a signal, and what it does to a bill", () => {
         // 127.0.0.1.
         //
         // The address then goes over threshold and `CredentialGuard` starts
-        // answering 429 to EVERYBODY, including chapter 3.2's expired-token test
+        // answering 429 to EVERYBODY, including the credentials chapter's expired-token test
         // three suites away, which expects 401 and reports
         // `expected 'internal_error' to be 'unauthorized'`. That is this project's
         // recurring fault wearing a new hat: a test asserting a local fact while
@@ -197,12 +197,12 @@ describe("a signal, and what it does to a bill", () => {
   /** A gateway of its own per test, because each of these tests ends by killing
    * one and the two signals must not share a victim. */
   /** **`.resume()` DRAINS A STREAM AND KEEPS NOTHING**, which is a
-   * third variant of chapter 3.20's `gaps.md` item 19a and the most deceptive of
+   * third variant of the membership-revocation chapter's `gaps.md` item 19a and the most deceptive of
    * the three: `stdio: "ignore"` never creates the output, a pipe nobody reads
    * leaves it in a kernel buffer, and `.resume()` actively reads it and throws it
    * away — while looking like someone handled the stream.
    *
-   * **This file's test is the one that failed run 8 of chapter 3.21's battery**
+   * **This file's test is the one that failed run 8 of the typing chapter's battery**
    * (`no ack within 5s`), and the log for that run contains ZERO
    * `"service":"gateway"` lines, because all four streams here were resumed. Every
    * aggregate the run log can offer — 429 counts, `auth_degraded`, connection

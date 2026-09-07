@@ -8,7 +8,7 @@ import type { EventHandler } from "./handler";
 // Every consumer the SAD names belongs to a later chapter: the webhook
 // dispatcher, the analytics ingester and the media worker (Part 4), the
 // dashboard's live stream (Part 5). Giving this one a job would mean either
-// stealing 3.5's subject or inventing product nobody asked for, and Principle
+// stealing the webhook dispatcher chapter's subject or inventing product nobody asked for, and Principle
 // VII forbids the second.
 //
 // So it does the smallest real thing: it observes that an event arrived. The
@@ -18,7 +18,7 @@ import type { EventHandler } from "./handler";
 // emptiness is the point: what makes the consumer correct is the runtime around
 // it, not the code inside it.
 //
-// RETIREMENT: chapter 3.5 replaces this with the webhook dispatcher, which is a
+// RETIREMENT: the webhook dispatcher chapter replaces this with the webhook dispatcher, which is a
 // handler with the same signature and a great deal more to do.
 export function createRecorder(logger: Logger): EventHandler {
   return async (event, context) => {

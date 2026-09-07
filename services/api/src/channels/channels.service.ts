@@ -67,7 +67,7 @@ export class ChannelsService {
    *
    * THE ANSWER FOR A PRIVATE CHANNEL THE CALLER CANNOT SEE IS THE NOT-FOUND
    * ENVELOPE, and it has to be byte-identical to the answer for a channel that does
-   * not exist — SC-002, over the same oracle chapter 3.12 built for cross-tenant
+   * not exist — SC-002, over the same oracle the isolation gauntlet built for cross-tenant
    * pairs. A `403` naming the membership would announce that the channel exists,
    * which is what FR-003 forbids. So both paths raise the same exception with the
    * same constant message, and the message names no id: echoing it back would make
@@ -186,7 +186,7 @@ export class ChannelsService {
    * A PRIVATE CHANNEL ANSWERS AS IF ABSENT. Not "you may not join" — that would
    * announce it exists, and joining is one of the verbs SC-001 covers.
    *
-   * THE CEILING IS READ, NOT REIMPLEMENTED. Chapter 3.13 counts members from
+   * THE CEILING IS READ, NOT REIMPLEMENTED. The channel-endpoints chapter counts members from
    * storage and refuses at 1,000 with `channel_member_limit_exceeded`; a second
    * count with its own limit here would be a second answer to one question. */
   async join(channelId: string, userId: string): Promise<"joined" | "already_a_member"> {

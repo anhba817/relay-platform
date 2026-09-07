@@ -47,7 +47,7 @@ export function createServer(logger?: Logger) {
   // that function directly stay Redis-free, and so its close has an owner.
   const limits = createGatewayLimits();
   // The FOURTH and FIFTH Redis clients, and the reason is chapter
-  // 3.8's verbatim: a connection in subscribe mode cannot run `SET` or `EXISTS`,
+  // The rate-limit chapter's verbatim: a connection in subscribe mode cannot run `SET` or `EXISTS`,
   // so presence needs a subscriber and a command client of its own. Created here
   // rather than inside `attachSessions` so the tests that call that function
   // directly stay Redis-free, and so its close has an owner.
@@ -58,7 +58,7 @@ export function createServer(logger?: Logger) {
   // `attachSessions` so the tests that call that function directly stay Redis-free,
   // and so its close has an owner.
   const membership = createMembership({ logger: log });
-  // The SEVENTH and EIGHTH Redis clients. Chapter 3.20 closed at
+  // The SEVENTH and EIGHTH Redis clients. The membership-revocation chapter closed at
   // six, and this module needs two of its own — a publisher and a subscriber —
   // because it is the first fabric this service both publishes to and consumes
   // from. `fanout.ts:33` states why they cannot be one client: a subscribed
@@ -66,7 +66,7 @@ export function createServer(logger?: Logger) {
   const typing = createTyping({ logger: log });
   const connections = createConnections({ logger: log });
   // THE FIRST SECRET THIS SERVICE HAS EVER HELD, and it is not a
-  // signing secret: chapter 3.2's claim that "the gateway holds no signing
+  // signing secret: the credentials chapter's claim that "the gateway holds no signing
   // secret" is untouched, because this one verifies nothing and signs nothing.
   // It only says which service is talking, on the one call that is the
   // gateway's own rather than a user's.
@@ -105,7 +105,7 @@ export function createServer(logger?: Logger) {
     // a silent no-op. **The feature was inert in the product and green in every
     // test**, because every test injects this option directly.
     typing,
-    // CHAPTER 3.22, T042. **THIS LINE IS THE ONE CHAPTER 3.21 FORGOT.** That
+    // CHAPTER 3.22, T042. **THIS LINE IS THE ONE the typing chapter FORGOT.** That
     // chapter built its module, awaited its `close()` in `shutdown()` — so lint
     // saw a used variable — and never passed it here. The feature was inert in
     // the product while 1,174 coverage tests and 174 gateway integration tests
@@ -181,7 +181,7 @@ if (import.meta.main) {
   // the code is sitting right there — but draining is telling clients to
   // reconnect elsewhere, which is a feature with its own semantics. Reaching for
   // it because a handler happened to arrive is the "declared, so use it" that
-  // chapter 3.8 refused by name.
+  // The rate-limit chapter refused by name.
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       logger.log("info", "shutdown.signal", { signal });

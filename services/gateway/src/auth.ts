@@ -20,7 +20,7 @@ import type { ApiClient, Identity } from "./api-client.js";
 
 export type { Identity } from "./api-client.js";
 
-/** FOUR outcomes, and chapter 3.11 added the fourth. A refused token, an
+/** FOUR outcomes, and the connection-metering chapter added the fourth. A refused token, an
  * unreachable api and an exhausted quota all fail to open a socket, and none of
  * them is the same event: 4001 tells a client its credential is wrong (retrying
  * will not help), 1011 tells it we are broken (retrying will), and 4008 tells it

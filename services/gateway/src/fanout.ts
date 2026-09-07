@@ -19,7 +19,7 @@ import { Redis } from "ioredis";
 // channel — `chan:{channel_id}`. Every instance hosting a member of that
 // channel is subscribed and delivers to its local sockets.
 //
-// WHO PUBLISHES CHANGED IN CHAPTER 3.18. This comment used to say "the
+// WHO PUBLISHES CHANGED IN the fan-out chapter. This comment used to say "the
 // instance that handled a send publishes the committed message AFTER the api's
 // response", which was true while a socket was the only way in. There are two
 // publishers now: this one, for a socket send, and the api, for a REST send.
@@ -130,7 +130,7 @@ export function createFanout({
       } catch (error) {
         // Same contract as `publish` above: the edit or the tombstone is already
         // committed, and a client that missed the frame repairs by re-reading history —
-        // which is what chapter 3.23's resume decision rests on.
+        // which is what the revisions chapter's resume decision rests on.
         logger.log("error", "fanout.publish_failed", {
           channel: revision.message.channel,
           error: String(error),

@@ -102,7 +102,7 @@ export interface MembershipChangedData {
  * and those customers made no mistake. */
 export const WEBHOOK_EVENT_TYPES = {
   "message.created": { emitted: true },
-  // CHAPTER 3.23's TWO, spelled as FR-WHK-02 spells them because a customer's
+  // The revisions chapter's TWO, spelled as FR-WHK-02 spells them because a customer's
   // subscription filters on these exact strings.
   "message.updated": { emitted: true },
   "message.deleted": { emitted: true },
@@ -137,7 +137,7 @@ type EmittedName = {
 
 /** THE ARRAY IS STILL THE RUNTIME FORM, so the set has a size a test can read. A bare
  * union has no runtime form: "the union has exactly five members" is unassertable, and
- * chapter 3.19's `codes.test.ts` earned its keep by asserting an exact set and an exact
+ * The presence chapter's `codes.test.ts` earned its keep by asserting an exact set and an exact
  * count — which is what makes a new member a decision rather than an accident. */
 export const OUTBOX_EVENT_TYPES = (
   Object.keys(WEBHOOK_EVENT_TYPES) as WebhookEventType[]
@@ -162,9 +162,9 @@ export interface PendingEvent {
   payload: OutboxEvent;
 }
 
-// The subject grammar moved to @relay/protocol in chapter 3.4, because a
+// The subject grammar moved to @relay/protocol in the broker chapter, because a
 // consumer needs it too and both sides must agree on it. Imported for use
-// below and re-exported so 3.3's callers keep working.
+// below and re-exported so the outbox chapter's callers keep working.
 export { subjectFor };
 
 export function messageCreatedEvent({
@@ -325,7 +325,7 @@ const envelope = {
   occurred_at: z.iso.datetime(),
 };
 
-/** A DISCRIMINATED UNION, AND IT WAS A LITERAL UNTIL CHAPTER 3.20 RAN IT.
+/** A DISCRIMINATED UNION, AND IT WAS A LITERAL UNTIL the membership-revocation chapter RAN IT.
  *
  * This schema was `type: z.literal("message.created")` inside a `strictObject`, and
  * the consumer that uses it — `services/api/src/consumer/runtime.ts:163` — answers a
@@ -437,7 +437,7 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
     data: z.strictObject({
       channel_id: z.string().min(1),
       // NOT nullable, unlike the message's `user`. A message can have no sender
-      // (chapter 3.17's senderless rows predate FR-MSG-15); a membership change
+      // (the sender chapter's senderless rows predate FR-MSG-15); a membership change
       // always has a member.
       user: z.string().min(1),
     }),

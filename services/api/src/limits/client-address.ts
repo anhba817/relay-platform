@@ -10,7 +10,7 @@ import type { RequestWithPrincipal } from "../auth/principal";
 // everybody.
 //
 // A FIELD ON THE INTERNAL CONTRACT, NOT A HEADER. A header the caller asserts is
-// a header the caller can forge — the exact pattern chapter 3.2 removed when it
+// a header the caller can forge — the exact pattern the credentials chapter removed when it
 // retired the two identity headers the gateway used to send. This one is
 // accepted only from a caller already trusted enough to reach the internal
 // routes, and it is trusted for exactly one thing: naming who was on the other

@@ -109,7 +109,7 @@ async function waitForHealth(url: string, why?: () => string): Promise<void> {
       // **The child has already said why and nobody was
       // listening.** This file spawns with `stdio: ["ignore", "pipe", "pipe"]`
       // and never read either pipe, so an api that died took its reason with it —
-      // which is the entire reason chapter 3.20's `gaps.md` item 19a has four
+      // which is the entire reason the membership-revocation chapter's `gaps.md` item 19a has four
       // occurrences and three eliminated hypotheses rather than a cause. The
       // buffer is drained below and its tail is attached here.
       throw new Error(
@@ -120,7 +120,7 @@ async function waitForHealth(url: string, why?: () => string): Promise<void> {
   }
 }
 
-/** A FRESH PORT PER CALL, and chapter 3.11 had to learn why twice.
+/** A FRESH PORT PER CALL, and the connection-metering chapter had to learn why twice.
  *
  * This used to bind a fixed 4123. Two things go wrong with a fixed port and both
  * of them look like a broken feature rather than a broken fixture:
@@ -213,7 +213,7 @@ async function startApi(
     description: "sends over REST so a socket can receive it",
   });
   // Two PEOPLE in the channel, because FR-005's property is "every
-  // connected member" and one socket cannot show it. ADDITIVE, on chapter 3.18's
+  // connected member" and one socket cannot show it. ADDITIVE, on the fan-out chapter's
   // precedent recorded just above — the tests that assert on "tuan" are unaffected by
   // two more members of a public channel, and T033 is the only test that names these.
   //
@@ -234,11 +234,11 @@ async function startApi(
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     // No outbox relay in this child. This suite is about the
     // socket's credentials; a background loop draining a table that chapter
-    // 3.3's suite is asserting on turns two unrelated test files into a race.
+    // The outbox chapter's suite is asserting on turns two unrelated test files into a race.
     env: { ...process.env, PORT: pinned, RELAY_OUTBOX_RELAY: "off",
       // Nor the notification relay, for the same reason.
       RELAY_NOTIFICATION_RELAY: "off",
-      // Its own failed-authentication keyspace. Chapter 3.8's auth
+      // Its own failed-authentication keyspace. The rate-limit chapter's auth
       // limiter counts failures per SOURCE ADDRESS in Redis, every suite in this
       // lane is 127.0.0.1, and vitest runs the files in parallel — so ten
       // failures a minute across ALL of them turns a neighbour's expected 401
@@ -253,7 +253,7 @@ async function startApi(
     stdio: ["ignore", "pipe", "pipe"],
   });
   // DRAINED, AND KEPT. Two reasons, and the second is why this exists at all:
-  // an undrained pipe fills (chapter 3.20 measured 4,000 requests before it
+  // an undrained pipe fills (the membership-revocation chapter measured 4,000 requests before it
   // mattered, so this is not the cause of any death), and an unread pipe throws
   // the evidence away when one happens. Item 19a is four unexplained failures
   // across two chapters — `ECONNREFUSED` on a port this file chose — and every
@@ -768,7 +768,7 @@ describe("the cap at the door (US3)", () => {
 // `fanout?.publish` is a no-op there and nothing in them subscribes to
 // anything. That is correct for what they test — credentials and refusals — and
 // changing them to carry a broker would move twelve socket opens and four api
-// boots to prove nothing new. Chapter 3.17's T040b took five tests down doing
+// boots to prove nothing new. The sender chapter's T040b took five tests down doing
 // exactly that, the fifth such incident in two features.
 //
 // So this adds a capability instead: a real spawned api, a real gateway, real
@@ -1463,8 +1463,8 @@ describe("the socket's delivery, with a fan-out attached", () => {
   });
 
   it("stops delivering to a member who was REMOVED while connected (FR-RTM-10)", async () => {
-    // INVERTED IN CHAPTER 3.20, AND THE TITLE WITH IT. This test read "keeps
-    // delivering" and asserted the violation on purpose from chapter 3.18 until
+    // INVERTED IN the membership-revocation chapter, AND THE TITLE WITH IT. This test read "keeps
+    // delivering" and asserted the violation on purpose from the fan-out chapter until
     // now — its own closing comment carried the instruction: "change this to
     // `.rejects` on the day a re-read exists".
     //
@@ -1484,7 +1484,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
     // test rather than writing a new one. A pass means the clause is met, not that
     // the assertion moved to somewhere easier.
     //
-    // AND THE TITLE IS PART OF THE CHANGE. Chapter 3.19 shipped a test whose title
+    // AND THE TITLE IS PART OF THE CHANGE. The presence chapter shipped a test whose title
     // claimed an arm it never touched and nothing caught it for four phases; a title
     // saying "keeps delivering" over an assertion that nothing arrives is the same
     // defect with the sign flipped.
@@ -1544,7 +1544,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
   }, 20_000);
 
   it("delivers nothing from a PRIVATE channel to a non-member's socket (FR-014, SC-007)", async () => {
-    // FR-CHN-05's fourth door. The read paths got three in chapter 3.15 — list,
+    // FR-CHN-05's fourth door. The read paths got three in the channel-control chapter — list,
     // history, and the channel itself — and delivery is the one this chapter
     // opens. Tested as its own case rather than inferred from the others,
     // because the mechanism is different: the read paths ask the repository,
@@ -1621,7 +1621,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
           // FEATURE 044 MADE THIS RED, and for the reason this builder's own comment
           // gives: `revisions` is required on the ack, so a sample without it fails
           // `safeParse` and comes back `invalid_frame` — a phase BEFORE the direction
-          // check this test is about. Chapter 3.23 hit the identical fault with
+          // check this test is about. The revisions chapter hit the identical fault with
           // `message.deleted`. Second incident, same builder, same cause.
           payload: {
             user: "tuan",
@@ -1636,7 +1636,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
       case "message.created":
       case "message.updated":
         return { type, payload: message };
-      // CHAPTER 3.23 SPLIT THIS CASE OFF, and the failure that forced it is the point
+      // The revisions chapter SPLIT THIS CASE OFF, and the failure that forced it is the point
       // of the test. `message.deleted` shared `message` — a `Message` with a `text` —
       // until 3.23 gave the frame a payload of its own with no text and a
       // `deleted_at`. The forged frame then failed the SHAPE check and came back
@@ -1784,7 +1784,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
 
 describe("the connection cap at the door (US1)", () => {
   // ITS OWN FIXTURE, AND THE REASON IS A DEFECT T042d CAUSED. That task wired the
-  // module into chapter 3.11's "cap at the door" describe, whose five quota tests
+  // module into the connection-metering chapter's "cap at the door" describe, whose five quota tests
   // share the user "tuan" — so the cap bit them and two went red:
   //
   //   × opens normally the moment the cap is raised
@@ -1861,7 +1861,7 @@ describe("the connection cap at the door (US1)", () => {
   // this block calls `attachSessions` with none, so the cap will not be enforced
   // here until Phase 5 passes the module in — which it must, or this test can
   // never go green. The block is named "the cap at the door" and already holds
-  // the other two door refusals: chapter 3.8's rate limit and chapter 3.11's
+  // the other two door refusals: the rate-limit chapter's rate limit and the connection-metering chapter's
   // quota. The connection cap is the third and belongs beside them.
   //
   // `expect.fail` is deliberate over `it.fails`: the assertion below states the

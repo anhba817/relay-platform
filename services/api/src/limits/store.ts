@@ -18,7 +18,7 @@ import { WINDOW_MS } from "./policy";
 // (constitution VII).
 //
 // The TTL does the cleanup: a key dies when its window ends and nothing
-// accumulates. Chapter 3.7's baseline and this chapter's own both found suites
+// accumulates. The deduplication chapter's baseline and this chapter's own both found suites
 // broken by shared stores that grew without bound, so a counter that tidies
 // itself is worth the sentence.
 

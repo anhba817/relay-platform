@@ -148,7 +148,7 @@ function spawnApi(pinned: string, credential: string): ChildProcess {
       ...process.env,
       PORT: pinned,
       RELAY_INTERNAL_CREDENTIAL: credential,
-      // Chapter 3.3's finding 4, for the third time: this suite drives the relay
+      // The outbox chapter's finding 4, for the third time: this suite drives the relay
       // explicitly, so a background copy draining the same table would race it.
       RELAY_OUTBOX_RELAY: "off",
       // Nor the notification relay, for the same reason.
@@ -271,7 +271,7 @@ describe("the dispatcher", () => {
       .map((l) => JSON.parse(l) as Record<string, unknown>)
       .filter((l) => l["msg"] === msg);
 
-  /** Publish a real event onto the EVENTS stream, exactly as chapter 3.3's
+  /** Publish a real event onto the EVENTS stream, exactly as the outbox chapter's
    * outbox relay does.
    *
    * WHY THIS EXISTS. Every other helper in this file reaches expansion by
@@ -291,7 +291,7 @@ describe("the dispatcher", () => {
 
   /** Run the api's delivery relay once: everything due goes onto the stream.
    * The real loop, driven explicitly — this suite turns the background copy off
-   * so the two cannot race (chapter 3.3's finding 4, third occurrence). */
+   * so the two cannot race (the outbox chapter's finding 4, third occurrence). */
   const publishDue = async (): Promise<number> => {
     const relay = require_(join(API_DIST, "webhooks", "delivery-relay.js")) as {
       createDeliveryRelay: (o: unknown) => { drainOnce: () => Promise<number> };
@@ -322,7 +322,7 @@ describe("the dispatcher", () => {
       // the backlog itself, so the next run passes — which is why it reads as a
       // flake rather than as the threshold it is.
       //
-      // Found at chapter 3.8's baseline. Chapter 3.7 fixed the same global drain
+      // Found at the rate-limit chapter's baseline. The deduplication chapter fixed the same global drain
       // in `deliveries.itest.ts` twice and never looked at this door.
       batchSize: 10_000,
     });
@@ -454,11 +454,11 @@ describe("the dispatcher", () => {
     //
     // A durable is server-side state that outlives the process that made it, and this
     // suite named a fresh pair per run — `itest-expand-<8 hex>` and
-    // `itest-deliver-<8 hex>` — and deleted neither. Chapter 3.24's close-out found
+    // `itest-deliver-<8 hex>` — and deleted neither. The attachments chapter's close-out found
     // **216 consumers on DELIVERIES**, 215 of them this file's, each holding a position
     // in a stream of 56,193 messages, and the twenty-run battery added 19 more.
     //
-    // `services/api/src/consumer/consumer.itest.ts` has done this since chapter 3.4 and
+    // `services/api/src/consumer/consumer.itest.ts` has done this since the broker chapter and
     // its comment says why: *"without this, every run of this suite left another handful
     // behind on a shared broker, and `stream-info.mjs` found twelve of them the first
     // time it looked."* That chapter learned it at twelve. **The fix was written in the
@@ -501,7 +501,7 @@ describe("the dispatcher", () => {
     expect(endpoint.received.length).toBe(before);
   });
 
-  it("invariant 16: the delivered body is 3.3's envelope and carries the event id", async () => {
+  it("invariant 16: the delivered body is the outbox chapter's envelope and carries the event id", async () => {
     endpoint.answerWith(200);
     const seeded = await seed(["message.created"]);
 

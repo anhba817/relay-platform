@@ -71,7 +71,7 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
     // it is the right default here: every test in this file is about the socket,
     // and a meter that reported would only add a call nobody asserts on.
     reportUsage: async () => null,
-    // Chapter 3.20's backstop reads this. The default answers what the session
+    // The membership-revocation chapter's backstop reads this. The default answers what the session
     // above says, so a stub that never overrides it is a stub whose re-read agrees
     // with its own connect — which is the state every test in this file that is not
     // about membership wants.
@@ -101,7 +101,7 @@ const VALID_TOKEN = "token-for-tuan";
 /** A token, from the gateway's point of view: an opaque string it forwards.
  *
  * This function used to SIGN one, with HS256 over a development secret both the
- * gateway and this file knew. After chapter 3.2 neither of them holds a secret —
+ * gateway and this file knew. After the credentials chapter neither of them holds a secret —
  * tokens are signed with the environment's own, in the api — so any override
  * here simply produces a DIFFERENT opaque string, which the stub refuses. The
  * refusal cases below therefore test what they always tested: a credential the
@@ -138,7 +138,7 @@ function stubFanout(): Fanout & {
   let deliver: (channelId: string, message: Message) => void = () => {};
   // The stub gained these because the interface did, and the typecheck is
   // what said so: widening `Fanout` broke every fake that did not implement it, which is
-  // the compile-time half of chapter 3.21's lesson about a module built and never passed.
+  // the compile-time half of the typing chapter's lesson about a module built and never passed.
   let deliverRevision: (channelId: string, revision: RevisionFabric) => void = () => {};
   return {
     published,
@@ -283,7 +283,7 @@ describe("the socket (chapter 2.5)", () => {
   });
 
   it("closes 1011, not 4001, when the api cannot answer at all", async () => {
-    // New in chapter 3.2, and the reason `authenticate` has three outcomes
+    // New in the credentials chapter, and the reason `authenticate` has three outcomes
     // rather than two. Moving verification to the api introduced a failure the
     // gateway never had: the verifier being DOWN. Answering that with 4001
     // would tell a client its credential is bad and stop it retrying, when the
@@ -320,7 +320,7 @@ describe("the socket (chapter 2.5)", () => {
     const ack = await nextFrame(socket, "message.ack");
     expect(ack).toMatchObject({ type: "message.ack", payload: { seq: 7 } });
     // The gateway carried; the api decided. The identity travelled with it —
-    // and after chapter 3.2 the TOKEN travels too, because the internal hop
+    // and after the credentials chapter the TOKEN travels too, because the internal hop
     // forwards the user's own credential rather than asserting who they are.
     expect(sent).toEqual([
       {
@@ -1080,7 +1080,7 @@ describe("the socket's limits", () => {
   });
 
   it("emits 4008 for a quota, and 4009 from nowhere", async () => {
-    // CHAPTER 3.8 WROTE THIS TEST INVERTED, and said why:
+    // The rate-limit chapter WROTE THIS TEST INVERTED, and said why:
     //
     //   4008 reads "quota exhausted". There is no quota yet — quotas are a
     //   later chapter — and reaching for the code because it was declared would
@@ -1094,7 +1094,7 @@ describe("the socket's limits", () => {
     // COMPLETES the handshake, sends an error frame carrying the resume date, and
     // closes 4008. Two refusals at one door, and a client can tell them apart.
     //
-    // 4009 IS STILL EMITTED BY NOTHING. Chapter 3.11 gave the gateway its first
+    // 4009 IS STILL EMITTED BY NOTHING. The connection-metering chapter gave the gateway its first
     // shutdown path, so "server shutdown (drain)" is closer than it has ever
     // been — and draining is a feature with its own semantics rather than a code
     // to reach for because a handler arrived.

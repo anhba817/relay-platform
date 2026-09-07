@@ -42,11 +42,11 @@ export class MessagesService {
     body: SendMessageBody,
     /** Chapter 2.6: who wrote it. Optional because an APPLICATION-key send is
      * unattributed — it acted for the tenant and there was no user to name. **That is no
-     * longer true**: chapter 3.17 made every message carry a sender (FR-MSG-15), and a key
+     * longer true**: the sender chapter made every message carry a sender (FR-MSG-15), and a key
      * names a bot user of its tenant. The parameter below is required at the repository and
      * resolved by the controller before this method is called.
      *
-     * IT IS NO LONGER OPTIONAL FOR A USER TOKEN. Chapter 3.15 made the public
+     * IT IS NO LONGER OPTIONAL FOR A USER TOKEN. The channel-control chapter made the public
      * route resolve its principal (T031a): the membership check in `sendMessage`
      * is gated on this parameter, and until then the public route supplied none,
      * so the check could not fire on the route a customer's client actually calls.
@@ -103,7 +103,7 @@ export class MessagesService {
       //
       // `ProtocolErrorFilter` maps a bare 403 to `forbidden`, and this is the only code
       // in the chapter that collides with the ladder — so it is named here, the way
-      // chapter 3.12 named `wrong_credential_service` for the same reason. The filter
+      // The isolation gauntlet named `wrong_credential_service` for the same reason. The filter
       // prefers an explicit code when one is given; leaving it to the ladder would put
       // "you lack a permission" on the wire in place of the one fact an integrator can
       // act on.
@@ -153,7 +153,7 @@ export class MessagesService {
         // add one to, and adding two would be the drift EIR-API-04 and
         // `ProtocolErrorFilter` exist to prevent (research R3).
         //
-        // `402`, NOT `429`. Chapter 3.8 owns `429`, and a client that sleeps for
+        // `402`, NOT `429`. The rate-limit chapter owns `429`, and a client that sleeps for
         // `Retry-After` and retries is behaving correctly for a rate limit and
         // wrongly for a quota — which will still be exhausted in an hour and in
         // three weeks. There is a time at which sends resume and it is in the
@@ -163,7 +163,7 @@ export class MessagesService {
         // a code from the status for 400, 401, 403 and 404, and everything else
         // becomes `internal_error` — so an unnamed `402` would emit a body
         // calling itself an internal error while carrying a `402`. That is the
-        // lie chapter 2.2 fixed for 400 and chapter 3.2 for 403, and 3.2's
+        // lie chapter 2.2 fixed for 400 and the credentials chapter for 403, and the credentials chapter's
         // mechanism — a thrower naming its own code — is what this uses. The
         // filter builds the four-field envelope and derives `docs_url` from the
         // code.
@@ -180,7 +180,7 @@ export class MessagesService {
   /** Change what a message says (FR-001, FR-013, FR-014).
    *
    * THE VISIBILITY CHECK FIRST, AND IT IS THE SAME ONE `history` MAKES. `channelVisibleTo`
-   * is the predicate chapter 3.15 built after finding `channelExists` answering only half
+   * is the predicate the channel-control chapter built after finding `channelExists` answering only half
    * the question — an absent channel gave 404 while a private channel a non-member read
    * gave 200 and an empty page. An edit route reaching for `channelExists` would rebuild
    * that leak in a new verb.

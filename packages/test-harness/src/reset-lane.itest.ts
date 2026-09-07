@@ -21,7 +21,7 @@ const SCRIPT = join(
 // Feature 043 — the two properties `reset-lane.mjs` has to hold (FR-005).
 //
 // The script purges every JetStream stream, deletes every durable consumer, and removes
-// webhook deliveries left pending by runs that ended. Chapter 3.24's close-out needed
+// webhook deliveries left pending by runs that ended. The attachments chapter's close-out needed
 // exactly that and had no command for it: clearing the lane took two hand-written
 // scripts and an approval, twice.
 //

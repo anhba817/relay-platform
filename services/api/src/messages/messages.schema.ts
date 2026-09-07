@@ -12,10 +12,10 @@ import { z } from "zod";
 // character bound is the honest approximation, recorded as such.
 export const sendMessageBodySchema = z
   .strictObject({
-    /** `.min(1)` REMOVED in chapter 3.24 (FR-019), and the floor moved to the
+    /** `.min(1)` REMOVED in the attachments chapter (FR-019), and the floor moved to the
      * refinement below rather than disappearing. An attachments-only message is a
      * photograph with no caption, and it stores `text = ""` rather than a null so
-     * chapter 3.23's tombstone predicate — `text === null` — is untouched. */
+     * The revisions chapter's tombstone predicate — `text === null` — is untouched. */
     text: z.string().max(MESSAGE_TEXT_MAX),
     metadata: z.record(z.string(), z.unknown()).optional(),
     // Chapter 2.3 (FR-MSG-04): the client's idempotency key — minted at send
@@ -59,7 +59,7 @@ export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
  * edited message is still a message, so both import `MESSAGE_TEXT_MAX` and neither
  * spells it.
  *
- * THE FLOORS DIVERGED IN CHAPTER 3.24 AND MUST STAY DIVERGED. This paragraph used to say
+ * THE FLOORS DIVERGED IN the attachments chapter AND MUST STAY DIVERGED. This paragraph used to say
  * the field was "written as a reference to that shape" — it was
  * `sendMessageBodySchema.shape.text` — and that is what broke: FR-019 removed the send's
  * `.min(1)` so an attachments-only message could carry empty text, and the edit's floor
@@ -87,7 +87,7 @@ export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
  * attachments-only message could carry no caption — and the edit inherited the
  * relaxation through this reference. **An edit has no attachments field**, so the pair
  * rule that restores the send's floor cannot restore this one: `PATCH` with `text: ""`
- * became a 200 and chapter 3.23's own test caught it.
+ * became a 200 and the revisions chapter's own test caught it.
  *
  * Spelled out rather than derived. Two schemas that happen to agree are a defect this
  * chapter has already recorded twice; two schemas that must DIFFER cannot share a
@@ -95,7 +95,7 @@ export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
 export const editMessageBodySchema = z.strictObject({
   /** THE MAXIMUM IS SHARED; THE FLOOR IS NOT, AND THAT IS THE WHOLE POINT (FR-008).
    *
-   * Chapter 3.24 found this field defined as `sendMessageBodySchema.shape.text`, so
+   * The attachments chapter found this field defined as `sendMessageBodySchema.shape.text`, so
    * relaxing the send's `.min(1)` for attachments-only messages silently relaxed the
    * edit's too — and an edit has no attachments field to restore its floor. The compiler
    * could not see it: the types are identical either way.

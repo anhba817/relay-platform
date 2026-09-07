@@ -11,7 +11,7 @@ import { Redis } from "ioredis";
 
 // The membership fabric's api half (FR-004).
 //
-// SHAPED ON `fanout/publisher.ts` AND NOT ON `createFanout`. Chapter 3.18 built that
+// SHAPED ON `fanout/publisher.ts` AND NOT ON `createFanout`. The fan-out chapter built that
 // publisher against the same problems this one has — a store that may be down on a
 // request path, a failure that must not fail the write, and a log line that is the
 // only evidence the path was taken — and its choices are inherited with their reasons
@@ -46,7 +46,7 @@ export function createMembershipPublisher({
   logger,
 }: MembershipPublisherOptions): MembershipPublisher {
   const redis = new Redis(url, {
-    // Chapter 3.18's three, for its reasons: a queued command rejects as soon as the
+    // The fan-out chapter's three, for its reasons: a queued command rejects as soon as the
     // connection attempt fails rather than waiting out a retry schedule; a connected
     // server that never answers is a different failure and only `commandTimeout`
     // catches it.
@@ -56,7 +56,7 @@ export function createMembershipPublisher({
     commandTimeout: 100,
   });
   // THE STATED REASON IS NFR-OBS-01, NOT PROCESS DEATH. `limits/store.ts:137` says a
-  // missing listener kills the api; chapter 3.18 measured that against ioredis 6.0.0
+  // missing listener kills the api; the fan-out chapter measured that against ioredis 6.0.0
   // and the process STAYS ALIVE — ioredis prints `[ioredis] Unhandled error event: …`
   // itself and continues. The accurate reason is that those lines are unstructured
   // and unbounded, which defeats NFR-OBS-01. A membership path that cannot reach
@@ -96,7 +96,7 @@ export function createMembershipPublisher({
         // outbox row with it; a publish that throws here would undo a route's success
         // for a delivery the backstop exists to repair (FR-016).
         //
-        // AND THE LOG LINE IS THE REQUIREMENT'S EVIDENCE (FR-015). Chapter 3.18's
+        // AND THE LOG LINE IS THE REQUIREMENT'S EVIDENCE (FR-015). The fan-out chapter's
         // trap against its own publisher: "the send returned 201 while Redis was
         // down" is true of a publisher that does nothing at all, so the assertion
         // that carries the requirement is this line and not the route's status.

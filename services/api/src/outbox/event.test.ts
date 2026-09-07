@@ -156,7 +156,7 @@ const DELETED = {
 };
 
 describe("the outbox event type set", () => {
-  // ASSERTED AS A SET AND AS A COUNT, which is chapter 3.19's `codes.test.ts`
+  // ASSERTED AS A SET AND AS A COUNT, which is the presence chapter's `codes.test.ts`
   // precedent: either alone lets a fourth type arrive unnoticed. FR-WHK-02 names
   // eight and FIVE exist since chapter 3.23; the other three arrive with the features
   // that can produce them.
@@ -177,7 +177,7 @@ describe("the outbox event type set", () => {
 
   it("declares exactly FR-WHK-02's eight, and says which three are unbuilt", () => {
     // THE DECLARED SET, ASSERTED EXACTLY, for the reason `codes.test.ts` established:
-    // chapter 3.24's plan expected one new error code and shipped two, and an exact-count
+    // The attachments chapter's plan expected one new error code and shipped two, and an exact-count
     // assertion is what caught it. A type appearing here without a decision behind it is
     // a subscription a customer can create and never hear from.
     expect(Object.keys(WEBHOOK_EVENT_TYPES)).toEqual([
@@ -443,7 +443,7 @@ describe("outboxEventSchema — what a CONSUMER will accept", () => {
   // `message.term()` — redelivery stopped for good. Every membership event would
   // have been destroyed there, in a lane that runs the consumer switched off.
   it("accepts every type the producer can build", () => {
-    // A LOOKUP RATHER THAN A TERNARY, because chapter 3.23 made the shapes three: a
+    // A LOOKUP RATHER THAN A TERNARY, because the revisions chapter made the shapes three: a
     // creation and an edit carry a `Message` (FR-008a), a deletion carries an identity
     // with no text (FR-020), and a membership change carries neither. The ternary's
     // `else` branch would have handed the membership shape to `message.deleted` and

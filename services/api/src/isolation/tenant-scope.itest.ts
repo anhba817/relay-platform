@@ -94,7 +94,7 @@ describe("every table has a path to one tenant", () => {
     // data-model.md said "exactly one foreign key", which would have classified
     // neither and failed totality on both.
     //
-    // CHAPTER 3.23 MADE THE REACH TRANSITIVE and this assertion is why the
+    // The revisions chapter MADE THE REACH TRANSITIVE and this assertion is why the
     // change is safe to make: `via` holds the DIRECT tables a chain arrives at,
     // never the intermediate ones, so `message_edits` reads `channels, users`
     // through `messages` rather than reading `messages`. Falsified twice

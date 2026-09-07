@@ -116,7 +116,7 @@ export type Attachment = z.infer<typeof attachmentSchema>;
 /** THE TEXT-AND-ATTACHMENTS PAIR RULE, in one place because it is one rule.
  *
  * FR-019: an attachments-only message is accepted and stores `text = ""` rather than a
- * null, so chapter 3.23's tombstone predicate — `text === null` — is untouched.
+ * null, so the revisions chapter's tombstone predicate — `text === null` — is untouched.
  * FR-019b: a message with neither text nor attachments is still refused.
  *
  * Those are two halves of one decision about a PAIR of fields, and writing it into

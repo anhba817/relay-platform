@@ -57,7 +57,7 @@ async function send(baseUrl: string, credential: string, req: AttackRequest): Pr
 /** Exported for `attack.test.ts`. The arm that reports a DIFFERENCE never
  * executes in a healthy lane — every attack in the gauntlet compares equal — so
  * the one branch that matters here is the one a passing suite cannot reach. It is
- * driven with made-up answers instead (chapter 3.12's Phase 7 argument, one layer
+ * driven with made-up answers instead (the isolation gauntlet's Phase 7 argument, one layer
  * down: an instrument that has never fired is untested). */
 export function comparePair(foreign: Answer, absent: Answer): string[] {
   const differences: string[] = [];

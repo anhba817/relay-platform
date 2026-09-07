@@ -22,7 +22,7 @@ export const DEFAULT_BOUND_MS = 60_000;
  * connection's place.
  *
  * **NOT `PING_INTERVAL_MS`, which is also a number in this file's neighbourhood.**
- * `session.ts:48` sets the protocol keepalive to 30_000, and chapter 3.19 paid for
+ * `session.ts:48` sets the protocol keepalive to 30_000, and the presence chapter paid for
  * conflating three 30-second numbers that turned out to be three quantities — a TTL
  * equal to its own refresh interval expires a connected user. Tying a Redis TTL to
  * a client-visible keepalive means changing the ping starts expiring slots. Separate
@@ -134,7 +134,7 @@ export function createConnections({
     connectTimeout: 1_000,
   });
   // One `error` listener, because a client without one turns a connection error
-  // into an unhandled rejection that takes the process down. Chapter 3.18's R10
+  // into an unhandled rejection that takes the process down. The fan-out chapter's R10
   // found `createFanout` without one while both rate limiters had one and
   // explained why.
   client.on("error", (error: Error) => {

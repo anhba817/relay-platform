@@ -4,11 +4,11 @@ import { z } from "zod";
  *
  * THE COLUMN IS THE ONE CHAPTER 2.1 LEFT EMPTY. Declared in
  * `0000_core_tables.sql`, named in SRS §6.1, read by nothing for eighteen
- * chapters. Chapter 3.8 was offered it for rate-limit policy and refused in
+ * chapters. The rate-limit chapter was offered it for rate-limit policy and refused in
  * prose — "the column is named for quotas, quotas are a later chapter". This is
  * that chapter.
  *
- * WHY A PARSER AT ALL. Chapter 3.8's limits are typed columns and need no
+ * WHY A PARSER AT ALL. The rate-limit chapter's limits are typed columns and need no
  * parsing; a jsonb column arrives as `unknown` and something has to turn it into
  * numbers before a cap can be compared. The alternative is a cast at each read
  * site, which is three places to get wrong instead of one.

@@ -67,14 +67,14 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
     // `channel_archived` and `user_banned` — three refusals a client acts on
     // differently, which is the test this registry sets.
     //
-    // Sixteen until chapter 3.17 added `sender_not_permitted`, and **this assertion
+    // Sixteen until the sender chapter added `sender_not_permitted`, and **this assertion
     // failed on the build that added it** — "expected 16 but got 17", which is the
     // third time this line has turned a new code into a decision instead of an
-    // accident. Chapter 3.11's close-code set did the same for 4003.
+    // accident. The connection-metering chapter's close-code set did the same for 4003.
     //
-    // Eighteen until chapter 3.23 added `not_message_author`, the fourth time, and then
+    // Eighteen until the revisions chapter added `not_message_author`, the fourth time, and then
     // `message_deleted` during that chapter's implementation — TWO in one chapter, which
-    // its plan did not expect. **One pinned place, not the four chapter 3.22's close code
+    // its plan did not expect. **One pinned place, not the four the connection-cap chapter's close code
     // moved** — that chapter's task predicted two and found four, so this one counted
     // before editing: this assertion is the only place in the file that names a total.
     // Twenty-one until feature 043 named the five bare 422s in `webhooks.service.ts` and
@@ -90,7 +90,7 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
     // one where the remedy differs, and here it differs absolutely: `forbidden`'s
     // published remedy is a change of credential or of permission, and neither makes a
     // message yours.
-    // Chapter 3.24's one addition, and the three assertions a new code earns: it exists,
+    // The attachments chapter's one addition, and the three assertions a new code earns: it exists,
     // it is not a synonym for the code somebody would otherwise reach for, and it says
     // what it is about. `invalid_request` is the wrong answer for `media_id` because that
     // field IS in the published contract.
@@ -137,7 +137,7 @@ describe("the registry is the whole vocabulary (FR-024)", () => {
 
   it("contains the three the channel surface adds", () => {
     // `not_a_member` has one emitter — the read-position route on a public channel —
-    // and it is here rather than at that call site for the reason chapter 3.2 gave
+    // and it is here rather than at that call site for the reason the credentials chapter gave
     // when it registered `wrong_credential_type` instead of inventing it inline.
     for (const code of ["not_a_member", "channel_archived", "user_banned"]) {
       expect(ERROR_CODES, code).toHaveProperty(code);

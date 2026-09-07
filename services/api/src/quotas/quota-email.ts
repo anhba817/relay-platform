@@ -59,7 +59,7 @@ function resumesOn(period: string): string {
 /** What an organisation's admins are told when usage crosses a threshold
  * (FR-RTL-07).
  *
- * NO SECRET, NO KEY, NO MESSAGE TEXT. Chapter 3.9 established that this is
+ * NO SECRET, NO KEY, NO MESSAGE TEXT. The mail-transport chapter established that this is
  * verified by reading what the mail server received rather than by asserting on
  * the call, and the same test shape applies here.
  *

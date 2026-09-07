@@ -66,12 +66,12 @@ export interface Sentinel {
    * considers ENABLED endpoints, and the dispatcher only does real work for one.
    * See `plant()` for the measurement that forced the split. */
   deliveryEndpointId: string;
-  /** Chapter 3.12's usage-table bait. One row each, and the ids are derived like
+  /** The isolation gauntlet's usage-table bait. One row each, and the ids are derived like
    * every other so a refusal names the file that planted them. */
   usageUserId: string;
   usageConnectionId: string;
   usageNotificationId: string;
-  /** Chapter 3.16's read-position bait. `read_positions` references both a channel
+  /** The user-surface chapter's read-position bait. `read_positions` references both a channel
    * and a user, and the sentinel had no channel — the usage user is reused because
    * it is already in this environment and one new id is enough. */
   readChannelId: string;
@@ -307,7 +307,7 @@ export async function plant(
 
   // bait 5: the four usage tables, ONE ROW EACH (FR-036).
   //
-  // Chapter 3.12 added these four to the trigger array, and being in the array is
+  // The isolation gauntlet added these four to the trigger array, and being in the array is
   // not the same as being watched: with no sentinel row in a table, the trigger
   // is a `WHEN` clause that never matches. One row per table is what makes the
   // guard real for them.

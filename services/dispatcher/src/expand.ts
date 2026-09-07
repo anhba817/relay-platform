@@ -6,12 +6,12 @@ import type { ApiClient } from "./api-client.js";
 //
 // The dispatcher does not write the rows. It cannot — constitution IV reserves
 // PostgreSQL writes to the API service — so it asks, and the api does the work
-// inside chapter 3.4's claim transaction. What looks like an inconvenience is
+// inside the broker chapter's claim transaction. What looks like an inconvenience is
 // what makes the operation exactly-once: the claim and the N delivery rows
 // commit together or not at all, so an event the broker redelivers cannot
 // produce a second set of webhooks (research R2).
 
-/** The envelope as chapter 3.3 publishes it. Parsed here rather than trusted,
+/** The envelope as the outbox chapter publishes it. Parsed here rather than trusted,
  * for chapter 2.5's reason: a message that has been sitting in a stream has had
  * time to stop matching the code that reads it. */
 export interface EventEnvelope {
@@ -43,7 +43,7 @@ export type ExpandOutcome = "expanded" | "duplicate" | "unparseable";
  *
  * `unparseable` is terminal and deliberately so — the same bytes fail the same
  * way every time, so retrying spends delivery attempts to reach a conclusion
- * that was available on the first. Chapter 3.4 made the same call for the same
+ * that was available on the first. The broker chapter made the same call for the same
  * reason. */
 export async function expandOnce(
   api: ApiClient,

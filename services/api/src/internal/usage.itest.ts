@@ -31,16 +31,16 @@ import { periodOf } from "../quotas/period";
 //   2. no connection can change environment once its row exists.
 //
 // What is deliberately NOT prevented is a platform caller writing usage for any
-// environment. That is what a platform credential is; chapter 3.5 argued it, and
+// environment. That is what a platform credential is; the webhook dispatcher chapter argued it, and
 // the protection is that the credential is deployment configuration rather than
 // tenant data — never provisioned, never in a table, absent by default.
 //
-// Chapter 3.5 added the first platform-credentialled routes and left no
+// The webhook dispatcher chapter added the first platform-credentialled routes and left no
 // `dispatch.itest.ts` in this directory at all. The precedent was silence, and
 // silence about an isolation property is what constitution I calls a
 // configuration mistake.
 
-// THE GATEWAY'S CREDENTIAL, and chapter 3.12 is why the variable changed.
+// THE GATEWAY'S CREDENTIAL, and the isolation gauntlet is why the variable changed.
 //
 // This suite set `RELAY_INTERNAL_CREDENTIAL` — the DISPATCHER's variable — and
 // presented it to `POST /internal/usage/connections`, which is the gateway's route
@@ -57,7 +57,7 @@ const DISPATCHER_CREDENTIAL = "rk_svc_usage_itest_dispatcher_0123456789";
 /** THE PERIOD THE SUBJECT WILL READ, not a month somebody typed.
  *
  * This was `"2026-08-01"` and it broke at midnight UTC on 1 September 2026 —
- * during chapter 3.21's close-out, in a file that chapter never touched. The
+ * during the typing chapter's close-out, in a file that chapter never touched. The
  * fixture credited connection-minutes to August while
  * `session.controller.ts:104` asks `periodOf(new Date())` whether the cap is
  * spent, so the quota read zero used and a session that should have been refused
@@ -182,7 +182,7 @@ describe("POST /internal/usage/connections", () => {
   // gateway's credential reached `POST /internal/dispatch/replay`, whose handler
   // takes a dead-letter id and NO environment — it acts on any tenant's dead
   // letter, which is correct for the dispatcher and is reach the gateway should
-  // never have had. Chapter 3.11 argued for two secrets on exactly this ground
+  // never have had. The connection-metering chapter argued for two secrets on exactly this ground
   // ("the gateway terminates connections from the public internet and the
   // dispatcher does not") and stopped one step short: two secrets stopped them
   // sharing a secret, and they still shared a surface.
@@ -352,7 +352,7 @@ describe("POST /internal/usage/connections", () => {
       const body = (await res.json()) as Record<string, string>;
       // NAMED BY THE THROWER. `ProtocolErrorFilter` infers a code for four
       // statuses and 402 is not one of them, so an unnamed refusal would arrive
-      // as `internal_error` — chapter 3.10's H3.
+      // as `internal_error` — the quota chapter's H3.
       expect(body.code).toBe("quota_exceeded");
       expect(body.message).toContain("connection-minute");
       expect(body.message).toContain("connections resume on");

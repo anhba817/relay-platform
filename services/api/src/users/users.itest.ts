@@ -465,7 +465,7 @@ describe("a user's channel listing", () => {
   it("takes a user token as well as an application credential", async () => {
     // The only route on this controller that does: a user records their own position.
     // Method-level `@Accepts` wins over the class-level one, which is the mechanism
-    // chapter 3.12 built and this is the first route to rely on it.
+    // The isolation gauntlet built and this is the first route to rely on it.
     const c = await repo.createChannel("own-token", "public");
     await repo.addMember(c.id, member.id);
     const one = await repo.sendMessage(c.id, { text: "one", userId: member.id });
@@ -559,7 +559,7 @@ describe("a user's channel listing", () => {
     // (T021a). `toEqual` on a whole body is the only assertion that
     // notices a field arriving — a `toMatchObject` would have said nothing, and a
     // reader would have learned about `kind` from the code rather than from a test.
-    // Chapter 3.16 made the same trade for `last_message`.
+    // The user-surface chapter made the same trade for `last_message`.
     expect(body).toEqual({
       kind: "person",
       description: null,
@@ -654,7 +654,7 @@ describe("a user's channel listing", () => {
     await repo.addMember(channel.id, bot.id);
 
     // `listMembers` returns user ids; the ROLE is on the add's own response, which is
-    // where chapter 3.15 put it (read back rather than echoed).
+    // where the channel-control chapter put it (read back rather than echoed).
     expect(await repo.listMembers(channel.id)).toContain(bot.id);
     // A ROLE LIKE ANYBODY ELSE. FR-004 asks that a bot support the operations a person
     // supports, and membership with a role is one of them — nothing about `kind` reaches
@@ -1193,7 +1193,7 @@ describe("a user's channel listing", () => {
     const token = await tokenFor("bannable");
 
     // THE CONTROL FIRST. A refusal proves nothing unless the same call worked a moment
-    // ago — chapter 3.12's fourteen green tests are why this line exists.
+    // ago — the isolation gauntlet's fourteen green tests are why this line exists.
     expect((await sendAs(channel.id, token, "before the ban")).status).toBe(201);
 
     expect((await ban("bannable")).status).toBe(200);

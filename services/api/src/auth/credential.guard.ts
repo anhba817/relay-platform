@@ -18,12 +18,12 @@ import {
 
 const ACCEPTS = "relay:accepts";
 
-/** What a route accepts (research R6, narrowed by chapter 3.12's FR-044).
+/** What a route accepts (research R6, narrowed by the isolation gauntlet's FR-044).
  *
  * A tenant class is named by its own name. A PLATFORM credential must additionally
  * name the services allowed, because there are two of them and they are not equally
  * exposed — the gateway terminates connections from the public internet and the
- * dispatcher does not. Chapter 3.11 gave each its own secret and stopped there, so
+ * dispatcher does not. The connection-metering chapter gave each its own secret and stopped there, so
  * both still resolved to one class and the gateway's credential reached every
  * dispatch route, including `replay`, whose handler takes a dead-letter id and no
  * environment.
@@ -48,7 +48,7 @@ function isPlatformSpec(
 
 /** What the 401 and the 403 say a route wanted.
  *
- * `AcceptSpec` broke this and nothing in an earlier draft of chapter 3.12 fixed it:
+ * `AcceptSpec` broke this and nothing in an earlier draft of the isolation gauntlet fixed it:
  * two client-visible strings are built from it, and widening the decorator's type
  * without widening theirs leaves the part an integrator actually reads behind. The
  * platform case names its services, because "an internal platform credential" is
@@ -135,7 +135,7 @@ export class CredentialGuard implements CanActivate {
 
     // FR-044. The class is right; the question left is whether THIS SERVICE may
     // call this route. Two platform credentials exist and `service` says which one
-    // answered — a fact chapter 3.11 recorded as being "for logs", which is where
+    // answered — a fact the connection-metering chapter recorded as being "for logs", which is where
     // the gap was: a field nothing enforces is a field nothing protects.
     //
     // `principal.service` is a `string` and the permitted list is a union of the

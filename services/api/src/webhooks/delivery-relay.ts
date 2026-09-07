@@ -21,12 +21,12 @@ import type { Publisher } from "../outbox/publisher";
 
 // The second relay (research R13).
 //
-// This is the moment chapter 3.3's outbox stops being a thing that moves EVENTS
+// This is the moment the outbox chapter's outbox stops being a thing that moves EVENTS
 // and becomes a shape: `SELECT … FOR UPDATE SKIP LOCKED`, publish, mark, for any
 // work the platform owes itself and must not lose. The second instance is what
 // makes it a pattern rather than a trick, and the reader has already built it.
 //
-// The one difference from 3.3's relay is a predicate — `next_attempt_at <=
+// The one difference from the outbox chapter's relay is a predicate — `next_attempt_at <=
 // now()` — and that predicate IS the retry schedule. Nothing waits in the
 // broker; a delivery enters the stream only once it is already due (research R1,
 // measured).
@@ -36,7 +36,7 @@ import type { Publisher } from "../outbox/publisher";
  * the signing secrets over the internal seam when it is ready to send, so a
  * customer credential never sits in a broker (contracts/dispatcher.md).
  *
- * The subject grammar lives in `@relay/protocol` — 3.4's lesson, applied again:
+ * The subject grammar lives in `@relay/protocol` — the broker chapter's lesson, applied again:
  * two sides, one definition, or a consumer silently receives nothing. */
 
 /** The api creates this stream because the api publishes to it. A publisher
@@ -72,12 +72,12 @@ export async function ensureDeliveriesStream(nc: NatsConnection): Promise<void> 
   await jsm.streams.update(DELIVERIES_STREAM, { ...existing.config, ...mutable });
 }
 
-/** Small, for 3.3's reason: a batch is held inside one transaction, and a long
+/** Small, for the outbox chapter's reason: a batch is held inside one transaction, and a long
  * one holds row locks while it publishes. */
 const BATCH_SIZE = 50;
 
 /** The poll interval when there is nothing due. Deliveries become due on a clock
- * rather than on an insert, so unlike 3.3's relay there is no "wake me on write"
+ * rather than on an insert, so unlike the outbox chapter's relay there is no "wake me on write"
  * shortcut to be tempted by — a timer is the correctness path here, not a
  * fallback behind one. */
 const IDLE_INTERVAL_MS = 250;
@@ -120,8 +120,8 @@ export function createDeliveryRelay({
 
   async function drainOnce(): Promise<number> {
     return drainDueDeliveries(db, batchSize, async (row: DueDeliveryRow) => {
-      // The same three-field port chapter 3.3 defined, unchanged. That the
-      // second relay needed no new seam is the evidence that 3.3's abstraction
+      // The same three-field port the outbox chapter defined, unchanged. That the
+      // second relay needed no new seam is the evidence that the outbox chapter's abstraction
       // was drawn in the right place.
       await publisher.publish({
         subject: deliverySubjectFor(row.environment_id),
@@ -194,7 +194,7 @@ export function createDeliveryRelay({
       } catch (error) {
         // A broker that is down is an expected state, not a crash. Rows stay
         // pending and due, so the backlog drains when it returns — the same
-        // buffering 3.3's relay promises for events.
+        // buffering the outbox chapter's relay promises for events.
         logger.log("error", "deliveries.drain_failed", { error: String(error) });
       }
       // AFTER the drain and only when there was nothing due, so a backlog is never

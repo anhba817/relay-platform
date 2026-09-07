@@ -19,7 +19,7 @@ import { Redis } from "ioredis";
 // and `fanout.ts` is not edited at all. The declared cost is two subscriptions
 // per channel instead of one.
 //
-// TWO CLIENTS, for the reason chapter 3.8 gave for the limiter's: a connection in
+// TWO CLIENTS, for the reason the rate-limit chapter gave for the limiter's: a connection in
 // subscriber mode cannot run ordinary commands, and presence needs `SET`,
 // `EXISTS` and `PUBLISH` as well as `SUBSCRIBE`. That makes five Redis
 // connections per gateway — fanout's two, the limiter's one, and these — and each
@@ -124,7 +124,7 @@ export function createPresence({
   // FAIL FAST RATHER THAN QUEUE, which is the limiter's shape and not the fan-out's.
   // Default ioredis retries forever and QUEUES commands, so against a dead store a
   // `SET` neither succeeds nor rejects — it waits, and the failure path this module
-  // documents is never taken. Chapter 3.18 measured the same thing about its
+  // documents is never taken. The fan-out chapter measured the same thing about its
   // publisher: "default ioredis retries FOREVER, so `publish` never rejects and the
   // command queues."
   //
@@ -236,7 +236,7 @@ export function createPresence({
       // Swallowed and logged, never rethrown: presence is the only thing that may
       // degrade (FR-023). And the log line is the REQUIREMENT'S EVIDENCE — a path
       // that silently does nothing satisfies "the socket still opened" exactly as
-      // well as a working one does, which is chapter 3.18's trap against its own
+      // well as a working one does, which is the fan-out chapter's trap against its own
       // publisher.
       logger.log("error", "presence.failed", { op, error: String(error) });
       return null;

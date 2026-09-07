@@ -10,7 +10,7 @@ import { mintUserToken } from "../auth/user-token";
 import { environmentSigningSecret } from "../db/repository";
 import { createDb, createPool } from "../db/client";
 import { createApiKey, createEnvironment, Repository } from "../db/repository";
-// The comparison this suite invented, now shared. Chapter 3.12 moved it into
+// The comparison this suite invented, now shared. The isolation gauntlet moved it into
 // `isolation/compare.ts` so 24 routes could use the same oracle; it is imported
 // back rather than duplicated, which is the fault that chapter is about.
 import { withoutRequestId } from "../isolation/compare";
@@ -52,7 +52,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       await new Repository(db, other.id).createChannel("theirs", "public")
     ).id;
 
-    // Chapter 3.15's fixtures: a private channel, one member, one stranger of the
+    // The channel-control chapter's fixtures: a private channel, one member, one stranger of the
     // SAME tenant, and a way to mint their tokens. The private channel is created
     // through the repository because `POST /v1/channels` does not accept `private`
     // until the read paths enforce it (FR-009's ordering).
@@ -61,7 +61,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
     const member = await repo.createUser("insider", "An Insider");
     await repo.addMember(privateChannelId, member.id);
     await repo.createUser("outsider", "An Outsider");
-    // A BOT OF THIS TENANT, and a person, for chapter 3.17's four outcomes. Added
+    // A BOT OF THIS TENANT, and a person, for the sender chapter's four outcomes. Added
     // beside the existing fixtures and NOT added to `privateChannelId` — that
     // membership is load-bearing for the tests above, and a bot needs none of it
     // (FR-019a) which is the point T012c makes.
@@ -170,7 +170,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
     it("stores the same url twice, twice (FR-021)", async () => {
       // THE SPEC ASKED THIS AS AN OPEN QUESTION AND ANSWERED IT: two identical links are
       // two attachments, because the platform does not compare them — the same argument
-      // chapter 3.23 made for not comparing message texts to decide whether an edit
+      // The revisions chapter made for not comparing message texts to decide whether an edit
       // happened.
       const res = await send({
         text: "the same twice",
@@ -297,10 +297,10 @@ describe("POST /v1/channels/:channelId/messages", () => {
       // adds no second surface BY CONSTRUCTION, not by this assertion. `channelVisibleTo`
       // runs as a gate before the read, so a non-member's answer contains no message and
       // therefore no attachment whatever the read path does with the column. Chapter
-      // 3.23's falsification proved this shape of test stays green when the predicate is
+      // The revisions chapter's falsification proved this shape of test stays green when the predicate is
       // removed. T032b runs it again here and expects green.
       // THE PRIVATE CHANNEL OF THE SAME TENANT, which the suite already mints — and it is
-      // the only case chapter 3.15's `channelVisibleTo` alone answers, per chapter 3.23's
+      // the only case the channel-control chapter's `channelVisibleTo` alone answers, per the revisions chapter's
       // falsification. A foreign tenant is refused by the tenant scope one layer earlier.
       await send(
         { text: "members only", user: "courier", attachments: [png("secret")] },
@@ -316,7 +316,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
         { headers: { authorization: `Bearer ${outsiderKey}` } },
       );
       expect(hidden.status).toBe(missing.status);
-      // BYTE-IDENTICAL BUT FOR `request_id`, the same strip chapter 3.12's oracle uses
+      // BYTE-IDENTICAL BUT FOR `request_id`, the same strip the isolation gauntlet's oracle uses
       // and the same one at :435 above: it names the request rather than the resource, so
       // it differs by construction. Comparing raw bodies makes every such test fail for a
       // reason that is not the finding — which is how this one failed first.
@@ -501,7 +501,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
   // ── T012c: the private channel, BOTH halves (SC-012) ───────────────────────
   //
   // A test that checked only the bot would pass if the membership gate had been deleted
-  // outright — which is the change that breaks chapter 3.15's refusal. The pair is the
+  // outright — which is the change that breaks the channel-control chapter's refusal. The pair is the
   // oracle.
   it("lets a key's bot send to a private channel it is not a member of", async () => {
     const res = await send(
@@ -556,7 +556,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       // Deleting rather than destructuring: an unused binding is a lint error and
       // the intent is a removal either way. `request_id` is the one field that
       // differs by construction — it names the request, not the resource — which is
-      // why chapter 3.12's oracle drops exactly this one and nothing else.
+      // why the isolation gauntlet's oracle drops exactly this one and nothing else.
       const strip = (b: Record<string, unknown>) => {
         delete b.request_id;
         return b;
@@ -696,7 +696,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
 
   it("refuses a token minted for an identifier with no user row", async () => {
       // `POST /auth/dev-token` mints tokens for identifiers that need not exist, so
-      // before chapter 3.15 this send SUCCEEDED, unattributed — and an unattributed
+      // before the channel-control chapter this send SUCCEEDED, unattributed — and an unattributed
       // send is one the membership check waves through. A user with no row is a
       // member of nothing. FR-039a removes the case by creating the row at mint time.
       const token = await tokenFor("never-seen-before");
@@ -1036,7 +1036,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId", () => {
    * `RELAY_OUTBOX_RELAY` alone and nothing publishes. Rows stay put to be counted. */
   const outboxCount = async (messageId: string, type: string): Promise<number> => {
     // A PLAIN STRING AND NOT drizzle's `sql` TEMPLATE, because the lint rule forbids
-    // importing `drizzle-orm` outside `db/` — constitution I, and chapter 3.23's T069a
+    // importing `drizzle-orm` outside `db/` — constitution I, and the revisions chapter's T069a
     // restored the ban for integration tests after a second flat-config block had been
     // replacing the rule instead of merging with it. `outbox.itest.ts` reads the table
     // the same way for the same reason. The interpolated values are a uuid this test
@@ -1184,7 +1184,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId", () => {
     expect(a["text"]).toBeNull();
     // AND THE AUTHOR IS STILL THE AUTHOR ON BOTH. A key deleted one of them and the
     // row says who WROTE it — who removed it is `metadata.deleted_by`, which no read
-    // path exposes (chapter 3.23's `gaps.md` item 2).
+    // path exposes (the revisions chapter's `gaps.md` item 2).
     expect(a["user"]).toBe("author");
     expect(b["user"]).toBe("author");
   });
@@ -1349,7 +1349,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId", () => {
     });
 
     it("says nothing about attachments in the edit history (FR-016)", async () => {
-      // `message_edits` HAS THREE COLUMNS AND THE SAD PUBLISHES THREE. Chapter 3.23 built
+      // `message_edits` HAS THREE COLUMNS AND THE SAD PUBLISHES THREE. The revisions chapter built
       // that table to a published DDL, and an attachment column would be a fourth nobody
       // published — so the edit history records what the text WAS and says nothing about
       // what was attached, because nothing about that changed.

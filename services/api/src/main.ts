@@ -22,14 +22,14 @@ async function bootstrap(): Promise<void> {
   // accumulating in Postgres instead of preventing the api from serving writes
   // (research R9).
   app.get(OutboxRelayService).start();
-  // The disablement notifications chapter 3.6 wrote and nothing
+  // The disablement notifications the retry-and-disable chapter wrote and nothing
   // delivered. Its backlog drains on this first start as ordinary undelivered
   // work — no migration and no special case, because `delivered_at IS NULL` was
   // already true of every one of those rows.
   app.get(NotificationRelayService).start();
   app.get(QuotaRelayService).start();
   // And the second relay: the same loop over a different table,
-  // publishing deliveries that have become due. Started here for 3.3's reason —
+  // publishing deliveries that have become due. Started here for the outbox chapter's reason —
   // a retry schedule that only runs when someone remembers is not a schedule.
   app.get(DeliveryRelayService).start();
   // And the first thing that reads what the relay publishes.

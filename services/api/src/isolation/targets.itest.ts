@@ -107,17 +107,17 @@ describe("the gauntlet's target list derives from the running application", () =
 
   // ── SC-014: THE COUNT MOVED BY EXACTLY WHAT THIS FEATURE ADDS ──────────────
   //
-  // Chapter 3.12 closed at **24** derived targets, recorded in
+  // The isolation gauntlet closed at **24** derived targets, recorded in
   // `specs/033-chapter-3-12/baseline.txt` and re-measured at the start of that
   // feature. Chapters 3.15 and 3.16 add fourteen routes, taking it to 38, and
-  // chapter 3.20 revives `GET /internal/memberships` for the membership backstop
+  // The membership-revocation chapter revives `GET /internal/memberships` for the membership backstop
   // — one route, so 39.
   //
   // A NUMBER RATHER THAN A DELTA, because a delta cannot fail: `after - before`
   // computed from the same run is an identity. This is the figure a reader can
   // check against the route table, and the route table lists which routes.
   //
-  // **THIS TEST DID ITS JOB AGAIN.** Chapter 3.20 added its route, ran this file,
+  // **THIS TEST DID ITS JOB AGAIN.** The membership-revocation chapter added its route, ran this file,
   // and got three failures naming the route by hand — unclassified, 38 against 39,
   // and the entry count. CLAUDE.md calls the derived list the highest-yield check
   // in the repository on the strength of five previous occasions; this is the
@@ -129,7 +129,7 @@ describe("the gauntlet's target list derives from the running application", () =
   // `GET …/:messageId/edits` as an entry matching no derived target — the direction
   // that catches a rename — while the counts named the one that did exist. Two routes
   // in this phase, and the deletion's arrives in the next.
-  it("has grown from chapter 3.12's 24 by exactly the routes since", () => {
+  it("has grown from the isolation gauntlet's 24 by exactly the routes since", () => {
     // This assertion moves ONE line per phase, which is the point: a phase that
     // adds a route and forgets to classify it fails the test above, and a phase
     // that adds a route nobody planned fails this one.

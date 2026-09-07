@@ -16,7 +16,7 @@ import { encryptSecret, mintSigningSecret } from "./secret";
 // here rather than leaving to the controller, because both are the kind of thing
 // that looks like validation and is actually a security boundary.
 
-/** FR-WHK-01, and the error must say the number. Chapter 3.2's lesson about
+/** FR-WHK-01, and the error must say the number. The credentials chapter's lesson about
  * error messages that name the mistake applies to a limit as much as to a
  * credential: "too many endpoints" leaves the reader counting. */
 export const MAX_ENDPOINTS_PER_ENVIRONMENT = 5;

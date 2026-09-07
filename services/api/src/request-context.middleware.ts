@@ -18,7 +18,7 @@ export class RequestContextMiddleware implements NestMiddleware {
     const requestId = newRequestId();
     res.setHeader("X-Request-Id", requestId);
     // ...and on the request, so a handler can put it in a line of its own.
-    // Chapter 3.18 needed this: the fan-out publish logs its failure from inside
+    // The fan-out chapter needed this: the fan-out publish logs its failure from inside
     // the send handler, and NFR-OBS-01 wants a request id in every structured
     // line while NFR-OBS-06 wants five-minute traceability from one. Until now
     // the id existed only here and on the response header, which a handler

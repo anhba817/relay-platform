@@ -12,8 +12,8 @@
  *
  * PURE, AND SEPARATE FROM THE TRANSACTION THAT USES IT, because those three
  * properties are the chapter's argument and each is one line to test here and a
- * database round trip to test anywhere else. Chapter 3.6 separated `disable.ts`
- * for the same reason and chapter 3.8 separated `bucket.ts`.
+ * database round trip to test anywhere else. The retry-and-disable chapter separated `disable.ts`
+ * for the same reason and the rate-limit chapter separated `bucket.ts`.
  *
  * `credited` is what the accounting row already holds; `reported` is what the
  * gateway now claims. Neither is ever negative — the schema refuses that at the

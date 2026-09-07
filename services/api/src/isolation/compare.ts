@@ -2,7 +2,7 @@
  *
  * LIFTED FROM `messages/messages.itest.ts`, WHERE IT WAS WRITTEN AND WHERE IT WAS
  * RIGHT. Chapter 2.2's suite needed to prove that a foreign channel answers exactly
- * as an absent one, chapter 3.8 added `request_id` to every error body and forced
+ * as an absent one, the rate-limit chapter added `request_id` to every error body and forced
  * this helper into existence, and there it stayed — one file's private function
  * doing the thing constitution I asks of every endpoint.
  *
@@ -10,7 +10,7 @@
  * never generalised is what separates nine scattered isolation tests from a suite.
  * It lives here so 24 routes can share it; `messages.itest.ts` imports it back.
  *
- * Chapter 3.8 added `request_id` to every error body (constitution V's fourth
+ * The rate-limit chapter added `request_id` to every error body (constitution V's fourth
  * field, promised since 1.3). It is unique per request BY DESIGN, so two error
  * bodies can no longer be compared whole — and comparing them whole is how a suite
  * proves a foreign resource is indistinguishable from an absent one, which is a

@@ -17,7 +17,7 @@ import {
 } from "../db/repository";
 import { encryptSecret, mintSigningSecret } from "./secret";
 
-// Chapter 3.8 added `request_id` to every error body (constitution V's fourth
+// The rate-limit chapter added `request_id` to every error body (constitution V's fourth
 // field, promised since 1.3). It is unique per request BY DESIGN, so two error
 // bodies can no longer be compared whole — and comparing them whole is how this
 // suite proves a foreign resource is indistinguishable from an absent one, which
@@ -100,7 +100,7 @@ describe("the test event", () => {
   /** An endpoint pointed at this suite's server.
    *
    * Created through the REPOSITORY rather than the public route, because the
-   * public route refuses loopback addresses — chapter 3.5's SSRF check, which is
+   * public route refuses loopback addresses — the webhook dispatcher chapter's SSRF check, which is
    * correct and which every local walk in this repository has to step around the
    * same way. */
   const seedEndpoint = async (repo: Repository, secret: string) =>

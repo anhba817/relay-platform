@@ -11,9 +11,9 @@ import { BATCH_SOURCES, MAX_PRODUCT_BATCH } from "./sentinel.js";
 // The product's three `BATCH_SIZE` constants are not exported, and importing
 // `outbox/relay.ts` into a setup file would drag drizzle, pg and the repository
 // along with it. So the bound is declared locally and checked here by reading the
-// files — the same shape chapter 3.8 used to prove close code 4008 was emitted by
+// files — the same shape the rate-limit chapter used to prove close code 4008 was emitted by
 // nothing, and for the same reason: the claim is about source, so the check reads
-// source. (Chapter 3.11 inverted that test: 4008 is emitted now, and the pattern
+// source. (the connection-metering chapter inverted that test: 4008 is emitted now, and the pattern
 // lives on against 4009.)
 
 const PLATFORM = join(import.meta.dirname, "..", "..", "..");

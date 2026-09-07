@@ -23,7 +23,7 @@ import { seedSocketTenants, type SocketTenants } from "./isolation-fixtures.js";
 // verbs — session, send, resume, subscribe — get attacked with another tenant's
 // identifiers.
 //
-// The arrangement is chapter 3.2's and 3.11 kept it for the same reason: the
+// The arrangement is the credentials chapter's and 3.11 kept it for the same reason: the
 // gateway runs IN PROCESS and the api as a CHILD. In process, because a test that
 // cannot reach the gateway's own state cannot check what it subscribed to; as a
 // child, because importing the api would make this service depend on the api's
@@ -35,7 +35,7 @@ const silent: Logger = createLogger("gateway", () => {});
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..", "..", "..");
 
-/** 120 SECONDS, NOT 30, and the number is measured (chapter 3.15's Phase 1).
+/** 120 SECONDS, NOT 30, and the number is measured (the channel-control chapter's Phase 1).
  *
  * This suite spawns an api child and waits for its health endpoint. Thirty seconds is
  * ample in the integration lane, where the whole suite finishes in **6 s**. Under
@@ -48,7 +48,7 @@ const REPO = join(HERE, "..", "..", "..");
  * and returns on the first success. It only changes how long a genuinely dead api takes
  * to say so.
  *
- * Chapter 3.12's battery blew this same 30 s at run 11 for an unrelated reason — two
+ * The isolation gauntlet's battery blew this same 30 s at run 11 for an unrelated reason — two
  * Next.js dev servers compiling an MDX page while the child had 30 s to boot. Both
  * failures were the deadline being tight rather than the api being broken. */
 async function waitForHealth(url: string): Promise<void> {
@@ -143,7 +143,7 @@ async function startApi(): Promise<{ url: string; stop: () => void }> {
       // two unrelated suites into a race (chapters 3.3 and 3.8).
       RELAY_OUTBOX_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",
-      // Its own failed-authentication keyspace. Chapter 3.8's auth limiter counts
+      // Its own failed-authentication keyspace. The rate-limit chapter's auth limiter counts
       // failures per source address, every suite in this lane is 127.0.0.1, and
       // vitest runs the files in parallel — so a neighbour's expected 401 becomes
       // this file's 429.
@@ -527,7 +527,7 @@ describe("the socket gauntlet", () => {
   // of. It keeps RECEIVING until it closes for any other reason, because delivery never
   // asks the api anything.
   //
-  // That is not a compromise invented here — it is the shape chapter 3.2 already chose
+  // That is not a compromise invented here — it is the shape the credentials chapter already chose
   // for an expired token, whose comment in `session.ts` says it in as many words: "the
   // socket is still up and still RECEIVES, because delivery never asks the api anything.
   // Writing does."
@@ -633,7 +633,7 @@ describe("the socket gauntlet", () => {
 
   // ── T134: THE PROFILE IS STORED AND THE WIRE DID NOT MOVE ─────────────────
   //
-  // Chapter 3.15 gives `users.display_name`, `users.avatar_url` and `users.metadata` a
+  // The channel-control chapter gives `users.display_name`, `users.avatar_url` and `users.metadata` a
   // route that writes them and a route that reads them. **None of that reaches a
   // socket.** `connection.ack` names who you are with a bare external id string, and
   // `messageSchema` carries `user` the same way — no display name, no avatar, no
@@ -647,10 +647,10 @@ describe("the socket gauntlet", () => {
   // no `message.created` ever arrives in this suite: `say()` writes through the
   // repository, THIS SUITE attaches no fan-out, and nothing here drains the outbox.
   //
-  // THE REASON CHANGED IN CHAPTER 3.18 AND THE FACT DID NOT. This comment used to say
+  // THE REASON CHANGED IN the fan-out chapter AND THE FACT DID NOT. This comment used to say
   // "the api publishes to no fan-out", which was the platform-wide truth chapter 3.12
   // recorded as a finding — a REST-sent message reached no socket, by two independent
-  // mechanisms. Chapter 3.17 removed one and chapter 3.18 the other, so the api does
+  // mechanisms. The sender chapter removed one and the fan-out chapter the other, so the api does
   // publish now; nothing arrives HERE because this suite subscribes to nothing, which is
   // a property of the fixture rather than of the platform. `public-surface.itest.ts` used
   // to pin the absence and now pins the arrival.
@@ -808,7 +808,7 @@ function sample(type: string, channel: string, user: string): unknown {
     case "connection.ack":
       // Feature 044 added a required `revisions` to this payload, and a sample missing
       // it is refused for its SHAPE a phase before the direction check — see the
-      // `message.deleted` note below, which is chapter 3.23 making the same repair.
+      // `message.deleted` note below, which is the revisions chapter making the same repair.
       return {
         type,
         payload: { user, cursor: {}, resume_ok: true, truncated: [], revisions: {} },
@@ -818,7 +818,7 @@ function sample(type: string, channel: string, user: string): unknown {
     case "message.created":
     case "message.updated":
       return { type, payload: message };
-    // CHAPTER 3.23 SPLIT THIS CASE OFF. `message.deleted` shared the `Message` above
+    // The revisions chapter SPLIT THIS CASE OFF. `message.deleted` shared the `Message` above
     // until this chapter gave the frame a payload with no text and a `deleted_at`. The
     // forged frame then failed the SHAPE check and the refusal came back
     // `invalid_frame` instead of `unknown_frame_type`.
@@ -860,7 +860,7 @@ describe("every frame in the union is classified, in both directions", () => {
   );
 
   it("derives all eleven members from the union itself", () => {
-    // ELEVEN with chapter 3.21's `typing.send`. **The title carries the number
+    // ELEVEN with the typing chapter's `typing.send`. **The title carries the number
     // too**, and updating the assertion without the title is how chapter 3.19
     // shipped a good test under a false name.
     expect(members.length).toBe(11);

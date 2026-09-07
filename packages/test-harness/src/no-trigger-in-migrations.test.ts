@@ -31,7 +31,7 @@ describe("the guard is not a product migration", () => {
 
   it("proves the scan can fire", () => {
     // The two assertions above are about absence, so the patterns are checked
-    // against text that must match. Chapter 3.8's 4008 test is the precedent.
+    // against text that must match. The rate-limit chapter's 4008 test is the precedent.
     expect("CREATE TRIGGER x ON y").toMatch(/CREATE\s+TRIGGER/i);
     expect("__sentinel_environments").toMatch(/__sentinel/i);
   });

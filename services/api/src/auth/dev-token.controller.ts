@@ -56,7 +56,7 @@ export class DevTokenController {
   ): Promise<{ token: string; expires_at: string }> {
     const principal = req.principal!;
     // The guard above already refused anything but an API key, so this is
-    // unreachable — but chapter 3.5 added a third principal kind that carries no
+    // unreachable — but the webhook dispatcher chapter added a third principal kind that carries no
     // environment at all, and an assumption the compiler cannot see is one a
     // later refactor can quietly break. Narrowing here costs a line and makes
     // `@Accepts("application")` a fact rather than a promise.
@@ -111,7 +111,7 @@ export class DevTokenController {
     // 404 `not_found`, AND THERE IS NO INDISTINGUISHABLE ANSWER AVAILABLE. Everywhere
     // else in this chapter a refusal is made byte-identical to the refusal for an
     // identifier that exists nowhere — but on this route an unknown identifier answers
-    // **200 with a token**, because chapter 3.16 made the mint create the row. So there
+    // **200 with a token**, because the user-surface chapter made the mint create the row. So there
     // is nothing for a refusal to be identical to: any refusal at all says "this
     // identifier exists and is not a person". That is a leak this route cannot close,
     // and 404 is chosen because it is the answer this route already gives for an

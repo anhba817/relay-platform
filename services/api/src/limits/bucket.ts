@@ -17,7 +17,7 @@
 // race between api instances.
 //
 // Then cleanup: the key expires when its window ends, so nothing accumulates.
-// That matters more than it sounds — chapter 3.7 spent a baseline on four suites
+// That matters more than it sounds — the deduplication chapter spent a baseline on four suites
 // that broke because a shared store grew without bound, and this chapter's own
 // baseline found a fifth.
 //

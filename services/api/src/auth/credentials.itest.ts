@@ -20,7 +20,7 @@ import { parseApiKeyCredential } from "./api-key";
 import { resolvePrincipal } from "./authenticate.middleware";
 import { MAX_TOKEN_LIFETIME_SECONDS } from "./user-token";
 
-// Chapter 3.8 added `request_id` to every error body (constitution V's fourth
+// The rate-limit chapter added `request_id` to every error body (constitution V's fourth
 // field, promised since 1.3). It is unique per request BY DESIGN, so two error
 // bodies can no longer be compared whole — and comparing them whole is how this
 // suite proves a foreign resource is indistinguishable from an absent one, which
@@ -116,7 +116,7 @@ describe("credentials", () => {
     // key instead — see `limits.itest.ts` (research R21).
     //
     // Explicit and visible, rather than the default being chosen to suit the
-    // tests. Chapter 3.6's `RELAY_DISABLE_SWEEP` states the rule: a flag whose
+    // tests. The retry-and-disable chapter's `RELAY_DISABLE_SWEEP` states the rule: a flag whose
     // default disabled a requirement would be a requirement nobody had built.
     process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = "10000";
     // AND ITS OWN BUCKET. Raising the threshold is private to this worker —
@@ -187,7 +187,7 @@ describe("credentials", () => {
     //
     //     AssertionError: expected '[{"public_id":"9e5240d…' not to contain 'A'
     //
-    // Latent since chapter 3.1 and found by chapter 3.11's twenty-run battery on
+    // Latent since the tenancy chapter and found by the connection-metering chapter's twenty-run battery on
     // the gate run after it. Parsed with the same shape the production code
     // parses (`CREDENTIAL` in `api-key.ts`) rather than a guess about delimiters.
     const secret = /^rk_(?:dev|live)_[0-9a-f]{32}_(.+)$/.exec(
@@ -318,7 +318,7 @@ describe("credentials", () => {
   //
   // DO NOT ASSERT BYTE-IDENTITY WITH THE UNKNOWN CASE. Everywhere else in this chapter a
   // refusal is made indistinguishable from the refusal for an identifier that exists
-  // nowhere — here the unknown case SUCCEEDS, because chapter 3.16 made the mint create
+  // nowhere — here the unknown case SUCCEEDS, because the user-surface chapter made the mint create
   // the row. There is nothing to be identical to, and any refusal at all says "this
   // identifier exists and is not a person". That is a leak this route cannot close, and
   // saying so is better than an assertion that pretends otherwise.
@@ -422,7 +422,7 @@ describe("credentials", () => {
     // contained an underscore, this checked only the fragment after the LAST
     // one, so a log line leaking the first thirty characters of a secret passed.
     //
-    // Found by chapter 3.6's baseline, which ran the lane three times.
+    // Found by the retry-and-disable chapter's baseline, which ran the lane three times.
     const parsed = parseApiKeyCredential(key.credential);
     expect(parsed).not.toBeNull();
     const secret = parsed!.secret;

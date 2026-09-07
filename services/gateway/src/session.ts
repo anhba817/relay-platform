@@ -63,7 +63,7 @@ const MAX_MISSED_PINGS = 2;
  * make an indicator flicker**. At 1.67 s the margin is thinner for no gain; at
  * 4 s a single loss blanks the indicator for a user who never stopped typing.
  *
- * Chapter 3.19 armed a grace check at exactly its own grace period and stranded a
+ * The presence chapter armed a grace check at exactly its own grace period and stranded a
  * user online for ever — two deadlines on one instant, reached by two clocks. The
  * ratio here is what keeps these two numbers from becoming one. */
 export const DEFAULT_RENEWAL_INTERVAL_MS = 2_000;
@@ -120,7 +120,7 @@ function send(socket: WebSocket, frame: Frame): void {
 
 /** EIR-API-04's envelope, wearing its WebSocket clothes.
  *
- * `request_id` ARRIVED IN CHAPTER 3.8, and the gateway had none to give — it
+ * `request_id` ARRIVED IN the rate-limit chapter, and the gateway had none to give — it
  * minted no ids at all. The field is required on the frame rather than optional,
  * because an optional fourth field would have been the fourth instance of the
  * habit that chapter is about: `rate_limited`, close code 4008 and this field
@@ -242,11 +242,11 @@ export interface SessionServerOptions {
    *
    * **THE DESTRUCTURING IS NOT HERE**, and that is deliberate rather than an
    * omission. `no-unused-vars` rejects a binding whose first consumer is a later
-   * phase, which makes the phase uncommittable — chapter 3.20 paid for that exact
+   * phase, which makes the phase uncommittable — the membership-revocation chapter paid for that exact
    * task once. Phase 5 destructures it in the same commit that calls it. */
   typing?: Typing;
   /** Injectable for the reason `meterIntervalMs` above and chapter
-   * 3.20's `rereadIntervalMs` are: **a test that waits out two real seconds pays
+   * The membership-revocation chapter's `rereadIntervalMs` are: **a test that waits out two real seconds pays
    * them in the package that paces the lane**, which has about four seconds of
    * headroom in the whole budget. That chapter's itest builds with 40 to test a
    * sixty-second backstop; this one builds with 40 and with 0. */
@@ -255,7 +255,7 @@ export interface SessionServerOptions {
    *
    * **OPTIONAL, LIKE THE OTHER FIVE, AND THAT IS A DECISION RATHER THAN A
    * DEFAULT.** For a typing indicator "optional" means no typing; for a cap it
-   * means NO CAP. Optional is also what let chapter 3.21's module go unpassed
+   * means NO CAP. Optional is also what let the typing chapter's module go unpassed
    * from `main.ts` and still compile, leaving the feature inert while 1,174
    * coverage tests were green.
    *
@@ -309,7 +309,7 @@ export function attachSessions({
   /** CHAPTER 3.22, FR-011a. What this instance holds, so a shutdown can free it
    * all at once.
    *
-   * A MAP IN THE CLOSURE RATHER THAN A FIELD ON `Connection`. Chapter 3.21 put
+   * A MAP IN THE CLOSURE RATHER THAN A FIELD ON `Connection`. The typing chapter put
    * one on the connection and corrected it to this; the shared type in
    * `registry.ts` belongs to every chapter and this is one chapter's concern.
    *
@@ -396,7 +396,7 @@ export function attachSessions({
    *
    * **DO NOT COPY `deliverPresence` BELOW, WHICH IS DELIBERATELY UNFILTERED.**
    * That function walks `subscribersOf` and sends to everyone, so a user sees
-   * their own presence transition — chapter 3.20 confirmed it from the other
+   * their own presence transition — the membership-revocation chapter confirmed it from the other
    * side, counting two frames where a watcher correctly sees their own arrival.
    * **Typing's rule is the opposite, and the two functions sit adjacent in this
    * file with opposite self-delivery rules.** The reason is worth a sentence
@@ -798,7 +798,7 @@ export function attachSessions({
           // UNENFORCED, and this line is the only externally visible evidence of
           // that — from outside, an accepted connection looks identical whether
           // the cap was checked and satisfied or not checked at all. Chapter
-          // 3.18's lesson: the assertion that carries the requirement is the log
+          // The fan-out chapter's lesson: the assertion that carries the requirement is the log
           // line.
           logger.log("error", "connection.cap_unenforced", {
             connection_id: pendingId,
@@ -878,7 +878,7 @@ export function attachSessions({
           // what a client needs is the date it resumes. The frame carries the
           // api's own message, four fields, exactly as a refusal over HTTP would.
           //
-          // NOT `refuseUpgrade`. That writes chapter 3.8's raw 429 and its whole
+          // NOT `refuseUpgrade`. That writes the rate-limit chapter's raw 429 and its whole
           // justification was `Retry-After` — a header a close frame has nowhere
           // to put. A quota refusal declines that header on purpose, so the
           // argument for the HTTP shape evaporates with it, and the shape that is
@@ -1423,9 +1423,9 @@ export function attachSessions({
    *
    * **A SIGNAL FOR A CHANNEL THE CONNECTION DOES NOT HOLD PUBLISHES NOTHING AND
    * SAYS NOTHING** (FR-007). Not an error frame: an error would tell a client
-   * whether a channel exists, which is the probe chapter 3.15 closed on the REST
+   * whether a channel exists, which is the probe the channel-control chapter closed on the REST
    * surface. `channelIds` is the membership this connection was granted, kept
-   * current by chapter 3.20's two branches, so the check is a set lookup rather
+   * current by the membership-revocation chapter's two branches, so the check is a set lookup rather
    * than a question for the api.
    *
    * No await on delivery, no ack, nothing stored. `publish` swallows its own

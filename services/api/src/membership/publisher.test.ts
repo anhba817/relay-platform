@@ -51,7 +51,7 @@ const CHANGE = {
 function sink(): { lines: Record<string, unknown>[]; logger: Logger } {
   const lines: Record<string, unknown>[] = [];
   // The sink receives a JSON STRING with its fields spread at the top level, not an
-  // object. Chapter 3.19's first version pushed the raw line, so every `msg` was
+  // object. The presence chapter's first version pushed the raw line, so every `msg` was
   // undefined and the log assertions matched nothing while passing.
   const logger = createLogger("membership-test", (line) =>
     lines.push(JSON.parse(line) as Record<string, unknown>),
@@ -129,7 +129,7 @@ describe("the membership publisher", () => {
   });
 
   it("survives an ioredis `error` event instead of dying on it", async () => {
-    // Chapter 3.18's test by name. The listener's stated reason is NFR-OBS-01 —
+    // The fan-out chapter's test by name. The listener's stated reason is NFR-OBS-01 —
     // unstructured, unbounded output — rather than process death, which 3.18
     // measured against ioredis 6.0.0 and found false.
     const { lines, logger } = sink();
@@ -144,7 +144,7 @@ describe("the membership publisher", () => {
 
   it("falls back to the documented default when RELAY_REDIS_URL is unset", async () => {
     // A defaulted parameter is a branch and every other test here passes a url, so
-    // this arm reads zero without one. Chapter 3.19's identical case measured [15, 0]
+    // this arm reads zero without one. The presence chapter's identical case measured [15, 0]
     // and needed a test written at close-out purely to take the fallback.
     const saved = process.env["RELAY_REDIS_URL"];
     delete process.env["RELAY_REDIS_URL"];

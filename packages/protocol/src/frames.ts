@@ -43,7 +43,7 @@ export const revisionCountSchema = z.record(
  * NOT IN `attachments.ts`, whose six exports are all about attachments. A message-text
  * bound on that shelf is the drift this constant exists to remove.
  *
- * A CONSTANT IS SAFE TO SHARE WHERE A SCHEMA WAS NOT. Chapter 3.24 found
+ * A CONSTANT IS SAFE TO SHARE WHERE A SCHEMA WAS NOT. The attachments chapter found
  * `editMessageBodySchema.text` defined as `sendMessageBodySchema.shape.text`, so relaxing
  * the send's `.min(1)` silently relaxed the edit's — and an edit has no attachments to
  * justify empty text. The maximum is common to all four sites; the FLOOR is what must
@@ -59,7 +59,7 @@ export const MESSAGE_TEXT_MAX = 8000;
  * Part 3 — a sentence that had been wrong for two parts, in the file that
  * publishes the contract, and no checker reads prose. Editing and deletion do
  * not appear here either, and that is a different fact rather than the same
- * one: they arrived in chapter 3.23 as their own frames, `message.updated`
+ * one: they arrived in the revisions chapter as their own frames, `message.updated`
  * and `message.deleted`, because a deletion is not a message. */
 export const messageSchema = z.strictObject({
   id: z.string().min(1),
@@ -178,7 +178,7 @@ export const messageUpdatedSchema = z.strictObject({
   payload: messageSchema,
 });
 
-/** THE ONE FRAME THAT DOES NOT CARRY A MESSAGE, and chapter 3.23 is where that became
+/** THE ONE FRAME THAT DOES NOT CARRY A MESSAGE, and the revisions chapter is where that became
  * unavoidable rather than tidy.
  *
  * `messageSchema.text` is `z.string()`. A deleted message has no text — FR-MSG-08 replaces
@@ -197,7 +197,7 @@ export const messageUpdatedSchema = z.strictObject({
  * indistinguishable on the wire, and the platform would be asserting something false rather
  * than declining to say it. */
 /** NAMED SEPARATELY so the fabric can import it instead of reaching into
- * `messageDeletedSchema.shape.payload`. Chapter 3.23's fifth subject grammar carries this
+ * `messageDeletedSchema.shape.payload`. The revisions chapter's fifth subject grammar carries this
  * exact shape, and one declaration is what stops the two drifting. */
 export const messageDeletedPayloadSchema = z.strictObject({
   id: z.string().min(1),
@@ -270,7 +270,7 @@ export const typingSendSchema = z.strictObject({
 /** Protocol-level error — EIR-API-04's error shape, reused on the socket
  * (chapter 1.3's recorded decision).
  *
- * `request_id` ARRIVED IN CHAPTER 3.8, not in Part 2. The comment here promised
+ * `request_id` ARRIVED IN the rate-limit chapter, not in Part 2. The comment here promised
  * it "joins in Part 2, when a gateway exists to mint one"; Part 2 came and went,
  * the gateway existed, and the field did not. Constitution V asks for four fields
  * and the platform sent three for twenty-two chapters.

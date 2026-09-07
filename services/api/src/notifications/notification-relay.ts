@@ -10,7 +10,7 @@ import { disableNotification, type Mailer } from "./mailer";
 
 // The notification relay (FR-WHK-07 to FR-WHK-07).
 //
-// THE OUTBOX A THIRD TIME, and deliberately the same shape as chapter 3.3's:
+// THE OUTBOX A THIRD TIME, and deliberately the same shape as the outbox chapter's:
 // claim undelivered rows oldest-first with `FOR UPDATE SKIP LOCKED`, do the
 // side effect, mark what succeeded, and put the mark in a `finally`. A reader
 // who understood the event relay understands this one, which is the argument
@@ -29,7 +29,7 @@ import { disableNotification, type Mailer } from "./mailer";
 // abort every batch for ever — it is claimed first, being oldest. The repository
 // catches per row and this callback is where the failure surfaces.
 //
-// NOT ON THE REQUEST PATH, for chapter 3.3's reason. Disabling an endpoint
+// NOT ON THE REQUEST PATH, for the outbox chapter's reason. Disabling an endpoint
 // writes a row and returns; whether a mail server is reachable is this loop's
 // problem. An SMTP timeout inside the dispatcher's disablement check would make
 // a mail outage into a webhook outage.
@@ -71,7 +71,7 @@ export function createNotificationRelay({
 
   async function deliver(row: DisableNotificationRow): Promise<void> {
     // Resolved from the ROW's organisation, not from the endpoint's current
-    // owner. Chapter 3.6 denormalised that column so this lookup could not
+    // owner. The retry-and-disable chapter denormalised that column so this lookup could not
     // follow an application that moved after the disablement (FR-WHK-07).
     const recipients = await organisationRecipients(db, row.organisationId);
 

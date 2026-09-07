@@ -201,7 +201,7 @@ describe("journey 4 — the message that survives the tunnel", () => {
 
     // And through the REST door, with this tenant's CREDENTIAL: a foreign
     // channel is a 404, indistinguishable from one that does not exist
-    // (FR-TEN-05). Chapter 3.2 changed what proves the tenant here — a key
+    // (FR-TEN-05). The credentials chapter changed what proves the tenant here — a key
     // this environment was issued, rather than a header naming it — and the
     // assertion is deliberately unchanged.
     const res = await fetch(

@@ -9,8 +9,8 @@ import {
 import type { Mailer } from "../notifications/mailer";
 import { quotaThreshold } from "./quota-email";
 
-// THE OUTBOX PATTERN, A FOURTH TIME — after 3.3's events, 3.5's
-// deliveries and 3.9's disablement emails. Same shape on purpose: a table whose
+// THE OUTBOX PATTERN, A FOURTH TIME — after the outbox chapter's events, the webhook dispatcher chapter's
+// deliveries and the mail-transport chapter's disablement emails. Same shape on purpose: a table whose
 // claim predicate starts null, a loop that reads it, a side effect, and no state
 // shared with the request path.
 //
@@ -50,7 +50,7 @@ export function createQuotaRelay({
     const recipients = await organisationRecipients(db, row.organisationId);
 
     if (recipients.length === 0) {
-      // The same real branch chapter 3.9 met: `humans.email` is nullable, so an
+      // The same real branch the mail-transport chapter met: `humans.email` is nullable, so an
       // organisation whose every member is unaddressable is a state the schema
       // permits. The row is marked delivered because there is no address to
       // retry to, and leaving it claimable would mean reclaiming the same

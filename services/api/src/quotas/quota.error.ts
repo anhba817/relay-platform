@@ -5,7 +5,7 @@ export type Dimension = keyof QuotaConfig;
 
 /** What each dimension is called to a customer, and what stops when it runs out.
  *
- * TABLES RATHER THAN A TERNARY, because chapter 3.11 is where the ternary broke.
+ * TABLES RATHER THAN A TERNARY, because the connection-metering chapter is where the ternary broke.
  * The old code read `dimension === "messages" ? "message" : "active user"`, and
  * `Dimension` is `keyof QuotaConfig` — so adding `connection_minutes` to the
  * config schema widened this type on its own and a connection-minutes breach

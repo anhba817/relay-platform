@@ -36,9 +36,9 @@ const EVENTS_STREAM = "EVENTS";
 
 /** One durable per job. A durable name is a POSITION in a stream shared by every
  * instance using it, so two dispatchers divide the work rather than each
- * receiving everything (chapter 3.4's research R8).
+ * receiving everything (the broker chapter's research R8).
  *
- * Overridable, and chapter 3.4's suites explain why: a test that shares the
+ * Overridable, and the broker chapter's suites explain why: a test that shares the
  * production durable inherits every message every previous run left behind, and
  * a batch of twenty-five is quickly all backlog. A per-run durable with
  * `DeliverPolicy.New` is the same trick 2.1 used for environments and 2.6 for
@@ -249,7 +249,7 @@ export function createDispatcher({
       // `msg.json()` THROWS on bytes that are not JSON, and a throw here would
       // land in drain()'s catch and be treated as "ask for the work back" — so
       // bytes that can never parse would be redelivered until the broker's
-      // attempt budget ran out. Chapter 3.4 settled this: the same bytes fail the
+      // attempt budget ran out. The broker chapter settled this: the same bytes fail the
       // same way every time, so an unparseable payload is terminated on the FIRST
       // attempt. Decoding defensively is what keeps that promise here.
       let raw: unknown;

@@ -261,7 +261,7 @@ describe("the api's fan-out publish", () => {
     // gateway and FR-009 was narrowed to say so.
     //
     // The two payloads come from INDEPENDENT sends. A shared helper would move
-    // both halves of the pair and the comparison would see nothing (3.17's T044).
+    // both halves of the pair and the comparison would see nothing (the sender chapter's T044).
     // THE SAME TEXT DOWN BOTH DOORS, so the only differences left are the ones
     // a send always has: a new id, a new sequence, a new timestamp — and the
     // sender, which CANNOT match by construction. An application credential may

@@ -27,7 +27,7 @@ import {
 export const internalSendRequestSchema = z
   .strictObject({
     channel_id: z.string().uuid(),
-    /** `.min(1)` REMOVED in chapter 3.24 (FR-019), not relaxed by accident.
+    /** `.min(1)` REMOVED in the attachments chapter (FR-019), not relaxed by accident.
      *
      * This is the door every socket send goes through. Leaving the minimum here
      * would meet FR-019 on the REST door alone: a REST client could send a
@@ -227,7 +227,7 @@ export const internalSessionResponseSchema = z.strictObject({
    * and the api is the only service that reads Postgres, so the limits travel on
    * the one call the gateway was already making at connect.
    *
-   * The same move chapter 3.2 made on this call, whose comment records it: the
+   * The same move the credentials chapter made on this call, whose comment records it: the
    * api "answers with the identity AND the memberships … it just asks a better
    * question than 'what may this user hear'". This asks it for one thing more
    * (research R12). */
@@ -239,7 +239,7 @@ export const internalSessionResponseSchema = z.strictObject({
 
 /** The deliveries stream, and its subject grammar.
  *
- * Here rather than in either service, for the reason chapter 3.4 moved the event
+ * Here rather than in either service, for the reason the broker chapter moved the event
  * grammar here: a consumer that assembles its own subject filter receives
  * nothing the day the grammar changes — no error, no warning, just an empty
  * stream position. Two sides, one definition.
@@ -268,7 +268,7 @@ export function deliverySubjectFor(environmentId: string): string {
 // 4's ingester is that consumer, and it does not exist yet, which is exactly when
 // a shared definition is cheapest to establish.
 //
-// `analytics.{domain}.{action}.{environment_id}` extends chapter 3.4's
+// `analytics.{domain}.{action}.{environment_id}` extends the broker chapter's
 // `events.{domain}.{action}.{env}` rather than inventing a second convention.
 //
 // The stream is SEPARATE from `EVENTS` and `DELIVERIES`, and that is a decision
@@ -332,7 +332,7 @@ export function webhookAttemptSubject(environmentId: string): string {
 
 /** dispatcher → api: turn one event into one delivery per matching endpoint.
  *
- * A CLAIMED write: the api reuses chapter 3.4's deduplication ledger, so an event
+ * A CLAIMED write: the api reuses the broker chapter's deduplication ledger, so an event
  * expanded twice would double every webhook it produced and cannot. The claim and
  * all N delivery rows commit in one transaction (research R2). */
 export const internalExpandRequestSchema = z.strictObject({

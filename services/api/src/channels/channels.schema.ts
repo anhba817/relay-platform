@@ -22,7 +22,7 @@ export const createChannelBodySchema = z.strictObject({
   external_id: z.string().min(1).max(255),
   // BOTH, AND ONLY NOW (FR-009).
   //
-  // Chapter 3.12 pinned this enum to `public` alone with the sharpest edit in that
+  // The isolation gauntlet pinned this enum to `public` alone with the sharpest edit in that
   // chapter, and the reason it gave was true then: `channels.type` had been a
   // `"public" | "private"` column with a CHECK since chapter 2.1 and NOTHING
   // DECIDED ON IT. An endpoint accepting `private` would have sold a guarantee the
@@ -41,7 +41,7 @@ export const createChannelBodySchema = z.strictObject({
   // first: the send path refuses a non-member, the by-id read and history answer
   // as if the channel were absent, and the socket's session never carries it. All
   // four are in place before this line changed. Reversed, the platform would sell
-  // the guarantee before keeping it — which is the mistake chapter 3.12's fifth
+  // the guarantee before keeping it — which is the mistake the isolation gauntlet's fifth
   // analysis pass caught one phase before it shipped.
   type: z.enum(["public", "private"]),
   name: z.string().min(1).max(255).optional(),
@@ -65,7 +65,7 @@ export type ChannelRole = z.infer<typeof channelRoleSchema>;
 
 /** An entry in the add body: a bare external id, or an id with a role.
  *
- * A UNION RATHER THAN A NEW SHAPE, because chapter 3.13 shipped
+ * A UNION RATHER THAN A NEW SHAPE, because the channel-endpoints chapter shipped
  * `{"user_ids": ["a", "b"]}` and a customer's server is sending that today. FR-011b
  * asks that a member be creatable WITH a role — US6's first scenario — and the
  * cheapest honest way is for an entry to be either form:

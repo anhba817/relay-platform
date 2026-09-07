@@ -54,7 +54,7 @@ export type LimitedOperation = keyof typeof DEFAULT_LIMITS;
  * threshold nothing could lift would refuse this project's own tests
  * (research R15).
  *
- * THE DEFAULT ENFORCES. Chapter 3.6's `RELAY_DISABLE_SWEEP` states the rule: a
+ * THE DEFAULT ENFORCES. The retry-and-disable chapter's `RELAY_DISABLE_SWEEP` states the rule: a
  * flag whose default disabled a requirement would be a requirement nobody had
  * built.
  *

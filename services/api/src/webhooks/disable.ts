@@ -18,7 +18,7 @@ export const DISABLE_AFTER_MS = 60 * 60 * 1_000;
 /** FIVE attempts, and the number comes from measurement rather than taste
  * (research R3).
  *
- * The hour alone is not enough. Chapter 3.5's schedule reaches a two-hour gap
+ * The hour alone is not enough. The webhook dispatcher chapter's schedule reaches a two-hour gap
  * between attempts, so ONE failure followed by silence satisfies "failing for
  * more than an hour" with a single data point — and disabling on one bad response
  * is what the floor exists to prevent.

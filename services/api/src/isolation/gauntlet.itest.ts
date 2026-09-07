@@ -73,7 +73,7 @@ describe("the isolation gauntlet", () => {
   beforeAll(async () => {
     db = createDb(createPool());
     // A token minter the fixtures can call without `fixtures.ts` importing the auth
-    // module: it has never needed to, and the two shapes chapter 3.15 adds are the
+    // module: it has never needed to, and the two shapes the channel-control chapter adds are the
     // only ones that want tokens.
     const mint = async (environmentId: string, userExternalId: string) => {
       const secret = (await environmentSigningSecret(db, environmentId))!.signingSecret;
@@ -389,7 +389,7 @@ describe("the isolation gauntlet", () => {
       ["read history", "GET", (c) => `/v1/channels/${c}/messages?limit=10`],
       ["send", "POST", (c) => `/v1/channels/${c}/messages`, { text: "not mine" }],
       ["join", "POST", (c) => `/v1/channels/${c}/join`],
-      // THE FIFTH VERB (SC-001a, chapter 3.15's T121a). Its route is built in the
+      // THE FIFTH VERB (SC-001a, the channel-control chapter's T121a). Its route is built in the
       // unread-count phase rather than with the other four, so it joins the oracle
       // here — the verb list is the authority and the count of verbs is not written
       // down anywhere, which is the fix for a number that went three, then four,
@@ -412,7 +412,7 @@ describe("the isolation gauntlet", () => {
         const absent = await asUser(same.stranger.token, method, path(nowhereId()), body);
         expect(refused.status).toBe(absent.status);
         // The bodies too, `request_id` excepted. Matching statuses is the easy half
-        // and says nothing on its own — chapter 3.12's oracle exists because of it.
+        // and says nothing on its own — the isolation gauntlet's oracle exists because of it.
         const a = withoutRequestId(await refused.json());
         const b = withoutRequestId(await absent.json());
         expect(a).toEqual(b);
@@ -489,7 +489,7 @@ describe("the isolation gauntlet", () => {
     describe("a foreign bot and a bot that exists nowhere", () => {
       // ── T036: THE CONTROL FIRST ───────────────────────────────────────────
       //
-      // Chapter 3.12's fourteen green tests compared two refusals and meant nothing,
+      // The isolation gauntlet's fourteen green tests compared two refusals and meant nothing,
       // because the thing they attacked was refused for an unrelated reason. If this
       // control does not pass, the pair below proves only that both sends failed.
       it("the control: the same credential, the same channel, its OWN bot — 201", async () => {

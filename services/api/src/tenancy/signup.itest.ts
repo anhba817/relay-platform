@@ -49,7 +49,7 @@ describe("signup", () => {
   let provider: Awaited<ReturnType<typeof standInProvider>>;
 
   beforeAll(async () => {
-    // Chapter 3.8 limited account creation per source address (FR-AUT-12), and this
+    // The rate-limit chapter limited account creation per source address (FR-AUT-12), and this
     // suite drives the signup routes repeatedly from one loopback address — which
     // is what a suite about signup does.
     //
@@ -182,10 +182,10 @@ describe("signup", () => {
         organisationName: "doomed org",
       }),
     ).rejects.toThrow();
-    // REVISED by chapter 3.3: this used to count ALL organisations before and
+    // REVISED by the outbox chapter: this used to count ALL organisations before and
     // after and assert the totals matched. That is a global assertion in a lane
     // where other suites create tenants concurrently — it passed for two
-    // chapters and then failed with "expected 884 to be 883" the day 3.3's
+    // chapters and then failed with "expected 884 to be 883" the day the outbox chapter's
     // crash tests started spawning child processes that provision their own.
     // The precise assertion below was always the one carrying the weight: the
     // doomed organisation must not survive its transaction. A count of
@@ -306,7 +306,7 @@ describe("signup", () => {
     // that assertion was not about this request. The count is global, every other
     // suite in the lane signs organisations up while this runs, and vitest runs
     // these files in parallel — so it asserted that nobody anywhere created a
-    // tenant during one `fetch`. Chapter 3.7's lane runs caught it at 9,917
+    // tenant during one `fetch`. The deduplication chapter's lane runs caught it at 9,917
     // organisations: `expected 9918 to be 9917`.
     //
     // What is left is the property itself, asserted where it can be attributed to

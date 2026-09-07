@@ -20,7 +20,7 @@ import { attachSessions } from "./session.js";
 //
 // A channel created over the public API, a member added over the public API, a
 // message sent over the public API, and the socket delivering it to that member.
-// Chapter 3.12 built the first two endpoints for exactly this path, and this is
+// The isolation gauntlet built the first two endpoints for exactly this path, and this is
 // the test that the path joins up.
 //
 // NO REPOSITORY CALL FOR ANY OF IT, which is the whole point and is a narrower
@@ -32,7 +32,7 @@ import { attachSessions } from "./session.js";
 // /v1/channels/:id/messages`, and `ws://…/v1/ws`.
 //
 // THAT LIST IS WHAT THIS TEST CALLS, NOT AN INVENTORY OF THE PUBLIC SURFACE, and the
-// distinction is worth a line because chapter 3.23 read it the other way. A task in
+// distinction is worth a line because the revisions chapter read it the other way. A task in
 // that chapter said three new routes made the sentence untrue and scheduled an edit
 // here; the sentence is about the path this file walks, which those routes are not
 // part of, so it was true before and after. The inventory of the surface lives in
@@ -294,10 +294,10 @@ describe("a channel, a member and a message, all over the public API", () => {
   // new coupling between the api and Redis. Both are named in the chapter.
   //
   // BOTH HALVES ARE CLOSED NOW, and the two chapters that closed them are worth naming
-  // separately because the gap needed both. Chapter 3.17 amended FR-MSG-13 — "on behalf
+  // separately because the gap needed both. The sender chapter amended FR-MSG-13 — "on behalf
   // of any user" became "on behalf of a bot user of that tenant" — so a REST send names a
-  // sender and `toFrame` stopped dropping the row from a resume. Chapter 3.18 gave the api
-  // a publisher, so the same row now reaches a LIVE socket too. Chapter 3.12's `gaps.md`
+  // sender and `toFrame` stopped dropping the row from a resume. The fan-out chapter gave the api
+  // a publisher, so the same row now reaches a LIVE socket too. The isolation gauntlet's `gaps.md`
   // G1 listed exactly those two mechanisms; neither remains.
   //
   // THE SENDER IS A BOT, because the caller is a key. A key may not name "tuan" — that
@@ -382,10 +382,10 @@ describe("a channel, a member and a message, all over the public API", () => {
     //
     // This block asserted `[]`, and the comment said why: "the page came back and every
     // row in it was dropped for having no sender." That was true, and it is the reason
-    // chapter 3.12's `gaps.md` G1 listed TWO independent mechanisms for "a REST-sent
+    // The isolation gauntlet's `gaps.md` G1 listed TWO independent mechanisms for "a REST-sent
     // message reaches no socket" — nothing publishes, and the public send passes no user.
     //
-    // FR-MSG-15 removed the second and chapter 3.18's publisher removed the first, so
+    // FR-MSG-15 removed the second and the fan-out chapter's publisher removed the first, so
     // both legs of this test now assert arrival: live above, and on resume below. The
     // resume leg is the one that proves the two paths do not double up — a client that
     // was connected and then reconnects with a cursor gets the backfill, not a replay of

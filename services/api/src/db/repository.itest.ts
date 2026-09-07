@@ -78,7 +78,7 @@ describe("tenant isolation is structural (FR-TEN-05)", () => {
     const channel = await repoA.getChannelByExternalId("support");
     expect(await repoA.addMember(channel!.id, user!.id)).toBe("added");
     // Asked twice is a SUCCESS and not a failure, and telling those apart is
-    // what chapter 3.13 changed here: the endpoint over this call has to be
+    // what the channel-endpoints chapter changed here: the endpoint over this call has to be
     // idempotent, and a unique violation reached the wire as `internal_error`.
     expect(await repoA.addMember(channel!.id, user!.id)).toBe("already_a_member");
     // B holds A's REAL ids — and still cannot write or read through them. The
@@ -96,7 +96,7 @@ describe("tenant isolation is structural (FR-TEN-05)", () => {
     const inA = await repoA.getUserByExternalId("tuan");
     expect(inB.id).not.toBe(inA!.id);
 
-    // THE OBSERVATION CHANGED IN CHAPTER 3.12 AND THE PROPERTY DID NOT. This
+    // THE OBSERVATION CHANGED IN the isolation gauntlet AND THE PROPERTY DID NOT. This
     // used to assert that a repeat within one tenant REJECTS, which observed the
     // unique index by watching it raise. `createUser` is now idempotent — the
     // members endpoint creates a user on first membership, so a repeated request
@@ -186,7 +186,7 @@ describe("idempotency must not disarm DR-01 (chapter 2.3)", () => {
 // `channels.type` has been a `"public" | "private"` column with a CHECK since
 // chapter 2.1, and until this chapter nothing DECIDED on it. It was selected and
 // returned by the create route, so it was read; no conditional anywhere branched
-// on it. Chapter 3.12's fifth analysis pass caught `POST /v1/channels` about to
+// on it. The isolation gauntlet's fifth analysis pass caught `POST /v1/channels` about to
 // accept `private` while that was still true.
 //
 // THESE CHANNELS ARE CREATED THROUGH THE REPOSITORY, not the API, and the reason
@@ -235,7 +235,7 @@ describe("a private channel refuses a non-member's send (FR-001)", () => {
 
   it("accepts a member's send to the same channel", async () => {
     // The control. Two refusals for unrelated reasons are also indistinguishable,
-    // which is what chapter 3.12's fourteen passing tests turned out to be
+    // which is what the isolation gauntlet's fourteen passing tests turned out to be
     // measuring — so the attacker has to be shown working before its failure
     // means anything.
     const channel = await repoA.createChannel("private-member", "private");
@@ -426,17 +426,17 @@ describe("the listing's keyset survives a shared last_activity_at", () => {
 // ── THE TOMBSTONE, AND THE CLAMP (chapter 3.15, FR-016, FR-019) ───────────────
 //
 // THE TOMBSTONES BELOW ARE STILL PLANTED BY HAND, and that is now a choice rather than a
-// necessity. These tests were written in chapter 3.15 against a state the platform could
+// necessity. These tests were written in the channel-control chapter against a state the platform could
 // not produce: FR-MSG-08 was unimplemented, `messages.deleted_at` and a null `text` were
 // in the schema, `backfill.controller` passed `text` straight through so a null already
 // reached the wire, and **nothing in the platform wrote either**. The comment here said
 // so, in the present tense.
 //
-// **CHAPTER 3.23 BUILT THE WRITER** (`repository.deleteMessage`, FR-006), so the
+// **The revisions chapter BUILT THE WRITER** (`repository.deleteMessage`, FR-006), so the
 // sentence stopped being true — the class of decay this repository keeps paying for, and
 // the reason `specs/041-chapter-3-23/check-prose.py` fails on the old wording. What that
 // chapter did NOT do is rewrite these tests to use the writer: a hand-planted fixture and
-// a written one are two different subjects, and 3.23's own `deleteMessage` tests assert
+// a written one are two different subjects, and the revisions chapter's own `deleteMessage` tests assert
 // that the two agree column for column. Changing these would have moved both halves of
 // the pair and left nothing comparing them.
 //
@@ -483,10 +483,10 @@ describe("the listing's tombstone rule and its clamp", () => {
   // **THIS PASSES AGAINST UNCHANGED CODE, AND THAT IS THE POINT.** `listMessages` has
   // never had a predicate on `messages.text` — its three `.where` clauses are the
   // channel-visibility predicate and the sequence bounds — and `messages.service`
-  // maps the rows through unmodified. So the repair path chapter 3.23's resume
+  // maps the rows through unmodified. So the repair path the revisions chapter's resume
   // decision depends on already works, and nothing had ever said so.
   //
-  // Chapter 3.15 wrote the same test for the channel LISTING and said why: *"so the
+  // The channel-control chapter wrote the same test for the channel LISTING and said why: *"so the
   // day FR-MSG-08's chapter ships, the count and the preview already agree."* History
   // never got one. A test written after the writer proves the writer; this one proves
   // the reader was already right.
@@ -509,7 +509,7 @@ describe("the listing's tombstone rule and its clamp", () => {
     // for a forward one — and the first version of this test called it with no cursor,
     // which takes the backward branch alone. Adding `isNotNull(messages.text)` to the
     // FORWARD branch then left it green. **A test that covers one of two query branches
-    // passes with half its subject applied**, which is chapter 3.17's T047c in a
+    // passes with half its subject applied**, which is the sender chapter's T047c in a
     // different file.
     const backward = await repoA.listMessages(channel.id, { userId: user.id, limit: 10 });
     const forward = await repoA.listMessages(channel.id, {
@@ -564,7 +564,7 @@ describe("the listing's tombstone rule and its clamp", () => {
     // `setReadPosition` REFUSES THIS, which is why the arm needs planting. The clamp is
     // defence against a bug — a position past `last_sequence` cannot be written and
     // `last_sequence` never goes backwards — so this is the only way the branch is ever
-    // covered. Chapter 3.12 found three instruments that had never produced output for
+    // covered. The isolation gauntlet found three instruments that had never produced output for
     // exactly this reason.
     expect(await repoA.setReadPosition(channel.id, user.id, 99)).toBeNull();
     await db.execute(
@@ -644,12 +644,12 @@ describe("the repository's own refusals", () => {
     // The subject of this test IS a senderless row, so the repository can no longer
     // produce its own fixture: `sendMessage` requires a sender as of FR-MSG-15, which
     // is exactly the guarantee this arm exists to describe the other side of. The row
-    // is inserted directly, the way chapter 3.12's read-position clamp is planted a few
+    // is inserted directly, the way the isolation gauntlet's read-position clamp is planted a few
     // hundred lines above — the only way a branch that no writer can reach is covered.
     //
     // THE ARM IS NOT DEAD, AND ITS SUBJECT HAS CHANGED (T055, FR-014).
     //
-    // Chapter 3.16 wrote this arm for a state the public route produced on every
+    // The user-surface chapter wrote this arm for a state the public route produced on every
     // key-authenticated send. It now covers LEGACY ROWS ONLY: 121,250 of the 394,808
     // messages in this lane have no sender (T050), and any deployment older than this
     // chapter has them, but nothing can make another. R8 said re-examine rather than
@@ -906,7 +906,7 @@ describe("deleteMessage", () => {
 
   it("keeps the sequence, author and created_at; drops text and attachments (FR-006)", async () => {
     // THE COLUMNS ARE `docs/05-sad.md:342`'s, and this is the first tombstone the
-    // PLATFORM writes. Chapter 3.15's suite plants one by hand a few describes above,
+    // PLATFORM writes. The channel-control chapter's suite plants one by hand a few describes above,
     // and the two agree column for column — which is what makes that chapter's reader
     // tests evidence about this chapter's writer.
     const author = await repoA.createUser("t040-author", "Author");
@@ -966,7 +966,7 @@ describe("deleteMessage", () => {
 
     // A TENANT KEY: the kind is recorded and there is no user, because an application
     // principal has no user of its own. WHICH credential it presented is an audit log's
-    // question — chapter 3.23's `gaps.md` item 2 draws that line.
+    // question — the revisions chapter's `gaps.md` item 2 draws that line.
     const byKey = await repoA.sendMessage(channel.id, {
       text: "moderated away",
       userId: author.id,
@@ -1042,7 +1042,7 @@ describe("deleteMessage", () => {
   });
 
   it("a deleted message still counts as one unread", async () => {
-    // Chapter 3.15 decided this against a planted tombstone and stated the
+    // The channel-control chapter decided this against a planted tombstone and stated the
     // approximation: unread is `last_sequence - read_position`, so a tombstone keeps its
     // sequence and therefore its place in the arithmetic. Counting rows instead would
     // make a deleted message stop being unread, at 10x the cost on the query a client
@@ -1121,12 +1121,12 @@ describe("deleteMessage", () => {
 // T004 — THE READER TEST, RUN AGAINST UNCHANGED CODE.
 //
 // FR-019 decides that an attachments-only message stores `text = ""` rather than
-// a null, so chapter 3.23's tombstone predicate is untouched. That decision rests on a
+// a null, so the revisions chapter's tombstone predicate is untouched. That decision rests on a
 // claim about code this chapter has not written yet: every read path already treats an
 // empty string as a live message. **This test must pass today.** If it fails, the
 // decision is wrong and the plan changes before a line of production code exists.
 //
-// Chapter 3.23 ran the equivalent and it paid twice: it proved the read path was already
+// The revisions chapter ran the equivalent and it paid twice: it proved the read path was already
 // correct, and it stopped a later phase from "fixing" something that worked.
 //
 // The row is planted with raw SQL because no write path accepts an empty text yet — the
@@ -1149,7 +1149,7 @@ describe("an empty text is a live message on every read path (FR-019)", () => {
       INSERT INTO messages (id, channel_id, sequence, user_id, text, attachments, created_at)
       VALUES (${plantedId}, ${channel.id}, ${before.seq + 1}, ${user.id}, '', NULL, now())
     `);
-    // The listing reads `channels.last_sequence`, not the messages table (chapter 3.15's
+    // The listing reads `channels.last_sequence`, not the messages table (the channel-control chapter's
     // keyset), so a hand-planted row is invisible to the preview until this moves.
     await db.execute(
       sql`UPDATE channels SET last_sequence = ${before.seq + 1}, last_activity_at = now()
@@ -1290,7 +1290,7 @@ describe("an attachments-only message is written and is not a tombstone (FR-019)
     });
 
     // THE COLUMN IS `''` AND NOT NULL, which is the whole of FR-019a. A null here would
-    // make chapter 3.23's tombstone predicate fire on a message somebody just sent.
+    // make the revisions chapter's tombstone predicate fire on a message somebody just sent.
     const { rows } = await db.execute(sql`SELECT text FROM messages WHERE id = ${sent.id}`);
     expect(rows[0]!["text"]).toBe("");
     expect(rows[0]!["text"]).not.toBeNull();
@@ -1392,7 +1392,7 @@ describe("listMessages returns attachments on BOTH branches (FR-009)", () => {
 // T053 says to re-check against the tree rather than copy the list forward.
 //
 // A RECORD SAYS "DECIDED"; ONLY AN ASSERTION TELLS THE NEXT READER THAT FROM "FORGOTTEN".
-// Chapter 3.23 left four sentences that had stopped being true because nothing compared
+// The revisions chapter left four sentences that had stopped being true because nothing compared
 // them with the code.
 describe("the read shapes that do NOT carry attachments (FR-009)", () => {
   it("the channel listing's preview has no attachments field", async () => {
@@ -1434,13 +1434,13 @@ describe("the read shapes that do NOT carry attachments (FR-009)", () => {
 
 // A CONCURRENT EDIT AND DELETION OF ONE MESSAGE (feature 043, FR-007).
 //
-// `gaps.md` 3.23-3 has carried this since chapter 3.23 built both writes. Neither takes
+// `gaps.md` 3.23-3 has carried this since the revisions chapter built both writes. Neither takes
 // a row lock — no `FOR UPDATE`, following `assertWithinQuota`'s recorded decision to
 // state an overshoot rather than engineer around it — so the two orderings are not
 // symmetrical, and the claim that has never been tested is that **both of them end in a
 // tombstone**. Not the outcome: the claim.
 //
-// DO NOT START FROM `Promise.all` ON ONE CLIENT. Chapter 3.22 spent a phase learning
+// DO NOT START FROM `Promise.all` ON ONE CLIENT. The connection-cap chapter spent a phase learning
 // that two operations issued on one connection serialise at the socket, so a test built
 // that way proves the code cannot race by never letting it. The third case below uses
 // TWO POOLS, which is what that chapter found it needed.

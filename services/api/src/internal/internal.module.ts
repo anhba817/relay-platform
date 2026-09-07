@@ -21,7 +21,7 @@ import { UsageController } from "./usage.controller";
 // request-scoped Repository, the guard, the service. One write path, two
 // doors (ADR-04/05).
 //
-// Chapter 3.5 adds the dispatch controller, which needs an UNSCOPED connection
+// The webhook dispatcher chapter adds the dispatch controller, which needs an UNSCOPED connection
 // rather than the request-scoped Repository: one dispatcher serves every
 // environment, so its operations take the tenant from the row they touch rather
 // than from a principal. `MessagesModule` provides "DB" but does not export it,
@@ -36,12 +36,12 @@ import { UsageController } from "./usage.controller";
     SessionController,
     // Registered here for the reason the comment below `UsageController`
     // gives: a controller nobody registers is a route that does not exist, and chapter
-    // 3.10's third analysis pass found exactly that.
+    // The quota chapter's third analysis pass found exactly that.
     MembershipsController,
     DispatchController,
     // Registered HERE and not in `app.module.ts`, which carries
     // only `HealthController` and already imports this module — a controller
-    // nobody registers is a route that does not exist, and chapter 3.10's third
+    // nobody registers is a route that does not exist, and the quota chapter's third
     // analysis pass found exactly that.
     UsageController,
   ],

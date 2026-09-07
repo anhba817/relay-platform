@@ -17,7 +17,7 @@ import { Redis } from "ioredis";
 // subscribed to the channel they are about to join. So this module subscribes two
 // ways — per channel, and per locally-connected user.
 //
-// ONE CLIENT, AND THE TASK LIST SAID TWO. Chapter 3.8's rule is that a connection in
+// ONE CLIENT, AND THE TASK LIST SAID TWO. The rate-limit chapter's rule is that a connection in
 // subscriber mode cannot run ordinary commands, so `fanout.ts` and `presence.ts` each
 // carry a pair — and this module was specified with a pair by analogy. **It runs no
 // ordinary commands.** Subscribe and unsubscribe are subscriber-mode operations, the
@@ -79,7 +79,7 @@ export function createMembership({
   const subscriber = new Redis(url);
 
   // THE STATED REASON IS NFR-OBS-01, NOT PROCESS DEATH. `limits.ts` says a missing
-  // listener kills the gateway; chapter 3.18 measured that against ioredis 6.0.0 and
+  // listener kills the gateway; the fan-out chapter measured that against ioredis 6.0.0 and
   // the process stays alive, printing `[ioredis] Unhandled error event: …` itself.
   // The accurate reason is that those lines are unstructured and unbounded.
   subscriber.on("error", (error: unknown) => {
@@ -128,7 +128,7 @@ export function createMembership({
       }
       return;
     }
-    // `?? 0` and NOT `?? 1`. Chapter 3.19's presence module used the latter and the
+    // `?? 0` and NOT `?? 1`. The presence chapter's presence module used the latter and the
     // coverage ratchet found the arm unreachable through `session.ts`; here an
     // unsubscribe for something never subscribed leaves the count at -1 with `?? 0`,
     // which is wrong, so the absent case returns early and is one of the arms the
@@ -225,7 +225,7 @@ export function createMembership({
 
     async close() {
       // Cleared, or a suite standing up two instances leaks a timer into the next
-      // file. Chapter 3.19 recorded that exact failure.
+      // file. The presence chapter recorded that exact failure.
       for (const timer of timers) clearInterval(timer);
       timers.clear();
       channelCounts.clear();

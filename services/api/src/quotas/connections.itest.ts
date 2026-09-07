@@ -283,7 +283,7 @@ describe("the accounting state is bounded by connections, not minutes", () => {
 
 describe("the figure survives a flush of the counter store (FR-RTL-05)", () => {
   it("reads the same number before and after Redis is emptied", async () => {
-    // The property that separates a quota from chapter 3.8's limiter. Connection
+    // The property that separates a quota from the rate-limit chapter's limiter. Connection
     // minutes never touch Redis at all, and this test is what stops that
     // becoming an accident rather than a design.
     const env = await environment();
@@ -467,12 +467,12 @@ describe("the cap brakes the thing it meters (US3, api side)", () => {
 // --- the third dimension's emails (US4) ------------------------------------
 //
 // MAILPIT IS ONE SHARED INBOX for the whole lane, so every assertion below
-// filters by a per-test recipient. Chapter 3.10's suite established that shape
+// filters by a per-test recipient. The quota chapter's suite established that shape
 // and then undercut it one line later with
 // `expect(await relay().drainOnce()).toBeGreaterThan(0)` — true whether it
 // drained this test's row or a neighbour's. `drainOnce` claims undelivered rows
 // across EVERY environment, and neither guard watches it: the lint rule does not
-// name the function (chapter 3.11 added it) and could not see the call anyway,
+// name the function (the connection-metering chapter added it) and could not see the call anyway,
 // because it goes through `createQuotaRelay`.
 //
 // So the assertions here are about rows this test wrote, by address, and never
@@ -571,7 +571,7 @@ describe("nobody is surprised by a third dimension (US4)", () => {
 
   it("notifies both thresholds a single report crossed (FR-RTL-07)", async () => {
     // A cap of 4 and four minutes in one step crosses 50%, 80% AND 100% —
-    // 80% of 4 is 3.2, which chapter 3.10 got wrong twice before writing it down.
+    // 80% of 4 is 3.2, which the quota chapter got wrong twice before writing it down.
     const address = `conn-${randomUUID().slice(0, 8)}@relay.test`;
     const env = await seed(address);
     await setCap(env, { connection_minutes: { hard: 4 } });

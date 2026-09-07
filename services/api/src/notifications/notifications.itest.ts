@@ -12,7 +12,7 @@ import { recordAttemptOutcome } from "../db/repository";
 import { createMailer } from "./mailer";
 import { createNotificationRelay } from "./notification-relay";
 
-// The transport chapter 3.6 deferred, against a real mail server (chapter 3.8,
+// The transport the retry-and-disable chapter deferred, against a real mail server (chapter 3.8,
 // FR-WHK-07 to FR-WHK-05).
 //
 // EVERY ASSERTION READS WHAT MAILPIT RECEIVED, never what the sender passed.
@@ -177,7 +177,7 @@ describe("the disablement notification, end to end", () => {
    * is global and the integration lane runs files in parallel, so another suite's
    * disablement can be claimed by this test's relay between two of its own lines —
    * which is precisely the "local facts about a global operation" fault chapter
-   * 3.7's baseline found in four suites, and which this file walked into on its
+   * The deduplication chapter's baseline found in four suites, and which this file walked into on its
    * first full-lane run. */
   const undelivered = async (endpointId: string): Promise<boolean> => {
     const { rows } = await pool.query(
@@ -225,7 +225,7 @@ describe("the disablement notification, end to end", () => {
   beforeEach(async () => {
     // Drain whatever earlier tests in this file left claimable, so each test's
     // count is about its own rows. `drainDisableNotifications` is global and
-    // oldest-first — chapter 3.7's baseline found four suites broken by
+    // oldest-first — the deduplication chapter's baseline found four suites broken by
     // forgetting that about a global operation.
     const r = relay();
     await r.drainOnce();
@@ -460,7 +460,7 @@ describe("the disablement notification, end to end", () => {
     expect(await inbox(good)).toHaveLength(1);
   }, 30_000);
 
-  it("drains chapter 3.6's backlog with NO SPECIAL HANDLING (FR-WHK-07)", async () => {
+  it("drains the retry-and-disable chapter's backlog with NO SPECIAL HANDLING (FR-WHK-07)", async () => {
     // Rows written before any transport existed are undelivered work by the
     // claim predicate's own definition. If they needed special handling the
     // shape would be wrong — so the test is that three rows written by three

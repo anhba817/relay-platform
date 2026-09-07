@@ -59,7 +59,7 @@ const userMetadataSchema = z
  * store a scheme the customer's own client executes when it renders the avatar — an
  * `<img src>` or an `<a href>` built from a value we accepted.
  *
- * `attachments.ts` already said this in chapter 3.24 — *"A URL validator that accepts
+ * `attachments.ts` already said this in the attachments chapter — *"A URL validator that accepts
  * `javascript:alert(1)` is not a scheme rule"* — and the avatar field, which is older,
  * never got the same treatment. One schema fragment, consumed twice below, because
  * `upsertUserEntrySchema`'s own comment already promises the two routes "cannot drift

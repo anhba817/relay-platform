@@ -169,7 +169,7 @@ describe("an exemption that names one table", () => {
 // them passed for two chapters.
 //
 // BEING IN THE ARRAY IS NOT EVIDENCE OF BEING WATCHED, which is why this block
-// drives all four rather than asserting the array's length. Chapter 3.10's SC-008
+// drives all four rather than asserting the array's length. The quota chapter's SC-008
 // passed by not being watched; a test that reads the source it is meant to check
 // is the same mistake one layer up.
 //
@@ -259,7 +259,7 @@ describe("the four usage tables chapters 3.10 and 3.11 left unguarded", () => {
 
   it("prints the read position's row, because it has no id column", async () => {
     // `(channel_id, user_id)` and no `id`, so the message falls through to
-    // `to_jsonb(OLD)::text` — the expression chapter 3.13 installed for the three
+    // `to_jsonb(OLD)::text` — the expression the channel-endpoints chapter installed for the three
     // usage tables in the same position. Asserting on the channel id inside the
     // printed row is what distinguishes "printed the row" from "printed
     // undefined", which is the failure this is here to catch.

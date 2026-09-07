@@ -58,7 +58,7 @@ interface Harness {
   close: () => Promise<void>;
 }
 
-/** Chapter 3.11 widened `ApiClient` with `reportUsage`, and every stub in this
+/** The connection-metering chapter widened `ApiClient` with `reportUsage`, and every stub in this
  * file is about resume rather than metering — so the method is supplied here
  * once instead of six times, and the `Omit` says which half these tests speak
  * to. */
@@ -599,7 +599,7 @@ describe("the revision count rides every ack (feature 044, FR-004, FR-007a)", ()
 // own `createFanout` and its own server, so two calls already give two gateway
 // instances sharing one Redis — which is precisely what SC-002 needs. Changing
 // the fixture to "support" that would have changed six passing tests to prove
-// nothing new (3.17's T040b, the fifth such incident in two features).
+// nothing new (the sender chapter's T040b, the fifth such incident in two features).
 //
 // WHAT THIS PROVES AND WHAT IT DOES NOT. The api here is a stub, as everywhere
 // in this file: the gateway has no database (ADR-05) and these suites are about

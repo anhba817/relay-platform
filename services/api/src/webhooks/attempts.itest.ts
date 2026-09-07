@@ -22,7 +22,7 @@ import {
 import { encryptSecret, mintSigningSecret } from "./secret";
 import { MAX_ATTEMPTS } from "./schedule";
 
-// Chapter 3.8 added `request_id` to every error body (constitution V's fourth
+// The rate-limit chapter added `request_id` to every error body (constitution V's fourth
 // field, promised since 1.3). It is unique per request BY DESIGN, so two error
 // bodies can no longer be compared whole — and comparing them whole is how this
 // suite proves a foreign resource is indistinguishable from an absent one, which
@@ -54,14 +54,14 @@ function withoutRequestId(body: unknown): unknown {
 // Every environment is minted here, and every assertion is scoped to a subject
 // carrying that environment's id. The stream is global and this lane runs beside
 // other suites, so an assertion that counted messages on `analytics.>` would be
-// counting somebody else's work (chapter 3.3's finding 4, again).
+// counting somebody else's work (the outbox chapter's finding 4, again).
 
 const CREDENTIAL =
   process.env["RELAY_INTERNAL_CREDENTIAL"] ??
   "rk_svc_attempts_itest_0123456789abcdef0123";
 
 /** A per-run consumer name. A durable IS a position in a shared stream, and
- * chapter 3.6's own baseline is the reason this is a per-SUITE prefix rather than
+ * The retry-and-disable chapter's own baseline is the reason this is a per-SUITE prefix rather than
  * a shared `itest-`: the api's consumer suite once swept every consumer whose name
  * began with that, and deleted a live one belonging to another suite. */
 const SUITE = "itest-attempts";
@@ -90,7 +90,7 @@ describe("the attempt record", () => {
   /** The relay's claim, with the publish stubbed out.
    *
    * `drainDueDeliveries` takes the publish as a callback — the seam that makes
-   * chapter 3.3's outbox broker-agnostic — so claiming a delivery without putting
+   * The outbox chapter's outbox broker-agnostic — so claiming a delivery without putting
    * it on the DELIVERIES stream is a one-line stub rather than a mock. This suite
    * is about the ANALYTICS stream, and a real delivery publish here would hand
    * work to whatever dispatcher happens to be running beside it. */
@@ -152,7 +152,7 @@ describe("the attempt record", () => {
    *
    * Polls rather than peeks: the publish happens after the outcome commits, so a
    * single fetch races the broker — and a test that fetches once is testing
-   * something the platform never does. Chapter 3.5's suite learned this and said
+   * something the platform never does. The webhook dispatcher chapter's suite learned this and said
    * so in as many words. */
   const collected = async (
     environmentId: string,
@@ -200,7 +200,7 @@ describe("the attempt record", () => {
     });
 
     // The stream is created by the API SERVICE, not here — one definition of a
-    // stream, as chapter 3.5 established for DELIVERIES. So the first outcome is
+    // stream, as the webhook dispatcher chapter established for DELIVERIES. So the first outcome is
     // reported before any consumer exists, which is also the honest ordering: the
     // platform must not need a reader in order to write.
     await seedEndpoint(repo);
@@ -228,8 +228,8 @@ describe("the attempt record", () => {
   afterAll(async () => {
     if (nats && !nats.isClosed()) {
       const jsm = await nats.jetstreamManager();
-      // The durable goes with the run. Chapter 3.5's dispatcher suite leaked two
-      // consumers per run onto a shared broker and 3.6's baseline found ninety of
+      // The durable goes with the run. The webhook dispatcher chapter's dispatcher suite leaked two
+      // consumers per run onto a shared broker and the retry-and-disable chapter's baseline found ninety of
       // them; this file does not add to that count.
       await jsm.consumers.delete(ANALYTICS_STREAM, durable).catch(() => undefined);
       // And the stream comes BACK, because the last test in this file deletes it.

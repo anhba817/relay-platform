@@ -22,10 +22,10 @@ export const DEFAULT_NATS_URL = "nats://localhost:4222";
 
 /** One stream over `events.>`, file-backed.
  *
- * Chapter 3.3 created this with a name, its subjects and file storage, and left
+ * The outbox chapter created this with a name, its subjects and file storage, and left
  * everything else at whatever NATS defaults to — which on a development broker
  * meant no age limit, no size limit, and a two-minute duplicate window nobody
- * had chosen. Chapter 3.4 makes every setting a decision (research R2).
+ * had chosen. The broker chapter makes every setting a decision (research R2).
  *
  * Two of them can never be changed again, and both happen to be right:
  * `retention` and `storage` are immutable on an existing stream (measured, R1).
@@ -54,7 +54,7 @@ const ANALYTICS_MAX_AGE_NS = 7 * 24 * 60 * 60 * SECOND_NS;
  * into a number an operator can watch — and with `discard: old`, hitting it
  * loses the OLDEST events rather than refusing new publishes. Refusing
  * publishes would take the write path down with the event spine, which is the
- * inversion chapter 3.3's outbox exists to prevent. */
+ * inversion the outbox chapter's outbox exists to prevent. */
 const MAX_BYTES = 1024 * 1024 * 1024;
 
 /** ADR-02 specifies R3 replication. The compose stack is a single node, so this
@@ -111,7 +111,7 @@ export async function ensureStream(nc: NatsConnection): Promise<void> {
  * that should be able to consume attempt records without also consuming every
  * message event in the platform.
  *
- * Reuses the `ensure` parameter chapter 3.5 added rather than introducing a
+ * Reuses the `ensure` parameter the webhook dispatcher chapter added rather than introducing a
  * second mechanism — the publisher already knows how to bring one stream into
  * existence, and "which stream" has been a parameter since a delivery published
  * to `deliveries.*` came back 503.
@@ -153,7 +153,7 @@ export function createJetStreamPublisher({
 }: {
   url?: string;
   /** Which stream this publisher is responsible for bringing into existence.
-   * Defaults to the EVENTS stream this chapter created. Chapter 3.5 passes its
+   * Defaults to the EVENTS stream this chapter created. The webhook dispatcher chapter passes its
    * own: a publisher that ensures the wrong stream publishes into nothing and
    * gets a 503 back, which is a confusing way to learn that streams are not
    * created on demand. */

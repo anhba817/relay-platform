@@ -19,7 +19,7 @@ const now0 = (): number => Date.now();
 
 // The tenant limiter (FR-RTL-01…04).
 //
-// MIDDLEWARE, NOT A GUARD, for two reasons. Chapter 3.2's: Nest constructs
+// MIDDLEWARE, NOT A GUARD, for two reasons. The credentials chapter's: Nest constructs
 // request-scoped providers before the enhancer chain, so a guard cannot be the
 // thing that resolves tenant scope. And one of its own: FR-RTL-02 wants the three
 // headers on SUCCESSFUL responses, and a guard that returns `true` has no natural
@@ -29,7 +29,7 @@ const now0 = (): number => Date.now();
 // by environment and the environment comes from the credential.
 //
 // COUNT EACH OPERATION ONCE, AT THE DOOR IT ENTERED (research R17). The exemption
-// cannot key off the principal, and CHAPTER 3.11 STRENGTHENED THAT RATHER THAN
+// cannot key off the principal, and the connection-metering chapter STRENGTHENED THAT RATHER THAN
 // WEAKENING IT.
 //
 // Three of the gateway's four api calls forward the END USER's token —
@@ -37,7 +37,7 @@ const now0 = (): number => Date.now();
 // `@Accepts("user")` and resolve exactly like customer traffic. The fourth,
 // `/internal/usage/connections`, is `@Accepts("platform")` and carries the
 // gateway's own credential, so the gateway is no longer the only service without
-// one: chapter 3.11 gave it `RELAY_INTERNAL_CREDENTIAL_GATEWAY`, and the
+// one: the connection-metering chapter gave it `RELAY_INTERNAL_CREDENTIAL_GATEWAY`, and the
 // dispatcher is no longer the sole holder of a platform credential.
 //
 // So the caller's class now tells you even less than it did. The route decides:

@@ -30,7 +30,7 @@ export type Shape = "read" | "list" | "write" | "credential" | "exempt";
  * request naming one environment with an identifier from another. A `write` shape
  * alone cannot tell those apart, and an earlier draft of this chapter gave all
  * eight the platform attack (research R5). */
-/** And `"either"`, added by chapter 3.15 for the first route that genuinely takes both
+/** And `"either"`, added by the channel-control chapter for the first route that genuinely takes both
  * (FR-017's read position: a user records their own, and the tenant records one for the
  * user it names). Recording it as `"user"` alone would understate which attacks apply —
  * both do, and `PUT /v1/users/:externalId/channels/:channelId/read` is attacked with a
@@ -86,7 +86,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     accepts: "none",
     shape: "exempt",
     because:
-      "the OAuth return. Its authority is a state cookie bound to the browser that began the flow, and chapter 3.1's suite already attacks that binding directly.",
+      "the OAuth return. Its authority is a state cookie bound to the browser that began the flow, and the tenancy chapter's suite already attacks that binding directly.",
   },
 
   // ── credential: tenant-scoped without taking an identifier ──────────────────
@@ -180,13 +180,13 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     accepts: "application",
     shape: "read",
   },
-  // CHAPTER 3.23's EDIT HISTORY (T033h, FR-023, FR-023a). `accepts: "application"`
+  // The revisions chapter's EDIT HISTORY (T033h, FR-023, FR-023a). `accepts: "application"`
   // because the route carries a method-level `@Accepts("application")` that narrows the
   // controller's class-level `("application", "user")` — FR-MOD-01 names the audience,
   // and nothing in the SRS asks for an end-user surface on what a message used to say.
   //
   // THE TWO VALUES MUST AGREE AND NOTHING COMPARES THEM. This entry and the decorator
-  // are the same authorisation fact written twice; chapter 3.23's `gaps.md` item 4 owns
+  // are the same authorisation fact written twice; the revisions chapter's `gaps.md` item 4 owns
   // that. What a wrong value here costs is not a leak — the guard decides, this list
   // only tells the gauntlet which credential to attack with — but a `"user"` here would
   // send the gauntlet at this route with a token the guard refuses at the door, and the
@@ -200,7 +200,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
 
   // ── write, public ───────────────────────────────────────────────────────────
   { method: "POST", path: "/v1/channels/:channelId/messages", accepts: "application", shape: "write" },
-  // CHAPTER 3.23's EDIT (T030a, FR-001, FR-013a). `accepts: "user"` because the method
+  // The revisions chapter's EDIT (T030a, FR-001, FR-013a). `accepts: "user"` because the method
   // declares `@Accepts("user")`: FR-MOD-02 grants a tenant key deletion of any message
   // and is silent on editing, and silence is read as absence of permission.
   //
@@ -209,7 +209,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // from `contracts/edit-and-delete.md` would match no target — the note at the join
   // route above records the same trap being paid for once already.
   { method: "PATCH", path: "/v1/channels/:channelId/messages/:messageId", accepts: "user", shape: "write" },
-  // CHAPTER 3.23's DELETION (T041a, FR-006, FR-012, FR-013). `accepts: "either"` — an
+  // The revisions chapter's DELETION (T041a, FR-006, FR-012, FR-013). `accepts: "either"` — an
   // existing value, used by the read-position route above — because the author OR a
   // tenant key may delete (FR-MOD-02), which is the class-level declaration this route
   // correctly inherits rather than overrides.
@@ -218,7 +218,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // an inherited `@Accepts` and a forgotten one read identically; here the intent is
   // written down, so a later reader can tell that both classes are meant.
   { method: "DELETE", path: "/v1/channels/:channelId/messages/:messageId", accepts: "either", shape: "write" },
-  // Chapter 3.12's two new routes, and the order they were added in is the point.
+  // The isolation gauntlet's two new routes, and the order they were added in is the point.
   // The derivation found them first: `targets.itest.ts` went from 22 to 24 and
   // named them as unclassified, on the build that registered the module and
   // before anything here mentioned them. That is the failure the derivation
@@ -226,7 +226,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // to it — never the derivation.
   { method: "POST", path: "/v1/channels", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/channels/:channelId/members", accepts: "application", shape: "write" },
-  // Chapter 3.15's two, and the derivation found them the same way it found the
+  // The channel-control chapter's two, and the derivation found them the same way it found the
   // pair above: the lane went red naming both as unclassified on the build that
   // added them, before this file mentioned either. Written with the ROUTER'S
   // parameter names — `:channelId`, not the contracts' `:externalId` — because the

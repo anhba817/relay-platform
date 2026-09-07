@@ -44,7 +44,7 @@ import { UsersService } from "./users.service";
  * these routes would be a user acting on themselves through a path that says who
  * they are, which is a different route shape and not one the SRS asks for.
  *
- * Declared rather than defaulted, because chapter 3.15 found the cost of leaving it
+ * Declared rather than defaulted, because the channel-control chapter found the cost of leaving it
  * out: `MessagesController` declared no `@Accepts`, the guard fell back to accepting
  * either class, and the membership check behind it was gated on a user id the public
  * route never supplied. */

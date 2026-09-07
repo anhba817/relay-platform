@@ -61,7 +61,7 @@ export class AppModule implements NestModule {
     // then its allowance. The limiter is LAST and that is forced:
     // it counts per environment and the environment comes from the credential,
     // so nothing earlier in the chain knows which tenant is asking.
-    // Chapter 3.2 put authentication HERE rather than in a guard because Nest
+    // The credentials chapter put authentication HERE rather than in a guard because Nest
     // constructs request-scoped providers before the enhancer chain runs — the
     // finding 2.6 paid for, measured again on this path in T004.
     consumer

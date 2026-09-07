@@ -9,7 +9,7 @@ import {
   ROTATION_WINDOW_MS,
 } from "./secret";
 
-// Why a webhook signing secret is NOT stored the way chapter 3.2 stored an API
+// Why a webhook signing secret is NOT stored the way the credentials chapter stored an API
 // key — and the resemblance between the two is exactly the trap.
 //
 // NFR-SEC-02 covers both in one sentence: "API key secrets and webhook signing
@@ -38,7 +38,7 @@ describe("a signing secret must survive storage, not merely be recognisable", ()
     expect(recovered).toBe(secret);
   });
 
-  it("cannot be recovered from chapter 3.2's treatment of the other credential", () => {
+  it("cannot be recovered from the credentials chapter's treatment of the other credential", () => {
     const secret = mintSigningSecret();
 
     // Hashing is what 3.2 does to an API key, and it is one-way on purpose. The

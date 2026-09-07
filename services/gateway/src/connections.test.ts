@@ -12,7 +12,7 @@ import {
   MAX_CONNECTIONS_PER_USER,
 } from "./connections.js";
 
-// CHAPTER 3.22's slot registry — THE HALF THAT NEEDS NO BROKER (feature 043: FR-006,
+// The connection-cap chapter's slot registry — THE HALF THAT NEEDS NO BROKER (feature 043: FR-006,
 // FR-006a, FR-024, FR-024a).
 //
 // This file held all seventeen of the registry's tests and twelve of them talk to a real
@@ -63,7 +63,7 @@ describe("the slot registry, without a broker", () => {
     // property is not observable through this module's own surface — a claim walks
     // from slot 0, so whatever an unconditional release did to slot 3 cannot be
     // seen from here — and the ownership half of it is the test below. Chapter
-    // 3.20's rule: a claim about an observable difference needs falsifying before
+    // The membership-revocation chapter's rule: a claim about an observable difference needs falsifying before
     // the test is written.
     await expect(
       registryFor().release(ENV, userFor(), randomUUID(), 3),
@@ -85,7 +85,7 @@ describe("the slot registry, without a broker", () => {
     // `null` MEANS COULD NOT ASK, and the distinction is the requirement: FR-016
     // accepts the connection and logs that the cap was not enforced, which is a
     // different fact from a user being under the limit. Conflating them is what
-    // chapter 3.18 found in the fan-out — "the send returned 201 while Redis was
+    // The fan-out chapter found in the fan-out — "the send returned 201 while Redis was
     // down" is true of a publisher that does nothing at all.
     const lines: Record<string, unknown>[] = [];
     const gone = createConnections({
@@ -113,7 +113,7 @@ describe("the slot registry, without a broker", () => {
     // connection's place, and three-to-one is what delivers it.
     expect(DEFAULT_HEARTBEAT_MS).toBeLessThan(DEFAULT_BOUND_MS);
     expect(DEFAULT_BOUND_MS / DEFAULT_HEARTBEAT_MS).toBeGreaterThanOrEqual(3);
-    // And it is NOT the protocol keepalive, which chapter 3.19 paid for conflating.
+    // And it is NOT the protocol keepalive, which the presence chapter paid for conflating.
     expect(DEFAULT_HEARTBEAT_MS).not.toBe(30_000);
   });
 

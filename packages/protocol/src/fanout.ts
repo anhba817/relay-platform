@@ -1,6 +1,6 @@
 /** The live fan-out's subject grammar (chapter 2.6, ADR-07).
  *
- * MOVED HERE IN CHAPTER 3.18, and the reason is the same one chapter 3.4 gave
+ * MOVED HERE IN the fan-out chapter, and the reason is the same one the broker chapter gave
  * when it moved the event spine's `subjectFor` into this package: a subject
  * grammar belongs where every party that uses it can agree on it. Until 3.18
  * the gateway was the only publisher, so the grammar could live beside the
@@ -31,7 +31,7 @@
  *     src/index.ts(12,1): error TS2308: Module "./internal.js" has already
  *     exported a member named 'subjectFor'.
  *
- * The spine's name is chapter 3.4's and is published; this one is new, so this
+ * The spine's name is the broker chapter's and is published; this one is new, so this
  * one moves. The collision is the same asymmetry the chapter has to explain
  * anyway: the spine's subject carries the tenant, the fan-out's carries only a
  * channel id, and putting them side by side is what made that visible. */

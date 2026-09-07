@@ -14,9 +14,9 @@ import { createConsumerRuntime, type ConsumerRuntime } from "./runtime";
 // so it never touches the database. A consumer deployed as its own service
 // would be a second writer.
 //
-// So it sits here, exactly as chapter 3.3's outbox relay does under ADR-06's
+// So it sits here, exactly as the outbox chapter's outbox relay does under ADR-06's
 // "a small loop inside the API service initially, promotable to its own
-// deployment". What that costs is named rather than discovered: chapter 3.5's
+// deployment". What that costs is named rather than discovered: the webhook dispatcher chapter's
 // dispatcher IS meant to be its own service, and it will need either an
 // internal route for its ledger or an explicit ADR amendment (research R5).
 
@@ -27,7 +27,7 @@ export const EVENT_CONSUMER = "EVENT_CONSUMER";
  * each receiving everything (research R8). */
 export const RECORDER_DURABLE = "recorder";
 
-/** On by default: an event spine nobody reads is what chapter 3.3 left behind.
+/** On by default: an event spine nobody reads is what the outbox chapter left behind.
  * `RELAY_EVENT_CONSUMER=off` exists for suites that want a quiet database —
  * 3.3 learned the hard way that a background loop mutating a table two other
  * test files assert on is a race between test files, not a property. */

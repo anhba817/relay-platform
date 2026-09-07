@@ -84,7 +84,7 @@ describe("the limiter", () => {
   beforeAll(async () => {
     const pool = createPool();
     // Migrations here, like every other suite that needs a schema newer than
-    // whatever the database happens to be at. Chapter 3.8's `0008` adds the
+    // whatever the database happens to be at. The rate-limit chapter's `0008` adds the
     // policy columns, and a suite that assumed they existed would pass on a
     // developer's machine and fail on a fresh one.
     await migrate(pool);
@@ -266,7 +266,7 @@ describe("the limiter", () => {
   it("does not count the dispatcher, which reaches every environment", async () => {
     // A limiter that throttles the dispatcher turns one busy customer's webhook
     // backlog into a stall for every customer — the failure FR-WHK-05 forbids and
-    // chapter 3.5's retry schedule was built to avoid.
+    // The webhook dispatcher chapter's retry schedule was built to avoid.
     //
     // Unlike the gateway, this one IS recognisable by principal: the platform
     // credential belongs to a deployment rather than a tenant, so it carries no
@@ -391,7 +391,7 @@ describe("the limiter", () => {
     //
     // The address rides the internal contract as a field rather than a header,
     // because a header the caller asserts is a header the caller can forge —
-    // chapter 3.2 removed exactly that pattern.
+    // The credentials chapter removed exactly that pattern.
     const previousPrefix = process.env["RELAY_AUTH_KEY_PREFIX"];
     const previousThreshold = process.env["RELAY_AUTH_FAILURES_PER_MINUTE"];
     process.env["RELAY_AUTH_KEY_PREFIX"] = `rlauth-fleet-${Date.now()}`;

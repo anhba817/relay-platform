@@ -37,7 +37,7 @@ export const AUTH_DB = "AUTH_DB";
  * request can ever present a platform principal, and the internal routes that
  * require one simply refuse everybody. Each service is absent independently.
  *
- * ONE SECRET PER SERVICE, AND CHAPTER 3.11 IS WHY. Until this chapter there was
+ * ONE SECRET PER SERVICE, AND the connection-metering chapter IS WHY. Until this chapter there was
  * one caller and this function ended `service: "dispatcher"`, hardcoded — which
  * was accurate exactly as long as the dispatcher was alone. The gateway now
  * reports connection-minutes, and `PlatformPrincipal.service` is documented as
@@ -50,7 +50,7 @@ export const AUTH_DB = "AUTH_DB";
  * secret lets the more exposed service set the blast radius for both.
  *
  * THE ALTERNATIVE, REFUSED: keep one secret and have the caller name itself in a
- * header, trusted only for logging. Chapter 3.2 spent itself removing exactly
+ * header, trusted only for logging. The credentials chapter spent itself removing exactly
  * that — the gateway used to send an environment header and a user header it had
  * invented — and "it is only for logs" is the sentence under which an asserted
  * header survives a review. */
@@ -71,7 +71,7 @@ const PLATFORM_SERVICES = [
  * `as const` is doing the work: without it `(typeof PLATFORM_SERVICES)[number][1]`
  * widens to `string` and a route could declare a service nobody deploys. With it,
  * adding a third internal service widens this union on its own and every route
- * that must now decide about it stops compiling — which is chapter 3.11's lesson
+ * that must now decide about it stops compiling — which is the connection-metering chapter's lesson
  * from `Dimension`, where adding a config key widened a type and the two-way
  * ternary underneath it was the thing the compiler could not see. */
 export type PlatformService = (typeof PLATFORM_SERVICES)[number][1];

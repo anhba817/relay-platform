@@ -264,7 +264,7 @@ describe("createMeter — what it holds, and what it does not", () => {
 //
 // GREP RATHER THAN BEHAVIOUR, because the claim is about ABSENCE: no input makes
 // this service open a connection to Postgres, and the only way to check "no
-// input" is to read what the source can do. Chapter 3.8's 4008 test is the
+// input" is to read what the source can do. The rate-limit chapter's 4008 test is the
 // precedent, including its self-check.
 describe("the gateway still owns no database (ADR-05)", () => {
   it("imports no database client anywhere in its source", async () => {

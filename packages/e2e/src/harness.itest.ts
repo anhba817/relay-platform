@@ -4,7 +4,7 @@ import { boot, type System } from "./harness.js";
 
 // Feature 043 — the assertion that would have caught it (FR-001).
 //
-// Chapter 3.24's close-out battery failed 10 times in 20, every one of them a suite
+// The attachments chapter's close-out battery failed 10 times in 20, every one of them a suite
 // reporting `ECONNREFUSED 127.0.0.1:4100` at its first real request. The cause was one
 // line: `stop()` signalled its children and slept 200 ms without waiting for them to
 // go, so the next suite's api bound a port the previous one still held, died, and left
@@ -58,7 +58,7 @@ describe("the harness releases what it started", () => {
     second = await boot({ gateways: 1 });
 
     // The request, not the boot. `waitForHealth` inside `boot()` has already passed —
-    // it passed on every red run of chapter 3.24's battery too.
+    // it passed on every red run of the attachments chapter's battery too.
     const seeded = await second.seedConversation();
     expect(seeded.environmentId).toMatch(/^[0-9a-f-]{36}$/);
 

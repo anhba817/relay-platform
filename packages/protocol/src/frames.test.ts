@@ -34,7 +34,7 @@ const valid: Record<string, unknown> = {
     type: "connection.ack",
     // Feature 044: `revisions` is REQUIRED here, and this specimen went red the moment it
     // was added — which is the point. The ack is a frame the platform BUILDS, so required
-    // is what makes every construction site name it. Chapter 3.24's inverse case is the
+    // is what makes every construction site name it. The attachments chapter's inverse case is the
     // one to keep straight: a reader of anything durable cannot require a field its writer
     // did not have, and `outboxEventSchema` learned that the expensive way.
     payload: {
@@ -236,7 +236,7 @@ describe("the deleted frame carries an identity and no text", () => {
   });
 
   it("refuses an ATTACHMENTS field, for the same reason it refuses text (FR-013)", () => {
-    // Chapter 3.24 gave `messageSchema` a required attachments array, and the obvious
+    // The attachments chapter gave `messageSchema` a required attachments array, and the obvious
     // next move — symmetry — would be wrong here. A deletion's payload carries no text
     // because a payload with a text field is a payload that can carry the words somebody
     // asked to have removed; an attachment URL is exactly as recoverable. So this frame
@@ -329,7 +329,7 @@ describe("the message-length maximum (feature 043, FR-008)", () => {
 
   it("does NOT bound the outbound message, and that is deliberate", () => {
     // `messageSchema` is what the server EMITS, read off rows the platform already
-    // stored. Chapter 3.24's `outboxEventSchema` defect is the argument: a reader of
+    // stored. The attachments chapter's `outboxEventSchema` defect is the argument: a reader of
     // anything durable cannot impose a rule its writer did not have. Every stored row
     // came through a bounded door, so the bound buys nothing here and would turn a
     // hypothetical long row into an undeliverable one.

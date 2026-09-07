@@ -85,17 +85,17 @@ function publishContext(req: RequestWithPrincipal): {
 // 3.24 had to be told to carry across. What keeps them together is a shared
 // DEFINITION each applies, not a family resemblance.
 //
-// Chapter 3.2 swapped the guard. `EnvironmentContextGuard` resolved a tenant
+// The credentials chapter swapped the guard. `EnvironmentContextGuard` resolved a tenant
 // from a header the caller asserted; `CredentialGuard` only asks whether the
 // principal the middleware already resolved is allowed here. Both classes are
 // accepted (FR-MSG-13 lets a server send on behalf of a bot user of its tenant, and
-// FR-AUT-10 does not reserve these routes) — and chapter 3.17 made that a DECLARATION
+// FR-AUT-10 does not reserve these routes) — and the sender chapter made that a DECLARATION
 // rather than a fallback, because a fallback is what let the gateway's credential reach
-// `POST /internal/dispatch/replay` in chapter 3.12.
+// `POST /internal/dispatch/replay` in the isolation gauntlet.
 // DECLARED, NOT INHERITED FROM A FALLBACK (T027a). Until now this class
 // declared no `@Accepts` and `credential.guard.ts` fell back to `EITHER` — the fallback
 // its own comment names as the thing that let the gateway's credential reach
-// `POST /internal/dispatch/replay` in chapter 3.12. Both classes are genuinely accepted
+// `POST /internal/dispatch/replay` in the isolation gauntlet. Both classes are genuinely accepted
 // here, so the declaration says the same thing the fallback did and says it on purpose.
 @Controller("v1/channels/:channelId/messages")
 @Accepts("application", "user")
@@ -393,7 +393,7 @@ export class MessagesController {
    * irrespective of author (FR-012), and an end user may delete their own (FR-013).
    *
    * **An inherited declaration and an absent one look identical in the source**, which
-   * is the thing `credential.guard.ts:31` argues about and chapter 3.12 paid for. So
+   * is the thing `credential.guard.ts:31` argues about and the isolation gauntlet paid for. So
    * `targets.ts` carries `accepts: "either"` for this path — an existing value, used by
    * the read-position route — and the entry is where a reader can see that both classes
    * are intended here rather than merely tolerated.

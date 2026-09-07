@@ -154,7 +154,7 @@ describe("the outbox", () => {
       userId: tuan.id,
       userExternalId: "tuan",
     });
-    // The key-authenticated public send is unattributed (3.2's recorded bound),
+    // The key-authenticated public send is unattributed (the credentials chapter's recorded bound),
     // which is a CONTENT difference, not a shape one.
     await repo.sendMessage(channelId, { text: "through REST", userId: tuan.id });
     const rows = (await unpublishedFor(db, env.id)).slice(before.length);

@@ -3,7 +3,7 @@ import type { ErrorCode } from "@relay/protocol";
 
 /** An HTTP failure that NAMES ITS OWN CODE, typed (chapter 3.14, FR-025, FR-026).
  *
- * Chapter 3.2 introduced the convention that a thrower may name its code, because
+ * The credentials chapter introduced the convention that a thrower may name its code, because
  * `wrong_credential_type` is a distinction a status cannot carry. What it could not
  * introduce was any check on the string: `HttpException`'s response is `unknown`,
  * so `code: "wrong_credental_type"` compiles, ships, and becomes a `docs_url`

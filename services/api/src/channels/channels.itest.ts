@@ -105,7 +105,7 @@ describe("the public channel surface", () => {
       expect(await second.json()).toEqual(await first.json());
     });
 
-    // CHAPTER 3.12 ASSERTED THE OPPOSITE HERE, and it was right at the time.
+    // The isolation gauntlet ASSERTED THE OPPOSITE HERE, and it was right at the time.
     //
     // FR-047 pinned the enum to `public` alone because `channels.type` decided
     // nothing: an endpoint accepting `private` would have sold a guarantee the
@@ -228,7 +228,7 @@ describe("the public channel surface", () => {
     }, 180_000);
 
     it("refuses a JOIN that would exceed it, with the same code", async () => {
-      // T047. The ceiling is chapter 3.13's and it is READ here, not reimplemented:
+      // T047. The ceiling is the channel-endpoints chapter's and it is READ here, not reimplemented:
       // `join` counts members from storage and refuses with the same
       // `channel_member_limit_exceeded` the member-add route uses. A second limit
       // with its own number would be a second answer to one question.
@@ -362,7 +362,7 @@ describe("the public channel surface", () => {
 
     it("refuses an application credential, which has no user to join", async () => {
       // The method-level `@Accepts("user")` overriding the class's "application".
-      // Without it this would be a 403 for every USER instead — chapter 3.12's
+      // Without it this would be a 403 for every USER instead — the isolation gauntlet's
       // FR-044 hole in the other direction.
       const res = await join(publicChannelId, credential);
       expect(res.status).toBe(403);
@@ -394,7 +394,7 @@ describe("the public channel surface", () => {
   // ── REMOVAL, BULK, BECAUSE THE REQUIREMENT ALWAYS WAS (chapter 3.15) ────────
   //
   // FR-006 says "up to 100 in one request" and FR-007 says the result is reported
-  // per user — chapter 3.13's add shape in both halves. The contract specified a
+  // per user — the channel-endpoints chapter's add shape in both halves. The contract specified a
   // single-user `DELETE` for ten analysis passes, having read "the shape chapter
   // 3.13 chose" as *named outcomes* and dropped *bulk*. Every pass compared
   // requirements to tasks, both said "removal", and identifier coverage read 100%.
@@ -522,7 +522,7 @@ describe("the public channel surface", () => {
   // ── MEMBER ROLES (chapter 3.15, FR-CHN-04, FR-011) ─────────────────────────
   //
   // The clause has asked for these since the SRS was written, and `members` was
-  // `(channel_id, user_id, joined_at)` the whole time. Chapter 3.12's traceability
+  // `(channel_id, user_id, joined_at)` the whole time. The isolation gauntlet's traceability
   // map recorded it as delivered and described it with a paraphrase belonging to
   // FR-CHN-06; that was corrected while this chapter was specified.
   describe("roles on members", () => {

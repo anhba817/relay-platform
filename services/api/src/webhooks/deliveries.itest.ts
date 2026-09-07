@@ -26,7 +26,7 @@ import { encryptSecret, mintSigningSecret } from "./secret";
 //
 // Every environment is minted in this file — the drain is global, so a
 // per-environment assertion is the only kind that survives another suite
-// running beside it. Chapter 3.3's finding 4 is the reason that sentence exists.
+// running beside it. The outbox chapter's finding 4 is the reason that sentence exists.
 
 const DISPATCHER = "dispatcher";
 
@@ -103,7 +103,7 @@ describe("expansion", () => {
     expect(await repo.listDeliveriesForEvent(e.eventId)).toHaveLength(
       first.created,
     );
-    // And the claim is chapter 3.4's ledger, unchanged.
+    // And the claim is the broker chapter's ledger, unchanged.
     expect(await timesHandled(db, DISPATCHER, e.eventId)).toBe(1);
   });
 
@@ -322,7 +322,7 @@ describe("the relay drains only what is due", () => {
    *
    * The drain is GLOBAL — one dispatcher serves every environment — so a test
    * that asserts on what its own call returned is really asserting that no other
-   * suite got there first. Chapter 3.3's finding 3 met this twice; this is the
+   * suite got there first. The outbox chapter's finding 3 met this twice; this is the
    * third time, and the fix is the same one: assert the property, not the
    * observer. Whoever claims the row, a due delivery ends up dispatched and a
    * not-yet-due one does not. */
@@ -875,7 +875,7 @@ describe("the failure run", () => {
    * with `expected 0 to be greater than 0` — nothing delivered, no error anywhere.
    * The suite that caused it passed.
    *
-   * Chapter 3.6's baseline drew the rule twice already: clean up what you created,
+   * The retry-and-disable chapter's baseline drew the rule twice already: clean up what you created,
    * and only what you created. */
   const minted: string[] = [];
   const mintEnvironment = async (name: string) => {
@@ -1230,7 +1230,7 @@ describe("the failure run", () => {
     // one, so they fill the batch and this endpoint is never reached. The suite
     // then fails on a shared database and passes on a fresh one.
     //
-    // Found at chapter 3.7's baseline, after 781 endpoints had accumulated an open
+    // Found at the deduplication chapter's baseline, after 781 endpoints had accumulated an open
     // run. Note which assertion caught it: `disabled >= 1` PASSED, because the
     // sweep had just disabled a hundred endpoints belonging to nobody. Only the
     // assertion about THIS endpoint could tell the difference.
@@ -1372,7 +1372,7 @@ describe("the failure run", () => {
 // Everything above calls `sweepDisabledEndpoints` directly, which leaves the
 // wrapper around it — the flag, the count log, the swallowed failure — measured by
 // nothing. Research R11 predicted exactly this: "the sweep runs in the relay loop
-// … easy to exercise in a way the instrument cannot see". Chapter 3.5 ignored the
+// … easy to exercise in a way the instrument cannot see". The webhook dispatcher chapter ignored the
 // equivalent warning and found four red thresholds with the chapter otherwise
 // finished.
 describe("the sweep, through the relay that runs it", () => {
@@ -1663,7 +1663,7 @@ describe("the failure run under concurrency", () => {
 // Also a finding of the sabotage battery: deleting the `await sweepOnce()` line
 // from the relay's `run()` loop broke nothing, because every test above calls
 // `sweepOnce` or `sweepDisabledEndpoints` directly. The sweep was tested and its
-// PLACE in the loop was not, which is the same shape as chapter 3.5's vacuous
+// PLACE in the loop was not, which is the same shape as the webhook dispatcher chapter's vacuous
 // "terminated, not retried" assertion — the mechanism was covered and the wiring
 // was not.
 describe("the relay's loop sweeps without being asked", () => {

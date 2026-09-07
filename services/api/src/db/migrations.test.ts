@@ -14,8 +14,8 @@ import { describe, expect, it } from "vitest";
 //
 // WHAT THE DRIFT LOOKED LIKE. `migrations/meta/` held drizzle-kit's snapshots, one per
 // generated migration, and they stopped keeping up: **15 SQL files against 8 snapshots,
-// seven behind**, measured when they were deleted. Chapter 3.23 recorded them as six
-// behind and chapter 3.24 as seven. A generator whose snapshot is seven migrations stale
+// seven behind**, measured when they were deleted. The revisions chapter recorded them as six
+// behind and the attachments chapter as seven. A generator whose snapshot is seven migrations stale
 // cannot produce a correct diff, so the next person to run it would have been handed a
 // migration that re-created tables that already exist.
 //

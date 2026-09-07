@@ -257,7 +257,7 @@ describe("the month's usage", () => {
 // ---------------------------------------------------------------------------
 //
 // A rate limit is about this second and forgets; a quota is about this month and
-// must not. Chapter 3.8's limiter keeps its counters in Redis, where a flush costs
+// must not. The rate-limit chapter's limiter keeps its counters in Redis, where a flush costs
 // one window of over-service. If this chapter had done the same, a flush would
 // cost the month — so the number lives where the messages live, and this is the
 // test that says so.
@@ -292,7 +292,7 @@ describe("the count survives the counter store", () => {
     const before = await usageFor(db, env.id, PERIOD);
     expect(before.messagesSent).toBe(3);
 
-    // The whole store, not this environment's keys. Chapter 3.8's counters and
+    // The whole store, not this environment's keys. The rate-limit chapter's counters and
     // everything else go with it.
     const redis = new Redis(
       process.env["RELAY_REDIS_URL"] ?? "redis://localhost:6379",
@@ -368,7 +368,7 @@ describe("running out", () => {
 
   it("names the dimension, the usage, the quota and the resume date", async () => {
     // T022a — read the WHOLE message rather than asserting on its parts.
-    // Chapter 3.8's header bug was found by printing a response and not by any
+    // The rate-limit chapter's header bug was found by printing a response and not by any
     // of the eighteen tests asserting on its fields.
     const { environmentId, repo, channelId, userId } = await seed();
     await setCaps(environmentId, { messages: { hard: 0 } });
@@ -482,7 +482,7 @@ describe("running out", () => {
 // ---------------------------------------------------------------------------
 //
 // Read out of Mailpit rather than asserted on a send call, which is the shape
-// chapter 3.9 established: only a received message can prove an email carries no
+// The mail-transport chapter established: only a received message can prove an email carries no
 // secret, and only a received message proves it was sent at all.
 //
 // Mailpit is ONE SHARED INBOX for the whole lane, so every assertion filters by a
@@ -666,7 +666,7 @@ describe("nobody is surprised", () => {
 
   it("cannot fail a send when the mail server is gone", async () => {
     // the send-must-not-fail rule. Writing a row is not sending one, and this is the requirement that
-    // says so out loud. Chapter 3.9 met the same hazard from the other side,
+    // says so out loud. The mail-transport chapter met the same hazard from the other side,
     // where a drain's failure became a lane's failure.
     const address = `down-${randomUUID().slice(0, 8)}@example.test`;
     const { environmentId, repo, channelId, userId } = await seed([address]);
@@ -699,7 +699,7 @@ describe("nobody is surprised", () => {
 // ---------------------------------------------------------------------------
 //
 // `start`, `stop` and the `run` loop are the part of every relay in this
-// codebase that no test enters — chapter 3.3's, 3.5's and 3.9's all report the
+// codebase that no test enters — the outbox chapter's, the webhook dispatcher chapter's and the mail-transport chapter's all report the
 // same hole, and `notification-relay.ts` sits at 58.06% statements because of
 // it. Every suite drives `drainOnce()` directly, which is the right way to
 // assert on rows and the wrong way to find out whether the loop that calls it in

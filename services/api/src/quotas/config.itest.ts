@@ -8,7 +8,7 @@ import { createEnvironment } from "../db/repository";
 // `config.test.ts` beside this file tests the PARSER. This tests the other gate,
 // and the two are not the same: the constraint is what stops a bad cap being
 // stored at all, and the parser is what stops a stored-but-unreadable one being
-// applied. Chapter 3.10 called the parser "the second gate rather than the only
+// applied. The quota chapter called the parser "the second gate rather than the only
 // one"; this file is the first.
 //
 // WHY IT EXISTS AT ALL. Migration 0010 DROPS and REBUILDS
@@ -73,9 +73,9 @@ describe("environments_quota_config_shape, after 0010 rebuilt it", () => {
     );
   });
 
-  it("still refuses everything chapter 3.10's clauses refused", async () => {
+  it("still refuses everything the quota chapter's clauses refused", async () => {
     // The rebuild's real risk is not the clause it adds, it is a clause it
-    // drops. Both of 3.10's dimensions are re-checked here for that reason.
+    // drops. Both of the quota chapter's dimensions are re-checked here for that reason.
     await expect(set({ messages: { hard: -1 } })).rejects.toThrow(
       /environments_quota_config_shape/,
     );

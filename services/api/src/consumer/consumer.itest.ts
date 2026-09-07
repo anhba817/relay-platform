@@ -118,7 +118,7 @@ function runtimeFor(
  * The comment on `spawnedDurables` below had already written down the rule that
  * would have prevented this: a prefix sweep deletes things it did not create.
  * That reasoning was applied to the walk's durables and not to this suite's own.
- * Found by chapter 3.6's baseline.
+ * Found by the retry-and-disable chapter's baseline.
  *
  * Two names, because they answer two different questions. `SUITE` is what the
  * teardown sweeps — this suite's whole namespace, so a run that crashed before
@@ -355,7 +355,7 @@ describe("the consumer", () => {
     // ONE environment, and both runtimes filtered to it (feature 030, T032).
     //
     // This used to call `ENV()` three times and construct both runtimes with no
-    // filter, which is instance 3 exactly — the fault chapter 3.7 fixed forty lines
+    // filter, which is instance 3 exactly — the fault the deduplication chapter fixed forty lines
     // down in this same file, in the test above this one. Three environments means
     // no single subject covers them, and an unfiltered durable starts at the head
     // of a stream holding every event earlier chapters left behind; the 400-pass
@@ -486,7 +486,7 @@ describe("the consumer", () => {
     // had to drain all of them inside a fixed budget of 800 polls before the
     // three under test were even reachable.
     //
-    // Found on run 11 of chapter 3.7's twenty post-fix lane runs: `expected
+    // Found on run 11 of the deduplication chapter's twenty post-fix lane runs: `expected
     // [ …(2756) ] to include '<uuid>'`. 2,756 events drained and the backlog
     // still not cleared. It is the same shape as the sweep and the drain in
     // `deliveries.itest.ts` — a test riding a shared, growing resource with a

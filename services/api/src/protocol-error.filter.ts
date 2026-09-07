@@ -24,7 +24,7 @@ export class ProtocolErrorFilter implements ExceptionFilter {
     // calls itself "internal_error" is a lie the client cannot act on).
     // The registry stays here until an API chapter owns a REST one.
     //
-    // Chapter 3.2 widened this twice. A thrower may now NAME its code, because
+    // The credentials chapter widened this twice. A thrower may now NAME its code, because
     // `wrong_credential_type` is a distinction the status alone cannot carry: a
     // 403 that calls itself "forbidden" tells an integrator they lack a
     // permission, when what they actually did was present the wrong kind of
@@ -76,7 +76,7 @@ export class ProtocolErrorFilter implements ExceptionFilter {
         : null;
     res.statusCode = status;
     res.setHeader("content-type", "application/json");
-    // FOUR FIELDS AS OF CHAPTER 3.8, and constitution V has asked for four since
+    // FOUR FIELDS AS OF the rate-limit chapter, and constitution V has asked for four since
     // chapter 1.3. `request_id` was promised "in Part 2, when a gateway exists to
     // mint one"; the gateway arrived and the field did not. It is read back off
     // the response rather than threaded through, because `RequestContextMiddleware`

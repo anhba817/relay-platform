@@ -76,7 +76,7 @@ export class MessagePublisherLifecycle implements OnModuleDestroy {
         // here. Middleware runs earlier still, which is why chapter 3.2
         // authenticates there (research R5, measured in T004).
         //
-        // Chapter 3.2 changed WHERE the environment comes from and nothing
+        // The credentials chapter changed WHERE the environment comes from and nothing
         // else about this line. It used to be an environment header — a
         // header any caller could type. It is now the environment resolved
         // from a verified credential, so a request cannot name a tenant it

@@ -95,7 +95,7 @@ describe("publishAttempt shapes the event contracts/attempts.md describes", () =
   });
 
   it("deduplicates on the delivery AND the attempt, not the delivery alone", async () => {
-    // Chapter 3.5's bug, in the one place it could recur. The delivery id is
+    // The webhook dispatcher chapter's bug, in the one place it could recur. The delivery id is
     // stable across all seven attempts, so a `msgID` of the delivery alone would
     // let the broker collapse attempts 2 through 7 into the first — and every
     // dashboard built on this stream would show one attempt per failing delivery

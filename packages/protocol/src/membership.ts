@@ -5,10 +5,10 @@ import { z } from "zod";
  *
  * WHY THIS IS NOT IN `fanout.ts` AND NOT IN `presence.ts`. Each fabric owns its
  * subject grammar in its own file — `internal.ts` established that for the event
- * spine and chapter 3.19 followed it for presence. A new file is a whole-file fence
+ * spine and the presence chapter followed it for presence. A new file is a whole-file fence
  * and leaves two chapters' hunks over `fanout.ts` alone.
  *
- * NOT `subjectFor`, WHICH `internal.ts` ALREADY EXPORTS. Chapter 3.18 paid for that
+ * NOT `subjectFor`, WHICH `internal.ts` ALREADY EXPORTS. The fan-out chapter paid for that
  * collision once:
  *
  *     error TS2308: Module "./internal.js" has already exported a member
@@ -49,7 +49,7 @@ export function subjectForUserMembership(
  *
  * `strictObject`, so an unknown field is a rejection rather than a silent ignore: a
  * field added on one side of a rolling deploy fails loudly on the other instead of
- * being dropped. Chapter 3.19 chose the same strictness for the same reason.
+ * being dropped. The presence chapter chose the same strictness for the same reason.
  *
  * THE WIRE FRAME IS `frames.ts`'s AND IS NOT EDITED. What reaches a client is what
  * chapter 1.3 published and `frames.test.ts` asserts:

@@ -15,7 +15,7 @@ const ENV = "3f2a0000-0000-0000-0000-000000000001";
 describe("the subject grammars, together", () => {
   // FOUR SHAPES ON ONE REDIS AFTER THIS CHAPTER. Cross-kind mis-delivery is a
   // property of the topology rather than something a filter defends (FR-033), and
-  // this is what proves the topology holds. Chapter 3.19 asserted the same thing
+  // this is what proves the topology holds. The presence chapter asserted the same thing
   // over two; a third and a fourth make it worth asserting pairwise rather than by
   // eye.
   it("gives four pairwise distinct subjects for the same id", () => {

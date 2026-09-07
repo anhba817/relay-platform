@@ -16,7 +16,7 @@ import { Redis } from "ioredis";
 // subscribed because it holds members of that channel. **Both roles coexist on
 // every instance.**
 //
-// TWO CLIENTS, AND THE TASK LIST SAID ONE. It carried chapter 3.20's finding
+// TWO CLIENTS, AND THE TASK LIST SAID ONE. It carried the membership-revocation chapter's finding
 // forward — that module was "written with two by analogy and the second was
 // created, listened to, closed and never used" — to a module with a different
 // shape. That chapter's gateway half only ever RECEIVED; its api did the
@@ -58,14 +58,14 @@ export function createTyping({
   url = process.env["RELAY_REDIS_URL"] ?? DEFAULT_REDIS_URL,
   logger,
 }: TypingOptions): Typing {
-  // The subscriber keeps ioredis's default retry, as chapter 3.20's does and for
+  // The subscriber keeps ioredis's default retry, as the membership-revocation chapter's does and for
   // the same reason: it MUST reconnect when the store comes back, which is what
   // "the next signal arrives without a restart" rests on.
   const subscriber = new Redis(url);
   const publisher = new Redis(url);
 
   // THE STATED REASON IS NFR-OBS-01, NOT PROCESS DEATH. `limits.ts` says a missing
-  // listener kills the gateway; chapter 3.18 measured that against ioredis 6.0.0
+  // listener kills the gateway; the fan-out chapter measured that against ioredis 6.0.0
   // and the process stays alive, printing `[ioredis] Unhandled error event: …`
   // itself. The accurate reason is that those lines are unstructured and unbounded.
   //

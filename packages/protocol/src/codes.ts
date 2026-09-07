@@ -27,7 +27,7 @@ export const CLOSE_CODES = {
   // "a client that cannot tell them apart retries the wrong one for ever":
   //
   //   4001  would send a client to re-authenticate. The token is valid; minting a
-  //         new one succeeds and connecting fails again, which is chapter 3.15's
+  //         new one succeeds and connecting fails again, which is the channel-control chapter's
   //         infinite loop against a wall.
   //   4002  would blame a client that did nothing wrong.
   //   4003  would tell a person they are barred while four of their connections
@@ -67,7 +67,7 @@ export const ERROR_CODES = {
   // REGISTERED HERE RATHER THAN WRITTEN INLINE. The frame schema types `code` as
   // `z.string().min(1)`, so nothing forces this — but the registry is the
   // documented vocabulary and `codes.test.ts` enforces its uniqueness, which is
-  // why chapter 3.2 put `wrong_credential_type` in it instead of inventing it at
+  // why the credentials chapter put `wrong_credential_type` in it instead of inventing it at
   // the call site.
   quota_exceeded:
     "a monthly quota is exhausted; the message names the dimension, the figures and the date it resumes",
@@ -77,7 +77,7 @@ export const ERROR_CODES = {
   // could say which class may call it and not which service, so the gateway's
   // credential reached `POST /internal/dispatch/replay`.
   //
-  // NOT `forbidden`. Chapter 3.2 made this argument when it added
+  // NOT `forbidden`. The credentials chapter made this argument when it added
   // `wrong_credential_type` rather than answering a wrong-credential mistake with
   // a generic 403: the response has to say what actually happened, and "you lack a
   // permission" is a different fact from "that credential belongs to another
@@ -252,7 +252,7 @@ export const ERROR_CODES = {
    * understood them perfectly and declined.
    *
    * SIX CODES, NOT FIVE. The plan said one per bare throw; validating the event-type set
-   * (FR-016) adds a refusal that did not exist to be counted. Chapter 3.24's plan
+   * (FR-016) adds a refusal that did not exist to be counted. The attachments chapter's plan
    * expected one new code and shipped two, and `codes.test.ts`'s exact-count assertion is
    * what caught it — so the count moves deliberately here rather than being discovered
    * there.
@@ -282,7 +282,7 @@ export const ERROR_CODES = {
     "no such resource for this tenant — and DELIBERATELY the same answer as for a resource in another tenant (FR-TEN-05)",
   internal_error:
     "the platform failed in a way it did not anticipate; the request_id is what a support ticket needs",
-  // Chapter 3.11's. A connection belongs to one environment for its lifetime, and
+  // The connection-metering chapter's. A connection belongs to one environment for its lifetime, and
   // a second report naming a different one is a bug in the reporter rather than a
   // state to reconcile — so it is refused rather than absorbed.
   connection_environment_conflict:
@@ -329,7 +329,7 @@ export function isErrorCode(value: string): value is ErrorCode {
  * built it with a template literal against `https://relay.example`, a host that
  * does not resolve, and two codes — `rate_limited` and `quota_exceeded`
  * (3.10, 3.11) — shipped links to pages that did not exist even in principle.
- * Chapter 3.11 declined to add a third instance and named the debt; a chapter whose
+ * The connection-metering chapter declined to add a third instance and named the debt; a chapter whose
  * exit criterion is "integrates on public documentation alone" cannot ship a
  * fourth.
  *

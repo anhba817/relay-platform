@@ -63,7 +63,7 @@ describe("the message names the right noun and the right operation", () => {
     expect(at("active_users")).toContain("sends resume on 2026-09-01");
   });
 
-  it("keeps the other two dimensions exactly as chapter 3.10 shipped them", () => {
+  it("keeps the other two dimensions exactly as the quota chapter shipped them", () => {
     expect(at("messages")).toBe(
       "monthly message quota exhausted: 50000 of 50000 for 2026-08-01; sends resume on 2026-09-01",
     );

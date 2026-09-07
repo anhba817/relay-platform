@@ -88,13 +88,13 @@ describe("webhook endpoints", () => {
     });
 
     expect(refused.status).toBe(422);
-    // Chapter 3.2's lesson about error messages that name the mistake, applied
+    // The credentials chapter's lesson about error messages that name the mistake, applied
     // to a limit: "too many endpoints" leaves the reader counting.
     const body = (await refused.json()) as { code: string; message: string };
     expect(body.message).toContain(String(MAX_ENDPOINTS_PER_ENVIRONMENT));
     // AND THE CODE (feature 043, FR-014). This test asserted the status and the text and
     // passed while the body called itself `internal_error` — which is exactly how the
-    // five bare 422s survived from chapter 3.5. The sixth code is asserted here rather
+    // five bare 422s survived from the webhook dispatcher chapter. The sixth code is asserted here rather
     // than in the group below because reaching this refusal costs a full environment's
     // worth of endpoints.
     expect(body.code).toBe("webhook_endpoint_limit_reached");
@@ -151,7 +151,7 @@ describe("webhook endpoints", () => {
     // THE HALF THE REVIEW GOT WRONG, and the reason this feature amended its own
     // requirement. `channel.created` is declared by FR-WHK-02 and unbuilt, and **838
     // stored subscriptions name it**. Validating against the emitted five — which the
-    // review and chapter 3.23's gaps ledger both recommend — would refuse every one of
+    // review and the revisions chapter's gaps ledger both recommend — would refuse every one of
     // them, and those customers made no mistake.
     const res = await create(key.credential, {
       url: "https://example.test/declared-unemitted",

@@ -33,7 +33,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 //
 // WHAT IT COST, MEASURED. A twenty-run battery was stopped at eight: two runs died in
 // `membership.itest.ts` with all 32 of its tests failing against Postgres, reporting
-// `other side closed` and naming no port. And chapter 3.24's record carries an
+// `other side closed` and naming no port. And the attachments chapter's record carries an
 // eleventh red it calls unexplainable — THIS file, saying "api never became healthy",
 // with the child's EADDRINUSE written to a pipe nobody read. Same mechanism, one band
 // along.
@@ -49,14 +49,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 //   give it a band in this map**: the next reader's instinct will be to allocate it
 //   one, and a fixed band is what it just stopped having.
 //
-// THE MAP WAS NOT 78% COMPLETE, IT WAS WRONG. Chapter 3.21's `gaps.md` item 4 put
+// THE MAP WAS NOT 78% COMPLETE, IT WAS WRONG. The typing chapter's `gaps.md` item 4 put
 // the two missing entries at two-of-nine and called the map incomplete. Adding them
 // shows something a completeness figure cannot: `presence.itest.ts` takes
 // `4700 + %200` and `meter.itest.ts`'s api takes `4710 + %60`, so **one
 // unregistered range strictly contains a registered one** and the gateway's
 // integration config sets no `fileParallelism` — both files run at once.
 //
-// Chapter 3.20 eliminated "a port collision" as a cause of that battery's failures
+// The membership-revocation chapter eliminated "a port collision" as a cause of that battery's failures
 // because *"the failing ports are in each file's own range"*. That test cannot see
 // this: the colliding port IS in each file's own range. P = 1/200 per run against an
 // observed 2.5-5% for those two files, so it is a contributor and not the cause —

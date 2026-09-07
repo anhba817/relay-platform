@@ -121,7 +121,7 @@ describe("idempotency enforcement (FR-MSG-04, DR-03)", () => {
   });
 
   it("recovers a TOMBSTONE with an empty list and nothing published (FR-011, FR-012)", async () => {
-    // THE CASE CHAPTER 3.18 GUARDED FOR TEXT, NOW WITH AN ATTACHMENT LIST. A message is
+    // THE CASE the fan-out chapter GUARDED FOR TEXT, NOW WITH AN ATTACHMENT LIST. A message is
     // sent with a key, deleted, and the same key is retried: the idempotency index still
     // recognises it, so the retry returns the ORIGINAL row — which is now a tombstone.
     //

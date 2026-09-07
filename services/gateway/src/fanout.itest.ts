@@ -268,7 +268,7 @@ describe("fan-out across instances", () => {
     await g2.fanout.unsubscribe(CHANNEL);
   });
 
-  // THE SUBJECT GRAMMAR'S TEST MOVED IN CHAPTER 3.18, to
+  // THE SUBJECT GRAMMAR'S TEST MOVED IN the fan-out chapter, to
   // `packages/protocol/src/fanout.test.ts`, along with `subjectFor` itself. It
   // was a pure string assertion sitting in a suite that needs a running Redis;
   // it needed neither. What stays here is everything that genuinely needs the

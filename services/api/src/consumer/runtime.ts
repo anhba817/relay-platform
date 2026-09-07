@@ -38,7 +38,7 @@ const ACK_WAIT_NS = 30 * 1_000_000_000;
 /** Bounded, because forever is not a retry policy. After this many attempts the
  * broker stops delivering and the message leaves the consumer's view entirely —
  * measured, not assumed (research R4). Nothing catches it. A dead-letter store
- * is FR-WHK-04's, in chapter 3.5. */
+ * is FR-WHK-04's, in the webhook dispatcher chapter. */
 const MAX_DELIVER = 5;
 
 /** Back-pressure: the broker stops handing out work when this much is
@@ -114,7 +114,7 @@ export function createConsumerRuntime({
   url?: string;
   batch?: number;
   /** Which subjects this consumer wants. The default is everything, which is
-   * what the recorder needs; a narrower filter is how chapter 3.5's dispatcher
+   * what the recorder needs; a narrower filter is how the webhook dispatcher chapter's dispatcher
    * will subscribe to the event types a customer asked for, and how a test
    * scopes itself to one environment's subject rather than replaying the whole
    * stream (contracts §consumer). */

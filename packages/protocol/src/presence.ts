@@ -8,11 +8,11 @@ import { z } from "zod";
  * not, for the reason `internal.ts` already demonstrates: the event spine keeps
  * its own `subjectFor` in its own file, so **each fabric owning its subject
  * grammar is this package's established shape** rather than a compromise. The
- * practical payoff is that `fanout.ts` gains no hunk, and chapter 3.18's fences
+ * practical payoff is that `fanout.ts` gains no hunk, and the fan-out chapter's fences
  * over it stay where they are.
  *
  * NOT `subjectFor` and not `subjectForChannel`. `internal.ts` exports the first
- * and `fanout.ts` the second, and chapter 3.18 paid for that collision once:
+ * and `fanout.ts` the second, and the fan-out chapter paid for that collision once:
  *
  *     error TS2308: Module "./internal.js" has already exported a member
  *     named 'subjectFor'.

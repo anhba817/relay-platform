@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
  * SEEDING GOES THROUGH THE API'S BUILD OUTPUT, which is the test-only seam chapter
  * 2.8 opened and 3.2 widened, for the reason it gave: there is no admin API for
  * environments or keys, and inventing one for a test would be inventing product.
- * Chapter 3.12 narrows that seam for channels and members — those get public
+ * The isolation gauntlet narrows that seam for channels and members — those get public
  * endpoints in Phase 6 — and leaves environments and keys where they were, so this
  * file states the same retirement its ancestors did.
  *
@@ -276,7 +276,7 @@ export async function seedSocketTenants(apiUrl: string): Promise<SocketTenants> 
   };
 
   // Sequential, not concurrent: both calls mint a token through the same api
-  // child, and chapter 3.8's per-IP failed-auth limiter is the one bucket that
+  // child, and the rate-limit chapter's per-IP failed-auth limiter is the one bucket that
   // fails CLOSED. Two parallel signups are well under it, and a suite that
   // learns that the hard way learns it as an unrelated 429.
   const attacker = await seed("a");

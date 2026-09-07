@@ -46,7 +46,7 @@ describe("shouldDisable requires an hour AND five failures", () => {
   });
 
   it("does NOT disable five failures inside the hour", () => {
-    // The window, doing its job. Chapter 3.5's first five attempts all land
+    // The window, doing its job. The webhook dispatcher chapter's first five attempts all land
     // within 5m36s, so without the hour a single blip would disable an endpoint
     // six seconds into an outage that might already be over.
     expect(

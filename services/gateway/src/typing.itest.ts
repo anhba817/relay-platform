@@ -29,11 +29,11 @@ import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
 import { createTyping, type Typing } from "./typing.js";
 
-// Chapter 3.21's fabric, against a REAL Redis.
+// The typing chapter's fabric, against a REAL Redis.
 //
 // NO API IS SPAWNED, AND THAT IS THE POINT OF THE FILE'S SHAPE. Seven of the
 // gateway's nine integration files spawn their own api, and five of the seven
-// failures across chapter 3.20's forty battery runs were one of those fixtures
+// failures across the membership-revocation chapter's forty battery runs were one of those fixtures
 // failing to come up. `resume.itest.ts` spawns none — it stubs the `ApiClient`
 // and boots gateways in process — and typing needs no api either, because it
 // writes nothing and reads nothing. **This is a tenth file and the spawn count
@@ -42,7 +42,7 @@ import { createTyping, type Typing } from "./typing.js";
 // AND NO PORT RANGE. `server.listen(0)` lets the OS assign, so two in-process
 // instances get two distinct ports for free and this file appears nowhere in the
 // lane's port map. The seven files that hold ranges are the seven that spawn an
-// api. Chapter 3.20 reached for a fixed range instead and collided twice — once
+// api. The membership-revocation chapter reached for a fixed range instead and collided twice — once
 // taking `isolation.itest.ts`'s exactly, then overlapping it again.
 //
 //   docker compose up -d redis
@@ -76,8 +76,8 @@ async function boot(options: {
   membership?: Membership;
   limits?: GatewayLimits;
   renewalIntervalMs?: number;
-  /** Chapter 3.21 phase 7. **The `ApiClient` is the seam that widens the resume
-   * window**, and chapter 3.20 recorded why nothing else does: slowing the FABRIC
+  /** The typing chapter phase 7. **The `ApiClient` is the seam that widens the resume
+   * window**, and the membership-revocation chapter recorded why nothing else does: slowing the FABRIC
    * calls `degrade()`, which empties the buffer itself. A connection is
    * `buffering` only from the upgrade until `api.backfill` returns — about twenty
    * milliseconds on this lane — so a test about mid-resume delivery has to make
@@ -170,7 +170,7 @@ async function boot(options: {
  * to be made on.
  *
  * NOT THIS CHAPTER'S OWN MODULE. Counting publishes through the code that
- * publishes is the shape chapter 3.18 warned about — a publisher that does
+ * publishes is the shape the fan-out chapter warned about — a publisher that does
  * nothing satisfies it. `presence.itest.ts` and `membership.itest.ts` both
  * reached for a raw client for the same reason, and both took the
  * `DRIVER_EXEMPT_TESTS` entry this file also takes. */
@@ -301,7 +301,7 @@ describe("a typing signal on its way out", () => {
    * about the filter rather than about the fabric being asleep.
    *
    * And no error frame: an error would tell a client whether a channel exists,
-   * which is the probe chapter 3.15 closed on the REST surface. */
+   * which is the probe the channel-control chapter closed on the REST surface. */
   it("publishes nothing for a channel the connection is not a member of, and says nothing", async () => {
     const mine = randomUUID();
     const theirs = randomUUID();
@@ -361,7 +361,7 @@ describe("a typing signal on its way out", () => {
   });
   /** Every collector in this file filters by CHANNEL and by TYPE (T049).
    *
-   * Chapter 3.20 counted `presence.changed` frames by type alone and read two
+   * The membership-revocation chapter counted `presence.changed` frames by type alone and read two
    * where a watcher correctly saw their own arrival — the fourth occurrence of
    * that mistake across two chapters. A socket here can carry a
    * `connection.ack`, a `message.created` and a typing frame for a channel the
@@ -465,7 +465,7 @@ describe("a typing signal on its way out", () => {
 
   /** T045. THE SIGNALLER RECEIVES NOTHING, in the same run in which someone else
    * does — which is what makes it an assertion about the filter rather than
-   * about a fabric that is asleep. Chapter 3.19's presence collector was
+   * about a fabric that is asleep. The presence chapter's presence collector was
    * unfiltered in three consecutive phases and every time the behaviour was
    * right and the assertion was wrong. */
   it("sends the signaller nothing while another member receives", async () => {
@@ -671,7 +671,7 @@ describe("a typing signal on its way out", () => {
 
     const socket = connect(instance);
     await acked(socket);
-    // The handshake spends `connect`, which is chapter 3.11's and not this
+    // The handshake spends `connect`, which is the connection-metering chapter's and not this
     // chapter's business — recorded so the assertion below is about `send`.
     expect(spends).toEqual(["connect"]);
 
@@ -686,7 +686,7 @@ describe("a typing signal on its way out", () => {
   /** T048c. THE MID-CONNECTION JOIN (FR-004a).
    *
    * **The obvious test — a member who was in the channel at connect — passes
-   * against an implementation that never touches chapter 3.20's `added`
+   * against an implementation that never touches the membership-revocation chapter's `added`
    * branch.** So this one connects first, joins second, and signals third.
    *
    * Without `typing?.subscribe` in that branch, a user added mid-connection
@@ -709,7 +709,7 @@ describe("a typing signal on its way out", () => {
     const frames = collect(watcher);
     await acked(watcher);
 
-    // The api's half of chapter 3.20's fabric, published directly: what is under
+    // The api's half of the membership-revocation chapter's fabric, published directly: what is under
     // test is whether the gateway's `added` branch subscribes the typing subject,
     // not whether the api can compose the event.
     //
@@ -746,7 +746,7 @@ describe("a typing signal on its way out", () => {
    *
    * **Asserted on a raw `ioredis` subscriber, not on frame counts at a socket and
    * not through this chapter's own module.** Counting publishes through the code
-   * that publishes is the shape chapter 3.18 warned about — a publisher that does
+   * that publishes is the shape the fan-out chapter warned about — a publisher that does
    * nothing satisfies it — and counting frames at a socket cannot distinguish one
    * publish from two when the second is deduplicated downstream. */
   it("publishes once for a burst inside the interval", async () => {
@@ -774,7 +774,7 @@ describe("a typing signal on its way out", () => {
    *
    * The same burst against an instance built with `renewalIntervalMs: 0`
    * publishes eight times where the test above publishes once. **Edit-and-restore
-   * is the proof form that has now failed twice** — chapter 3.20 ran it on two
+   * is the proof form that has now failed twice** — the membership-revocation chapter ran it on two
    * orderings and got no failure either time, because both were unobservable — and
    * a proof written as a case stays in the suite instead of being something
    * somebody did once and wrote down. */
@@ -804,7 +804,7 @@ describe("a typing signal on its way out", () => {
    *
    * **BUILT WITH 40 ms RATHER THAN WAITING OUT TWO REAL SECONDS.** The gateway
    * package paces the lane at ~45 s and the whole budget has about four seconds of
-   * headroom; chapter 3.20 tests a sixty-second backstop at 40 ms for the same
+   * headroom; the membership-revocation chapter tests a sixty-second backstop at 40 ms for the same
    * reason. And the wait below is 120 ms against a 40 ms interval — **never
    * exactly the interval**, which would put two deadlines on one instant reached
    * by two clocks, the shape that stranded a user online for ever in 3.19. */
@@ -930,7 +930,7 @@ describe("a typing signal on its way out", () => {
   });
   /** T063. A TYPING FRAME ARRIVING MID-RESUME IS SENT IMMEDIATELY (FR-018).
    *
-   * **CHAPTER 3.20's EQUIVALENT PASSED TWICE WITH ITS SUBJECT DELETED**, and its
+   * **The membership-revocation chapter's EQUIVALENT PASSED TWICE WITH ITS SUBJECT DELETED**, and its
    * record in `specs/038-chapter-3-20/baseline.txt` is what this test is built
    * against. Both of its traps are handled here:
    *
@@ -1057,7 +1057,7 @@ describe("a typing signal on its way out", () => {
    * **THE TITLE SAID "logs it once" UNTIL T098 READ IT AGAINST THE BODY**, and
    * the body proves the opposite: five `op: "connection"` lines and zero
    * `op: "publish"`. FR-015's third clause is what this test refutes, so a title
-   * quoting that clause was a good test under a false name — chapter 3.19's
+   * quoting that clause was a good test under a false name — the presence chapter's
    * exact failure, in this chapter's own file.
    *
    * Then the proxy re-listens on the SAME port and the next signal publishes with
@@ -1112,7 +1112,7 @@ describe("a typing signal on its way out", () => {
     // better for the product and worse for the requirement, because FR-015 says a
     // failure "MUST be logged once" and what is logged once per outage is
     // nothing, while what is logged per retry is unbounded. **A publisher that
-    // queues satisfies "the socket stayed open" the way chapter 3.18's fan-out
+    // queues satisfies "the socket stayed open" the way the fan-out chapter's fan-out
     // satisfied "the send returned 201 while Redis was down": trivially.**
     //
     // Not fixed here. All four fabric modules share this listener shape, and
@@ -1138,7 +1138,7 @@ describe("a typing signal on its way out", () => {
 
   /** T069 and T070. THE LOG VOCABULARY, AS THE SET AN INSTANCE ACTUALLY EMITTED.
    *
-   * **Not as what a grep finds.** Chapter 3.20's FR-032 declared three names while
+   * **Not as what a grep finds.** The membership-revocation chapter's FR-032 declared three names while
    * the code emitted six — `rejected`, `granted`, `revoked` and `revoked_all`
    * beside the two it shared — and the clause had to be amended with its argument
    * afterwards. A set assertion is what would have caught that on the day.

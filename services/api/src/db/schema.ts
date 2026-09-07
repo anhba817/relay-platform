@@ -96,7 +96,7 @@ export const memberships = pgTable(
     // role in a channel (FR-CHN-04). Different tables, different subjects, and ONE WORD
     // different — `admin` here, `moderator` there. A migration that reused this constraint
     // for channel members would accept `admin` on a channel member, refuse `moderator`,
-    // and look correct in review. Chapter 3.15's research found that before writing it;
+    // and look correct in review. The channel-control chapter's research found that before writing it;
     // the comment sits on both sides because a warning on one side is a warning the next
     // person does not find.
     check(
@@ -139,7 +139,7 @@ export const environments = pgTable(
     // that may be lost and a quota that is money is the thing 3.8 is about.
     // (Deliberately not a chapter NUMBER: 3.7 renumbered quotas once already,
     // and a comment in a file fenced byte-exact into a published page goes stale
-    // silently. Chapter 3.7's rule — cite what a thing is, never where it will
+    // silently. The deduplication chapter's rule — cite what a thing is, never where it will
     // be. A grep for forward references is the gate, so this comment must not
     // trip it either.) Putting
     // one in a field named for the other would collapse in the schema what the
@@ -263,12 +263,12 @@ export const users = pgTable(
     // WHAT KIND OF THING THIS USER IS (FR-USR-07).
     //
     // A stored property on the row a customer already knows about, not a second table.
-    // Every reader built since chapter 3.15 reads `users`; a `bots` table would have
+    // Every reader built since the channel-control chapter reads `users`; a `bots` table would have
     // needed each of them taught a second place to look, and a message's `user_id`
     // would have had to reference one of two tables.
     //
     // `NOT NULL DEFAULT 'person'` is metadata-only on Postgres 11+, so the existing
-    // rows are not rewritten — chapter 3.16 measured that for `last_activity_at`.
+    // rows are not rewritten — the user-surface chapter measured that for `last_activity_at`.
     // The default belongs HERE, at creation, and NOT in the request schema: a schema
     // default would make "absent" indistinguishable from "person" before anything can
     // compare it to the stored row, and telling those two apart is what makes a
@@ -287,7 +287,7 @@ export const users = pgTable(
       t.environmentId,
       t.externalId,
     ), // DR-02
-    // THE CONSTRAINED TEXT COLUMNS IN THIS SCHEMA NAME EACH OTHER (chapter 3.15's
+    // THE CONSTRAINED TEXT COLUMNS IN THIS SCHEMA NAME EACH OTHER (the channel-control chapter's
     // practice, applied here): `channels_type_check` on `channels.type`,
     // `members_role_check` on `members.role`, `memberships_role_check` on an
     // organisation membership's role, and this pair. One word apart is how `admin`
@@ -473,7 +473,7 @@ export const members = pgTable(
       .defaultNow(),
     // A USER'S ROLE IN A CHANNEL (FR-CHN-04), default `member`.
     //
-    // The default is what lets chapter 3.13's `addMember` keep working unchanged and
+    // The default is what lets the channel-endpoints chapter's `addMember` keep working unchanged and
     // gives every existing row a value the CHECK accepts.
     role: text("role").notNull().default("member"),
   },
@@ -519,7 +519,7 @@ export const members = pgTable(
 // tenant's own operations mutate, so it takes the stronger classification.
 //
 // NO `id` COLUMN, and the guard's refusal message is why that matters: it interpolates a
-// key, and chapter 3.13 installed
+// key, and the channel-endpoints chapter installed
 // `coalesce(to_jsonb(OLD) ->> 'id', to_jsonb(OLD)::text)` for exactly this case.
 export const readPositions = pgTable(
   "read_positions",
@@ -540,7 +540,7 @@ export const readPositions = pgTable(
     // every later count wrong.
     sequence: bigint("sequence", { mode: "number" }).notNull(),
     // WRITTEN BY EVERY POSITION WRITE AND READ BY NOTHING, and that is a decision rather
-    // than an oversight (chapter 3.16's `gaps.md` §5).
+    // than an oversight (the user-surface chapter's `gaps.md` §5).
     //
     // Chapters 3.15 and 3.16 exist because five columns had no reader, so leaving a sixth
     // behind needs a sentence or it becomes the next feature's finding. The two options
@@ -568,7 +568,7 @@ export const readPositions = pgTable(
 // (FR-TEN-06); this one does not, because an outbox row is not tenant data — it
 // is work the platform owes itself. The environment travels inside `subject`
 // and `payload`, so a consumer can filter, but nothing reads this table on a
-// tenant's behalf. Same family of exception as 3.2's unscoped key lookup, and
+// tenant's behalf. Same family of exception as the credentials chapter's unscoped key lookup, and
 // recorded for the same reason.
 //
 // No status column. `published_at IS NULL` is the queue: a row is pending or it
@@ -620,7 +620,7 @@ export const outbox = pgTable(
 // arrived first silence the other.
 //
 // No environment_id, for the reason the outbox has none: this is the platform's
-// own bookkeeping rather than tenant data (constitution I, 3.3's data model).
+// own bookkeeping rather than tenant data (constitution I, the outbox chapter's data model).
 // No event body either — recording that an event was handled needs none of a
 // tenant's message text (NFR-SEC-06).
 export const consumedEvents = pgTable(
@@ -638,7 +638,7 @@ export const consumedEvents = pgTable(
 // ---------------------------------------------------------------------------
 // Webhooks. Three tables, and all three carry `environment_id`.
 //
-// DECISION: 3.3's `outbox` and 3.4's `consumed_events` each
+// DECISION: the outbox chapter's `outbox` and the broker chapter's `consumed_events` each
 // omitted the tenant column and each recorded it as a deliberate exception. Two
 // exceptions in consecutive chapters is a pattern, and a pattern without a
 // stated rule is how a third chapter gets it wrong by resemblance. THE RULE: a
@@ -648,7 +648,7 @@ export const consumedEvents = pgTable(
 // customer. Both fail the test on both halves, so both are scoped and both join
 // the cross-tenant gauntlet as targets.
 //
-// NAMED, NOT NUMBERED. This line used to say "chapter 3.7's cross-tenant
+// NAMED, NOT NUMBERED. This line used to say "the deduplication chapter's cross-tenant
 // gauntlet", and the gauntlet has moved three times since — carried by the
 // comment none of them. A chapter number in a source comment is a reference that
 // ages every time the plan changes, and this file is fenced byte-exact into a
@@ -686,7 +686,7 @@ export const webhookEndpoints = pgTable(
     // accepting either is correct throughout (contracts/webhooks.md §Rotation).
     secretPreviousCiphertext: text("secret_previous_ciphertext"),
     secretRotatedAt: timestamp("secret_rotated_at", { withTimezone: true }),
-    // An owner can pause an endpoint. Chapter 3.6 is the follow-on chapter 3.5
+    // An owner can pause an endpoint. The retry-and-disable chapter is the follow-on chapter 3.5
     // named here, and the prediction held: automatic disablement added a rule and
     // four columns, and did not have to change this one.
     enabled: boolean("enabled").notNull().default(true),
@@ -712,7 +712,7 @@ export const webhookEndpoints = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-    // DELETION IS SOFT, and this column is why. Chapter 3.2 made the same
+    // DELETION IS SOFT, and this column is why. The credentials chapter made the same
     // choice for `api_keys.revokedAt` and gave the reason: "a deleted row loses
     // the record of what once had access". Here the stakes are higher — a hard
     // delete would have to cascade, and cascading would erase the customer's
@@ -726,7 +726,7 @@ export const webhookEndpoints = pgTable(
     // The SWEEP's only query (research R1): enabled endpoints with
     // an open failure run, so the one that has outrun the hour can be found
     // without reading every endpoint in the platform. Partial, for the reason
-    // 3.3's outbox index and 3.5's delivery index are partial — a healthy
+    // The outbox chapter's outbox index and the webhook dispatcher chapter's delivery index are partial — a healthy
     // endpoint has a null run and costs nothing to keep out of it.
     index("webhook_endpoints_failure_run_idx")
       .on(t.failureRunStartedAt)
@@ -750,7 +750,7 @@ export const webhookEndpoints = pgTable(
   ],
 );
 
-// The retry schedule — and it is chapter 3.3's outbox with one more column.
+// The retry schedule — and it is the outbox chapter's outbox with one more column.
 //
 // DECISION (research R1, MEASURED): the obvious implementation is
 // to let the broker hold the delay between attempts. It was measured against a
@@ -774,7 +774,7 @@ export const webhookDeliveries = pgTable(
     endpointId: uuid("endpoint_id")
       .notNull()
       .references(() => webhookEndpoints.id),
-    // Chapter 3.3's envelope id — the customer's deduplication key, stable
+    // The outbox chapter's envelope id — the customer's deduplication key, stable
     // across every attempt and across a dead-letter replay (spec FR-018).
     eventId: uuid("event_id").notNull(),
     payload: jsonb("payload").notNull(),
@@ -793,7 +793,7 @@ export const webhookDeliveries = pgTable(
     state: text("state").notNull().default("pending"),
     // WHAT THE ENDPOINT ACTUALLY SAID on the most recent attempt.
     //
-    // Chapter 3.5 recorded an attempt by MOVING the delivery — state, attempt,
+    // The webhook dispatcher chapter recorded an attempt by MOVING the delivery — state, attempt,
     // next_attempt_at — and threw the answer away, which was enough while the
     // only reader was the retry schedule. Two things here need it back, and
     // neither can get it from the attempt event: that publish is at-most-once by
@@ -832,7 +832,7 @@ export const webhookDeliveries = pgTable(
       sql`${t.state} IN ('pending','delivered','dead')`,
     ),
     // The relay's only query: pending rows that are due, oldest first. Partial,
-    // for the reason 3.3's outbox index is partial — it covers only what the
+    // for the reason the outbox chapter's outbox index is partial — it covers only what the
     // relay reads, so delivered rows cost nothing to keep.
     index("webhook_deliveries_due_idx")
       .on(t.nextAttemptAt)
@@ -962,7 +962,7 @@ export const usagePeriods = pgTable(
     messagesSent: bigint("messages_sent", { mode: "number" })
       .notNull()
       .default(0),
-    // Chapter 3.11's third figure, same type for the same reason. Ten thousand
+    // The connection-metering chapter's third figure, same type for the same reason. Ten thousand
     // sockets held continuously accrue 5.26 billion connection-minutes a year
     // and `integer` stops at 2,147,483,647 — about five months in.
     connectionMinutes: bigint("connection_minutes", { mode: "number" })
@@ -985,7 +985,7 @@ export const usagePeriods = pgTable(
   ],
 );
 
-// One row per connection per period, and the whole of chapter 3.11's
+// One row per connection per period, and the whole of the connection-metering chapter's
 // idempotency (research R4).
 //
 // A report says what a connection has consumed IN TOTAL, not since last time.
@@ -1045,7 +1045,7 @@ export const usageActiveUsers = pgTable(
   (t) => [primaryKey({ columns: [t.environmentId, t.period, t.userId] })],
 );
 
-// THE OUTBOX, A FOURTH TIME — after 3.3's events, 3.5's deliveries and 3.9's
+// THE OUTBOX, A FOURTH TIME — after the outbox chapter's events, the webhook dispatcher chapter's deliveries and the mail-transport chapter's
 // disablement emails. Four concrete tables that look alike is a pattern; one
 // abstract table serving four purposes is a framework.
 //

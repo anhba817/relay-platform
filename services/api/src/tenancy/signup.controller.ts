@@ -34,7 +34,7 @@ import {
 // the seam it guards is untouched by this chapter (3.2 retires it).
 //
 // What these routes do NOT do: issue a session. A session is a credential,
-// credentials are 3.2's subject, and the dashboard that would consume one is
+// credentials are the credentials chapter's subject, and the dashboard that would consume one is
 // Part 5. The callback reports what it created — and, from 3.2, hands over the
 // environment's first API key, because with no session nothing else could
 // bootstrap one (research R8).

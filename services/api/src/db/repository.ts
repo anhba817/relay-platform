@@ -74,7 +74,7 @@ import {
 //
 //   createEnvironment / provisionOrganisation — the ADMIN surface. These
 //   create tenants, so they are the only operations here that are not
-//   tenant-scoped. As of chapter 3.1 they build the whole container stack:
+//   tenant-scoped. As of the tenancy chapter they build the whole container stack:
 //   organisation -> application -> environment, with no stubs left.
 //
 //   Repository — everything else. The constructor REQUIRES an
@@ -104,7 +104,7 @@ export async function createEnvironment(
   // The admin surface writes through the same Db handle but carries no
   // tenant scope — it is the operation that MINTS the scope.
   //
-  // Chapter 3.1 added the organisation above the application, and this
+  // The tenancy chapter added the organisation above the application, and this
   // function had to grow with it the same day: `applications.organisation_id`
   // is NOT NULL, and this is the function every Part 2 suite, the e2e harness
   // and three walk scripts use to make a tenant. A schema change whose only
@@ -302,7 +302,7 @@ export async function environmentLimits(
  * `creditConnectionMinutes` give: `Repository` closes over an `environmentId` by
  * construction, and the caller that now needs this is the usage report route,
  * which holds a PLATFORM principal and therefore no environment at all. The
- * private methods on `Repository` stay as one-line delegations, so chapter 3.10's
+ * private methods on `Repository` stay as one-line delegations, so the quota chapter's
  * two call sites inside `sendMessage` read exactly as they did.
  *
  * Copying the crossing logic into the platform path instead would have made a
@@ -374,7 +374,7 @@ export async function organisationOf(
  * resource with nothing to stop it.
  *
  * ONE QUERY, AND THE PLAN SAID TWO. Research R7 chose "a second call on the same
- * request rather than a heavier version of the first", because chapter 3.10's H2
+ * request rather than a heavier version of the first", because the quota chapter's H2
  * had refused to put a usage join inside `environmentLimits`. H2 is still right
  * and `environmentLimits` is untouched — its OTHER caller is
  * `rate-limit.middleware.ts`, which runs on every `/v1` request and must not pay
@@ -383,7 +383,7 @@ export async function organisationOf(
  * But two calls cost what a join would have, at concurrency, and it was measured:
  * connect latency at 32-way went from 15.0ms to 17.6ms across four runs clustered
  * inside 0.7ms, and folding them back recovered 0.8ms of it. The mechanism is the
- * one chapter 3.10's T033 already recorded — an extra round trip holds a pooled
+ * one the quota chapter's T033 already recorded — an extra round trip holds a pooled
  * connection for the duration, and above the pool size that queues.
  *
  * THE UNCONFIGURED TENANT still pays one indexed read and leaves. */
@@ -457,7 +457,7 @@ export async function assertConnectionsWithinQuota(
  * `max(reported, credited)`. Both live in `quotas/credit.ts`, pure and tested
  * without a database, because those two lines are the whole protocol.
  *
- * THE LOCK CHAPTER 3.10 WANTED AND COULD NOT HAVE. Crediting is read-then-write,
+ * THE LOCK the quota chapter WANTED AND COULD NOT HAVE. Crediting is read-then-write,
  * so it takes `SELECT … FOR UPDATE` on the accounting row. 3.10 needed the same
  * lock on the usage row and hit `FOR UPDATE cannot be applied to the nullable
  * side of an outer join`, because its caps and usage had become one joined read.
@@ -611,7 +611,7 @@ export async function creditConnectionMinutes(
  *
  * A NULL QUOTA IS CARRIED THROUGH AS NULL rather than resolved to `Infinity` or
  * `-1`. The absent state stays absent all the way to the reader — the same rule
- * chapter 3.8's nullable limit columns encode, and the reason `capsFor` returns
+ * The rate-limit chapter's nullable limit columns encode, and the reason `capsFor` returns
  * `null` rather than a sentinel.
  *
  * Admin surface: takes an environment id rather than being scoped by construction,
@@ -634,9 +634,9 @@ export async function usageFor(
   const [row] = await db
     .select({
       messagesSent: usagePeriods.messagesSent,
-      // Chapter 3.11's figure, read from the ROLL-UP and never summed over
+      // The connection-metering chapter's figure, read from the ROLL-UP and never summed over
       // `usage_connections` — that sum is proportional to the tenant's
-      // connections for the month, which is chapter 3.10's R1 argument in a new
+      // connections for the month, which is the quota chapter's R1 argument in a new
       // costume.
       connectionMinutes: usagePeriods.connectionMinutes,
       quotaConfig: environments.quotaConfig,
@@ -690,12 +690,12 @@ export interface QuotaNotificationRow {
   hardCapInForce: boolean;
 }
 
-/** The outbox drain, a FOURTH time — after 3.3's events, 3.5's
- * deliveries and 3.9's disablement emails. Same claim predicate, same
+/** The outbox drain, a FOURTH time — after the outbox chapter's events, the webhook dispatcher chapter's
+ * deliveries and the mail-transport chapter's disablement emails. Same claim predicate, same
  * per-row error handling, same required batch size.
  *
  * PER-ROW `try`/`catch` WITH A REQUIRED `onError`, and the default that used to
- * sit on 3.9's version is not repeated here: it discarded a row's failure with no
+ * sit on the mail-transport chapter's version is not repeated here: it discarded a row's failure with no
  * log line, and feature 030's R48 removed it after finding it as this file's last
  * uncovered function. One bad recipient must not abort the batch and must not
  * vanish either. */
@@ -821,8 +821,8 @@ export async function drainOutbox(
 
 // ---------------------------------------------------------------------------
 // The disablement notifications (FR-WHK-07 to FR-WHK-07). THE OUTBOX A
-// THIRD TIME — after chapter 3.3's events and chapter 3.5's deliveries — and
-// this one needed no migration at all: chapter 3.6 gave the table a
+// THIRD TIME — after the outbox chapter's events and the webhook dispatcher chapter's deliveries — and
+// this one needed no migration at all: the retry-and-disable chapter gave the table a
 // `delivered_at` column and left it null throughout, which is a claim predicate
 // already written down.
 //
@@ -854,7 +854,7 @@ export interface DisableNotificationRow {
 /** Claim up to `limit` undelivered notifications, hand each to `deliver`, and
  * mark the ones that went out — all inside ONE transaction.
  *
- * AN EXPLICIT LIMIT, no default. Chapter 3.7's baseline found four suites broken
+ * AN EXPLICIT LIMIT, no default. The deduplication chapter's baseline found four suites broken
  * by tests that asserted local facts about a global, oldest-first operation, and
  * this is another global operation: a caller that wants only its own rows drained
  * has to say how many, and a test that forgets ends up asserting about somebody
@@ -965,7 +965,7 @@ export async function drainDisableNotifications(
 
 /** The addresses to notify for an organisation, at SEND TIME (FR-WHK-07).
  *
- * Resolved from the row's `organisation_id`, which chapter 3.6 denormalised onto
+ * Resolved from the row's `organisation_id`, which the retry-and-disable chapter denormalised onto
  * the notification precisely so this lookup could not follow the endpoint's
  * CURRENT owner. An application that moved between organisations after the
  * disablement must not silently retarget an obligation already owed to somebody
@@ -998,7 +998,7 @@ export async function organisationRecipients(
  * the one the chapter shows going up while the broker is down. */
 /** The name this consumer claims events under. One name, because the ledger is
  * keyed per consumer and the dispatcher is one consumer however many processes
- * run it (chapter 3.4's data model). */
+ * run it (the broker chapter's data model). */
 export const DISPATCHER_CONSUMER = "dispatcher";
 
 /** Turn one event into one delivery per matching endpoint — **in one
@@ -1008,7 +1008,7 @@ export const DISPATCHER_CONSUMER = "dispatcher";
  * this cannot go through the scoped Repository. It is still safe, because the
  * environment comes from the EVENT rather than from a caller's parameter.
  *
- * The claim is chapter 3.4's, unchanged, and it is doing more work here than it
+ * The claim is the broker chapter's, unchanged, and it is doing more work here than it
  * did there. The broker will redeliver — that is what at-least-once means — and
  * an event expanded twice would double every webhook it produced. Because the
  * claim and the N inserts share a transaction, "expansion runs exactly once"
@@ -1320,7 +1320,7 @@ export async function recordAttemptOutcome(
     status?: number;
     error?: string;
     /** How long the customer took to answer. Carried across the internal seam on
-     * every attempt since chapter 3.5 and discarded until 3.6 wanted it (research
+     * every attempt since the webhook dispatcher chapter and discarded until 3.6 wanted it (research
      * R6). Optional only so that callers written before it existed still compile;
      * every real caller has it. */
     latencyMs?: number;
@@ -1600,7 +1600,7 @@ export async function testDeliveryResult(
  *
  * THE SECOND TRIGGER, and it is not belt-and-braces. The on-outcome check catches
  * every endpoint that is still receiving attempts, and research R1 measured that
- * this is not all of them. Against chapter 3.5's tier table, one failing delivery
+ * this is not all of them. Against the webhook dispatcher chapter's tier table, one failing delivery
  * attempts at +35m36s and then not again until +2h35m36s — so nothing happens AT
  * the hour, and a check that only runs when an outcome is recorded fires
  * ninety-five minutes late. Worse: if that last attempt dead-letters and no
@@ -1663,7 +1663,7 @@ export async function sweepDisabledEndpoints(
     // endpoint whose deliveries have all been pruned still deserves to be switched
     // off; it just gets "no response" as its reason.
     //
-    // `FOR UPDATE OF e SKIP LOCKED` is chapter 3.3's pattern and here it does two
+    // `FOR UPDATE OF e SKIP LOCKED` is the outbox chapter's pattern and here it does two
     // jobs: it serialises the sweep against a concurrent outcome report on the same
     // endpoint, and it lets two api instances sweep at once without either waiting
     // — whichever skips simply finds nothing to do, which is correct.
@@ -1811,7 +1811,7 @@ export interface DueDeliveryRow {
   attempt: number;
 }
 
-/** Claim the deliveries that are due and hand each to `publish` — chapter 3.3's
+/** Claim the deliveries that are due and hand each to `publish` — the outbox chapter's
  * `drainOutbox` with ONE MORE PREDICATE (research R13).
  *
  * That is the whole point, and it is worth not obscuring: the reader built this
@@ -1851,7 +1851,7 @@ export async function drainDueDeliveries(
         dispatched.push(row.id);
       }
     } finally {
-      // In the `finally` for 3.3's reason: whatever went wrong with row N+1,
+      // In the `finally` for the outbox chapter's reason: whatever went wrong with row N+1,
       // rows 1..N really did reach the broker and must not be published twice by
       // this instance's next pass.
       if (dispatched.length > 0) {
@@ -1951,7 +1951,7 @@ export type ClaimResult = "handled" | "duplicate";
 
 /** Claim an event for a consumer and run its effect — **in one transaction**.
  *
- * This is the shape chapter 3.3 used for the outbox row and the message it
+ * This is the shape the outbox chapter used for the outbox row and the message it
  * describes, pointed the other way: the ledger row and the effect share a fate.
  * A handler that throws rolls the claim back with it, so the redelivery finds no
  * claim and runs again. Claiming outside the transaction would mean a failed
@@ -1962,9 +1962,9 @@ export type ClaimResult = "handled" | "duplicate";
  * The INSERT is the check. `ON CONFLICT DO NOTHING` with a `RETURNING` tells us
  * whether this call won the row; a SELECT-then-INSERT would let two instances
  * fetching the same message both believe they were first (2.3's lesson on
- * idempotency keys, 3.1's on signup).
+ * idempotency keys, the tenancy chapter's on signup).
  *
- * **The limit of this, stated because chapter 3.5 will meet it**: the effect has
+ * **The limit of this, stated because the webhook dispatcher chapter will meet it**: the effect has
  * to be transactional for the fate to be shared, which means it has to be in
  * Postgres. A handler whose effect is an HTTP call to a customer cannot be
  * rolled back, and no ledger makes it so. That consumer must choose which way to
@@ -2236,7 +2236,7 @@ export interface ChannelRow {
   id: string;
   external_id: string;
   /** The column has been `"public" | "private"` with a CHECK constraint since
-   * chapter 2.1, and chapter 3.15 gave it its first DECISION. Before that it was
+   * chapter 2.1, and the channel-control chapter gave it its first DECISION. Before that it was
    * selected and returned by the create route — read, but consulted by nothing:
    * no conditional anywhere branched on it, so FR-CHN-05's private guarantee was
    * unimplemented while the value round-tripped.
@@ -2261,7 +2261,7 @@ export interface MessageRow {
    * contrast is the decision.
    *
    * `edited_at?` is optional so write paths need not spell `edited_at: null`, and that
-   * convenience is exactly what made chapter 3.24's `internalSendResponseSchema` a break
+   * convenience is exactly what made the attachments chapter's `internalSendResponseSchema` a break
    * waiting to happen: a field the type lets you omit is a field the gateway's strict
    * parse refuses at runtime, with no compiler anywhere in between. Required here means
    * every path that builds a row is named by `tsc` instead.
@@ -2458,7 +2458,7 @@ export interface WebhookDeliveryRow {
   /** Non-null once the relay has published it. Exposed because the drain is
    * GLOBAL — one dispatcher serves every environment — so a test that asserts on
    * what ITS call to the drain returned is asserting on which suite got there
-   * first. Chapter 3.3's finding 3, in its third chapter. */
+   * first. The outbox chapter's finding 3, in its third chapter. */
   dispatched_at: string | null;
 }
 
@@ -2483,7 +2483,7 @@ export class Repository {
 
   /** The tenant this repository is scoped to, readable but not settable.
    *
-   * Added in chapter 3.6 for the test event, which needs an UNSCOPED operation —
+   * Added in the retry-and-disable chapter for the test event, which needs an UNSCOPED operation —
    * `createTestDelivery` ignores subscriptions and `enabled`, so it cannot be a
    * method here — but must still be told which environment is asking. Exposing the
    * id rather than widening the operation keeps constitution I's shape: the
@@ -2656,7 +2656,7 @@ export class Repository {
 
   /** A tenant's dead letters, newest first. Scoped: a dead letter holds a
    * payload that was being sent to this customer, which is why the table carries
-   * `environment_id` where 3.3's outbox and 3.4's ledger did not. */
+   * `environment_id` where the outbox chapter's outbox and the broker chapter's ledger did not. */
   async listDeadLetters(): Promise<WebhookDeadLetterRow[]> {
     const rows = await this.db
       .select({
@@ -2797,7 +2797,7 @@ export class Repository {
           display_name: row.display_name,
           avatar_url: row.avatar_url,
           // `as` AND NOT `?? {}`. The column is `notNull().default({})`, so the driver
-          // never hands back null — and chapter 3.12 removed `addMember`'s
+          // never hands back null — and the isolation gauntlet removed `addMember`'s
           // `(inserted.rowCount ?? 0)` for exactly this reason: an arm nothing can take,
           // bought for nothing, in the one file constitution VI asks 100% of.
           metadata: row.metadata as Record<string, unknown>,
@@ -2919,7 +2919,7 @@ export class Repository {
    *
    * Constitution II: "State changes and their events MUST commit atomically via the
    * transactional outbox. Publish-after-commit without the outbox is forbidden."
-   * Chapter 3.18's Redis publish is legal because `sendMessage` already wrote the
+   * The fan-out chapter's Redis publish is legal because `sendMessage` already wrote the
    * durable row inside the transaction that wrote the message; a membership write
    * recorded nothing, so the same publish here would be exactly the case the
    * principle names. The row has to come first, and it has to be atomic with the
@@ -3118,9 +3118,9 @@ export class Repository {
    *
    * BULK, BECAUSE THE REQUIREMENT ALWAYS WAS. FR-006 says "up to 100 in one
    * request" and FR-007 says the result is reported per user — which is chapter
-   * 3.13's `addMembers` shape in both halves. `contracts/membership.md` specified a
+   * The channel-endpoints chapter's `addMembers` shape in both halves. `contracts/membership.md` specified a
    * single-user `DELETE …/members/:userExternalId` for ten analysis passes, having
-   * read "the shape chapter 3.13 chose" as *named outcomes* and dropped *bulk*.
+   * read "the shape the channel-endpoints chapter chose" as *named outcomes* and dropped *bulk*.
    * Every pass compared requirements to tasks, both said "removal", and identifier
    * coverage read 100% the whole time.
    *
@@ -3228,7 +3228,7 @@ export class Repository {
     });
   }
 
-  /** How many deliveries an endpoint holds, scoped. Added for chapter 3.12's
+  /** How many deliveries an endpoint holds, scoped. Added for the isolation gauntlet's
    * `expand` attack, which has to read the victim's side to prove nothing moved —
    * and it lives HERE rather than in the test because the restored lint ban
    * (R23, FR-043) puts the query engine in this directory and nowhere else. The
@@ -3329,7 +3329,7 @@ export class Repository {
    * the profile takes whatever this call carries — a revived row does not inherit the
    * profile the deletion wiped.
    *
-   * `status` REPORTS WHICH HAPPENED, per entry, in the shape chapter 3.13 chose for
+   * `status` REPORTS WHICH HAPPENED, per entry, in the shape the channel-endpoints chapter chose for
    * `addMember`: a partial outcome is reported per entry rather than collapsed into one
    * status code. */
   async upsertUser(
@@ -3394,7 +3394,7 @@ export class Repository {
     // THAT was absent — two statements for one impossible state (the winner of an
     // `ON CONFLICT` race having its row deleted between two statements of the same call,
     // which nothing in the api can do). `repository.ts` already carried two throws of
-    // that class from chapter 3.12 and its lines ratchet sat at 99; a third took the file
+    // that class from the isolation gauntlet and its lines ratchet sat at 99; a third took the file
     // to 98.92 and the gate went red. The instrument was right: the second throw bought
     // nothing the first did not already say.
     //
@@ -3436,7 +3436,7 @@ export class Repository {
     // impossible state that the comment forty lines below already argues against. Lines
     // fell to **98.95%** against a pin of 99 and the gate went red, exactly as that
     // comment predicts. Third time this project has answered the ratchet by removing code
-    // rather than covering it (3.12's `addMember`, 3.16's `upsertUser`).
+    // rather than covering it (the isolation gauntlet's `addMember`, the user-surface chapter's `upsertUser`).
     //
     // The flag defers to the read the method already does at the end, so the conflict
     // costs no extra query and no extra throw.
@@ -3630,7 +3630,7 @@ export class Repository {
       // messages a bot sent.
       //
       // THE OTHER DELETION METHOD IS `markUserDeleted`, and it clears nothing — it only
-      // stamps the marker. It has **no production caller**: chapter 3.16 added it so the
+      // stamps the marker. It has **no production caller**: the user-surface chapter added it so the
       // listing's 404 branch was reachable before the deletion route existed. This rule
       // is `deleteUser`'s, and a reader looking for it in the other one will find a
       // method nothing calls.
@@ -4059,7 +4059,7 @@ export class Repository {
       // the parameter is optional by design and must not be touched.
       //
       // A BOT CAN BE BANNED, AND THAT IS THE POINT (FR-005c). `banned_at` has been on
-      // every `users` row since chapter 3.15 and this check has never run for a bot
+      // every `users` row since the channel-control chapter and this check has never run for a bot
       // because no send named one. A ban is how an operator stops a runaway integration
       // without deleting the identity its messages are attributed to.
       //
@@ -4112,10 +4112,10 @@ export class Repository {
       //                       It acts for the customer, carries no user, and sees
       //                       private channels (FR-005).
       //
-      // And that gate is only honest because chapter 3.15 made the public route
+      // And that gate is only honest because the channel-control chapter made the public route
       // supply a user. It called `messages.send(channelId, body)` with none, and
       // `MessagesController` declared no `@Accepts` at the time — so the guard fell
-      // back to `EITHER` and a user token was accepted there. Chapter 3.17 declared it;
+      // back to `EITHER` and a user token was accepted there. The sender chapter declared it;
       // the third of three copies of this sentence, all corrected in 3.23. A check gated on a parameter
       // no caller fills in is a check that never fires, and this one did not, on
       // the only send path a customer's own client uses.
@@ -4125,7 +4125,7 @@ export class Repository {
       // that does not exist — same status, same body but for `request_id` — and
       // send is one of the verbs it covers. A `403 not_a_member` here would
       // announce that the channel exists, which is the leak FR-003 forbids and
-      // exactly what chapter 3.12's indistinguishability oracle was built to
+      // exactly what the isolation gauntlet's indistinguishability oracle was built to
       // catch. The refusal above throws the same error for the same reason.
       //
       // FR-021a's ORDER is ban, then membership and visibility, then archive. The
@@ -4138,13 +4138,13 @@ export class Repository {
       //
       // This gate used to read `channel.type === "private" && userId !== undefined`,
       // and the second half was doing real work: a key-authenticated send carried no
-      // user, so it skipped the membership check entirely. That is chapter 3.15's
+      // user, so it skipped the membership check entirely. That is the channel-control chapter's
       // FR-005 — an application credential "acts for the customer, carries no user,
       // and sees private channels" — and `messages.itest.ts` asserts it by name.
       //
       // Requiring `userId` would have made the condition always true, fired the check,
       // and refused a bot that is not a member with `ChannelNotFoundError`: a 404 that
-      // by design cannot say why. A capability chapter 3.15 delivered would have
+      // by design cannot say why. A capability the channel-control chapter delivered would have
       // vanished, and the analysis passes that read FR-005 never noticed because the
       // word "private" appeared nowhere in this chapter's plan.
       //
@@ -4181,13 +4181,13 @@ export class Repository {
       // The order is the requirement, not an implementation detail. Put this check
       // above the membership one and a non-member of a private ARCHIVED channel
       // learns it exists from `channel_archived` — a refusal that reveals what it is
-      // refusing, which is the defect chapter 3.12's fifth analysis pass caught one
+      // refusing, which is the defect the isolation gauntlet's fifth analysis pass caught one
       // phase before shipping.
       //
       // So: ban, then membership and visibility, then archive. The ban's slot is
       // ahead of the channel read entirely — a banned user gets one answer for every
       // channel id, including ids that do not exist — and it is EMPTY here on
-      // purpose: `users.banned_at` has no reader until chapter 3.16 gives it one at
+      // purpose: `users.banned_at` has no reader until the user-surface chapter gives it one at
       // T155a. Leaving the slot visible is the point; a reader who finds two checks
       // where the requirement names three should be able to see which is missing.
       //
@@ -4196,7 +4196,7 @@ export class Repository {
 
       // THE CAP, CHECKED BEFORE THE MESSAGE IS WRITTEN (FR-RTL-08).
       //
-      // Here rather than in middleware, because chapter 3.8's limiter never sees
+      // Here rather than in middleware, because the rate-limit chapter's limiter never sees
       // `/internal/messages` — `operationsFor` returns [] for anything outside
       // `/v1` — and that is the route a WebSocket send arrives on. Both doors
       // reach this method, and it already owns the write transaction, so the
@@ -4340,7 +4340,7 @@ export class Repository {
       //
       // Same argument as the event above it, one requirement further on. A quota
       // is about THIS MONTH and must not forget, so the count cannot live in the
-      // per-minute counter store chapter 3.8 built — a flush there costs one
+      // per-minute counter store the rate-limit chapter built — a flush there costs one
       // window of over-service, a flush here costs the month (a quota must survive the counter store).
       //
       // It is an increment rather than a query because the alternative is a read
@@ -4367,7 +4367,7 @@ export class Repository {
       //
       // EVERY SEND IS ATTRIBUTED, SO EVERY SEND COUNTS. The gate here
       // was the twin of the ban check's: it existed because a key-authenticated send
-      // carried no `userId`, which chapter 3.3 decided and FR-MSG-15 reverses.
+      // carried no `userId`, which the outbox chapter decided and FR-MSG-15 reverses.
       //
       // A BOT IS BILLED (FR-018, FR-ANL-05, *"shall meter, per tenant per day:
       // messages sent, unique active users, ..."*). The row is the bill, and a bot's
@@ -4690,7 +4690,7 @@ export class Repository {
    *
    * NO AUDIT LOG ROW, though SAD §342's diagram shows one beside the outbox insert.
    * There is no `audit_log` table in §6.1 or in `schema.ts`, and inventing one is a
-   * feature with a retention policy rather than a line in this method. Chapter 3.23's
+   * feature with a retention policy rather than a line in this method. The revisions chapter's
    * `gaps.md` item 2 draws that boundary: `metadata.deleted_by` records WHAT KIND of
    * principal deleted the message, and which credential it presented is the audit
    * log's question. */
@@ -4781,7 +4781,7 @@ export class Repository {
       // `text === null` IS THE TEST, not `deletedAt !== null`. Both are set together by
       // this method, but the lane holds rows where only `text` is null — system
       // messages have had no text since chapter 2.1 — and `text` is the column every
-      // read path already branches on. Chapter 3.15's planted tombstone sets both.
+      // read path already branches on. The channel-control chapter's planted tombstone sets both.
       if (row.text === null) {
         return {
           deleted: {
@@ -5440,7 +5440,7 @@ export class Repository {
        *
        * A message with no attachments stores NULL and is RETURNED with an empty list, so
        * a reader needs no special case. Putting the conversion in each caller would give
-       * the platform as many answers as it has callers — and chapter 3.23 shipped a
+       * the platform as many answers as it has callers — and the revisions chapter shipped a
        * control test that was green before its field existed, because `?? null` cannot
        * tell an absent key from a null one. This is the one place that decides. */
       attachments: row.attachments ?? [],

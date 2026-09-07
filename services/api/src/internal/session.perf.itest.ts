@@ -18,7 +18,7 @@ import { mintUserToken } from "../auth/user-token";
 
 // What the cap costs at the door (NFR-PERF-01).
 //
-// COMMITTED RATHER THAN AD-HOC, because chapter 3.10's T033 measured with a
+// COMMITTED RATHER THAN AD-HOC, because the quota chapter's T033 measured with a
 // script that lived nowhere, reported regressions of 273% to 411%, and sent two
 // code changes chasing a warm-up artefact before instrumentation showed the real
 // figure was 0.56 ms. A number nobody can re-run is a number nobody can check.
@@ -97,7 +97,7 @@ describe("the connect path, with a cap to check", () => {
       .join("\n");
 
     // THE ASSERTION IS ABOUT THE PLAN, NOT THE CLOCK. A clock cannot show a
-    // scan, which is the correction chapter 3.10's first analysis pass had to
+    // scan, which is the correction the quota chapter's first analysis pass had to
     // make to its own success criterion.
     expect(plan).toMatch(/Index (Only )?Scan|Index Cond/);
     expect(plan).not.toMatch(/Seq Scan on (environments|usage_periods)/);

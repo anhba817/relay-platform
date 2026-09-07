@@ -81,7 +81,7 @@ export class BackfillController {
  *     has `user_id` NULL. There is no truthful value to invent, and the
  *     wire contract requires one.
  *   - **No text.** A tombstone (FR-MSG-08) is not a creation. Deletes arrived in
- *     chapter 3.23 and they do get `message.deleted` — **and resume does NOT carry
+ *     The revisions chapter and they do get `message.deleted` — **and resume does NOT carry
  *     that frame.** This sentence promised it would, and it was written before the
  *     decision existed.
  *

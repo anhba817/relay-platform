@@ -11,7 +11,7 @@ export interface ApplicationPrincipal {
   kind: "application";
   /** Resolved from the key, never from the caller's word for it. */
   environmentId: string;
-  /** For last_used_at, and for 3.6's quota accounting. */
+  /** For last_used_at, and for the retry-and-disable chapter's quota accounting. */
   keyId: string;
 }
 

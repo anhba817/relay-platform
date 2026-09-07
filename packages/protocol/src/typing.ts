@@ -5,7 +5,7 @@ import { z } from "zod";
  *
  * WHY THIS IS NOT IN `fanout.ts`, `presence.ts` OR `membership.ts`. Each fabric
  * owns its subject grammar in its own file — `internal.ts` established that for
- * the event spine, chapter 3.19 followed it for presence and 3.20 for
+ * the event spine, the presence chapter followed it for presence and 3.20 for
  * membership. A new file is a whole-file fence and leaves three chapters' hunks
  * over `fanout.ts` alone.
  *
@@ -17,13 +17,13 @@ import { z } from "zod";
  * grep that settled it: the message path is typed to messages at SEVEN places,
  * where ADR-19's record counts three.
  *
- * NOT `subjectFor`, WHICH `internal.ts` ALREADY EXPORTS. Chapter 3.18 paid for
+ * NOT `subjectFor`, WHICH `internal.ts` ALREADY EXPORTS. The fan-out chapter paid for
  * that collision once:
  *
  *     error TS2308: Module "./internal.js" has already exported a member
  *     named 'subjectFor'.
  *
- * WHY ONE SHAPE AND NOT TWO. Chapter 3.20 needed a second, principal-addressed
+ * WHY ONE SHAPE AND NOT TWO. The membership-revocation chapter needed a second, principal-addressed
  * subject because an addition cannot ride the channel it adds you to — the
  * instance holding the new member is not subscribed yet. Typing has no such
  * case: a signal is only ever interesting to people already in the channel, and
@@ -35,7 +35,7 @@ export function subjectForTyping(channelId: string): string {
 /** What crosses `typing:{channel_id}` between gateway instances. Consumed only by
  * gateways and **never sent to a client** — the wire frame is `frames.ts`'s.
  *
- * `environment` IS ON THE FABRIC AND NOT ON THE WIRE, as chapter 3.20's is and
+ * `environment` IS ON THE FABRIC AND NOT ON THE WIRE, as the membership-revocation chapter's is and
  * for the same reason: a receiving gateway checks it against the connection it is
  * about to act on, while a client already knows its own environment and has no
  * use for a tenant id.

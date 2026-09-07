@@ -43,10 +43,10 @@ import type {
 // `@Accepts("application")` and not both classes: creating a channel and deciding
 // who is in it are server-side acts. An end-user token is minted for one person
 // (FR-AUT-10), and a person adding themselves to a channel is a product decision
-// this chapter is not making — chapter 3.15 owns the user-facing surface.
+// this chapter is not making — the channel-control chapter owns the user-facing surface.
 /** The one thing this controller needs from the response object.
  *
- * Declared rather than imported, which is chapter 3.4's decision in
+ * Declared rather than imported, which is the broker chapter's decision in
  * `signup.controller.ts` and its reason still holds: `@Res()` normally means
  * importing express's `Response` type, express 5 ships no types, and adding
  * `@types/express` for one method signature would move the api's dependency list
@@ -247,7 +247,7 @@ export class ChannelsController {
    * `getAllAndOverride([handler, class])`, so the method wins.
    *
    * Without this decorator every user's join would be a 403, which is chapter
-   * 3.12's FR-044 hole exactly: a credential mismatch that passed for a whole
+   * The isolation gauntlet's FR-044 hole exactly: a credential mismatch that passed for a whole
    * chapter and then turned nine of fifteen tests red.
    */
   @Post(":channelId/join")

@@ -131,7 +131,7 @@ describe("the internal surface", () => {
     expect(page.messages.some((m) => m.id === res.id)).toBe(true);
   });
 
-  // Chapter 3.2 replaced `GET /internal/memberships` with
+  // The credentials chapter replaced `GET /internal/memberships` with
   // `POST /internal/session`. These two cases held that route's contract, and
   // they move rather than disappear: the route changed, the guarantees did not.
   // The answer now carries the identity as well, because the gateway no longer
@@ -226,7 +226,7 @@ describe("the internal surface", () => {
   //
   // `POST /internal/messages` resolves the user from the forwarded token and then
   // calls the same `messages.send` the public route does, so one check in
-  // `repository.sendMessage` covers both doors. Chapter 3.12 recorded this route
+  // `repository.sendMessage` covers both doors. The isolation gauntlet recorded this route
   // as checking nothing; what it was missing was a check, not a caller — it has
   // always supplied `user.id` (`internal.controller.ts:65`).
   it("refuses a non-member's send to a private channel, as if it were absent", async () => {

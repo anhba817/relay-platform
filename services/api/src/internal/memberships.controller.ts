@@ -9,7 +9,7 @@ import { Repository } from "../db/repository";
 // `GET /internal/memberships` (FR-017) — REVIVED, not invented.
 //
 // `internalMembershipsResponseSchema` has been exported from
-// `packages/protocol/src/internal.ts` since chapter 3.2 and parsed by nothing. The
+// `packages/protocol/src/internal.ts` since the credentials chapter and parsed by nothing. The
 // route it described was replaced that chapter by `POST /internal/session`, which
 // answers identity and memberships in one call at connect — and the schema stayed,
 // with `internalSessionResponseSchema`'s comment two lines below saying it "replaces

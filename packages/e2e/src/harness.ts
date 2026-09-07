@@ -53,7 +53,7 @@ const forwarded = (...names: string[]): Record<string, string> =>
  * inventing one for a test would be inventing product. The import is a
  * test-only seam with a named retirement, like 2.3's `listMessagesRaw`.
  *
- * REASSESSED IN CHAPTER 3.12 (T063a), and two of the three now have an API.
+ * REASSESSED IN the isolation gauntlet (T063a), and two of the three now have an API.
  * `POST /v1/channels` and `POST /v1/channels/:channelId/members` are public, and
  * the members route creates a user on first membership — so `createChannel`,
  * `createUser` and `addMember` could all come off this seam today. The list it
@@ -77,7 +77,7 @@ const forwarded = (...names: string[]): Record<string, string> =>
  * rewrite four journeys in a chapter about isolation. `services/gateway/src/
  * public-surface.itest.ts` makes the same claim where the coverage run does look,
  * and `packages/outsider` makes the stronger one in a package that cannot import
- * this file at all. The migration is chapter 3.15's, with the rest of FR-CHN. */
+ * this file at all. The migration is the channel-control chapter's, with the rest of FR-CHN. */
 interface Seeder {
   createEnvironment: (
     db: unknown,
@@ -362,7 +362,7 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
    * and used it for a failure message only. Now it is load-bearing.
    *
    * The alternative was a fixed port, which collides always under contention, or a
-   * random one from a band, which `session.itest.ts:133` draws and chapter 3.23
+   * random one from a band, which `session.itest.ts:133` draws and the revisions chapter
    * measured as self-colliding 2.96% of runs. Binding 0 cannot collide at all. */
   const boundPort = async (name: string, timeoutMs = 30_000): Promise<number> => {
     const deadline = Date.now() + timeoutMs;
@@ -412,7 +412,7 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       // threshold would raise it in the parent and not in the api the child runs.
       "RELAY_AUTH_FAILURES_PER_MINUTE",
       "RELAY_AUTH_KEY_PREFIX",
-      // Chapter 3.8's other half: where the notification relay posts its SMTP.
+      // The rate-limit chapter's other half: where the notification relay posts its SMTP.
       // The lane runs Mailpit on 11025 and the default is 1025, so an
       // unforwarded variable is not a missing feature — it is a mailer talking
       // confidently to a port nothing is listening on.
@@ -420,23 +420,23 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     ),
     // The api children run WITHOUT the outbox relay. This journey
     // asserts message delivery, and a background loop draining the outbox while
-    // 3.3's own suite asserts on that same table is a race between two test
+    // The outbox chapter's own suite asserts on that same table is a race between two test
     // files, not a property of the system. The relay has its own suite, which
     // drives it explicitly.
     RELAY_OUTBOX_RELAY: "off",
     // And no notification relay either, for the same reason. This
     // journey asserts message delivery; a loop marking rows delivered while
-    // 3.8's own suite asserts on that column is a race between test files.
+    // The rate-limit chapter's own suite asserts on that column is a race between test files.
     RELAY_NOTIFICATION_RELAY: "off",
     // No event consumer in these children either, for the reason
     // the line above exists — this journey asserts message delivery, and a
-    // background consumer writing to a table 3.4's suite asserts on is a race
+    // background consumer writing to a table the broker chapter's suite asserts on is a race
     // between test files rather than a property of the system.
     RELAY_EVENT_CONSUMER: "off",
     // Nor the delivery relay, for the third time and the same
     // reason. Three background loops now share tables that other suites assert
     // on, and each one had to be silenced here the moment it existed — which is
-    // the general form of 3.3's finding 4 rather than a coincidence.
+    // the general form of the outbox chapter's finding 4 rather than a coincidence.
     RELAY_DELIVERY_RELAY: "off",
   };
 
@@ -577,7 +577,7 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       // listeners was still holding its port when the next suite booted — and the
       // next suite's health check passed against the dying predecessor, printed
       // `api up on …`, and then failed at its first real request with
-      // `ECONNREFUSED`. **Ten of chapter 3.24's twenty-run battery failed exactly
+      // `ECONNREFUSED`. **Ten of the attachments chapter's twenty-run battery failed exactly
       // that way**, and the debt was not settled when a run ended: it was paid by
       // whatever booted next, in that run or the following one.
       //

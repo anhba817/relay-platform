@@ -114,7 +114,7 @@ describe("integrating with Relay from the outside", () => {
     expect(again.body["id"]).toBe(channelId);
   });
 
-  it("creates a PRIVATE channel, which the route began accepting in chapter 3.15", async () => {
+  it("creates a PRIVATE channel, which the route began accepting in the channel-control chapter", async () => {
     // THIS TEST WAS RED FOR TWO CHAPTERS AND NOBODY SAW IT (T065).
     //
     // It asserted `400` with `field: "type"`, which was true when it was written: the
@@ -240,9 +240,9 @@ describe("integrating with Relay from the outside", () => {
   it("receives a message on a socket — sent over REST", async () => {
     // THE SEND NO LONGER HAS TO BE ON THE SOCKET, and that is this chapter.
     //
-    // The gap this exercise recorded had TWO causes. Chapter 3.17 removed the first:
+    // The gap this exercise recorded had TWO causes. The sender chapter removed the first:
     // a public send attributes a sender, so the row is no longer dropped from a
-    // resume. Chapter 3.18 removes the second, which was the whole of what remained
+    // resume. The fan-out chapter removes the second, which was the whole of what remained
     // — the api published to no fan-out, so a REST-sent message reached no live
     // socket. The title of this test used to say "SENT over the socket" in capitals,
     // because a REST send could not work; it now sends over REST on purpose.
@@ -283,7 +283,7 @@ describe("integrating with Relay from the outside", () => {
     const text = `over REST ${Date.now()}`;
     // NOT `socket.send`. A POST, with the credential a customer's server holds, to
     // the route their backend calls — and then the socket is watched for the frame.
-    // `user: "outside-bot"` is not optional and not decoration. Chapter 3.17 made an
+    // `user: "outside-bot"` is not optional and not decoration. The sender chapter made an
     // application credential speak only as a bot user of its tenant, so a POST without
     // it is a 400 naming `user` — which is how the first run of this inverted test
     // failed, for a reason that had nothing to do with delivery.
@@ -312,7 +312,7 @@ describe("integrating with Relay from the outside", () => {
    *
    * This file is the only instrument in the repository that boots what customers run and
    * drives it the way they do — Node's global `WebSocket`, no workspace import, the REST
-   * credential a customer's server holds. Chapter 3.23's plan scheduled a title audit
+   * credential a customer's server holds. The revisions chapter's plan scheduled a title audit
    * over this file and no task wrote to it; this chapter writes.
    *
    * TWO ATTACHMENTS AND THE ORDER, for the reason every other test in this chapter gives:
@@ -380,7 +380,7 @@ describe("integrating with Relay from the outside", () => {
    *
    * `grep -c "\.send(" packages/outsider/src/integrate.itest.ts` read **0** across
    * eleven tests before this one: ten REST, and one socket test whose title says
-   * "sent over REST" because chapter 3.18 corrected it. This file is the only
+   * "sent over REST" because the fan-out chapter corrected it. This file is the only
    * check in the repository that uses the public surface as a customer does —
    * Node's global `WebSocket`, no workspace import — and until now it had never
    * exercised the inbound seam at all.
@@ -457,7 +457,7 @@ describe("integrating with Relay from the outside", () => {
     // CHAPTER 3.22, T048. **THE ONLY INSTRUMENT THAT BOOTS THE SHIPPED BINARY**,
     // and the reason this task is a plan requirement rather than a polish item.
     //
-    // Chapter 3.21 built a module, awaited its `close()` so lint saw a used
+    // The typing chapter built a module, awaited its `close()` so lint saw a used
     // variable, and never passed it to `attachSessions`. The feature was inert in
     // the product while 1,174 coverage tests and 174 gateway integration tests
     // were green — `**/main.ts` is excluded from the ratchet, so no number could
@@ -544,7 +544,7 @@ describe("integrating with Relay from the outside", () => {
   /** CHAPTER 3.23 — an edit, over the shipped binary, seen on somebody else's socket.
    *
    * **WRITTEN BECAUSE THIS FILE IS THE ONLY THING THAT BOOTS THE PRODUCT.** CLAUDE.md
-   * records what that bought: chapter 3.21 built a module, awaited its `close()`, never
+   * records what that bought: the typing chapter built a module, awaited its `close()`, never
    * passed it to `attachSessions`, and shipped it inert past 1,174 coverage tests and
    * 174 gateway integration tests. This file found it. The rule it left behind — a
    * chapter that adds an argument to `attachSessions` owes an outsider test — applies

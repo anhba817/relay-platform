@@ -67,7 +67,7 @@ describe("decideOutcome", () => {
 
   it("invariant 11: a duplicate claim is acknowledged, not handled again", async () => {
     // The event genuinely has been handled — by a previous delivery to this
-    // same consumer that crashed after committing, which is chapter 3.4's whole
+    // same consumer that crashed after committing, which is the broker chapter's whole
     // subject. Acknowledging is correct precisely BECAUSE the handler did not
     // run: the effect is already durable, and running it twice is the failure
     // SAD risk R5 names (double webhooks, double metering).
@@ -149,7 +149,7 @@ describe("decideOutcome", () => {
 
   it("passes the broker's delivery count to the handler", async () => {
     // A handler may LOG the attempt. The context is the only way it can see
-    // one, and chapter 3.4's recorder puts it in the log line.
+    // one, and the broker chapter's recorder puts it in the log line.
     const handler = vi.fn(async () => {});
 
     await decideOutcome({

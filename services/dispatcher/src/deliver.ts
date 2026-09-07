@@ -7,7 +7,7 @@ import { signatureHeaders } from "./signature.js";
 //
 // THE ORDER IS THE ARGUMENT: post, then report, then acknowledge.
 //
-// Chapter 3.4's consumer claimed the event and ran its effect in ONE
+// The broker chapter's consumer claimed the event and ran its effect in ONE
 // transaction, so a crash between them rolled both back. Nothing here can do
 // that. The effect is an HTTP request that has already happened on somebody
 // else's machine, and the claim would be a call to another service. They cannot
@@ -23,7 +23,7 @@ import { signatureHeaders } from "./signature.js";
 //                           envelope carries the event id they deduplicate on.
 //
 // The platform takes the duplicate. A loss nobody can detect is worse than a
-// duplicate the recipient was handed the means to absorb — and chapter 3.3 spent
+// duplicate the recipient was handed the means to absorb — and the outbox chapter spent
 // itself removing exactly the first kind of failure, so reintroducing it at the
 // last hop would undo that work where a customer would feel it.
 

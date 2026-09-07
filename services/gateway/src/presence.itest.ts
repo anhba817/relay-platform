@@ -35,8 +35,8 @@ import { attachSessions } from "./session.js";
 //
 // `presence.changed` has been in the protocol union since chapter 1.3. Its states
 // are `online` and `offline`, `frames.test.ts` asserts its shape and rejects
-// `state: "away"`, and chapter 3.12's gauntlet proves a client cannot forge one.
-// Nothing has ever produced one — chapter 3.17's `gaps.md` item 2 recorded it as
+// `state: "away"`, and the isolation gauntlet's gauntlet proves a client cannot forge one.
+// Nothing has ever produced one — the sender chapter's `gaps.md` item 2 recorded it as
 // "a declared frame with no sender" and assigned it to this chapter by name.
 //
 // THIS TEST IS RED ON PURPOSE UNTIL PHASE 3. The phase 1 and phase 2 commits both
@@ -174,7 +174,7 @@ async function startApi(): Promise<ApiUnderTest> {
   // shared fixture.
   //
   // T016 asked for fresh channel AND user ids per run for this reason and the first
-  // implementation did the channels only. Chapter 3.18's `isolation-fixtures.ts`
+  // implementation did the channels only. The fan-out chapter's `isolation-fixtures.ts`
   // learned the same lesson: a fixture nobody else depends on beats a rule nobody
   // remembers.
   const channels = await Promise.all(
@@ -350,7 +350,7 @@ interface Instance {
   url: string;
   /** Everything this instance logged. **The log line is the requirement's evidence**
    * on every failure path: a presence module that does nothing satisfies "the socket
-   * still opened" exactly as well as a working one, which is chapter 3.18's trap
+   * still opened" exactly as well as a working one, which is the fan-out chapter's trap
    * against its own publisher. */
   logs: LogLine[];
   close: () => Promise<void>;
@@ -798,7 +798,7 @@ describe("presence: the grace period (FR-RTM-06)", () => {
   // comment and nothing counts — so the reference count is unbounded and two is the
   // easy case. Five connections, closed one at a time: nothing until the last.
   //
-  // CHAPTER 3.22 BUILT THE CAP AND THE SENTENCE ABOVE IS STILL TRUE HERE, which is a
+  // The connection-cap chapter BUILT THE CAP AND THE SENTENCE ABOVE IS STILL TRUE HERE, which is a
   // decision rather than an oversight. Every gateway module is an optional parameter
   // and this fixture passes no `connections`, so nothing counts in THIS file after
   // that chapter either. The cap lives where a fixture asks for it: the new

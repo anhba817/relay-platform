@@ -38,7 +38,7 @@ import type { Publisher } from "../outbox/publisher";
 // "Only the API service writes to PostgreSQL… Other services obtain writes and
 // backfill reads via the API service's internal endpoints." The dispatcher owns
 // no database, so everything it needs is here — and that constraint is not a
-// workaround, it is the reason chapter 3.4's claim-and-effect-in-one-transaction
+// workaround, it is the reason the broker chapter's claim-and-effect-in-one-transaction
 // pattern stops applying and the chapter has something to say.
 //
 // `@Accepts("platform")` and nothing else. These routes reach EVERY environment,

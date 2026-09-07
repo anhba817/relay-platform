@@ -47,7 +47,7 @@ import { attachSessions } from "./session.js";
 
 // Chapter 3.20, phase 3 — the fabric, and ONLY the fabric.
 //
-// **THE ARMS THAT `session.ts` CANNOT REACH, WRITTEN NOW.** Chapter 3.19 met its
+// **THE ARMS THAT `session.ts` CANNOT REACH, WRITTEN NOW.** The presence chapter met its
 // equivalents at close-out and its record is the price: six arms of `presence.ts`
 // had never executed while thirty-one integration tests and eight unit tests were
 // green, and the seven tests written to fix that came with a re-measured battery.
@@ -69,7 +69,7 @@ interface LogLine {
 }
 
 /** THE SINK RECEIVES A JSON STRING, not an object, and the fields are spread at the
- * top level rather than nested. Chapter 3.19's first version pushed the raw line, so
+ * top level rather than nested. The presence chapter's first version pushed the raw line, so
  * every `l.msg` was `undefined` and the log assertions matched nothing while passing
  * — the one failure mode a log-based assertion has. The `records a line at all` test
  * below is what proves this helper before anything relies on it (T044). */
@@ -155,7 +155,7 @@ afterAll(() => {
 // PHASE 4'S HARNESS. Deferred out of phase 3 deliberately: written a phase early,
 // every function below is declared and called by nothing, which is a lint error
 // rather than a head start. **This is the seventh api spawn in the gateway package**
-// and it makes chapter 3.19's `gaps.md` item 17 worse rather than better — six files
+// and it makes the presence chapter's `gaps.md` item 17 worse rather than better — six files
 // already spawn their own with their own helper, and building the shared fixture is
 // item 17's actual fix and a job of its own. The decision here is to pay the seventh,
 // say so, and leave the fix an owner in `gaps.md`.
@@ -167,7 +167,7 @@ const require_ = createRequire(import.meta.url);
 
 interface Repo {
   createUser: (externalId: string, displayName?: string) => Promise<{ id: string }>;
-  /** THE SENDER MUST BE A BOT, and `createUser` cannot make one — chapter 3.17 made
+  /** THE SENDER MUST BE A BOT, and `createUser` cannot make one — the sender chapter made
    * that refusal deliberately, and the send route enforces the other half: "an
    * application credential may send only as a bot user". The seed's people are the
    * audience; the sender is a separate row created through the one method that can
@@ -266,7 +266,7 @@ async function startApi(): Promise<ApiUnderTest> {
   //
   // Nine files in this repository drew their own band by hand and TWO of them contained
   // a service the lane itself runs: this one held 5432, and `limits.itest.ts` held
-  // 4222 — NATS. That second one is the likeliest reading of chapter 3.24's eleventh
+  // 4222 — NATS. That second one is the likeliest reading of the attachments chapter's eleventh
   // red, the one its record calls unexplained, which said "api never became healthy"
   // and discarded the child's reason.
   //
@@ -346,7 +346,7 @@ async function startApi(): Promise<ApiUnderTest> {
 
 /** FRESH USERS AND CHANNELS PER TEST, and this is not tidiness. A user removed in
  * one test is still removed in the next, and a shared fixture presents that as an
- * empty frame list — chapter 3.19's first run failed exactly that way, with test 1
+ * empty frame list — the presence chapter's first run failed exactly that way, with test 1
  * passing and tests 2 to 4 reporting `expected [] to have a length of 1`, which
  * reads like a broken fabric.
  *
@@ -607,7 +607,7 @@ interface InstanceOptions {
   backfillDelayMs?: number;
   subscribeDelayMs?: number;
   /** The backstop's interval. Production is sixty seconds; a test injects a short
-   * one, the way chapter 3.19's grace-period tests inject a hundred-millisecond
+   * one, the way the presence chapter's grace-period tests inject a hundred-millisecond
    * grace. Waiting out sixty would put one test at a quarter of the lane's budget. */
   rereadIntervalMs?: number;
   /** The proxy's url, so one instance can lose its fabric while the rest keep
@@ -830,7 +830,7 @@ describe("the membership fabric carries a change between two processes", () => {
 
 describe("the arms a session cannot reach", () => {
   it("ignores an unsubscribe for a channel that was never subscribed", async () => {
-    // `counts.get(key) ?? 0` and the early return under it. Chapter 3.19's presence
+    // `counts.get(key) ?? 0` and the early return under it. The presence chapter's presence
     // module wrote `?? 1` here, and the coverage ratchet found the arm unreachable
     // through `session.ts` — which is exactly why this test is in this file.
     const { logs, logger } = recorder();
@@ -878,7 +878,7 @@ describe("the arms a session cannot reach", () => {
   });
 
   it("logs membership.invalid_payload for a body that is not JSON", async () => {
-    // **AND THE TITLE NAMES WHAT THE ASSERTION CHECKS.** Chapter 3.19 shipped
+    // **AND THE TITLE NAMES WHAT THE ASSERTION CHECKS.** The presence chapter shipped
     // "logs presence.invalid_payload for a payload that is not a transition"
     // asserting `toEqual([])` — a good test under a false name, with both rejection
     // arms of the module reading zero coverage while it was green.
@@ -926,7 +926,7 @@ describe("the arms a session cannot reach", () => {
     });
     await expect(membership.close()).resolves.toBeUndefined();
     // Closed before the interval elapsed, so nothing ran — and nothing may run
-    // after. A timer surviving `close()` is how chapter 3.19 leaked one suite's
+    // after. A timer surviving `close()` is how the presence chapter leaked one suite's
     // work into the next file.
     await new Promise((r) => setTimeout(r, 150));
     expect(reads).toBe(0);
@@ -976,7 +976,7 @@ describe("the arms a session cannot reach", () => {
     // THE ARM NO OTHER TEST TAKES, and the reason it needs naming: every test above
     // passes a url or an interval, so `url ?? DEFAULT_REDIS_URL` and
     // `rereadIntervalMs ?? DEFAULT_REREAD_INTERVAL_MS` both read zero without this.
-    // Chapter 3.19's identical case measured `[15, 0]` and needed a test written at
+    // The presence chapter's identical case measured `[15, 0]` and needed a test written at
     // close-out purely to take the fallback.
     const saved = process.env["RELAY_REDIS_URL"];
     delete process.env["RELAY_REDIS_URL"];
@@ -1005,7 +1005,7 @@ describe("the arms a session cannot reach", () => {
 
   it("logs an ioredis connection error rather than dying on it", async () => {
     // The `error` listener, reachable only by pointing the module at nothing. Its
-    // stated reason is NFR-OBS-01 rather than process death: chapter 3.18 measured
+    // stated reason is NFR-OBS-01 rather than process death: the fan-out chapter measured
     // ioredis 6.0.0 and the process survives an unlistened `error`, printing
     // `[ioredis] Unhandled error event: …` itself — unstructured and unbounded.
     const { logs, logger } = recorder();
@@ -1553,7 +1553,7 @@ describe("the channel's other members see who left (US2)", () => {
     // **COUNTED BY SUBJECT, NOT BY TYPE**, and the first version counted by type and
     // read two presence frames. Both were correct: a watcher shares every one of
     // their own channels with themselves, so `linh` sees `linh` arrive. Chapter
-    // 3.19's `collect()` carries this warning in its own comment, T043 repeats it as
+    // The presence chapter's `collect()` carries this warning in its own comment, T043 repeats it as
     // an instruction — "filter every collector by subject" — and this suite counted
     // unfiltered anyway. The behaviour was right and the assertion was wrong, for
     // the fourth time across two chapters.
@@ -1819,7 +1819,7 @@ describe("a ban revokes everything at once (US4)", () => {
     // **THE TITLE DOES NOT SAY "STOPS BOTH CHANNELS" ANY MORE.** It did, and that
     // half moved to the shared-window test above when this file stopped paying the
     // five-second budget twice. A title claiming an assertion the test no longer
-    // makes is chapter 3.19's defect exactly, and T130 exists to catch it.
+    // makes is the presence chapter's defect exactly, and T130 exists to catch it.
     // **ONE WINDOW FOR THE WHOLE CASE.** Five seconds is FR-RTM-10's own budget and
     // cannot be injected shorter, so the ban, its negative assertion and the
     // bystander's positive one all share a single wait.
@@ -2071,7 +2071,7 @@ describe("the backstop — constitution IV's recovery property", () => {
   it("answers the route, writes the row and logs once with Redis unreachable", async () => {
     // FR-015 AND FR-016. Three things must be true and only one is obvious: **a
     // publisher that does nothing satisfies the first two exactly as well.** So the
-    // log line is what carries the requirement, which is chapter 3.18's trap against
+    // log line is what carries the requirement, which is the fan-out chapter's trap against
     // its own publisher, restated.
     const proxy = await startRedisProxy();
     const instance = await startInstance({ redisUrl: proxy.url, rereadIntervalMs: 200 });

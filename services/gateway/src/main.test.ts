@@ -39,7 +39,7 @@ describe("gateway skeleton", () => {
       const expectedFrames = frameSchema.options.map((o) => o.shape.type.value);
       expect(body.protocol.frames).toEqual(expectedFrames);
       expect(body.protocol.frames).toContain("connection.ack");
-      // ELEVEN from chapter 3.21's `typing.send`. The `toEqual` above is derived
+      // ELEVEN from the typing chapter's `typing.send`. The `toEqual` above is derived
       // on both sides and needed nothing; this line is the second of the two
       // hard-coded frame counts in the repository, and the only one no task
       // owned until analysis pass 17. It failed here in the UNIT lane, which

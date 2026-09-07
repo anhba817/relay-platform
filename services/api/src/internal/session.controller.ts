@@ -87,7 +87,7 @@ export class SessionController {
     // operation that consumes connection-minutes.
     //
     // ONE READ FOR BOTH, and the plan said two. Research R7 chose a second call
-    // rather than a heavier `environmentLimits`, because chapter 3.10's H2 had
+    // rather than a heavier `environmentLimits`, because the quota chapter's H2 had
     // refused to put a usage join in that function — and H2 is still right, since
     // its other caller is the rate-limit middleware on every `/v1` request. But
     // two calls cost what a join would have: measured, connect latency at 32-way
@@ -95,7 +95,7 @@ export class SessionController {
     //
     // THE CODE IS NAMED BY THE THROWER. `ProtocolErrorFilter` is `@Catch()`-all
     // and infers a code for four statuses; 402 is not one of them, so an unnamed
-    // refusal would reach the gateway as `internal_error` — chapter 3.10's H3.
+    // refusal would reach the gateway as `internal_error` — the quota chapter's H3.
     let policy;
     try {
       policy = await connectPolicy(
