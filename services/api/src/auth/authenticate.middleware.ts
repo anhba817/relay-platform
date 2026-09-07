@@ -37,7 +37,7 @@ export const AUTH_DB = "AUTH_DB";
  * request can ever present a platform principal, and the internal routes that
  * require one simply refuse everybody. Each service is absent independently.
  *
- * ONE SECRET PER SERVICE, AND the connection-metering chapter IS WHY. Until this chapter there was
+ * ONE SECRET PER SERVICE, AND THE CONNECTION-METERING CHAPTER IS WHY. Until this chapter there was
  * one caller and this function ended `service: "dispatcher"`, hardcoded — which
  * was accurate exactly as long as the dispatcher was alone. The gateway now
  * reports connection-minutes, and `PlatformPrincipal.service` is documented as

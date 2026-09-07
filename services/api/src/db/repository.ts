@@ -455,7 +455,7 @@ export async function assertConnectionsWithinQuota(
  * `max(reported, credited)`. Both live in `quotas/credit.ts`, pure and tested
  * without a database, because those two lines are the whole protocol.
  *
- * THE LOCK the quota chapter WANTED AND COULD NOT HAVE. Crediting is read-then-write,
+ * THE LOCK THE QUOTA CHAPTER WANTED AND COULD NOT HAVE. Crediting is read-then-write,
  * so it takes `SELECT … FOR UPDATE` on the accounting row. The quota chapter needed the same
  * lock on the usage row and hit `FOR UPDATE cannot be applied to the nullable
  * side of an outer join`, because its caps and usage had become one joined read.

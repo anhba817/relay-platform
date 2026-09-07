@@ -248,7 +248,7 @@ async function startApi(): Promise<ApiUnderTest> {
       ...process.env,
       PORT: pinned ?? "0",
       RELAY_OUTBOX_RELAY: "off",
-      // Nor the notification relay, for the same reason.
+      // The rate-limit chapter: nor the notification relay, for the same reason.
       RELAY_NOTIFICATION_RELAY: "off",
       RELAY_REDIS_URL: REDIS_URL,
     },

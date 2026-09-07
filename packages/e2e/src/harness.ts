@@ -424,7 +424,7 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     // files, not a property of the system. The relay has its own suite, which
     // drives it explicitly.
     RELAY_OUTBOX_RELAY: "off",
-    // And no notification relay either, for the same reason. This
+    // The rate-limit chapter: and no notification relay either, for the same reason. This
     // journey asserts message delivery; a loop marking rows delivered while
     // The rate-limit chapter's own suite asserts on that column is a race between test files.
     RELAY_NOTIFICATION_RELAY: "off",
@@ -433,7 +433,7 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     // background consumer writing to a table the broker chapter's suite asserts on is a race
     // between test files rather than a property of the system.
     RELAY_EVENT_CONSUMER: "off",
-    // Nor the delivery relay, for the third time and the same
+    // The webhook dispatcher chapter: nor the delivery relay, for the third time and the same
     // reason. Three background loops now share tables that other suites assert
     // on, and each one had to be silenced here the moment it existed — which is
     // the general form of the outbox chapter's finding 4 rather than a coincidence.

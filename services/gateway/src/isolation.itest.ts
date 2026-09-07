@@ -647,7 +647,7 @@ describe("the socket gauntlet", () => {
   // no `message.created` ever arrives in this suite: `say()` writes through the
   // repository, THIS SUITE attaches no fan-out, and nothing here drains the outbox.
   //
-  // THE REASON CHANGED IN the fan-out chapter AND THE FACT DID NOT. This comment used to say
+  // THE REASON CHANGED IN THE FAN-OUT CHAPTER AND THE FACT DID NOT. This comment used to say
   // "the api publishes to no fan-out", which was the platform-wide truth the isolation gauntlet
   // recorded as a finding — a REST-sent message reached no socket, by two independent
   // mechanisms. The sender chapter removed one and the fan-out chapter the other, so the api does
@@ -774,7 +774,7 @@ const DIRECTIONS: ReadonlyArray<readonly [string, "inbound" | "outbound", string
   ["membership.changed", "outbound", "membership is written through the api, never the socket"],
   ["presence.changed", "outbound", "derived from connections the gateway holds, not claimed"],
   ["typing", "outbound", "server-fanned; a client claiming one could type as anybody"],
-  // And the second inbound frame in twenty chapters. It carries no
+  // The typing chapter, and the second inbound frame in twenty chapters. It carries no
   // `user` — the connection supplies it — which is what keeps the row above true
   // rather than contradicted: same subject, two frames, and only the server's
   // names a person.

@@ -324,7 +324,7 @@ const envelope = {
   occurred_at: z.iso.datetime(),
 };
 
-/** A DISCRIMINATED UNION, AND IT WAS A LITERAL UNTIL the membership-revocation chapter RAN IT.
+/** A DISCRIMINATED UNION, AND IT WAS A LITERAL UNTIL THE MEMBERSHIP-REVOCATION CHAPTER RAN IT.
  *
  * This schema was `type: z.literal("message.created")` inside a `strictObject`, and
  * the consumer that uses it — `services/api/src/consumer/runtime.ts:163` — answers a

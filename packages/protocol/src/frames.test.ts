@@ -75,7 +75,7 @@ const valid: Record<string, unknown> = {
     payload: { user: "u1", state: "online" },
   },
   typing: { type: "typing", payload: { channel: "c1", user: "u1" } },
-  // And the only INBOUND member besides `message.send`. One
+  // The typing chapter, and the only INBOUND member besides `message.send`. One
   // field: the connection supplies the user.
   "typing.send": { type: "typing.send", payload: { channel: "c1" } },
   error: {

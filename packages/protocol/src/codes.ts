@@ -170,7 +170,7 @@ export const ERROR_CODES = {
   invalid_request:
     "the request body, query or path failed validation; `field` names the first offending key",
   forbidden: "the credential is valid and is not permitted to do this",
-  // AND **NOT** `forbidden` — the third time this file has made that
+  // THE REVISIONS CHAPTER, AND **NOT** `forbidden` — the third time this file has made that
   // argument, after `wrong_credential_type` and `wrong_credential_service`, and the
   // first time the reason is not about credentials at all.
   //
@@ -191,7 +191,7 @@ export const ERROR_CODES = {
   // pass 3 caught the task whose condition nobody had evaluated.
   not_message_author:
     "the caller did not write this message; only its author may change what it says",
-  // AND A SECOND NEW CODE IN ONE CHAPTER — which is one more than the
+  // THE REVISIONS CHAPTER, AND A SECOND NEW CODE IN ONE CHAPTER — which is one more than the
   // plan expected, so it gets the test at the top of this file applied out loud: *"a
   // client that cannot tell them apart retries the wrong one for ever."*
   //

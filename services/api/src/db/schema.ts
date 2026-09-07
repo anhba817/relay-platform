@@ -287,7 +287,7 @@ export const users = pgTable(
       t.environmentId,
       t.externalId,
     ), // DR-02
-    // THE CONSTRAINED TEXT COLUMNS IN THIS SCHEMA NAME EACH OTHER (the channel-control chapter's
+    // THE CONSTRAINED TEXT COLUMNS IN THIS SCHEMA NAME EACH OTHER (THE CHANNEL-CONTROL CHAPTER'S
     // practice, applied here): `channels_type_check` on `channels.type`,
     // `members_role_check` on `members.role`, `memberships_role_check` on an
     // organisation membership's role, and this pair. One word apart is how `admin`

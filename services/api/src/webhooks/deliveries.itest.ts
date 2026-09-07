@@ -332,7 +332,7 @@ describe("the relay drains only what is due", () => {
 
   /** The same drain, retried until a row this suite owns has settled.
    *
-   * FOUND AT the deduplication chapter'S POST-FIX MEASUREMENT, on run 2 of 20: "expected null
+   * FOUND AT THE DEDUPLICATION CHAPTER'S POST-FIX MEASUREMENT, on run 2 of 20: "expected null
    * not to be null" for a delivery that was unambiguously due. The comment above
    * had the principle right and the implementation one call short.
    *

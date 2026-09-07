@@ -59,7 +59,7 @@ export type SendMessageBody = z.infer<typeof sendMessageBodySchema>;
  * edited message is still a message, so both import `MESSAGE_TEXT_MAX` and neither
  * spells it.
  *
- * THE FLOORS DIVERGED IN the attachments chapter AND MUST STAY DIVERGED. This paragraph used to say
+ * THE FLOORS DIVERGED IN THE ATTACHMENTS CHAPTER AND MUST STAY DIVERGED. This paragraph used to say
  * the field was "written as a reference to that shape" — it was
  * `sendMessageBodySchema.shape.text` — and that is what broke: FR-019 removed the send's
  * `.min(1)` so an attachments-only message could carry empty text, and the edit's floor

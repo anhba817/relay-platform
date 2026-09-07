@@ -92,7 +92,7 @@ export function createServer(logger?: Logger) {
     limits,
     presence,
     membership,
-    // AND THIS LINE HAD NO OWNER UNTIL THE SEALED CLIENT ASKED FOR
+    // THE TYPING CHAPTER, AND THIS LINE HAD NO OWNER UNTIL THE SEALED CLIENT ASKED FOR
     // IT. Phase 3's task deferred the destructuring in `session.ts` to keep that
     // phase committable — `no-unused-vars` rejects a binding whose first consumer
     // is a later phase — and recorded the wiring as a later task's job. No later

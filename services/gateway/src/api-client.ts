@@ -174,7 +174,7 @@ export function createApiClient(
       // it. Everything else falls through to `parse`, which throws — the api
       // being unreachable is a different event with a different close code.
       if (res.status === 401 || res.status === 403) return null;
-      // So is 402, and it is a DIFFERENT answer: the credential is
+      // The connection-metering chapter, So is 402, and it is a DIFFERENT answer: the credential is
       // good and the month is spent. Without this branch it would fall into
       // `parse`, throw, and close the socket 1011 — "we are broken, retry" —
       // which is wrong about whose fault it is and wrong about whether retrying

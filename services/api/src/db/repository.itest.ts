@@ -96,7 +96,7 @@ describe("tenant isolation is structural (FR-TEN-05)", () => {
     const inA = await repoA.getUserByExternalId("tuan");
     expect(inB.id).not.toBe(inA!.id);
 
-    // THE OBSERVATION CHANGED IN the isolation gauntlet AND THE PROPERTY DID NOT. This
+    // THE OBSERVATION CHANGED IN THE ISOLATION GAUNTLET AND THE PROPERTY DID NOT. This
     // used to assert that a repeat within one tenant REJECTS, which observed the
     // unique index by watching it raise. `createUser` is now idempotent — the
     // members endpoint creates a user on first membership, so a repeated request

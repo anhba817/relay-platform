@@ -236,7 +236,7 @@ async function startApi(
     // socket's credentials; a background loop draining a table that chapter
     // The outbox chapter's suite is asserting on turns two unrelated test files into a race.
     env: { ...process.env, PORT: pinned, RELAY_OUTBOX_RELAY: "off",
-      // Nor the notification relay, for the same reason.
+      // The rate-limit chapter: nor the notification relay, for the same reason.
       RELAY_NOTIFICATION_RELAY: "off",
       // Its own failed-authentication keyspace. The rate-limit chapter's auth
       // limiter counts failures per SOURCE ADDRESS in Redis, every suite in this
@@ -1463,7 +1463,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
   });
 
   it("stops delivering to a member who was REMOVED while connected (FR-RTM-10)", async () => {
-    // INVERTED IN the membership-revocation chapter, AND THE TITLE WITH IT. This test read "keeps
+    // INVERTED IN THE MEMBERSHIP-REVOCATION CHAPTER, AND THE TITLE WITH IT. This test read "keeps
     // delivering" and asserted the violation on purpose from the fan-out chapter until
     // now — its own closing comment carried the instruction: "change this to
     // `.rejects` on the day a re-read exists".

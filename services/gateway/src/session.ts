@@ -868,7 +868,7 @@ export function attachSessions({
           return;
         }
         if (result.outcome === "over_quota") {
-          // And this is the 4001 path's SHAPE for the 4001 path's
+          // The connection-metering chapter, and this is the 4001 path's SHAPE for the 4001 path's
           // REASON. The handshake completes so that a close code has a socket to
           // arrive on — EIR-WS-05 asks that of a bad token and EIR-WS-06 asks the
           // same of quota exhaustion, and `CLOSE_CODES[4008]` has read "quota
@@ -965,14 +965,14 @@ export function attachSessions({
         // carries two subscriptions. `ioredis` takes a variadic `subscribe`, so the
         // count doubles and the round trips do not.
         presence?.subscribe(channelId),
-        // And the third. Without this line the membership fabric has
+        // The membership-revocation chapter, and the third. Without this line the membership fabric has
         // no receiver at all — the publisher publishes, the module parses nothing,
         // and every test of the revocation path fails for a reason that looks like a
         // broken fabric. **No task owned it**: T054 covers the release on a
         // revocation and T079 covers the user's own subject, and the ordinary open
         // path fell between them.
         membership?.subscribeChannel(channelId),
-        // And the fourth. A channel now carries four subscriptions
+        // The typing chapter, and the fourth. A channel now carries four subscriptions
         // on one instance, all reference-counted, all released by the last member
         // to leave. **This line and the two release sites below are what the
         // previous chapter's own note warned about**: its equivalent had no task,
@@ -1115,7 +1115,7 @@ export function attachSessions({
     if (renewal !== undefined) renewal.unref();
 
     socket.on("close", (code) => {
-      // And the ORDER MATTERS. The meter is told first, because
+      // The connection-metering chapter, and the ORDER MATTERS. The meter is told first, because
       // the line below removes this connection from the registry the meter walks
       // — and a socket that opened and closed between two reports would
       // otherwise be counted zero. That is not a rounding error: it is the one
@@ -1143,7 +1143,7 @@ export function attachSessions({
       }
       meter?.closed(connection, new Date());
       registry.remove(connection.id);
-      // AND THIS HANDLER NOW CARRIES THREE ORDERING CONSTRAINTS, not
+      // THE PRESENCE CHAPTER, AND THIS HANDLER NOW CARRIES THREE ORDERING CONSTRAINTS, not
       // one. The meter is told BEFORE `registry.remove` — a socket that opened and
       // closed between two reports would otherwise be counted zero, which is the one
       // thing the wall-clock-minute unit was chosen to charge. Presence is told

@@ -80,7 +80,7 @@ export class InternalController {
       // build a message.created frame without a sender, so the write path
       // finally records the one it already had in its hand.
       user.id,
-      // And the external id travels too, because the event this
+      // The outbox chapter: and the external id travels too, because the event this
       // write now emits is read by customers, who know users by that name.
       userExternalId,
     );
