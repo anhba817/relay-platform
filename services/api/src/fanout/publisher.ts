@@ -50,7 +50,7 @@ export interface MessagePublisher {
    * delivery is allowed to fail, because the row is already durable and 2.7's
    * resume will find it (ADR-07, constitution IV). */
   publish(message: Message, context: PublishContext): Promise<void>;
-  /** Chapter 3.23, ADR-24. Publish an edit or a deletion to its channel's revision
+  /** ADR-24. Publish an edit or a deletion to its channel's revision
    * subject. Same contract as `publish`: NEVER REJECTS, because the row is already
    * committed and a client that misses the frame repairs by re-reading history — which is
    * the bound FR-016a states rather than a gap. */

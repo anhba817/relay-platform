@@ -365,7 +365,7 @@ describe("the socket gauntlet", () => {
 
   // ── THE SOCKET'S SEND INTO A PRIVATE CHANNEL OF ITS OWN TENANT ─────────────
   //
-  // Chapter 3.15, FR-001. Every attack above crosses a tenant boundary; this one
+  // FR-001. Every attack above crosses a tenant boundary; this one
   // does not. The attacker's own tenant holds a private channel they are not a
   // member of, and the socket reaches the same `repository.sendMessage` the REST
   // route does — through `api-client` to `POST /internal/messages`, which has

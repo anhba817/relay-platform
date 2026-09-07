@@ -58,7 +58,7 @@ export type Authentication =
    * spent its month". Carries the api's own message, because the resume date is
    * in it and a close reason string has nowhere to put one. */
   | { outcome: "over_quota"; message: string }
-  /** Chapter 3.15, FR-031. The api answered, the token is perfectly good, and the user
+  /** FR-031. The api answered, the token is perfectly good, and the user
    * is banned in this environment. Its own outcome and its own close code (4003), not a
    * reuse of `refused`: 4001 means "your credential is bad", which a client acts on by
    * re-authenticating, and re-authenticating succeeds and connects to the same refusal. */

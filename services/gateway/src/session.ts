@@ -251,7 +251,7 @@ export interface SessionServerOptions {
    * headroom in the whole budget. That chapter's itest builds with 40 to test a
    * sixty-second backstop; this one builds with 40 and with 0. */
   renewalIntervalMs?: number;
-  /** Chapter 3.22, FR-RTM-09's five-connection cap.
+  /** FR-RTM-09's five-connection cap.
    *
    * **OPTIONAL, LIKE THE OTHER FIVE, AND THAT IS A DECISION RATHER THAN A
    * DEFAULT.** For a typing indicator "optional" means no typing; for a cap it
@@ -306,7 +306,7 @@ export function attachSessions({
   close: () => Promise<void>;
 } {
   const registry = new Registry();
-  /** CHAPTER 3.22, FR-011a. What this instance holds, so a shutdown can free it
+  /** FR-011a. What this instance holds, so a shutdown can free it
    * all at once.
    *
    * A MAP IN THE CLOSURE RATHER THAN A FIELD ON `Connection`. The typing chapter put
@@ -851,7 +851,7 @@ export function attachSessions({
           return;
         }
         if (result.outcome === "banned") {
-          // Chapter 3.15, FR-031. THE SHAPE OF THE QUOTA REFUSAL, for the same reason:
+          // FR-031. THE SHAPE OF THE QUOTA REFUSAL, for the same reason:
           // the handshake completes so a close code has a socket to arrive on, and an
           // error frame goes first because a close reason is a short string.
           //
@@ -1668,7 +1668,7 @@ export function attachSessions({
       clearInterval(heartbeat);
       meter.stop();
       await meter.reportOnce(new Date());
-      // CHAPTER 3.22, FR-011a. Before `wss.close()`, because that call does not
+      // FR-011a. Before `wss.close()`, because that call does not
       // close established sockets — so their own close handlers may never run and
       // this is the last chance to free their places. SC-013: after a deployment a
       // user whose connections were on the replaced instance reconnects

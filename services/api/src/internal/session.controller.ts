@@ -123,7 +123,7 @@ export class SessionController {
     return {
       environment_id: principal.environmentId,
       user: principal.userExternalId,
-      // Chapter 3.15, FR-031. THE ROW IS ALREADY IN HAND — `getUserByExternalId` above
+      // FR-031. THE ROW IS ALREADY IN HAND — `getUserByExternalId` above
       // reads it for the channel list — so carrying the ban costs one field and no query.
       // The gateway refuses the socket; this route only reports the fact, because the
       // gateway has no database and the column is in Postgres.

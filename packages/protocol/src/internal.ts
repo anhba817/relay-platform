@@ -202,7 +202,7 @@ export const internalSessionResponseSchema = z.strictObject({
    * feature still satisfies the schema during a rolling deploy, and the gateway then reports
    * every channel at zero, which is today's behaviour. */
   channel_revisions: revisionCountSchema.default({}),
-  /** Chapter 3.15, FR-031. Whether this user is banned in this environment.
+  /** FR-031. Whether this user is banned in this environment.
    *
    * IT RIDES THIS RESPONSE FOR THE REASON THE LIMITS DO: the gateway has no database and
    * must not gain one, `banned_at` is a column in Postgres, and the api is the only

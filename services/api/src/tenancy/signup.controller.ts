@@ -129,7 +129,7 @@ export class SignupController {
       organisation: result.organisation,
       application: result.application,
       environment: result.environment,
-      // Chapter 3.2, FR-AUT-02: the environment's first key, and the ONLY time
+      // FR-AUT-02: the environment's first key, and the ONLY time
       // its secret exists outside a hash. It is present only when this call
       // created the tenant — a returning owner is not handed a new secret,
       // because the old one is unrecoverable by design and the recovery for a

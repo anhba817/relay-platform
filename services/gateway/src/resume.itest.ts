@@ -359,7 +359,7 @@ describe("resume across a real fabric", () => {
     socket.close();
   });
 
-  /** CHAPTER 3.23, FR-016 — THE GATEWAY'S HALF, AND ONLY THE GATEWAY'S HALF.
+  /** FR-016 — THE GATEWAY'S HALF, AND ONLY THE GATEWAY'S HALF.
    *
    * **The task list put four tests here and they could not be written.** This file boots
    * the gateway against a STUBBED api: `environment_id: "env-1"` and `user: "tuan"` are

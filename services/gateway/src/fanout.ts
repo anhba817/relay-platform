@@ -49,7 +49,7 @@ export interface Fanout {
   /** Publish a committed message to its channel's subject. A failure here
    * costs delivery latency, never durability. */
   publish(message: Message): Promise<void>;
-  /** Chapter 3.23, ADR-24. Register the revision callback — an edit or a deletion of a
+  /** ADR-24. Register the revision callback — an edit or a deletion of a
    * message that already exists.
    *
    * A SECOND CALLBACK ON THE SAME MODULE, not a second module. The revision subject's

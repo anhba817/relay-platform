@@ -2199,18 +2199,18 @@ export interface UserRow {
   id: string;
   external_id: string;
   display_name: string | null;
-  /** Chapter 3.15, FR-023. Both columns have existed since chapter 2.1 and **no route
+  /** FR-023. Both columns have existed since chapter 2.1 and **no route
    * has ever written or read either one** — two of the four dead columns this feature
    * exists to give readers. They are on the row rather than fetched by a second query
    * because every caller that wants a profile wants all of it. */
   avatar_url: string | null;
   metadata: Record<string, unknown>;
-  /** Chapter 3.15, FR-031. Read on the send path and at connect. Like `deleted_at`, it
+  /** FR-031. Read on the send path and at connect. Like `deleted_at`, it
    * is selected rather than filtered so a caller can tell the states apart — a
    * repository that hid banned users would make the ban unobservable and the refusal
    * untestable. */
   banned_at: string | null;
-  /** Chapter 3.15, FR-017. A deleted user KEEPS THEIR ROW: `ON DELETE SET NULL` on
+  /** FR-017. A deleted user KEEPS THEIR ROW: `ON DELETE SET NULL` on
    * `messages.user_id` would satisfy the letter of "messages are preserved" and break
    * delivery, because `backfill.controller`'s `toFrame` drops a senderless row — so
    * "authored by a deleted user" and "authored by nobody" are different states and
@@ -2221,7 +2221,7 @@ export interface UserRow {
    * apart: a repository that hid deleted rows would make the marker unobservable and
    * the deletion untestable. */
   deleted_at: string | null;
-  /** Chapter 3.17, FR-USR-07. What kind of thing this user is — `'person'` or `'bot'`.
+  /** FR-USR-07. What kind of thing this user is — `'person'` or `'bot'`.
    *
    * ON EVERY USER, not only bots. A reader that had to infer personhood from a null
    * description would be inferring it from the absence of something, and FR-003 asks
@@ -2426,7 +2426,7 @@ export interface WebhookEndpointRow {
   enabled: boolean;
   secret_rotated_at: string | null;
   created_at: string;
-  /** Chapter 3.6, FR-009. `enabled: false` with `disabled_at: null` means the
+  /** FR-009. `enabled: false` with `disabled_at: null` means the
    * customer paused it themselves; both set means the platform did. Without this
    * pair a customer looking at a disabled endpoint has no way to tell whether they
    * are looking at their own decision or ours, and the support conversation starts
@@ -2939,7 +2939,7 @@ export class Repository {
   async addMember(
     channelId: string,
     userId: string,
-    /** Chapter 3.15, FR-011b. Absent means the column's own default — `member` —
+    /** FR-011b. Absent means the column's own default — `member` —
      * which is what keeps every existing caller working unchanged. An entry that
      * names a role is creating a member WITH one rather than changing them into one
      * afterwards, which is what US6's first scenario asks for. */
@@ -3673,7 +3673,7 @@ export class Repository {
       display_name?: string | null | undefined;
       avatar_url?: string | null | undefined;
       metadata?: Record<string, unknown> | undefined;
-      /** Chapter 3.17, FR-004. `string | undefined` and NOT `| null`, unlike its three
+      /** FR-004. `string | undefined` and NOT `| null`, unlike its three
        * neighbours: the boundary refuses a null (FR-004b) because
        * `users_bot_description_check` would raise on a bot, so a null can never arrive
        * here and widening the type would invite one. */

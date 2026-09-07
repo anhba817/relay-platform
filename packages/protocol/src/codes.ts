@@ -7,7 +7,7 @@
 export const CLOSE_CODES = {
   4001: "invalid or expired token",
   4002: "protocol violation",
-  // Chapter 3.15, FR-031. A FIFTH CODE, AND NOT A REUSE OF 4001.
+  // FR-031. A FIFTH CODE, AND NOT A REUSE OF 4001.
   //
   // A banned user's token is perfectly valid — it verifies, it names a real user, it is
   // in date. Closing 4001 tells a client to re-authenticate, which succeeds at minting a
@@ -19,7 +19,7 @@ export const CLOSE_CODES = {
   // protocol violation — and a ban is none of them. Numbered here, the way chapter 1.3
   // numbered 4002 and 4008.
   4003: "banned in this environment",
-  // CHAPTER 3.22, FR-RTM-09. A SIXTH CODE, AND EVERY REUSE FAILS THIS FILE'S OWN TEST.
+  // FR-RTM-09. A SIXTH CODE, AND EVERY REUSE FAILS THIS FILE'S OWN TEST.
   //
   // The remedy for this refusal is unlike every other one here: close one of the
   // connections you already hold, and reconnect immediately. No waiting, no new
@@ -287,7 +287,7 @@ export const ERROR_CODES = {
   // state to reconcile — so it is refused rather than absorbed.
   connection_environment_conflict:
     "this connection was first reported for a different environment; a connection belongs to one environment for its whole life",
-  // Chapter 3.22, FR-RTM-09, and the socket's half of the connection cap: an error
+  // FR-RTM-09, and the socket's half of the connection cap: an error
   // frame carrying the limit and the count, sent immediately before close 4004.
   //
   // THE FIGURES GO IN THE MESSAGE, not in payload fields. `errorFrameSchema` is a

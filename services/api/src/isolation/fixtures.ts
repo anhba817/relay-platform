@@ -111,7 +111,7 @@ export function nowhereId(): string {
 
 /** ONE TENANT, TWO USERS, AND A PRIVATE CHANNEL ONE OF THEM IS NOT IN.
  *
- * Chapter 3.15, FR-034. `seedTwoTenants` above gives every attack a victim in
+ * FR-034. `seedTwoTenants` above gives every attack a victim in
  * ANOTHER environment, and all four attack shapes take an identifier that does not
  * exist in the attacker's own tenant. A non-member of your OWN tenant is a
  * different case entirely: the channel is right there, the environment predicate
@@ -187,7 +187,7 @@ export async function seedSameTenant(db: Db, mintToken: MintToken): Promise<Same
 
 /** THE SAME `external_id` IN TWO ENVIRONMENTS, ONE PUBLIC AND ONE PRIVATE.
  *
- * Chapter 3.15, FR-034a. `seedTenant` above label-prefixes every identifier —
+ * FR-034a. `seedTenant` above label-prefixes every identifier —
  * `${label}-channel` — so the two tenants it mints never share one, and all four
  * attack shapes take an id that does NOT exist in the attacker's tenant. The case
  * where the same STRING resolves in both, to channels of different types, has no

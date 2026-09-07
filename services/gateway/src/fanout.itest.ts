@@ -178,7 +178,7 @@ describe("fan-out across instances", () => {
   });
 
   it("delivers an edit on the revision subject and NOT on the message one", async () => {
-    // Chapter 3.23, ADR-24. The `updated` arm's payload is a `Message`, which is exactly
+    // ADR-24. The `updated` arm's payload is a `Message`, which is exactly
     // why this test names both callbacks. Route on the wrong one and an edit is shown to
     // every member as a brand new message — and nothing about its shape would say so.
     await g2.fanout.subscribe(CHANNEL);
