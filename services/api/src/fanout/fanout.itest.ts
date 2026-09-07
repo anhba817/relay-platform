@@ -42,7 +42,8 @@ describe("the api's fan-out publish", () => {
 
   /** Frames seen on a subject, in arrival order, raw and parsed. A subscriber
    * rather than a spy: what matters is what reaches the fabric, not what a mock
-   * was asked to do. Raw is kept because T018 asserts on the exact key set. */
+   * was asked to do. Raw is kept because the key-set assertion below reads the
+   * published bytes rather than a parsed object. */
   const seen = new Map<string, string[]>();
 
   const watch = async (channel: string) => {
@@ -228,14 +229,14 @@ describe("the api's fan-out publish", () => {
     expect(frames.map((f) => f.text)).toContain(text);
   });
 
-  it("publishes a payload the delivery side will accept (T018)", async () => {
+  it("publishes a payload the delivery side will accept", async () => {
     // Against `messageSchema` ITSELF, not against a list of mistakes. One
     // `safeParse` covers a seventh key, `channel_id` in place of `channel`, a
     // missing `user`, a non-positive `seq` and a `created_at` that is not RFC
     // 3339 — and the far end DROPS what does not match, so any of those would
     // deliver nothing while the send still answered 201.
     await watch(channelId);
-    const text = `T018 ${randomUUID()}`;
+    const text = `payload-shape ${randomUUID()}`;
     await restSend({ text });
     const [raw] = await untilRaw(channelId, 1);
 

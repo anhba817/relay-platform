@@ -682,8 +682,8 @@ describe("the isolation gauntlet", () => {
   });
   // ── T031: the five platform routes, and what isolation means for them ──────
   //
-  // T031b, the comment the plan asked for: a platform credential is not
-  // tenant-scoped and is not meant to be. The dispatcher serves every tenant, so
+  // A platform credential is not tenant-scoped and is not meant to be. The
+  // dispatcher serves every tenant, so
   // its credential reaches every tenant's deliveries. FR-044 narrowed WHICH
   // ROUTES each service may call and changed nothing about that reach.
   //
@@ -693,7 +693,7 @@ describe("the isolation gauntlet", () => {
   // `usage/connections` (an environment per connection). Those two can be told
   // to act on environment A while carrying something from B, and both are
   // attacked: expand below, connections by `usage.itest.ts`'s
-  // `connection_environment_conflict` assertion (T032).
+  // `connection_environment_conflict` assertion.
   //
   // The other three — `material`, `outcome`, `replay` — take one opaque
   // identifier and DERIVE the environment from the row they find. There is no
@@ -703,7 +703,7 @@ describe("the isolation gauntlet", () => {
   // guards them is FR-044 and nothing else — which is why `material`, the one
   // response in the platform that returns a decrypted customer secret, is the
   // route to watch first if a platform credential ever leaks.
-  describe("the platform routes (T031, T031b)", () => {
+  describe("the platform routes", () => {
     const dispatcher = process.env["RELAY_INTERNAL_CREDENTIAL"] ?? "";
 
     // Through the victim's OWN repository, which is both scoped and the only

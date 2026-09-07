@@ -828,7 +828,7 @@ describe("the membership fabric carries a change between two processes", () => {
   });
 });
 
-describe("the arms a session cannot reach (T036's list)", () => {
+describe("the arms a session cannot reach", () => {
   it("ignores an unsubscribe for a channel that was never subscribed", async () => {
     // `counts.get(key) ?? 0` and the early return under it. Chapter 3.19's presence
     // module wrote `?? 1` here, and the coverage ratchet found the arm unreachable
@@ -1068,7 +1068,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
     // timing flake in a lane that runs nine files at once.
     const elapsed = Date.now() - started;
     // eslint-disable-next-line no-console
-    console.log(`[T066] request-return to notice: ${String(elapsed)} ms`);
+    console.log(`[membership] request-return to notice: ${String(elapsed)} ms`);
     expect(elapsed).toBeLessThan(1_000);
   });
 
@@ -1746,9 +1746,9 @@ describe("a member added mid-connection starts receiving (US3)", () => {
 });
 
 describe("the window between the add committing and the subscription landing", () => {
-  it("loses a message published inside it, under EITHER ordering (T086)", async () => {
-    // **T080 ASKED FOR AN ORDERING WHOSE FAILURE MODE DOES NOT EXIST**, and T086
-    // asked for the proof, which is how it was found. The task reads: inserting into
+  it("loses a message published inside it, under EITHER ordering", async () => {
+    // **THE PLAN ASKED FOR AN ORDERING WHOSE FAILURE MODE DOES NOT EXIST**, and asking
+    // for the proof is how that was found. The reasoning ran: inserting into
     // `channelIds` before subscribing "opens a window where `registry.subscribersOf`
     // returns a connection for a channel this instance is not yet receiving — a
     // silently lost message rather than an error".

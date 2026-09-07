@@ -177,7 +177,7 @@ describe("the public channel surface", () => {
       expect((await repo.listMembers(channelId)).length).toBe(2);
     });
 
-    it("says already_a_member on a repeat, and is not a 500 (T052)", async () => {
+    it("says already_a_member on a repeat, and is not a 500", async () => {
       const res = await addMembers(channelId, { user_ids: ["tuan"] });
       expect(res.status).toBe(200);
       const body = (await res.json()) as { members: { status: string }[] };
@@ -710,7 +710,7 @@ describe("the public channel surface", () => {
       expect(a).toEqual(b);
     });
 
-    it("does not change what a user has left unread (FR-022, T078)", async () => {
+    it("does not change what a user has left unread (FR-022)", async () => {
       // The edge case the spec names, and this is where "the count is still true"
       // gets a definition: archiving writes ONE column on `channels` and touches no
       // message and no read position. So `last_sequence` is what it was, every read
