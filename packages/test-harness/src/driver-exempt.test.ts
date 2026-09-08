@@ -79,14 +79,26 @@ describe("the driver exemption is checked in both directions", () => {
   });
 
   it("exempts the repository layer as a directory and everything else by path", () => {
+    const text = config();
+    // FOUND BY SCANNING BACK FROM THE RULE, NOT BY A WINDOW. This read `indexOf("ignores:
+    // [", indexOf("no-restricted-imports") - 2000)` and the 2000 was the whole check: the
+    // block grew by a comment, the real `ignores` fell 2,027 characters before the anchor
+    // — 27 outside the window — and the search silently found the NEXT one instead and
+    // reported `[]`. An empty list is a legitimate-looking answer, so nothing said broken.
+    const anchor = text.indexOf("no-restricted-imports");
+    expect(anchor, "the rule this test reads is not in the config").toBeGreaterThan(-1);
+    const start = text.lastIndexOf("ignores: [", anchor);
+    expect(start, "no ignores list precedes the rule").toBeGreaterThan(-1);
+    const entries = [...text.slice(start, text.indexOf("]", start)).matchAll(/"([^"]+)"/g)].map(
+      (m) => m[1]!,
+    );
+    // THE POSITIVE CONTROL. Every assertion below is about which of these are globs, and
+    // a parse that found nothing would satisfy all of them.
+    expect(entries.length, "parsed no entries at all — this test is broken, not passing")
+      .toBeGreaterThan(0);
     // The directory pattern is legitimate — `services/api/src/db` IS the layer the
     // rule carves out. Any OTHER pattern would silently absorb the next file added
     // under it, which is the thing this list exists instead of.
-    const text = config();
-    const start = text.indexOf("ignores: [", text.indexOf("no-restricted-imports") - 2000);
-    const globs = [...text.slice(start, text.indexOf("]", start)).matchAll(/"([^"]+)"/g)]
-      .map((m) => m[1]!)
-      .filter((g) => g.includes("*"));
-    expect(globs).toEqual(["services/api/src/db/**"]);
+    expect(entries.filter((g) => g.includes("*"))).toEqual(["services/api/src/db/**"]);
   });
 });

@@ -132,15 +132,33 @@ export default defineConfig({
         // throw for a state the surrounding code says cannot arise:
         //
         //   119   no such environment, in a mint whose caller already resolved it
-        //   805   a channel neither inserted nor readable: the loser of an ON
+        //   841   a channel neither inserted nor readable: the loser of an ON
         //         CONFLICT race finding no row, which needs the winner's row deleted
         //         between two statements of one call, and nothing deletes channels
-        //   1899  an idempotency key that conflicted while its message is missing
-        //   2060  the private-channel arm of the history read, whose OTHER arm every
+        //   2109  an idempotency key that conflicted while its message is missing
+        //   2270  the private-channel arm of the history read, whose OTHER arm every
         //         test takes — the one branch here that is reachable, and the chapter
         //         that gives a user a history page is where it gets its case
+        //
+        // The four are the same four; only their line numbers moved. Re-read at the
+        // sender chapter rather than assumed, because a stale list of what is uncovered
+        // is how a ratchet keeps a claim nobody has checked since it was true.
         "services/api/src/db/repository.ts": {
-          branches: 90,
+          // 90 -> 92 (the sender chapter). MEASURED TWICE ON THIS TREE: 92.66 both
+          // times, byte-identical down to the uncovered line numbers. Two observations
+          // rather than one because coverage is not reproducible run to run here —
+          // `session.ts` has read 87.80 and 85.36 on identical code twenty minutes
+          // apart — and a ratchet pinned to a single lucky reading is one that teaches
+          // its next reader to lower it. This file did not move at all, so the headroom
+          // below the pin is 0.66 rather than a swing allowance.
+          //
+          // The arms that moved it: the sender's `kind` read feeding two checks, the
+          // promotion's has-ever-sent scan, and the kind-conflict flag that replaced a
+          // third throw. Statements (96.45) and lines (98.23) also cleared their pins,
+          // and are deliberately NOT raised: this chapter changed the branch structure,
+          // and moving three ratchets on one chapter's evidence tightens two of them
+          // against a measurement that was never their subject.
+          branches: 92,
           functions: 100,
           lines: 97,
           statements: 95,
