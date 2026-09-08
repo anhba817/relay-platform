@@ -1,6 +1,7 @@
 import type { ApiClient, Identity } from "./api-client.js";
 
-// The door (chapter 2.5, rebuilt by 3.2). Tokens are still checked BEFORE the
+// The door (chapter 2.5, rebuilt by the credentials chapter). Tokens are still
+// checked BEFORE the
 // handshake completes — an unauthenticated socket never reaches session code —
 // but the gateway no longer does the checking.
 //

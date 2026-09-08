@@ -34,7 +34,7 @@ function principalUser(req: RequestWithPrincipal): string {
 // public routes — the write path has one implementation (ADR-04), and the
 // socket is a new door onto it, not a second path.
 //
-// DECISION (chapter 2.5, narrowed by 3.2): these routes are still
+// DECISION (chapter 2.5, narrowed by the credentials chapter): these routes are still
 // network-internal, and there is still no service-to-service credential between
 // the gateway and the api — that remains Part 3 hardening. What changed is what
 // they trust. The gateway used to ASSERT identity in two headers it invented

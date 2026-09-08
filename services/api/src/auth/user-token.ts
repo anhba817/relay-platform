@@ -3,7 +3,8 @@ import { SignJWT, decodeJwt, jwtVerify } from "jose";
 // End-user tokens (FR-AUT-06/07/08). HS256 over the
 // environment's own signing secret, verified by `jose` rather than by hand.
 //
-// WHY a dependency here, when 3.1 went out of its way to add none: hand-rolled
+// WHY a dependency here, when the tenancy chapter went out of its way to add none:
+// hand-rolled
 // HS256 is thirty lines and three classic vulnerabilities — accepting whatever
 // algorithm the token names, forgetting to check `exp`, and comparing
 // signatures with `===`. A convenience is worth typing around; security code is

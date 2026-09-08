@@ -87,7 +87,7 @@ export const internalMembershipsResponseSchema = z.strictObject({
   channel_ids: z.array(z.string().min(1)),
 });
 
-/** api → gateway, chapter 3.2: who the presented token belongs to, and what it
+/** api → gateway: who the presented token belongs to, and what it
  * may hear — in ONE answer.
  *
  * This replaces the memberships response above rather than joining it. The

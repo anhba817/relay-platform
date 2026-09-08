@@ -1,4 +1,4 @@
-// The credentials chapter walk, as a script (so the transcript in the chapter is
+// The the credentials chapter walk, as a script (so the transcript in the chapter is
 // reproducible rather than decorative).
 //
 // It follows the path a reader actually takes: mint a key, send with it, turn

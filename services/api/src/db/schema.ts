@@ -135,7 +135,7 @@ export const environments = pgTable(
 // DECISION: the SRS states the requirements this table serves
 // (FR-AUT-01…05, NFR-SEC-02) but no source document defines a key table —
 // SAD §6.1 does not have one. Its shape is a chapter derivation, recorded here
-// the way 2.1 recorded `members` and 3.1 recorded the tenancy containers.
+// the way 2.1 recorded `members` and the tenancy chapter recorded its containers.
 //
 // It sits BELOW the environment boundary, so it carries an environment_id like
 // every other table down here. The credential is two parts: `public_id` is an

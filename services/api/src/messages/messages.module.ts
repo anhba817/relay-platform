@@ -28,7 +28,7 @@ import { MessagesService } from "./messages.service";
         // The FACTORY reads the PRINCIPAL, not the guard's leftovers: Nest
         // resolves request-scoped providers BEFORE the enhancer chain
         // runs, so anything a guard stashes on the request is invisible
-        // here. Middleware runs earlier still, which is why chapter 3.2
+        // here. Middleware runs earlier still, which is why the credentials chapter
         // authenticates there (research R5, measured in T004).
         //
         // The credentials chapter changed WHERE the environment comes from and nothing
