@@ -179,7 +179,19 @@ describe("the outbox", () => {
 
     // Every event this environment produced reached the destination with its
     // own id as the deduplication key.
-    const ids = publisher.sent.map((m) => m.id);
+    //
+    // FILTERED TO OURS, WHICH THE COMMENT ALWAYS SAID AND THE CODE DID NOT. The
+    // relay is global: it moves whatever is oldest, so `publisher.sent` holds other
+    // suites' events and the harness's bait. Bait rows are inserted with a `{}`
+    // payload and therefore no id at all, so two hundred of them collapse to a
+    // single Set entry and the count came back 251 against 450 — a duplicate-
+    // detection failure reported by a test that detects nothing of the kind.
+    //
+    // Same predicate as the second pass below, because it is the same question.
+    const ids = publisher.sent
+      .filter((m) => m.subject.endsWith(env.id))
+      .map((m) => m.id);
+    expect(ids.length, "no event of ours reached the publisher").toBeGreaterThan(0);
     expect(new Set(ids).size).toBe(ids.length);
 
     // A second pass has nothing of OURS to do — marked rows are done.
@@ -216,10 +228,17 @@ describe("the outbox", () => {
     const relayA = createRelay({ db, publisher: a, logger: silent, batchSize: 7 });
     const relayB = createRelay({ db, publisher: b, logger: silent, batchSize: 7 });
 
-    // Run them at the same time, repeatedly, until the backlog is gone.
-    for (let pass = 0; pass < 20; pass++) {
+    // Run them at the same time, repeatedly, until THIS environment's backlog is
+    // gone. Same reader fix as `drainUntilClear`, and sharper here: `batchSize: 7`
+    // made twenty passes a budget of 140 rows, against a table holding thousands.
+    // The loop ends when our rows are done or when neither relay can move anything.
+    for (;;) {
       if ((await outboxDepthFor(db, env.id)) === 0) break;
-      await Promise.all([relayA.drainOnce(), relayB.drainOnce()]);
+      const [movedA, movedB] = await Promise.all([
+        relayA.drainOnce(),
+        relayB.drainOnce(),
+      ]);
+      if (movedA + movedB === 0) break;
     }
 
     expect(await outboxDepthFor(db, env.id)).toBe(0);
@@ -411,14 +430,31 @@ describe("the outbox", () => {
  * otherwise passes alone and fails in a full lane. (It did exactly that here.)
  * Suites cannot isolate themselves by construction on this table the way 2.1's
  * per-suite environments let them everywhere else. */
+/*
+ * READER FIX. The comment above was right about the table and wrong about the loop.
+ *
+ * `passes = 20` bounded the DRIVING in units of batches while the work is bounded
+ * by the whole table. Twenty passes of the default batch move 2,000 rows; the
+ * harness's bait alone is 200 per test file, so the loop could return with this
+ * environment's rows untouched — a correctly scoped read of a wrongly driven relay.
+ *
+ * There is no right constant here, which is the point: the relay is global and
+ * oldest-first, so reaching this suite's rows means draining everything older than
+ * them, and how much that is depends on who else is in the database. So the loop
+ * has no pass budget. It stops on the only two conditions that mean anything —
+ * this environment is clear, or a pass moved nothing and the relay is therefore
+ * done. Each pass that moves rows reduces the global backlog, so it terminates.
+ * `safety` turns a hypothetical infinite loop into a failed test, and is derived
+ * from the work that actually exists rather than guessed.
+ */
 async function drainUntilClear(
   relay: { drainOnce: () => Promise<number> },
   db: Db,
   environmentId: string,
-  passes = 20,
 ): Promise<number> {
   let moved = 0;
-  for (let i = 0; i < passes; i++) {
+  const safety = (await outboxDepth(db)) + 100;
+  for (let i = 0; i < safety; i++) {
     if ((await outboxDepthFor(db, environmentId)) === 0) break;
     const drained = await relay.drainOnce();
     moved += drained;

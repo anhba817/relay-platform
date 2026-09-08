@@ -331,14 +331,44 @@ describe("the consumer", () => {
     const durable = `itest-shared-${Date.now()}`;
     const byA: string[] = [];
     const byB: string[] = [];
+    // ONE environment, and both runtimes filtered to it.
+    //
+    // This used to call `ENV()` three times and construct both runtimes with no
+    // filter — the same fault the test above this one already carries a comment
+    // about, in this same file. Three environments means no single subject covers
+    // them, and an unfiltered durable starts at the head of a stream holding every
+    // event earlier chapters left behind; the 400-pass budget below then has to
+    // drain all of it before reaching these three.
+    //
+    // It has never failed, which is the whole problem with the class: it passes
+    // until the stream outgrows the budget, and then it fails in whichever run
+    // happens to cross the line. FIXING AN INSTANCE IS NOT FIXING A CLASS — the
+    // fix forty lines up left this one standing, because it was made against the
+    // test that failed rather than against the shape.
+    //
+    // The environments were incidental. What this test is about is two runtimes
+    // sharing one durable, and that is unchanged.
+    const environmentId = ENV();
     const ids = [
-      await publish(ENV()),
-      await publish(ENV()),
-      await publish(ENV()),
+      await publish(environmentId),
+      await publish(environmentId),
+      await publish(environmentId),
     ];
 
-    const a = runtimeFor(db, durable, async (e) => void byA.push(e.id));
-    const b = runtimeFor(db, durable, async (e) => void byB.push(e.id));
+    const a = runtimeFor(
+      db,
+      durable,
+      async (e) => void byA.push(e.id),
+      silent,
+      environmentId,
+    );
+    const b = runtimeFor(
+      db,
+      durable,
+      async (e) => void byB.push(e.id),
+      silent,
+      environmentId,
+    );
     for (let i = 0; i < 400; i++) {
       await Promise.all([a.pollOnce(), b.pollOnce()]);
       if (ids.every((id) => byA.includes(id) || byB.includes(id))) break;

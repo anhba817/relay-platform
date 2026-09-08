@@ -13,7 +13,26 @@ export default defineConfig({
     // bait, plants it per file.
     globalSetup: ["../../packages/test-harness/src/global-setup.ts"],
     setupFiles: ["../../packages/test-harness/src/setup.ts"],
-    env: { RELAY_HARNESS_BAIT: "on" },
+    // MEASURED THIS CHAPTER: eight suites in this lane import `AppModule`, and not
+    // one of them sets a relay flag. Each relay defaults to on when its flag is
+    // unset (`process.env.RELAY_OUTBOX_RELAY ?? "on"`), so those eight booted two
+    // background loops that sweep the whole database while every other suite's
+    // fixtures sit in it.
+    //
+    // The exposure looks nil if you only count the suites that spawn an api CHILD
+    // and set the flags in the child's env — they do it correctly. The suites that
+    // boot the app IN PROCESS are the ones nobody looked at.
+    //
+    // A relay catches and logs its own errors, so the guard's refusal raised inside
+    // one is a log line and a green lane. Setting the flags here makes the quiet
+    // database a property of the lane rather than a convention nobody applied — and
+    // the list is exactly the relays that exist, because `setup.ts` refuses a name
+    // no module reads.
+    env: {
+      RELAY_HARNESS_BAIT: "on",
+      RELAY_OUTBOX_RELAY: "off",
+      RELAY_EVENT_CONSUMER: "off",
+    },
     include: ["src/**/*.itest.ts"],
     // ONE FILE AT A TIME, BECAUSE THEY SHARE ONE DATABASE.
     //
