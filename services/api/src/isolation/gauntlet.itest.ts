@@ -109,18 +109,23 @@ describe("the isolation gauntlet", () => {
   // ── write ───────────────────────────────────────────────────────────────────────
   it("POST /v1/channels/:channelId/messages — refuses, and writes nothing", async () => {
     attacked.add("POST /v1/channels/:channelId/messages");
+    // THE ATTACK PRESENTS A KEY, AND A KEY SEND NAMES A BOT
+    // (FR-MSG-15). Without a sender both halves would be refused for naming
+    // nobody — identically, so the pair would agree and this test would pass
+    // while attacking the validator instead of the tenancy boundary.
+    const from = { text: "from the attacker", user: t.attacker.botExternalId };
     const verdict = await writeAttack(
       url,
       t.attacker.credential,
       {
         method: "POST",
         path: `/v1/channels/${t.victim.channelId}/messages`,
-        body: { text: "from the attacker" },
+        body: from,
       },
       {
         method: "POST",
         path: `/v1/channels/${ABSENT_UUID}/messages`,
-        body: { text: "from the attacker" },
+        body: from,
       },
       () => t.victim.repo.listMessages(t.victim.channelId, { limit: 50 }),
     );
