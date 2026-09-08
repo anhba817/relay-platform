@@ -58,6 +58,52 @@ describe("every code the REST filter can emit is registered (FR-024)", () => {
   });
 });
 
+describe("the three refusals this chapter's channel adds", () => {
+  // NAMED HERE RATHER THAN COUNTED. A `toHaveLength(13)` would go red for the right
+  // reason on a deletion and for the wrong reason on any addition, so every later
+  // chapter that adds a code would edit this number — and a number edited on every
+  // change is a number nobody reads. What matters about these three is that they are
+  // three and not one: a client acts differently on each.
+  const ADDED = ["not_a_member", "channel_archived", "user_banned"] as const;
+
+  it.each(ADDED)("registers %s with a description a client can act on", (code) => {
+    expect(ERROR_CODES).toHaveProperty(code);
+    expect(ERROR_CODES[code as ErrorCode]).not.toBe("");
+  });
+
+  it("keeps them distinct from forbidden, which is what they exist instead of", () => {
+    // Reusing `forbidden` for all three is the design this chapter argues against, so
+    // the assertion is that no two of them share a description with it or each other
+    // — the failure mode is a copied line, not a missing key.
+    const meanings = [...ADDED, "forbidden"].map((c) => ERROR_CODES[c as ErrorCode]);
+    expect(new Set(meanings).size).toBe(meanings.length);
+  });
+
+  // THREE CLAIMS, THREE TITLES, and the reason is what a failure looks like from
+  // outside the repository. One case asserting all three went red on the wording of
+  // `not_a_member` under a title about bans and archives — a CI summary has no tree
+  // to grep, so the title is the whole report.
+  //
+  // Asserting on wording is unusual and deliberate: these strings are the contract
+  // `docs_url` resolves to, and a client's developer reads them rather than the code.
+
+  it("says a ban is tenant-scope, not channel-scope", () => {
+    expect(ERROR_CODES.user_banned).toMatch(/environment/);
+  });
+
+  it("says an archive leaves history readable", () => {
+    expect(ERROR_CODES.channel_archived).toMatch(/history is still readable/);
+  });
+
+  it("never lets not_a_member announce that the channel exists", () => {
+    // THE LEAK FR-003 FORBIDS, in the one place it can be written by accident. A
+    // private channel the caller cannot see must answer the not-found envelope, so a
+    // description saying "the channel exists and…" would put the oracle in the text
+    // even when the status code is right.
+    expect(ERROR_CODES.not_a_member).not.toMatch(/\bexists?\b/);
+  });
+});
+
 describe("the docs URL is built in one place, with the code as the anchor", () => {
   it("appends the code VERBATIM — no slug transform, no case change", () => {
     for (const code of Object.keys(ERROR_CODES) as ErrorCode[]) {

@@ -86,6 +86,15 @@ export const memberships = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.organisationId, t.humanId] }),
+    // A HUMAN'S ROLE IN AN ORGANISATION (FR-TEN-07), and NOT a channel role.
+    //
+    // `members.role` below is the other one: `('owner','moderator','member')`, a user's
+    // role in a channel (FR-CHN-04). Different tables, different subjects, and ONE WORD
+    // different — `admin` here, `moderator` there. A migration that reused this constraint
+    // for channel members would accept `admin` on a channel member, refuse `moderator`,
+    // and look correct in review. The channel-control chapter's research found that before writing it;
+    // the comment sits on both sides because a warning on one side is a warning the next
+    // person does not find.
     check(
       "memberships_role_check",
       sql`${t.role} IN ('owner','admin','member')`,
@@ -275,9 +284,21 @@ export const members = pgTable(
     joinedAt: timestamp("joined_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // A USER'S ROLE IN A CHANNEL (FR-CHN-04), default `member`.
+    //
+    // The default is what lets the channel-endpoints chapter's `addMember` keep working unchanged and
+    // gives every existing row a value the CHECK accepts.
+    role: text("role").notNull().default("member"),
   },
   (t) => [
     primaryKey({ columns: [t.channelId, t.userId] }),
+    // ITS OWN CONSTRAINT, and NOT `memberships_role_check` above.
+    //
+    // `memberships.role` is `('owner','admin','member')` — a human's role in an
+    // organisation, FR-TEN-07. This one is `('owner','moderator','member')` — FR-CHN-04's
+    // three. One word apart, and reusing the other constraint here would accept `admin`
+    // on a channel member, refuse `moderator`, and read as correct in review.
+    check("members_role_check", sql`${t.role} IN ('owner','moderator','member')`),
     // Hot-path index (SAD §6.3): the resume path's "which channels am I in".
     index("members_user_channel").on(t.userId, t.channelId),
   ],
