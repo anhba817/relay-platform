@@ -10,8 +10,21 @@ import { AppModule } from "./app.module";
 // not get a second opinion.
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { logger: false });
-  const port = Number(process.env.PORT ?? 4000);
-  await app.listen(port);
+  const requested = Number(process.env.PORT ?? 4000);
+  await app.listen(requested);
+  // THE PORT IT GOT, NOT THE PORT IT ASKED FOR.
+  //
+  // `PORT=0` asks the operating system for any free port, which is what a test
+  // spawning this service should do — a fixed port races whichever sibling suite also
+  // binds one, and a previous run's child still holding it makes a health check succeed
+  // against a service that has never heard of this run's data. Three unrelated-looking
+  // assertions, one fixture.
+  //
+  // But a parent can only use the number if this process reports it, and logging
+  // `requested` prints 0. So the bound address is read back and logged.
+  const address = app.getHttpServer().address() as { port?: number } | string | null;
+  const port =
+    typeof address === "object" && address !== null ? (address.port ?? requested) : requested;
   createLogger("api").log("info", "listening", { port });
 }
 
