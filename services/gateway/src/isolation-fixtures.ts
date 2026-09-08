@@ -67,10 +67,18 @@ export interface SocketTenants {
  * per suite is a table nothing checks: two suites eventually overlap, or a band grows to
  * contain a port the lane itself runs, and the failure is a health check that succeeds
  * against the wrong service. Asking the operating system removes the table. */
-async function startApi(): Promise<{ url: string; stop: () => void }> {
+export async function startApi(
+  // EXTRA ENV, BECAUSE THE SECOND CALLER NEEDED IT AND A SECOND COPY IS A SECOND RULE.
+  // `public-surface.itest.ts` spawns an api child too, and it arrived with a
+  // hand-allocated band of its own — 4800-5000, with a comment naming three other
+  // suites' bands and one file's fixed 4124. That comment was already wrong when it
+  // was written; two of the files it names do not exist yet. Exporting this is
+  // cheaper than keeping the table honest, which is the same argument as deleting it.
+  extra: Readonly<Record<string, string>> = {},
+): Promise<{ url: string; stop: () => void }> {
   const dist = join(REPO, "services", "api", "dist");
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
-    env: { ...process.env, PORT: "0" },
+    env: { ...process.env, ...extra, PORT: "0" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const port = await new Promise<number>((resolve, reject) => {

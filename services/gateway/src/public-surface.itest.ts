@@ -1,4 +1,3 @@
-import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -12,6 +11,7 @@ import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createApiClient } from "./api-client.js";
+import { startApi } from "./isolation-fixtures.js";
 import { createFanout, type Fanout } from "./fanout.js";
 import { attachSessions } from "./session.js";
 import { docsUrl } from "@relay/protocol";
@@ -45,26 +45,20 @@ interface Seeder {
   createApiKey: (db: unknown, input: { environmentId: string }) => Promise<{ credential: string }>;
 }
 
-async function waitForHealth(url: string): Promise<void> {
-  const deadline = Date.now() + 30_000;
-  for (;;) {
-    try {
-      if ((await fetch(url)).ok) return;
-    } catch {
-      // not up yet
-    }
-    if (Date.now() > deadline) throw new Error("api never became healthy");
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-}
 
-/** 4800-5000: `session.itest.ts` holds 4400-4600, `isolation.itest.ts` 4600-4800
- * and `limits.itest.ts` 4124. A random high port per run, for the reason
- * `session.itest.ts` records — a previous run's child still holding a fixed port
- * answers the health check from a DIFFERENT environment, and every token this run
- * minted is then refused by an api that has never heard of it. */
-async function startApi(): Promise<{ url: string; credential: string; stop: () => void }> {
-  const port = 4800 + Math.floor(Math.random() * 200);
+/** THE PORT COMES FROM THE CHILD, and the band that used to be here is gone.
+ *
+ * This bound `4800 + random(200)` under a comment that named `session.itest.ts`'s
+ * 4400-4600, `isolation.itest.ts`'s 4600-4800 and `limits.itest.ts`'s fixed 4124 — a
+ * table maintained by whoever remembered to read it. Two of those three files do not
+ * exist at this chapter, so the comment was describing a layout that had not been
+ * built, which is the clearest possible demonstration that nothing checks it.
+ *
+ * `startApi` lives in `isolation-fixtures.ts`, which established the mechanism: the
+ * api is started with `PORT=0` and the port is read from the `listening` line it
+ * logs. There is no band to overlap and no health-check loop to pass vacuously —
+ * a child that has logged its port is listening on it. */
+async function startApiChild(): Promise<{ url: string; credential: string; stop: () => void }> {
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error("the api is not built — run `pnpm build` before this lane");
@@ -80,19 +74,15 @@ async function startApi(): Promise<{ url: string; credential: string; stop: () =
   });
   const key = await seeder.createApiKey(db, { environmentId: environment.id });
 
-  const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
-    env: {
-      ...process.env,
-      PORT: String(port),
-      RELAY_OUTBOX_RELAY: "off",
-      RELAY_NOTIFICATION_RELAY: "off",
-      RELAY_AUTH_KEY_PREFIX: `rlauth-public-${randomUUID().slice(0, 8)}`,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
+  // Only the flags a module reads. `RELAY_NOTIFICATION_RELAY` was set here and is
+  // read by nothing at this chapter — a variable set for its own sake teaches the
+  // next reader that these names are incantations rather than switches.
+  const { url, stop } = await startApi({
+    RELAY_OUTBOX_RELAY: "off",
+    RELAY_EVENT_CONSUMER: "off",
+    RELAY_AUTH_KEY_PREFIX: `rlauth-public-${randomUUID().slice(0, 8)}`,
   });
-  const url = `http://127.0.0.1:${port}`;
-  await waitForHealth(`${url}/healthz`);
-  return { url, credential: key.credential, stop: () => child.kill() };
+  return { url, credential: key.credential, stop };
 }
 
 describe("a channel, a member and a message, all over the public API", () => {
@@ -109,7 +99,7 @@ describe("a channel, a member and a message, all over the public API", () => {
     });
 
   beforeAll(async () => {
-    api = await startApi();
+    api = await startApiChild();
     server = serve({
       service: "gateway",
       health: () => ({}),
