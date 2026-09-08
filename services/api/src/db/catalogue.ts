@@ -64,6 +64,14 @@ const SPINE: ReadonlyArray<readonly [string, string]> = [
   // in here, and nothing on this platform removes them. That is a real gap, it is not a
   // tenancy gap, and it is recorded here rather than argued away — the chapter that owns
   // per-environment retention owns the fix.
+  // SECOND IN A ROW, AND FOR A DIFFERENT REASON THAN THE OUTBOX'S. The outbox holds a
+  // copy of tenant data and argues that nothing reads it on a tenant's behalf. This
+  // holds no tenant data at all: an event id and the fact that it was handled. There is
+  // nothing in a row here to leak.
+  [
+    "consumed_events",
+    "consumer bookkeeping — an event id and a timestamp, holding no tenant data to leak",
+  ],
   [
     "outbox",
     "work the platform owes itself rather than a tenant's record; the environment " +

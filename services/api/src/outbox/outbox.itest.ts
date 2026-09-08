@@ -15,6 +15,7 @@ import {
 import { createJetStreamPublisher } from "./jetstream.publisher";
 import { createRelay } from "./relay";
 import type { Publisher, PublishedMessage } from "./publisher";
+import { DEFAULT_NATS_URL } from "./jetstream.publisher";
 
 // The outbox, against the real database. Invariants 1-4, 7-8 and
 // 11 live here; the crash cases (5, 6, 10) and the broker outage (9) are added
@@ -359,7 +360,7 @@ describe("the outbox", () => {
 
     // The broker returns. Nobody intervenes; the same loop drains what piled up.
     const up = createJetStreamPublisher({
-      url: process.env.RELAY_NATS_URL ?? "nats://localhost:14222",
+      url: process.env.RELAY_NATS_URL ?? DEFAULT_NATS_URL,
     });
     const upRelay = createRelay({ db, publisher: up, logger: silent });
     const drained = await drainUntilClear(upRelay, db, env.id);

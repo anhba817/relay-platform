@@ -14,6 +14,8 @@ import { claimEvent, timesHandled } from "../db/repository";
 import { ensureStream } from "../outbox/jetstream.publisher";
 import { createConsumerRuntime } from "./runtime";
 import type { EventHandler } from "./handler";
+import { DEFAULT_NATS_URL } from "../outbox/jetstream.publisher";
+import { migrate } from "../db/migrate";
 
 // The consumer, against a real broker and a real database.
 //
@@ -35,7 +37,7 @@ async function publish(
   overrides: Record<string, unknown> = {},
 ): Promise<string> {
   const nc = await connect({
-    servers: process.env.RELAY_NATS_URL ?? "nats://localhost:4222",
+    servers: process.env.RELAY_NATS_URL ?? DEFAULT_NATS_URL,
   });
   const id = randomUUID();
   const payload = {
@@ -67,7 +69,7 @@ async function publish(
 /** Publish something that is not an event at all. */
 async function publishGarbage(environmentId: string): Promise<void> {
   const nc = await connect({
-    servers: process.env.RELAY_NATS_URL ?? "nats://localhost:4222",
+    servers: process.env.RELAY_NATS_URL ?? DEFAULT_NATS_URL,
   });
   await nc
     .jetstream()
@@ -163,9 +165,16 @@ describe("the consumer", () => {
   let db: Db;
 
   beforeAll(async () => {
-    db = createDb(createPool());
+    // MIGRATE BEFORE TOUCHING THE TABLE. This suite deleted from `consumed_events`
+    // without ever applying the schema, so it only passed when some other file had run
+    // first — an ordering dependency between test files, which is not a thing a test
+    // file can state. Serialising the lane made the order deterministic and this one
+    // came out first: `42P01 relation "consumed_events" does not exist`.
+    const pool = createPool();
+    await migrate(pool);
+    db = createDb(pool);
     const nc = await connect({
-      servers: process.env.RELAY_NATS_URL ?? "nats://localhost:4222",
+      servers: process.env.RELAY_NATS_URL ?? DEFAULT_NATS_URL,
     });
     await ensureStream(nc);
     await nc.drain();
@@ -188,7 +197,7 @@ describe("the consumer", () => {
     // ones its child processes named for themselves. Missing the second kind is
     // how the first count reached twelve.
     const nc = await connect({
-      servers: process.env.RELAY_NATS_URL ?? "nats://localhost:4222",
+      servers: process.env.RELAY_NATS_URL ?? DEFAULT_NATS_URL,
     });
     const jsm = await nc.jetstreamManager();
     for await (const info of jsm.consumers.list("EVENTS")) {
@@ -201,7 +210,7 @@ describe("the consumer", () => {
 
   it("invariant 1: the stream's settings read back exactly as configured", async () => {
     const nc = await connect({
-      servers: process.env.RELAY_NATS_URL ?? "nats://localhost:4222",
+      servers: process.env.RELAY_NATS_URL ?? DEFAULT_NATS_URL,
     });
     const info = await (await nc.jetstreamManager()).streams.info("EVENTS");
     const c = info.config;
@@ -219,7 +228,7 @@ describe("the consumer", () => {
 
   it("invariant 2: applying the configuration twice is a no-op, not an error", async () => {
     const nc = await connect({
-      servers: process.env.RELAY_NATS_URL ?? "nats://localhost:4222",
+      servers: process.env.RELAY_NATS_URL ?? DEFAULT_NATS_URL,
     });
     const before = await (await nc.jetstreamManager()).streams.info("EVENTS");
     await ensureStream(nc);
