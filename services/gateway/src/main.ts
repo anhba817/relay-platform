@@ -1,4 +1,4 @@
-import { CLOSE_CODES, frameSchema } from "@relay/protocol";
+import { CLOSE_CODES, docsUrl, frameSchema } from "@relay/protocol";
 import { createLogger, serve, type Logger } from "@relay/service-kit";
 
 import { createApiClient } from "./api-client.js";
@@ -21,6 +21,7 @@ export function createServer(logger?: Logger) {
   const log = logger ?? createLogger("gateway");
   const server = serve({
     service: "gateway",
+      notFoundDocsUrl: docsUrl("not_found"),
     health: () => ({
       uptime_s: Math.round(process.uptime()),
       protocol: { frames, close_codes: closeCodes },

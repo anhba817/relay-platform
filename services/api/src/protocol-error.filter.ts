@@ -1,5 +1,7 @@
 import type { ServerResponse } from "node:http";
 
+import { docsUrl, ERROR_CODES, type ErrorCode } from "@relay/protocol";
+
 import {
   Catch,
   HttpException,
@@ -37,9 +39,17 @@ export class ProtocolErrorFilter implements ExceptionFilter {
       typeof (response as { code?: unknown }).code === "string"
         ? (response as { code: string }).code
         : null;
-    const code =
-      named ??
-      (status === 400
+    // TYPED AS `ErrorCode` (FR-025). Four of the five codes this ladder can emit were
+    // not in the registry, and `docs_url` is derived from the code, so each shipped a
+    // link to a page that could not exist. With the annotation an unregistered code
+    // stops compiling here instead of reaching a customer.
+    //
+    // AND `named` IS CHECKED AGAINST THE REGISTRY RATHER THAN TRUSTED. A thrower can
+    // put any string in `code` — `protocolError` makes that hard, not impossible,
+    // because `HttpException` is still public — and this filter is the last place that
+    // can notice before the string becomes a URL.
+    const ladder: ErrorCode =
+      status === 400
         ? "invalid_request"
         : status === 401
           ? "unauthorized"
@@ -47,7 +57,9 @@ export class ProtocolErrorFilter implements ExceptionFilter {
             ? "forbidden"
             : status === 404
               ? "not_found"
-              : "internal_error");
+              : "internal_error";
+    const code: ErrorCode =
+      named !== null && named in ERROR_CODES ? (named as ErrorCode) : ladder;
     const message =
       exception instanceof HttpException
         ? exception.message
@@ -58,7 +70,7 @@ export class ProtocolErrorFilter implements ExceptionFilter {
       JSON.stringify({
         code,
         message,
-        docs_url: `https://relay.example/docs/errors/${code}`,
+        docs_url: docsUrl(code),
       }),
     );
   }

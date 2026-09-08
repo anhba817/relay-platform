@@ -1,12 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 
-import {
-  CLOSE_CODES,
-  frameSchema,
-  type Frame,
-  type Message,
-} from "@relay/protocol";
+import { CLOSE_CODES, type ErrorCode, type Frame, type Message, docsUrl, frameSchema } from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
 import { WebSocketServer, type WebSocket } from "ws";
 
@@ -38,13 +33,13 @@ function send(socket: WebSocket, frame: Frame): void {
 }
 
 /** EIR-API-04's envelope, wearing its WebSocket clothes. */
-function sendError(socket: WebSocket, code: string, message: string): void {
+function sendError(socket: WebSocket, code: ErrorCode, message: string): void {
   send(socket, {
     type: "error",
     payload: {
       code,
       message,
-      docs_url: `https://relay.example/docs/errors/${code}`,
+      docs_url: docsUrl(code),
     },
   });
 }

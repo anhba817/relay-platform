@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createApiClient } from "./api-client.js";
 import { attachSessions } from "./session.js";
+import { docsUrl } from "@relay/protocol";
 
 // The socket's credential cases, against a REAL api.
 //
@@ -175,7 +176,12 @@ describe("the socket's credentials", () => {
 
   beforeAll(async () => {
     api = await startApi();
-    server = serve({ service: "gateway", health: () => ({}), logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
     attachSessions({ server, api: createApiClient(api.url), logger: silent });
     await new Promise<void>((resolve) => server.listen(0, resolve));
     url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;

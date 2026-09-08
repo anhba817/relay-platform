@@ -11,6 +11,7 @@ import type { Frame, Message } from "@relay/protocol";
 import type { ApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
 import { attachSessions } from "./session.js";
+import { docsUrl } from "@relay/protocol";
 
 // Chapter 2.7's race, run against a REAL broker. The unit suite proves the
 // ordering with a stub whose timing the test controls; this file proves it
@@ -60,6 +61,7 @@ async function boot(api: ApiClient): Promise<Harness> {
   const fanout = createFanout({ url, logger: silent });
   const server: Server = serve({
     service: "gateway",
+      notFoundDocsUrl: docsUrl("not_found"),
     health: () => ({}),
     logger: silent,
   });

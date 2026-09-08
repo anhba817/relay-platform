@@ -12,6 +12,7 @@ import type { InternalSendResponse, Message } from "@relay/protocol";
 import type { ApiClient } from "./api-client.js";
 import type { Fanout } from "./fanout.js";
 import { attachSessions } from "./session.js";
+import { docsUrl } from "@relay/protocol";
 
 // The door, the frames, and the liveness clock — all provable without a
 // database, because the gateway has no database (ADR-05). The api is a
@@ -133,6 +134,7 @@ async function boot(
 ): Promise<Harness> {
   const server: Server = serve({
     service: "gateway",
+      notFoundDocsUrl: docsUrl("not_found"),
     health: () => ({}),
     logger: silent,
   });

@@ -55,16 +55,31 @@ export interface ServeOptions {
   /** Extra fields merged into the /healthz payload. */
   health: () => Record<string, unknown>;
   logger?: Logger;
+  /** The `docs_url` for the not-found envelope this server answers unknown routes
+   * with (FR-027).
+   *
+   * REQUIRED, AND THE DEPENDENCY INVERTS RATHER THAN BEING ADDED. The obvious move
+   * is to import `docsUrl` from `@relay/protocol` here — and this package declares
+   * NO dependencies at all, which is the property that lets anything use it. So the
+   * caller supplies the URL, and because the field is required the compiler makes it
+   * do so.
+   *
+   * Optional would have been a third instance of this chapter's own subject: a
+   * default host is a placeholder with a longer life. */
+  notFoundDocsUrl: string;
 }
 
 /** Build (but do not start) a service's HTTP server: every response carries
  * X-Request-Id (EIR-API-05), every request logs exactly one structured line
  * carrying the same id (NFR-OBS-06's grep-ability starts here), GET /healthz
  * answers with the service's health payload, and unknown routes get the
- * EIR-API-04 error shape. The docs_url host is a placeholder until the docs
- * site exists — constitution V's reachable-page promise lands with it. */
+ * EIR-API-04 error shape.
+ *
+ * The docs_url is no longer built here. It is a required option and the caller
+ * derives it from the registry, which is how a package with no dependencies can
+ * still emit a URL that registry owns. */
 export function serve(options: ServeOptions): Server {
-  const { service, health } = options;
+  const { service, health, notFoundDocsUrl } = options;
   const logger = options.logger ?? createLogger(service);
   return createServer((req, res) => {
     const requestId = newRequestId();
@@ -82,7 +97,7 @@ export function serve(options: ServeOptions): Server {
       body = {
         code: "not_found",
         message: `no route for ${req.method ?? "?"} ${path}`,
-        docs_url: "https://relay.example/docs/errors/not_found",
+        docs_url: notFoundDocsUrl,
       };
     }
     res.statusCode = status;
