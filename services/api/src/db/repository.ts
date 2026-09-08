@@ -924,8 +924,8 @@ export class Repository {
    * (FR-006, FR-007, FR-008).
    *
    * BULK, BECAUSE THE REQUIREMENT ALWAYS WAS. FR-006 says "up to 100 in one
-   * request" and FR-007 says the result is reported per user — which is chapter
-   * the endpoints chapter's `addMembers` shape in both halves. `contracts/membership.md` specified a
+   * request" and FR-007 says the result is reported per user — which is the
+   * endpoints chapter's `addMembers` shape in both halves. `contracts/membership.md` specified a
    * single-user `DELETE …/members/:userExternalId` for ten analysis passes, having
    * read "the shape the channel-endpoints chapter chose" as *named outcomes* and dropped *bulk*.
    * Every pass compared requirements to tasks, both said "removal", and identifier
