@@ -22,3 +22,4 @@
 
 export { SENTINEL, sentinelFor, plant, type Sentinel } from "./sentinel.js";
 export { EXEMPT_FILES, isExempt } from "./exempt.js";
+export { DEFAULT_DATABASE_URL, databaseUrl } from "./db-url.js";

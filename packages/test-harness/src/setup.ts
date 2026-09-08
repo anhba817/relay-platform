@@ -3,6 +3,7 @@ import { relative } from "node:path";
 import pg from "pg";
 import { beforeAll, expect } from "vitest";
 
+import { databaseUrl } from "./db-url.js";
 import { isExempt, EXEMPT_FILES } from "./exempt.js";
 import { plant, sentinelFor } from "./sentinel.js";
 
@@ -59,8 +60,13 @@ function withExemption(url: string): string {
   return u.toString();
 }
 
-const BASE_URL = process.env["DATABASE_URL"];
-if (EXEMPT && BASE_URL !== undefined) {
+// THROUGH THE SAME FALLBACK, so an exempt suite is exempt whether or not the
+// variable is set. Reading `process.env` directly here would have left the
+// exemption silently absent on a clean shell — the suite would run guarded, fail
+// on its own legitimate global operation, and point at the guard rather than at
+// the missing variable.
+const BASE_URL = databaseUrl();
+if (EXEMPT) {
   process.env["DATABASE_URL"] = withExemption(BASE_URL);
 }
 
@@ -109,7 +115,6 @@ beforeAll(async () => {
   // gateway and e2e lanes would change their workload for no return, which is the
   // failure research R4 measured (FR-022). The config that wants it says so.
   if (process.env["RELAY_HARNESS_BAIT"] !== "on") return;
-  if (BASE_URL === undefined) return;
 
   // A DEDICATED CLIENT THAT NEVER ENTERS THE SUITE'S POOL. Deleting a sentinel row
   // is exactly what the guard forbids, so planting needs the exemption — and a

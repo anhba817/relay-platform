@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import pg from "pg";
 
+import { databaseUrl } from "./db-url.js";
+
 // Installed once per lane, before any test file (feature 030, T013).
 //
 // MIGRATES FIRST, and that is not tidiness. `globalSetup` runs before every suite,
@@ -22,13 +24,11 @@ const MIGRATE = join(PLATFORM, "services", "api", "dist", "db", "migrate.js");
 const GUARD_SQL = join(import.meta.dirname, "sentinel.sql");
 
 export default async function globalSetup(): Promise<void> {
-  const connectionString = process.env["DATABASE_URL"];
-  if (connectionString === undefined) {
-    throw new Error(
-      "the global-operation guard needs DATABASE_URL — the integration lane " +
-        "cannot install it against a database it cannot name",
-    );
-  }
+  // FALLS BACK, IT DOES NOT THROW. The first version demanded the variable, which
+  // made this lane the only task in the repository that required it and broke the
+  // plain `pnpm test:integration` a developer runs from a clean shell (research
+  // R50). `db-url.ts` carries the default and the reason.
+  const connectionString = databaseUrl();
 
   // The migration runner is the api's build output. Failing here with a sentence
   // beats failing later inside a CREATE TRIGGER.

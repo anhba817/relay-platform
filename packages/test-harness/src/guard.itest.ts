@@ -4,6 +4,7 @@ import { join } from "node:path";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { databaseUrl } from "./db-url.js";
 import { sentinelFor } from "./sentinel.js";
 
 // THE GUARD, DRIVEN ONE TABLE AT A TIME.
@@ -23,7 +24,7 @@ import { sentinelFor } from "./sentinel.js";
 // — it is provoking one and expecting to be refused. An exemption would switch the
 // trigger off and every expectation below would invert without the file changing.
 
-const url = new URL(process.env["DATABASE_URL"] ?? "postgres://relay:relay@localhost:15432/relay");
+const url = new URL(databaseUrl());
 if (!["localhost", "127.0.0.1"].includes(url.hostname)) {
   throw new Error(
     `integration tests refuse non-local databases (got host "${url.hostname}")`,
@@ -184,6 +185,29 @@ describe("the guard refuses an unscoped mutation of a sentinel row", () => {
       await expect(plain.query(`DELETE FROM ${table}`)).rejects.toThrow(
         new RegExp(`global-operation guard.*${table}.*${VICTIM.owner.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "s"),
       );
+    });
+
+    it(`lets an EXEMPT connection's UPDATE on ${table} actually land`, async () => {
+      // THE EXEMPTION PATH, and the assertion is the VALUE READ BACK — not the
+      // row count, and not the absence of a throw.
+      //
+      // A BEFORE UPDATE trigger returning OLD does not permit the update: it
+      // replaces it with a write of the old values. `rowCount` is 1 either way and
+      // nothing throws, so a guard that reverts every exempt write looks exactly
+      // like one that permits them. The symptom shows up somewhere else entirely —
+      // an exempt sweep that disables the same rows on every pass and never runs
+      // out — which is a long way from the file holding the fault.
+      const mark = `{"guard-probe":"${table}"}`;
+      await admin.query(
+        `UPDATE ${table} SET metadata = $1::jsonb WHERE id = $2`,
+        [mark, table === "channels" ? VICTIM.channelId : VICTIM.userId],
+      );
+      const { rows } = await admin.query<{ metadata: unknown }>(
+        `SELECT metadata FROM ${table} WHERE id = $1`,
+        [table === "channels" ? VICTIM.channelId : VICTIM.userId],
+      );
+      expect(rows[0]?.metadata, `the exempt write to ${table} was reverted`)
+        .toEqual(JSON.parse(mark));
     });
 
     it(`permits a scoped UPDATE on ${table} that hits a non-sentinel row`, async () => {
