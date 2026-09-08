@@ -154,12 +154,17 @@ describe("signup", () => {
   });
 
   it("writes the full set or nothing when provisioning fails (invariant 1)", async () => {
-    const before = await db.execute(
-      `SELECT count(*)::int AS n FROM organisations`,
-    );
-    // Force a failure inside the transaction, after the organisation insert:
-    // an organisation name that is fine and a provider value the CHECK
-    // constraint refuses.
+    // SCOPED TO THE ROW THIS TEST CREATES, not to the table.
+    //
+    // This read `SELECT count(*) FROM organisations` before and after and asserted the
+    // two matched. That is a GLOBAL claim about a LOCAL operation: any other suite that
+    // provisions a tenant between the two reads breaks it, and the failure —
+    // `expected 452 to be 451` — says nothing about a neighbour. The isolation
+    // fixtures seed two tenants and did exactly that.
+    //
+    // What invariant 1 actually claims is that the failed transaction left NOTHING
+    // behind. That is a question about one organisation, and the test above already
+    // asks its questions that way.
     await expect(
       provisionOrganisation(db, {
         provider: "not-a-provider",
@@ -167,18 +172,11 @@ describe("signup", () => {
         organisationName: "doomed org",
       }),
     ).rejects.toThrow();
-    const after = await db.execute(
-      `SELECT count(*)::int AS n FROM organisations`,
-    );
-    // Nothing survived — no half-built tenant, which is the whole point of the
-    // single transaction.
-    expect((after.rows[0] as { n: number }).n).toBe(
-      (before.rows[0] as { n: number }).n,
-    );
-    const orphan = await db.execute(
+    const doomed = await db.execute(
       `SELECT count(*)::int AS n FROM organisations WHERE name = 'doomed org'`,
     );
-    expect((orphan.rows[0] as { n: number }).n).toBe(0);
+    // No half-built tenant, which is the whole point of the single transaction.
+    expect((doomed.rows[0] as { n: number }).n).toBe(0);
   });
 
   it("recognises a returning owner instead of creating a second organisation (invariant 2)", async () => {

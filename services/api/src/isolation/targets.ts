@@ -18,7 +18,7 @@
  * one — and it is tenant-scoped all the same, because the key it accepts resolves to
  * exactly one environment. Filing it as `exempt` is how a route stops being attacked
  * while looking accounted for. */
-export type Shape = "read" | "list" | "write" | "credential" | "exempt";
+export type Shape = "read" | "write" | "credential" | "exempt";
 
 /** Which credential class the route accepts, and therefore which attack applies.
  *
@@ -43,7 +43,7 @@ export type Classification =
 
 /** Every route the api serves, as the derivation reports it: 9 today.
  *
- * The shapes sum to 9 — 3 exempt, 1 credential, 1 read, 4 write — and that sum is
+ * The shapes sum to 9 — 3 exempt, 2 credential, 1 read, 3 write — and that sum is
  * asserted against the derivation rather than written down twice. A count nobody
  * recomputes is a count that stops being true quietly.
  *
@@ -106,7 +106,17 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // ── the internal surface: an end-user token, so a FOREIGN CREDENTIAL is the attack
   { method: "POST", path: "/internal/messages", accepts: "user", shape: "write" },
   { method: "POST", path: "/internal/backfill", accepts: "user", shape: "write" },
-  { method: "POST", path: "/internal/session", accepts: "user", shape: "write" },
+  {
+    // NOT A `write`, AND THE DIFFERENCE IS THE WHOLE POINT OF HAVING SHAPES. This route
+    // takes no body and no path parameter: there is no identifier to forge, so a
+    // foreign-identifier attack has nothing to express. Its only tenant-scoped input is
+    // the token, which is what `credential` attacks. Classifying it `write` would have
+    // produced an attack that sends a valid request and proves nothing.
+    method: "POST",
+    path: "/internal/session",
+    accepts: "user",
+    shape: "credential",
+  },
 ];
 
 export function targetKey(t: { method: string; path: string }): string {
@@ -116,13 +126,11 @@ export function targetKey(t: { method: string; path: string }): string {
 /** Counts, for the suite to print. Derived from the list rather than typed beside it,
  * because a hand-maintained tally is the thing that goes stale first. */
 export function shapeCounts(list: readonly Classification[]): Record<Shape, number> {
-  const counts: Record<Shape, number> = {
-    read: 0,
-    list: 0,
-    write: 0,
-    credential: 0,
-    exempt: 0,
-  };
+  // NO `list` SHAPE YET, and that is deliberate rather than an omission. Nothing this
+  // api serves returns a collection, so a list attack would be a function with no
+  // target — and a shape with no member is a vocabulary entry that drifts. The chapter
+  // that adds the first list route adds the shape and the attack together.
+  const counts: Record<Shape, number> = { read: 0, write: 0, credential: 0, exempt: 0 };
   for (const c of list) counts[c.shape]++;
   return counts;
 }

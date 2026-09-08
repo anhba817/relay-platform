@@ -91,12 +91,12 @@ describe("the gauntlet's target list derives from the running application", () =
 
   it("accounts for every derived target as attacked or exempt", () => {
     const counts = shapeCounts(CLASSIFICATIONS);
-    const attacked = counts.read + counts.list + counts.write + counts.credential;
+    const attacked = counts.read + counts.write + counts.credential;
     // A number nobody can see is a number nobody checks. Visible under
     // `--reporter=verbose`; the assertion below is what gates the build either way.
     console.log(
       `gauntlet targets: ${derived.length} derived, ${attacked} attacked, ${counts.exempt} exempt ` +
-        `(read ${counts.read}, list ${counts.list}, write ${counts.write}, credential ${counts.credential})`,
+        `(read ${counts.read}, write ${counts.write}, credential ${counts.credential})`,
     );
     expect(attacked + counts.exempt).toBe(derived.length);
   });
