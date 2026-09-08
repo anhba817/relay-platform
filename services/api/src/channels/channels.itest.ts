@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../app.module";
 import { createDb, createPool, type Db } from "../db/client";
 import { createApiKey, createEnvironment, Repository } from "../db/repository";
-import { withoutRequestId } from "../isolation/compare";
 import { CHANNEL_MEMBER_LIMIT } from "./channels.schema";
 
 // THE TWO ENDPOINTS, END TO END (FR-016 to FR-019, FR-047, FR-048, SC-014).
@@ -171,8 +170,11 @@ describe("the public channel surface", () => {
       const foreign = await addMembers(foreignChannelId, { user_ids: ["intruder"] });
       const nowhere = await addMembers(absent, { user_ids: ["intruder"] });
       expect(foreign.status).toBe(nowhere.status);
-      expect(withoutRequestId(await foreign.json())).toEqual(
-        withoutRequestId(await nowhere.json()),
+      // COMPARED WHOLE. The envelope is `code`, `message` and `docs_url`, and all
+      // three must match for a foreign channel to be indistinguishable from an absent
+      // one. Nothing here is per-request yet, so nothing is excluded.
+      expect(await foreign.json()).toEqual(
+        await nowhere.json(),
       );
       // And the other tenant's channel gained nobody. Read through ITS OWN
       // repository — a repository scoped to the empty string is not a scope, it is

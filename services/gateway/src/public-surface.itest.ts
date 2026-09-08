@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApiClient } from "./api-client.js";
 import { createFanout, type Fanout } from "./fanout.js";
 import { attachSessions } from "./session.js";
+import { docsUrl } from "@relay/protocol";
 
 // THE EXIT CRITERION, REHEARSED IN THE LANE (FR-020, SC-015).
 //
@@ -109,7 +110,12 @@ describe("a channel, a member and a message, all over the public API", () => {
 
   beforeAll(async () => {
     api = await startApi();
-    server = serve({ service: "gateway", health: () => ({}), logger: silent });
+    server = serve({
+      service: "gateway",
+      health: () => ({}),
+      logger: silent,
+      notFoundDocsUrl: docsUrl("not_found"),
+    });
     // THE FAN-OUT IS NOT OPTIONAL FOR DELIVERY, which is easy to miss because a
     // gateway without one still connects, still authenticates and still acks a
     // send. `attachSessions` takes `fanout` as an option, and without it a
