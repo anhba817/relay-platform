@@ -52,6 +52,23 @@ const SPINE: ReadonlyArray<readonly [string, string]> = [
     "schema_migrations",
     "the migration ledger; it predates tenancy and belongs to the database",
   ],
+  // THE FIRST TABLE THIS CHECK HAS ACTUALLY REFUSED, and it refused it correctly.
+  //
+  // An outbox row is not a tenant's record — it is work the platform owes itself. The
+  // environment travels inside `subject` and `payload`, so a consumer can filter, but
+  // nothing reads this table on a tenant's behalf and no request path joins it.
+  //
+  // THAT ARGUMENT IS ABOUT READS, AND IT DOES NOT COVER RETENTION. The payload is a
+  // full copy of the message, `text` included, and the relay marks rows published
+  // rather than deleting them. So a message deleted from `messages` still has its words
+  // in here, and nothing on this platform removes them. That is a real gap, it is not a
+  // tenancy gap, and it is recorded here rather than argued away — the chapter that owns
+  // per-environment retention owns the fix.
+  [
+    "outbox",
+    "work the platform owes itself rather than a tenant's record; the environment " +
+      "travels in `subject` and `payload` and no read path joins it",
+  ],
 ];
 
 /** The spine, for anyone who needs to state it rather than derive it. */
