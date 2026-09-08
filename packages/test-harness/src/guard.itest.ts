@@ -178,12 +178,37 @@ describe("the guard refuses an unscoped mutation of a sentinel row", () => {
       ).rejects.toThrow(/global-operation guard/);
     });
 
-    it(`refuses an unscoped DELETE on ${table}, and names the owner`, async () => {
+    it(`refuses an unscoped DELETE on ${table}, naming SOME owner`, async () => {
       // Asserted on the MESSAGE, not just on rejection: the diagnosis is the
       // feature. A refusal that does not say whose bait it was leaves the reader
       // grepping for a uuid.
+      //
+      // "SOME owner", NOT OURS, AND THAT DISTINCTION COST A LANE RUN. An unscoped
+      // DELETE trips on whichever sentinel row Postgres reaches first, and which
+      // one that is depends on who else is in the database. Pinned to this file's
+      // own owner it passed alone and failed in the coverage lane, where the
+      // refusal named `services/api/src/isolation/targets.itest.ts` instead —
+      // an assertion scoped wider than the thing it tests, failing for somebody
+      // else's reason. The case below pins the owner properly.
       await expect(plain.query(`DELETE FROM ${table}`)).rejects.toThrow(
-        new RegExp(`global-operation guard.*${table}.*${VICTIM.owner.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "s"),
+        new RegExp(`global-operation guard.*${table}.*the bait planted by \\S+\\.itest\\.ts`, "s"),
+      );
+    });
+
+    it(`names THIS file's owner when the row can only be ours`, async () => {
+      // Scoped to one environment and still refused, because scoping to a TENANT
+      // is not the same as being allowed to mutate a sentinel. This is the only
+      // shape that can assert the owner, since it is the only shape whose victim
+      // is not decided by row order.
+      await expect(
+        plain.query(`DELETE FROM ${table} WHERE environment_id = $1`, [
+          VICTIM.environmentId,
+        ]),
+      ).rejects.toThrow(
+        new RegExp(
+          `global-operation guard.*${table}.*${VICTIM.owner.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+          "s",
+        ),
       );
     });
 

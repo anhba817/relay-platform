@@ -56,6 +56,17 @@ export default defineConfig({
         // a test happened to touch, which is not what "business logic" means.
         "**/main.ts",
         "**/*.module.ts",
+        // THE LANE'S OWN INFRASTRUCTURE IS NOT BUSINESS LOGIC. `include` is
+        // `packages/*/src/**`, so the harness arrived inside the measurement the
+        // moment it became a package. Its files run on every integration suite and
+        // would score near the top, raising the workspace figure while saying
+        // nothing about the product — the same dilution `**/*.module.ts` is
+        // excluded for.
+        //
+        // Excluded as a directory rather than file by file, deliberately: unlike
+        // the driver exemption, absorbing the next file added here is the CORRECT
+        // behaviour, because the next file added here is also not business logic.
+        "packages/test-harness/**",
       ],
       thresholds: {
         // Constitution VI, first clause: 70% of business logic. Set to what the
@@ -80,10 +91,30 @@ export default defineConfig({
         // The gap is recorded in specs/024-coverage-and-ci/notes.md with the
         // uncovered branches named. Raising these to 100 is the work; this
         // feature is the instrument that made the number sayable at all.
+        // THIS CHAPTER LOWERED `lines` 98 -> 97, AND THE REASON IS NOT A
+        // REGRESSION. Silencing the relays lane-wide removed coverage that came
+        // from a background sweep nobody asserted on: two hundred bait rows moving
+        // through `claimAndPublish` while every other suite ran. A number that
+        // depended on an unasserted loop racing the tests was never a measurement
+        // of this file, and the honest figure is the lower one.
+        //
+        // The three uncovered lines are named rather than chased, because each is a
+        // throw for a state the surrounding code says cannot arise:
+        //
+        //   118   no such environment, in a mint whose caller already resolved it
+        //   724   a channel neither inserted nor readable — the row is another
+        //         environment's, and the caller sees the not-found answer anyway
+        //   1010  an idempotency key that conflicted while its message is missing
+        //
+        // Reaching any of them from a test means corrupting the database first, and
+        // a test that does that is asserting on the corruption rather than on the
+        // guard. Measured at 97.74; pinned at 97, one point below, for the run-to-
+        // run swing this provider has (a function of forty on `session.ts` moved
+        // 87.80 -> 85.36 on identical code).
         "services/api/src/db/repository.ts": {
           branches: 85,
           functions: 100,
-          lines: 98,
+          lines: 97,
           statements: 95,
         },
         // THE DEDUPLICATION CHAPTER RAISED THIS, 93 -> 95. The chapter added two pure functions
