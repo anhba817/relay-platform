@@ -72,12 +72,24 @@ BEGIN
    WHERE environment_id = OLD.environment_id;
 
   -- The message is a contract — see contracts/guard.md. Prefix, schema, table,
-  -- row id, and the diagnosis. NO SUGGESTED FIX: the right scoped alternative
+  -- row key, and the diagnosis. NO SUGGESTED FIX: the right scoped alternative
   -- depends on what the test meant, and a guess printed as advice is worse than
   -- silence. That guidance belongs in the lint rule, which knows the call site.
+  --
+  -- `to_jsonb(OLD) ->> 'id'` AND NOT `OLD.id`, BECAUSE NOT EVERY GUARDED TABLE HAS
+  -- ONE. PL/pgSQL resolves `OLD.id` at RUNTIME against the row the trigger fired for,
+  -- so a table with no `id` raises `record "old" has no field "id"` — from inside the
+  -- refusal path, replacing the diagnosis with a message about the diagnosis.
+  --
+  -- Two tables carried an `id` when this was written and the third does not:
+  -- `read_positions` is keyed `(channel_id, user_id)` because that is what a read
+  -- position is. `to_jsonb` turns the row into a document first, so the lookup is a
+  -- key that may be absent rather than a field that must exist, and the whole row is
+  -- the fallback — which is more useful anyway for a table whose identity is a pair.
   RAISE EXCEPTION
-    'global-operation guard: this statement modified sentinel row %.% (id %), which belongs to no test%',
-    TG_TABLE_SCHEMA, TG_TABLE_NAME, OLD.id,
+    'global-operation guard: this statement modified sentinel row %.% (key %), which belongs to no test%',
+    TG_TABLE_SCHEMA, TG_TABLE_NAME,
+    COALESCE(to_jsonb(OLD) ->> 'id', to_jsonb(OLD)::text),
     COALESCE(' — the bait planted by ' || who, '');
 END $$;
 
@@ -109,10 +121,25 @@ DECLARE
   t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
-    -- This chapter's two. Both carry `environment_id`, both hold bait planted by
-    -- `sentinelFor`, and `guard.itest.ts` drives each one.
+    -- The instruments chapter's two. Both carry `environment_id`, both hold bait
+    -- planted by `sentinelFor`, and `guard.itest.ts` drives each one.
     'channels',
-    'users'
+    'users',
+    -- THIS CHAPTER'S, AND IT ARRIVES WITH THE TABLE. `read_positions` carries
+    -- `environment_id` although `channel_id` already determines it, precisely so this
+    -- trigger can exist — a table without the column is a table the guard cannot
+    -- refuse a cross-environment delete on.
+    --
+    -- AND IT HAS NO `id`, which is the case the refusal message was changed for: it
+    -- interpolates `coalesce(to_jsonb(OLD) ->> 'id', to_jsonb(OLD)::text)` rather than
+    -- `OLD.id`, so a table keyed on `(channel_id, user_id)` still names the row it
+    -- refused.
+    --
+    -- `members` REMAINS THE COUNTER-EXAMPLE. It is per-member state too and it is
+    -- deliberately absent: no `environment_id`, so the catalogue calls it `hop` and
+    -- `OLD.environment_id` would not compile in the WHEN clause above. The rule is the
+    -- column, not the intuition that a table feels tenant-scoped.
+    'read_positions'
   ] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS __sentinel_guard_%1$s ON %1$I', t);
     EXECUTE format(

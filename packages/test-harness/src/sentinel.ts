@@ -126,11 +126,15 @@ export async function plant(
 ): Promise<void> {
   const q = (sql: string, values?: unknown[]) => client.query(sql, values);
 
-  // Children before parents, so the deletes do not trip a foreign key. `channels`
-  // before `users` is not arbitrary: chapter 9 adds a table keyed on both.
-  await q(`DELETE FROM outbox   WHERE subject = $1`, [`${s.name}.bait`]);
-  await q(`DELETE FROM channels WHERE environment_id = $1`, [s.environmentId]);
-  await q(`DELETE FROM users    WHERE environment_id = $1`, [s.environmentId]);
+  // Children before parents, so the deletes do not trip a foreign key — and
+  // `read_positions` references BOTH `channels` and `users`, which is why the note
+  // the instruments chapter left here said the order was not arbitrary.
+  // The subject the plant below writes, not the one it used to: a cleanup keyed on
+  // a stale subject leaves every row it was meant to remove.
+  await q(`DELETE FROM outbox         WHERE subject = $1`, [`events.${s.name}.bait`]);
+  await q(`DELETE FROM read_positions WHERE environment_id = $1`, [s.environmentId]);
+  await q(`DELETE FROM channels       WHERE environment_id = $1`, [s.environmentId]);
+  await q(`DELETE FROM users          WHERE environment_id = $1`, [s.environmentId]);
 
   // Register before inserting bait: the trigger's WHEN clause tests membership,
   // so an unregistered sentinel is unguarded bait.
@@ -184,6 +188,18 @@ export async function plant(
     `INSERT INTO channels (id, environment_id, external_id, type, name)
      VALUES ($1, $2, $3, 'private', $3) ON CONFLICT (id) DO NOTHING`,
     [s.channelId, s.environmentId, s.name],
+  );
+  // THIS CHAPTER'S GUARD BAIT. `read_positions` joined the trigger array in
+  // `sentinel.sql`, and a name in that array with no row behind it installs a trigger
+  // that can never match — which reads, in every report, exactly like protection.
+  //
+  // It reuses the user and channel above rather than minting a third id: the row only
+  // has to EXIST for the WHEN clause to have something to test, and one keyed on a
+  // pair the sentinel already owns is one fewer id to clean up.
+  await q(
+    `INSERT INTO read_positions (environment_id, channel_id, user_id, sequence)
+     VALUES ($1, $2, $3, 0) ON CONFLICT (channel_id, user_id) DO NOTHING`,
+    [s.environmentId, s.channelId, s.userId],
   );
 
   // DRAIN BAIT: unpublished events. `outbox` carries no environment_id — it is

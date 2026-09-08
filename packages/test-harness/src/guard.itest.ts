@@ -5,7 +5,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { databaseUrl } from "./db-url.js";
-import { sentinelFor } from "./sentinel.js";
+import { sentinelFor, type Sentinel } from "./sentinel.js";
 
 // THE GUARD, DRIVEN ONE TABLE AT A TIME.
 //
@@ -59,12 +59,87 @@ const GUARDED: readonly string[] = (() => {
       "guard.itest.ts cannot find sentinel.sql's table array — the shape it parses changed",
     );
   }
-  const names = [...block[1]!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+  // COMMENT LINES FIRST, and this is not tidiness. The array's own comments contain
+  // quoted strings — the chapter that added `read_positions` explained the refusal
+  // message's `to_jsonb(OLD) ->> 'id'` right there — and a naive scan for quoted
+  // lower-case words took `id` for a table. The suite then ran five cases against a
+  // table called `id`, all of which failed, and the report named a table nobody had
+  // written. A parser over a language it does not parse has to at least know what a
+  // comment is.
+  const body = block[1]!
+    .split("\n")
+    .map((l) => l.replace(/--.*$/, ""))
+    .join("\n");
+  const names = [...body.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
   if (names.length === 0) {
     throw new Error("sentinel.sql's table array parsed empty, which would make every case below vacuous");
   }
   return names;
 })();
+
+/** ONE ENTRY PER GUARDED TABLE: how to plant a row in it, and a column an UPDATE can
+ * touch. Asserted against `GUARDED` in both directions below.
+ *
+ * WHY THIS IS A TABLE AND NOT A CONVENTION. The generated cases used
+ * `SET metadata = '{}'::jsonb` for every guarded table, which worked for exactly as
+ * long as every guarded table had a `metadata` column. `read_positions` does not, and
+ * the report said `column "metadata" of relation "read_positions" does not exist` —
+ * five cases failing on a column, in a suite about a trigger.
+ *
+ * And the victim fixture had the same shape problem from the other side: it planted a
+ * `users` row and a `channels` row because those were the two tables, so adding a
+ * third left the trigger with nothing to match and an unscoped DELETE went through.
+ * A guard test whose fixture does not cover a guarded table reports that table as
+ * unguarded and is right.
+ */
+interface Shape {
+  plant: string;
+  values: (s: Sentinel) => unknown[];
+  /** A no-op-safe assignment for the refusal cases: they must reach the trigger, and
+   * what they set is irrelevant. */
+  touch: string;
+  /** A detectable assignment for the exemption case, with the read that checks it. */
+  mark: string;
+  read: string;
+  marked: (n: number) => unknown;
+}
+
+const SHAPES: Readonly<Record<string, Shape>> = {
+  users: {
+    plant: `INSERT INTO users (id, environment_id, external_id, display_name)
+            VALUES ($1, $2, $3, $3) ON CONFLICT (id) DO NOTHING`,
+    values: (s) => [s.userId, s.environmentId, s.name],
+    touch: `metadata = '{}'::jsonb`,
+    mark: `metadata = $1::jsonb`,
+    read: `SELECT metadata AS v FROM users WHERE environment_id = $1`,
+    marked: (n) => ({ "guard-probe": String(n) }),
+  },
+  channels: {
+    plant: `INSERT INTO channels (id, environment_id, external_id, type, name)
+            VALUES ($1, $2, $3, 'private', $3) ON CONFLICT (id) DO NOTHING`,
+    values: (s) => [s.channelId, s.environmentId, s.name],
+    touch: `metadata = '{}'::jsonb`,
+    mark: `metadata = $1::jsonb`,
+    read: `SELECT metadata AS v FROM channels WHERE environment_id = $1`,
+    marked: (n) => ({ "guard-probe": String(n) }),
+  },
+  read_positions: {
+    plant: `INSERT INTO read_positions (environment_id, channel_id, user_id, sequence)
+            VALUES ($1, $2, $3, 0) ON CONFLICT (channel_id, user_id) DO NOTHING`,
+    values: (s) => [s.environmentId, s.channelId, s.userId],
+    // `sequence` rather than `metadata`, because this table has no metadata — and
+    // `updated_at` would be touched by a trigger on some tables, so a column nothing
+    // else writes is the honest choice.
+    touch: `sequence = sequence`,
+    // NOT `metadata`, AND NOT KEYED ON `id`. This table has neither. The mark is a
+    // sequence value nothing else writes and the read is scoped by environment, which
+    // works for all three tables and does not assume a surrogate key — the absence of
+    // one being the reason this table joined the guard with a message change.
+    mark: `sequence = $1`,
+    read: `SELECT sequence AS v FROM read_positions WHERE environment_id = $1`,
+    marked: (n) => n,
+  },
+};
 
 let admin: pg.Client;
 let plain: pg.Client;
@@ -100,16 +175,12 @@ beforeAll(async () => {
      VALUES ($1, $2, 'development', $3) ON CONFLICT (id) DO NOTHING`,
     [VICTIM.environmentId, VICTIM.applicationId, `sentinel-not-a-secret-${VICTIM.environmentId}`],
   );
-  await admin.query(
-    `INSERT INTO users (id, environment_id, external_id, display_name)
-     VALUES ($1, $2, $3, $3) ON CONFLICT (id) DO NOTHING`,
-    [VICTIM.userId, VICTIM.environmentId, VICTIM.name],
-  );
-  await admin.query(
-    `INSERT INTO channels (id, environment_id, external_id, type, name)
-     VALUES ($1, $2, $3, 'private', $3) ON CONFLICT (id) DO NOTHING`,
-    [VICTIM.channelId, VICTIM.environmentId, VICTIM.name],
-  );
+  // THROUGH `SHAPES`, so a table added to the guard's array is planted here by
+  // construction rather than by somebody remembering.
+  for (const table of GUARDED) {
+    const shape = SHAPES[table]!;
+    await admin.query(shape.plant, shape.values(VICTIM));
+  }
 
   // The neighbour's tenancy, DELIBERATELY NOT registered in
   // `__sentinel_environments` — that omission is the whole point of these rows.
@@ -127,23 +198,19 @@ beforeAll(async () => {
      VALUES ($1, $2, 'development', $3) ON CONFLICT (id) DO NOTHING`,
     [NEIGHBOUR.environmentId, NEIGHBOUR.applicationId, `sentinel-not-a-secret-${NEIGHBOUR.environmentId}`],
   );
-  await admin.query(
-    `INSERT INTO users (id, environment_id, external_id, display_name)
-     VALUES ($1, $2, $3, $3) ON CONFLICT (id) DO NOTHING`,
-    [NEIGHBOUR.userId, NEIGHBOUR.environmentId, NEIGHBOUR.name],
-  );
-  await admin.query(
-    `INSERT INTO channels (id, environment_id, external_id, type, name)
-     VALUES ($1, $2, $3, 'private', $3) ON CONFLICT (id) DO NOTHING`,
-    [NEIGHBOUR.channelId, NEIGHBOUR.environmentId, NEIGHBOUR.name],
-  );
+  for (const table of GUARDED) {
+    const shape = SHAPES[table]!;
+    await admin.query(shape.plant, shape.values(NEIGHBOUR));
+  }
 });
 
 afterAll(async () => {
   // Children before parents, and through `admin` because deleting a sentinel row
   // is exactly what the guard forbids.
   for (const s of [VICTIM, NEIGHBOUR]) {
-    for (const t of ["channels", "users"]) {
+    // REVERSED, so children go before parents: `read_positions` references both of
+    // the others, and the array is written creation-order.
+    for (const t of [...GUARDED].reverse()) {
       await admin.query(`DELETE FROM ${t} WHERE environment_id = $1`, [s.environmentId]);
     }
     await admin.query(`DELETE FROM environments WHERE id = $1`, [s.environmentId]);
@@ -156,6 +223,18 @@ afterAll(async () => {
 });
 
 describe("the guard refuses an unscoped mutation of a sentinel row", () => {
+  it("has a shape for every guarded table and no shape for anything else", () => {
+    // THE COMMENT ON `SHAPES` CLAIMED THIS AND THE SUITE DID NOT MAKE IT. Every use
+    // site writes `SHAPES[table]!`, so a guarded table with no entry throws
+    // `Cannot read properties of undefined` from inside a fixture — a message about
+    // JavaScript, in a suite about a trigger, naming no table.
+    //
+    // BOTH DIRECTIONS. A missing entry is the failure above; an extra one is a table
+    // that used to be guarded and is not, which leaves a fixture planting rows the
+    // trigger no longer protects and nothing anywhere going red.
+    expect(Object.keys(SHAPES).sort()).toEqual([...GUARDED].sort());
+  });
+
   it("installs one trigger per name in sentinel.sql's array, and no more", async () => {
     // BOTH DIRECTIONS. A name in the array with no trigger means the DO block
     // failed silently; a trigger with no name means a stale install survived a
@@ -174,7 +253,7 @@ describe("the guard refuses an unscoped mutation of a sentinel row", () => {
       // table and the owner, because a bare failure sends the next reader to the
       // wrong file.
       await expect(
-        plain.query(`UPDATE ${table} SET metadata = '{}'::jsonb`),
+        plain.query(`UPDATE ${table} SET ${SHAPES[table]!.touch}`),
       ).rejects.toThrow(/global-operation guard/);
     });
 
@@ -222,17 +301,16 @@ describe("the guard refuses an unscoped mutation of a sentinel row", () => {
       // like one that permits them. The symptom shows up somewhere else entirely —
       // an exempt sweep that disables the same rows on every pass and never runs
       // out — which is a long way from the file holding the fault.
-      const mark = `{"guard-probe":"${table}"}`;
+      const shape = SHAPES[table]!;
+      const n = 1 + GUARDED.indexOf(table);
+      const value = shape.marked(n);
       await admin.query(
-        `UPDATE ${table} SET metadata = $1::jsonb WHERE id = $2`,
-        [mark, table === "channels" ? VICTIM.channelId : VICTIM.userId],
+        `UPDATE ${table} SET ${shape.mark} WHERE environment_id = $2`,
+        [typeof value === "object" ? JSON.stringify(value) : value, VICTIM.environmentId],
       );
-      const { rows } = await admin.query<{ metadata: unknown }>(
-        `SELECT metadata FROM ${table} WHERE id = $1`,
-        [table === "channels" ? VICTIM.channelId : VICTIM.userId],
-      );
-      expect(rows[0]?.metadata, `the exempt write to ${table} was reverted`)
-        .toEqual(JSON.parse(mark));
+      const { rows } = await admin.query<{ v: unknown }>(shape.read, [VICTIM.environmentId]);
+      expect(rows[0]?.v, `the exempt write to ${table} was reverted`)
+        .toEqual(typeof value === "object" ? value : String(value));
     });
 
     it(`permits a scoped UPDATE on ${table} that hits a non-sentinel row`, async () => {
@@ -245,7 +323,7 @@ describe("the guard refuses an unscoped mutation of a sentinel row", () => {
       // the trigger's WHEN clause deleted. One row has to change hands for the
       // permission to have been exercised.
       const res = await plain.query(
-        `UPDATE ${table} SET metadata = '{}'::jsonb WHERE environment_id = $1`,
+        `UPDATE ${table} SET ${SHAPES[table]!.touch} WHERE environment_id = $1`,
         [NEIGHBOUR.environmentId],
       );
       expect(res.rowCount, `no ${table} row in the neighbour environment to permit`)
