@@ -130,6 +130,11 @@ describe("the isolation gauntlet", () => {
       () => t.victim.repo.listMessages(t.victim.channelId, { limit: 50 }),
     );
     expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+    // AND THE REFUSAL IS THE TENANCY ONE. Without this the pair above agrees on any
+    // shared refusal, including the validator's — drop `user` from `from` and both
+    // halves become 400 `field: "user"`, `differences` stays empty and this test goes
+    // on passing without ever reaching a channel.
+    expect(verdict.foreign.status).toBe(404);
     // THE STATE READ IS THE POINT: a 404 that completed the write is the case no
     // status code reveals.
     expect(verdict.stateChanged, "the victim's messages moved").toBe(false);
