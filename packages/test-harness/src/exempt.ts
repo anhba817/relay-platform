@@ -9,32 +9,20 @@
 //
 // This list and `eslint.config.mjs`'s ignores for the global-admin functions must
 // agree. A file exempt from one and not the other is a trap for whoever adds the
-// seventh.
+// next one.
+//
+// AND IT IS ASSERTED IN BOTH DIRECTIONS, which the obvious version is not. An
+// unlisted file performing a global operation fails loudly — that is the rule's
+// whole job. A LISTED FILE THAT DOES NOT EXIST passes forever: the list can only
+// grow, and a stale entry holds a standing exemption over nothing, or worse over a
+// path some later chapter creates for an unrelated reason. `exempt.test.ts` checks
+// that every path here names a file on disk, so deleting a suite turns this list
+// red instead of leaving it quietly wrong.
 
 export const EXEMPT_FILES: ReadonlyArray<{ path: string; because: string }> = [
   {
     path: "services/api/src/outbox/outbox.itest.ts",
     because: "drives the event relay, whose whole subject is a global drain",
-  },
-  {
-    path: "services/api/src/webhooks/deliveries.itest.ts",
-    because: "drives both the sweep and the due-delivery drain",
-  },
-  {
-    path: "services/api/src/webhooks/test-event.itest.ts",
-    because: "drives the delivery relay",
-  },
-  {
-    path: "services/api/src/webhooks/attempts.itest.ts",
-    because: "drives the delivery relay",
-  },
-  {
-    path: "services/api/src/notifications/notifications.itest.ts",
-    because: "drives the notification relay",
-  },
-  {
-    path: "services/dispatcher/src/dispatcher.itest.ts",
-    because: "drives the due-delivery drain from the dispatcher's side",
   },
 ];
 

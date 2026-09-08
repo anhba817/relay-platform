@@ -70,14 +70,32 @@ END $$;
 -- rows. Not `outbox`: it has no environment_id because it is platform
 -- bookkeeping, so its bait is protected by the reader mechanism only. A stated
 -- gap rather than an oversight (data-model.md).
+--
+-- THIS ARRAY IS NOT A COUNT, AND THAT IS DELIBERATE. Every table that carries
+-- `environment_id` joins it IN THE CHAPTER THAT CREATES THE TABLE, together with
+-- the sentinel row that makes the trigger's WHEN clause match and the case in
+-- `guard.itest.ts` that drives it. Naming a number here — "five tables", "nine
+-- tables" — would be a fact about the chapter that wrote the number, and every
+-- later chapter would have to remember to change it. Nothing checks a comment.
+--
+-- AND BEING IN THIS ARRAY IS NOT BEING WATCHED. The trigger fires only when
+-- `__is_sentinel(OLD.environment_id)` is true, which needs a sentinel row sitting
+-- in the table. A name added here without bait planted in `sentinel.ts` installs
+-- a trigger that can never match, and it reads exactly like protection. That is
+-- why the three go together: the name, the bait, and the case that turns red when
+-- the name is removed.
+--
+-- `members` IS THE COUNTER-EXAMPLE AND BELONGS NOWHERE NEAR THIS LIST. It has no
+-- `environment_id` — the catalogue classifies it `hop`, reaching the environment
+-- through `channels` — so `OLD.environment_id` would not compile in the WHEN
+-- clause. The rule is the column, not the intuition that a table "feels" tenant.
 DO $$
 DECLARE
   t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
-    'webhook_endpoints',
-    'webhook_deliveries',
-    'webhook_disable_notifications',
+    -- This chapter's two. Both carry `environment_id`, both hold bait planted by
+    -- `sentinelFor`, and `guard.itest.ts` drives each one.
     'channels',
     'users'
   ] LOOP

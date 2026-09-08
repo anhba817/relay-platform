@@ -1,12 +1,12 @@
 // The integration lane's own infrastructure (feature 030).
 //
 // WHY THIS IS A PACKAGE and not a directory inside `services/api`: after the
-// guard's exemption had to reach every lane, five vitest configs across four
-// packages load it — the api's, the dispatcher's, the gateway's, the e2e
-// package's and the root coverage config's. A gateway test lane reaching into
-// another service's `src/` is a worse precedent than a shared package, even in
-// test code, and `packages/` is where this repository already keeps shared
-// things (research R16).
+// guard's exemption had to reach every lane, four vitest configs load it — the
+// api's, the gateway's, the e2e package's and the root coverage config's, and the
+// list grows with every service that gets an integration lane. A gateway test lane
+// reaching into another service's `src/` is a worse precedent than a shared
+// package, even in test code, and `packages/` is where this repository already
+// keeps shared things (research R16).
 //
 // REFERENCED BY PATH, NOT BY NAME, which is why this package publishes no
 // `exports` map. By name would mean adding `@relay/test-harness` to four

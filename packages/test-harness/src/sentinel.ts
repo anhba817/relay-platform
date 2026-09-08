@@ -30,10 +30,16 @@ export const BAIT_ROWS = MAX_PRODUCT_BATCH * 2;
  * `bait-size.test.ts`; listed here so the two cannot drift apart. */
 export const BATCH_SOURCES = [
   "services/api/src/outbox/relay.ts",
-  "services/api/src/webhooks/delivery-relay.ts",
-  "services/api/src/notifications/notification-relay.ts",
-  "services/api/src/db/repository.ts",
 ] as const;
+
+// NOT `db/repository.ts`, AND THE REASON IS THE INTERESTING ONE. Its claim-and-
+// publish takes `limit: number` with no default, and so does its message page — a
+// caller cannot omit the bound, so there is no default for the bait to dominate.
+// A required parameter beats a defaulted one here for the same reason a design in
+// which a case cannot arise beats a branch that handles it: the branch is the thing
+// that rots. Add a default to either and this list has to grow, which
+// `bait-size.test.ts` will not tell you — it checks that every file NAMED here has
+// a default, not that every file WITH one is named. That direction needs a reader.
 
 export interface Sentinel {
   /** The test file that owns these rows, as a repository-relative path. */
@@ -42,7 +48,12 @@ export interface Sentinel {
   humanId: string;
   applicationId: string;
   environmentId: string;
-  endpointId: string;
+  /** GUARD BAIT, not drain bait. A trigger sits on `users` and `channels`, and its
+   * WHEN clause tests `__is_sentinel(OLD.environment_id)` — which needs a row IN the
+   * table to have anything to test. Without these two the triggers install, report
+   * as installed, and can never match. See `sentinel.sql`. */
+  userId: string;
+  channelId: string;
   /** `__sentinel__:<owner>`, on every row, so a failure says whose it is. */
   name: string;
 }
@@ -67,7 +78,8 @@ export function sentinelFor(owner: string): Sentinel {
     humanId: id("human"),
     applicationId: id("application"),
     environmentId: id("environment"),
-    endpointId: id("endpoint"),
+    userId: id("user"),
+    channelId: id("channel"),
     name: `__sentinel__:${owner}`,
   };
 }
@@ -92,29 +104,33 @@ export const SENTINEL = {
  * unguarded. `setup.ts` opens a dedicated client, passes it here, and closes it
  * before the first test (FR-024, research R12).
  *
- * The four kinds are chosen so that every global operation in the codebase touches
- * at least one:
+ * TWO KINDS, AND THEY ARE NOT THE SAME MECHANISM. Confusing them is how a table
+ * ends up named as guarded and watched by nothing:
  *
- *   an endpoint the sweep would disable   -> sweepDisabledEndpoints
- *   due deliveries                        -> drainDueDeliveries
- *   unpublished outbox rows               -> drainOutbox
- *   undelivered notifications             -> drainDisableNotifications
+ *   GUARD BAIT — a row the trigger PROTECTS. One per table named in
+ *   `sentinel.sql`'s array, because the WHEN clause has nothing to test without
+ *   one. A `users` row and a `channels` row, at this chapter.
  *
- * The organisation deliberately has NO addressable member. Research R4 measured
- * 200 addressable bait notifications turning one suite's drain into 200 SMTP sends
- * and a ten-second timeout; unaddressable makes each bait row cost one log line,
- * through the branch FR-WHK-07's unaddressable case already covers. */
+ *   DRAIN BAIT — a row a global operation would CLAIM, so that an unscoped sweep
+ *   takes something belonging to a test. One per global operation in the codebase:
+ *
+ *     unpublished outbox rows  ->  drainOutbox
+ *
+ * ONE GLOBAL OPERATION EXISTS AT THIS CHAPTER, so there is one drain bait, and the
+ * list grows with the code rather than ahead of it. Bait planted for an operation
+ * nobody has written yet is bait nothing can take — which is indistinguishable, in
+ * a passing suite, from bait that works. */
 export async function plant(
   client: { query(sql: string, values?: unknown[]): Promise<unknown> },
   s: Sentinel,
 ): Promise<void> {
   const q = (sql: string, values?: unknown[]) => client.query(sql, values);
 
-  // Children before parents, so the deletes do not trip a foreign key.
-  await q(`DELETE FROM webhook_disable_notifications WHERE environment_id = $1`, [s.environmentId]);
-  await q(`DELETE FROM webhook_deliveries            WHERE environment_id = $1`, [s.environmentId]);
-  await q(`DELETE FROM outbox                        WHERE subject = $1`, [`${s.name}.bait`]);
-  await q(`DELETE FROM webhook_endpoints             WHERE environment_id = $1`, [s.environmentId]);
+  // Children before parents, so the deletes do not trip a foreign key. `channels`
+  // before `users` is not arbitrary: chapter 9 adds a table keyed on both.
+  await q(`DELETE FROM outbox   WHERE subject = $1`, [`${s.name}.bait`]);
+  await q(`DELETE FROM channels WHERE environment_id = $1`, [s.environmentId]);
+  await q(`DELETE FROM users    WHERE environment_id = $1`, [s.environmentId]);
 
   // Register before inserting bait: the trigger's WHEN clause tests membership,
   // so an unregistered sentinel is unguarded bait.
@@ -151,47 +167,49 @@ export async function plant(
     [s.environmentId, s.applicationId, `sentinel-not-a-secret-${s.environmentId}`],
   );
 
-  // bait 1: an endpoint the sweep would disable. `disabled_at` and
-  // `disabled_reason` must be null together, and `failure_run_started_at` and
-  // `failure_run_attempts` must be non-null together — both read off the live
-  // schema rather than guessed (webhook_endpoints_disabled_check,
-  // webhook_endpoints_failure_run_check).
+  // GUARD BAIT. One row in each table `sentinel.sql` names, so the trigger's WHEN
+  // clause has a sentinel `environment_id` to match. These are not consumable — no
+  // global operation claims them — and the count does not matter; what matters is
+  // that the row EXISTS, because a trigger over a table holding no sentinel row is
+  // a no-op that looks exactly like a trigger doing its job.
+  //
+  // `type` must be 'public' or 'private' (channels_type_check), and both tables are
+  // unique on (environment_id, external_id) — read off the live schema, not guessed.
   await q(
-    `INSERT INTO webhook_endpoints
-       (id, environment_id, url, event_types, secret_ciphertext, enabled,
-        failure_run_started_at, failure_run_attempts, disabled_at, disabled_reason)
-     VALUES ($1, $2, $3, '["message.created"]'::jsonb, 'sentinel-not-a-ciphertext',
-             true, now() - interval '4 hours', 25, NULL, NULL)`,
-    [s.endpointId, s.environmentId, `https://sentinel.invalid/${s.owner}`],
+    `INSERT INTO users (id, environment_id, external_id, display_name)
+     VALUES ($1, $2, $3, $3) ON CONFLICT (id) DO NOTHING`,
+    [s.userId, s.environmentId, s.name],
+  );
+  await q(
+    `INSERT INTO channels (id, environment_id, external_id, type, name)
+     VALUES ($1, $2, $3, 'private', $3) ON CONFLICT (id) DO NOTHING`,
+    [s.channelId, s.environmentId, s.name],
   );
 
-  // bait 2: due deliveries.
-  await q(
-    `INSERT INTO webhook_deliveries
-       (id, environment_id, endpoint_id, event_id, payload, attempt, state, next_attempt_at)
-     SELECT gen_random_uuid(), $1, $2, gen_random_uuid(), '{}'::jsonb, 1, 'pending',
-            now() - interval '1 hour'
-       FROM generate_series(1, $3)`,
-    [s.environmentId, s.endpointId, BAIT_ROWS],
-  );
-
-  // bait 3: unpublished events. `outbox` carries no environment_id — it is
-  // platform bookkeeping — so the subject is what identifies these, and it is
-  // also why the trigger cannot guard them (data-model.md).
+  // DRAIN BAIT: unpublished events. `outbox` carries no environment_id — it is
+  // platform bookkeeping — so the subject is what identifies these, and it is also
+  // why the trigger cannot guard them (data-model.md). The count is `BAIT_ROWS` and
+  // not one, because a single row cannot tell a batch that ignored its limit from
+  // one that honoured it.
+  //
+  // AND IT IS AN `events.` SUBJECT WITH AN ENVELOPE ID, WHICH IT WAS NOT. Bait
+  // imitates an unpublished event, and these rows sit in the one table the outbox
+  // chapter's relay drains GLOBALLY, oldest first. A bait row is therefore reachable
+  // by any test that drains for real, and the first version was unreachable in the
+  // two ways that matter: `EVENTS` accepts `events.>` and nothing accepts
+  // `<name>.bait`, so a real publish came back `NatsError: 503`; and `'{}'` carries
+  // no `id`, so `publishPending` handed the broker `msgID: undefined` and every bait
+  // row looked like the same event. Both were measured: 3,200 pending rows in 16
+  // subjects, every unroutable row in this lane and no other.
+  //
+  // A FIXTURE THAT IMITATES A THING MUST BE USABLE EVERYWHERE THE THING IS. The
+  // count, the table and the unpublished state — everything the bait is FOR — are
+  // unchanged; what changed is the two fields that made it a landmine rather than
+  // bait.
   await q(
     `INSERT INTO outbox (subject, payload)
-     SELECT $1, '{}'::jsonb FROM generate_series(1, $2)`,
-    [`${s.name}.bait`, BAIT_ROWS],
-  );
-
-  // bait 4: undelivered disablement notifications.
-  await q(
-    `INSERT INTO webhook_disable_notifications
-       (id, environment_id, organisation_id, endpoint_id, disabled_at,
-        run_started_at, run_attempts, last_status)
-     SELECT gen_random_uuid(), $1, $2, $3, now() - interval '3 hours',
-            now() - interval '4 hours', 25, 503
-       FROM generate_series(1, $4)`,
-    [s.environmentId, s.organisationId, s.endpointId, BAIT_ROWS],
+     SELECT $1, jsonb_build_object('id', gen_random_uuid()::text, 'type', 'bait')
+       FROM generate_series(1, $2)`,
+    [`events.${s.name}.bait`, BAIT_ROWS],
   );
 }

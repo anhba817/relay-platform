@@ -6,9 +6,9 @@ import pg from "pg";
 // Installed once per lane, before any test file (feature 030, T013).
 //
 // MIGRATES FIRST, and that is not tidiness. `globalSetup` runs before every suite,
-// and six suites call `migrate(pool)` in their own `beforeAll` — that is, after
-// this. On an unmigrated database `CREATE TRIGGER … ON webhook_endpoints` would hit
-// a table that does not exist and the lane would die before a single test. CI is
+// and five suites call `migrate(pool)` in their own `beforeAll` — that is, after
+// this. On an unmigrated database `CREATE TRIGGER … ON channels` would hit a table
+// that does not exist and the lane would die before a single test. CI is
 // safe (`node services/api/dist/db/migrate.js` runs before `pnpm test:integration`)
 // and `fresh-db.sh` migrates, so only a direct developer run was exposed — but
 // depending on somebody else having migrated is not a property, it is a habit

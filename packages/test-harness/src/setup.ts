@@ -19,8 +19,8 @@ import { plant, sentinelFor } from "./sentinel.js";
 //   services/api/src/messages/idempotency.itest.ts
 //
 // An exemption written in `beforeAll` would arrive after their pool already exists.
-// None of the six exempt suites is written that way today, so nothing is currently
-// broken by it — which is the same kind of luck this whole feature exists to remove
+// The exempt suite is not written that way today, so nothing is currently broken by
+// it — which is the same kind of luck this whole feature exists to remove
 // (FR-026, research R14).
 //
 // Bait planting stays in `beforeAll`, because it is asynchronous database work.
@@ -68,14 +68,20 @@ if (EXEMPT && BASE_URL !== undefined) {
 // Module scope, part 2: a non-exempt file may not run a relay.
 // ---------------------------------------------------------------------------
 
-/** Both relays catch and log their own errors, so a refusal raised inside one is a
- * log line and a green lane — the guard's sharpest limitation (research R13). Every
- * suite that spawns an api child sets these off today; that is a convention in four
- * files, and this makes it checked (FR-025). */
+/** A relay catches and logs its own errors, so a refusal raised inside one is a log
+ * line and a green lane — the guard's sharpest limitation (research R13). Every
+ * suite that spawns an api child sets these off today; that is a convention, and
+ * this makes it checked (FR-025).
+ *
+ * TWO NAMES, ONE PER RELAY THAT EXISTS. Listing a flag no module reads would make
+ * every non-exempt suite throw until it switched off a relay nobody has written —
+ * and the fix a reader would reach for is to set the variable, which teaches exactly
+ * the wrong habit: that these names are incantations rather than switches. Each
+ * relay chapter adds its own name here, and `exempt.test.ts` asserts every name in
+ * this array is read by product code, so a flag cannot arrive ahead of its relay or
+ * outlive it. */
 const RELAY_FLAGS = [
   "RELAY_OUTBOX_RELAY",
-  "RELAY_DELIVERY_RELAY",
-  "RELAY_NOTIFICATION_RELAY",
   "RELAY_EVENT_CONSUMER",
 ] as const;
 
