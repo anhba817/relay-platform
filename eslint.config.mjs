@@ -16,8 +16,32 @@ export default tseslint.config(
   {
     // Isolation lives in data access, not in handlers (constitution I):
     // only the repository layer may touch the driver.
+    //
+    // AND THE LANE'S OWN INFRASTRUCTURE, NAMED FILE BY FILE. The harness opens raw
+    // connections deliberately: one carrying the guard's exemption and one without,
+    // which is the distinction its tests are about, and `createPool()` cannot express
+    // it. So these three are exempt — as PATHS, not as a `packages/test-harness/**`
+    // pattern, because a pattern would silently absorb the next file added there and
+    // that is the failure mode the guard itself exists to remove.
+    //
+    // The exemption is checked in both directions. This rule catches an unlisted
+    // file that imports the driver; nothing here can catch a LISTED file that stopped
+    // importing it, so the list can only grow and a stale entry holds a standing
+    // exemption forever. `driver-exempt.test.ts` reads this array and asserts each
+    // path exists and still imports a module the rule below restricts — with those
+    // module names read out of the rule rather than restated.
     files: ["**/*.ts"],
-    ignores: ["services/api/src/db/**"],
+    ignores: [
+      "services/api/src/db/**",
+      // DRIVER_EXEMPT — the lane's own infrastructure. Reasons, one per path:
+      //   global-setup.ts  installs the guard against a database vitest names
+      //   setup.ts         rewrites the connection string to carry the exemption
+      //   guard.itest.ts   holds one exempt client and one plain one, and the
+      //                    difference between them is the whole test
+      "packages/test-harness/src/global-setup.ts",
+      "packages/test-harness/src/setup.ts",
+      "packages/test-harness/src/guard.itest.ts",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",
