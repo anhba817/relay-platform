@@ -917,7 +917,16 @@ export class Repository {
           ON CONFLICT (channel_id, user_id) DO NOTHING
           RETURNING channel_id`,
     );
-    if ((inserted.rowCount ?? 0) > 0) return "added";
+    // `RETURNING` and `.rows.length`, not `rowCount ?? 0`. `rowCount` is typed
+    // `number | null` by the driver and is never null for an INSERT, so the `??`
+    // was a branch nothing could take — one uncovered arm in the file constitution
+    // VI asks for 100% of, bought for nothing. A row that came back is a row that
+    // was inserted.
+    //
+    // BOTH SQL BRANCHES ALREADY RETURNED. The comment beside `metadata` a few
+    // hundred lines above has raised this objection since the user-surface
+    // chapter; what was missing was the line that acts on it.
+    if (inserted.rows.length > 0) return "added";
 
     const existing = await this.db
       .select({ userId: members.userId })
@@ -1277,7 +1286,7 @@ export class Repository {
     // impossible state that the comment forty lines below already argues against. Lines
     // fell to **98.95%** against a pin of 99 and the gate went red, exactly as that
     // comment predicts. Third time this project has answered the ratchet by removing code
-    // rather than covering it: the user-surface chapter's `upsertUser` was the first.
+    // rather than covering it (the user-surface chapter's `addMember` and its `upsertUser`).
     //
     // The flag defers to the read the method already does at the end, so the conflict
     // costs no extra query and no extra throw.
