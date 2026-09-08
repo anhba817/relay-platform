@@ -395,13 +395,13 @@ describe("the public channel surface", () => {
 
   // ── REMOVAL, BULK, BECAUSE THE REQUIREMENT ALWAYS WAS ───────────────────────
   //
-  // FR-006 says "up to 100 in one request" and FR-007 says the result is reported
-  // per user — the channel-endpoints chapter's add shape in both halves. The contract specified a
-  // single-user `DELETE` for ten analysis passes, having read "the shape the
-  // endpoints chapter chose" as *named outcomes* and dropped *bulk*. Every pass
-  // requirements to tasks, both said "removal", and identifier coverage read 100%.
-  // Comparing US2's scenario 4 — which names a hundred users — to the route's path,
-  // which named one, is what found it.
+  // FR-006 says "up to 100 in one request" and FR-007 says the result is reported per
+  // user — the endpoints chapter's add shape in both halves. The contract specified a
+  // single-user `DELETE` for ten analysis passes, having read "the shape that chapter
+  // chose" as *named outcomes* and dropped *bulk*. Every pass compared requirements
+  // to tasks, both said "removal", and identifier coverage read 100%. Comparing US2's
+  // scenario 4 — which names a hundred users — to the route's path, which named one,
+  // is what found it.
   describe("POST /v1/channels/:channelId/members/remove (FR-006, FR-007)", () => {
     let target: string;
 

@@ -190,8 +190,8 @@ export class ChannelsController {
    * no business here — it carries no user to join. `credential.guard.ts` resolves
    * `getAllAndOverride([handler, class])`, so the method wins.
    *
-   * Without this decorator every user's join would be a 403, which is the
-   * isolation harness's FR-044 hole exactly: a credential mismatch that passed
+   * Without this decorator every user's join would be a 403, which is the isolation
+   * harness's FR-044 hole exactly: a credential mismatch that passed for a whole
    * chapter and then turned nine of fifteen tests red.
    */
   @Post(":channelId/join")

@@ -23,7 +23,7 @@ import { migrate } from "../db/migrate";
 // in a shared stream that already holds tens of thousands of events from earlier
 // chapters — two runs sharing a name would inherit each other's progress, and
 // the second would look mysteriously empty. This is the same lesson 2.6 learned
-// about Redis subjects and the outbox chapter about its own: a shared store needs a
+// about Redis subjects and the outbox chapter about its own table: a shared store needs a
 // per-run handle, because the isolation every other suite gets from a tenant
 // column is not available here.
 

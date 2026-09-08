@@ -20,7 +20,7 @@ import { docsUrl } from "@relay/protocol";
 //
 // A channel created over the public API, a member added over the public API, a
 // message sent over the public API, and the socket delivering it to that member.
-// The channel endpoints were built for exactly this path, and this is
+// The first two channel endpoints were built for exactly this path, and this is
 // the test that the path joins up.
 //
 // NO REPOSITORY CALL FOR ANY OF IT, which is the whole point and is a narrower

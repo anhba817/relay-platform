@@ -11,6 +11,7 @@ import {
   environments,
   humans,
   members,
+  readPositions,
   memberships,
   messages,
   organisations,
@@ -936,13 +937,15 @@ export class Repository {
    * and their socket stops receiving the channel on its next resume because the
    * session is built from `members`.
    *
-   * NO READ POSITION TO REMOVE YET, AND THAT IS AN OBLIGATION AND NOT A GAP.
-   * `read_positions` is per-member state keyed by `(channel_id, user_id)`, so
-   * leaving a removed member's row would leave a non-member's position in a
-   * per-member table. The table arrives in the next chapter, and the delete has to
-   * arrive with it — this comment is here so that the chapter which creates the
-   * table finds the requirement rather than deducing it. `channels.itest.ts` gets
-   * the case in the same edit.
+   * THE READ POSITION GOES WITH THE MEMBERSHIP, and the previous chapter wrote this
+   * requirement down here rather than leaving it to be deduced. `read_positions` is
+   * per-member state keyed by `(channel_id, user_id)`, so leaving a removed member's
+   * row would leave a non-member's position in a per-member table.
+   *
+   * Adding the user back therefore starts their unread count at the channel's whole
+   * history, which is the same thing "no row means position zero" says for a new
+   * member — so the delete costs nothing a rejoin has to undo.
+   *
    * SCOPED THROUGH THE CHANNEL, and the caller has already read it scoped. `members`
    * carries no `environment_id` — the catalogue calls it a `hop` — so the join is
    * what keeps a foreign channel's rows out of reach.
@@ -979,6 +982,25 @@ export class Repository {
       )
       .returning({ userId: members.userId });
     const removed = new Set(deleted.map((r) => r.userId));
+
+    // SCOPED BY environment_id AND NOT BY THE CHANNEL JOIN, because this table
+    // carries one. `members` above needs the `EXISTS` over `channels` to stay inside
+    // a tenant; `read_positions` was given `environment_id` precisely so the guard
+    // could watch it, and the same column makes this predicate direct.
+    //
+    // EVERY id THE CALLER NAMED, not just the ones a membership was removed for. A
+    // user with a read position and no membership is the state this is cleaning up,
+    // and refusing to touch it because the membership was already gone would leave
+    // exactly the row the delete exists for.
+    await this.db
+      .delete(readPositions)
+      .where(
+        and(
+          eq(readPositions.channelId, channelId),
+          eq(readPositions.environmentId, this.environmentId),
+          inArray(readPositions.userId, userIds),
+        ),
+      );
 
     for (const id of userIds) {
       outcome.set(id, removed.has(id) ? "removed" : "not_a_member");
