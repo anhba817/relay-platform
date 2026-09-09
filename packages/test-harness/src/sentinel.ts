@@ -237,12 +237,38 @@ export async function plant(
      VALUES ($1, $2, $3) ON CONFLICT (environment_id, period, user_id) DO NOTHING`,
     [s.environmentId, s.quotaPeriod, s.userId],
   );
+  // ALREADY DELIVERED, AND THAT IS THE FOURTH MEASUREMENT OF ONE LAW. The
+  // disablement notifications and the webhook deliveries both had to concede the
+  // same point: **bait may be claimable only where draining it is DATABASE work.**
+  // A sweep or a publish qualifies; anything that does per-row I/O does not.
+  //
+  // `drainQuotaNotifications` claims on `delivered_at IS NULL` and then calls
+  // `deliver(row)` — a mail send. So an undelivered bait row is claimed by every
+  // quota relay in the lane.
+  //
+  // AND HERE THE LAW ARRIVES WITH TEETH RATHER THAN WITH LATENCY. The three earlier
+  // instances cost seconds; this one is a hard failure, because the quota chapter
+  // also put `quota_notifications` under the guard. The drain claims the sentinel's
+  // row on a connection carrying no exemption, the trigger refuses the UPDATE, and
+  // the transaction is poisoned — `25P02 in_failed_sql_transaction` on the next
+  // statement, six tests red, and the message names neither the bait nor the guard.
+  //
+  // Delivered two hours ago, so the row is still a row a global count would see and
+  // is outside every claim window.
+  //
+  // `DO UPDATE`, NOT `DO NOTHING`, AND THAT IS NOT TIDINESS. A sentinel's ids are
+  // derived from its owner, so this row's id is the same on every run for ever — and
+  // `DO NOTHING` would mean the state the row was FIRST planted with is the state it
+  // keeps. A lane that ran this fixture once before the line above said
+  // `delivered_at` holds an undelivered bait row that no later run can repair, and the
+  // failure it causes is the one described above: refused, poisoned, six red. Here the
+  // row's STATE is part of the fixture's contract and not merely its existence.
   await q(
     `INSERT INTO quota_notifications
        (id, environment_id, organisation_id, period, dimension, threshold,
-        quota, usage_at_crossing)
-     VALUES ($1, $2, $3, $4, 'messages', 50, 1, 1)
-     ON CONFLICT (id) DO NOTHING`,
+        quota, usage_at_crossing, delivered_at)
+     VALUES ($1, $2, $3, $4, 'messages', 50, 1, 1, now() - interval '2 hours')
+     ON CONFLICT (id) DO UPDATE SET delivered_at = EXCLUDED.delivered_at`,
     [s.quotaNotificationId, s.environmentId, s.organisationId, s.quotaPeriod],
   );
 

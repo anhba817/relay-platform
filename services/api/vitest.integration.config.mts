@@ -32,6 +32,8 @@ export default defineConfig({
       RELAY_HARNESS_BAIT: "on",
       RELAY_OUTBOX_RELAY: "off",
       RELAY_EVENT_CONSUMER: "off",
+      // The quota relay, the fourth. Same reason as the other three.
+      RELAY_QUOTA_RELAY: "off",
     },
     include: ["src/**/*.itest.ts"],
     // FILES IN PARALLEL AGAIN, AND EIGHT PLACES ARE WHY IT COULD NOT BE.
