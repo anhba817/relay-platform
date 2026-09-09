@@ -23,6 +23,7 @@ import { WebSocket } from "ws";
 
 import type { ApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
+import type { Decision, GatewayLimits } from "./limits.js";
 import { createMembership, type Membership } from "./membership.js";
 import { createPresence } from "./presence.js";
 import { attachSessions } from "./session.js";
@@ -88,6 +89,10 @@ async function boot(options: {
   /** T072 only: the other three fabrics, so one watcher can receive all four
    * kinds over the same channel. */
   allFabrics?: boolean;
+  /** T048b only: a RECORDING double for the send limiter, so a test can assert
+   * which operations the session layer asked it to spend. Not wired by default —
+   * every other test in this file is about delivery. */
+  limits?: GatewayLimits;
 }): Promise<Instance> {
   const environment = options.environment ?? "env-1";
   const logger =
@@ -144,6 +149,7 @@ async function boot(options: {
     ...(options.renewalIntervalMs === undefined
       ? {}
       : { renewalIntervalMs: options.renewalIntervalMs }),
+    ...(options.limits === undefined ? {} : { limits: options.limits }),
   });
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
@@ -660,6 +666,59 @@ describe("a typing signal on its way out", () => {
     signaller.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
     expect(await untilTyping(frames, channel, 2)).toHaveLength(2);
   }, 15_000);
+
+  /** T048b. A TYPING SIGNAL SPENDS NO MESSAGE QUOTA (FR-014).
+   *
+   * **Moved out of US3 by analysis pass 1**, and the reason is worth keeping:
+   * leaving it in a P2 story meant stopping after the MVP could ship a cosmetic
+   * feature able to exhaust a customer's message budget. A client holding a key
+   * down is not sending messages, and a limiter that thought otherwise would let
+   * an indicator empty a budget the customer pays for.
+   *
+   * **ASSERTED ON THE LIMITER, NOT ON A COUNTER.** The requirement is that the
+   * typing branch never REACHES `limits.spend` — it returns above it — and a
+   * recording double says exactly that. A counter read out of Redis would also
+   * pass against a branch that spent and then refunded, which satisfies "the
+   * count did not move" and not "the call was never made".
+   *
+   * **AND IN THIS ORDER THE PROPERTY WAS TRUE BEFORE IT WAS TESTABLE.**
+   * `session.ts` has returned from `typing.send` above everything for nine
+   * chapters; until the limiter arrived underneath it there was nothing below to
+   * reach. So this test does not merely arrive late — it is the first moment the
+   * early return can be said to matter, and it is what stands between a typing
+   * indicator and a customer's message budget from here on. */
+  it("never reaches the send limiter, however many signals arrive", async () => {
+    const channel = randomUUID();
+    const spends: string[] = [];
+    const limits: GatewayLimits = {
+      spend: async (_environmentId, operation): Promise<Decision> => {
+        spends.push(operation);
+        return {
+          over: false,
+          limit: 600,
+          remaining: 599,
+          resetSeconds: Math.floor(Date.now() / 1000) + 60,
+          retryAfterSeconds: 1,
+        };
+      },
+      close: async () => {},
+    };
+    const instance = await boot({ user: "tuan", channels: [channel], limits });
+    open.push(instance.close);
+
+    const socket = connect(instance);
+    await acked(socket);
+    // The handshake spends `connect`, and recording it here is what makes the
+    // assertion below a claim about `send` rather than about an unwired double.
+    expect(spends).toEqual(["connect"]);
+
+    for (let i = 0; i < 5; i += 1) {
+      socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    }
+    await settle();
+
+    expect(spends.filter((op) => op === "send")).toEqual([]);
+  });
   /** T048c. THE MID-CONNECTION JOIN (FR-004a).
    *
    * **The obvious test — a member who was in the channel at connect — passes
