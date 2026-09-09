@@ -4,6 +4,10 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, sql, type SQL } from "driz
 
 import type { Attachment } from "@relay/protocol";
 
+import {
+  DEFAULT_LIMITS,
+  type LimitedOperation,
+} from "../limits/policy";
 import type { Db } from "./client";
 import {
   apiKeys,
@@ -241,6 +245,37 @@ export async function environmentSigningSecret(
     .from(environments)
     .where(eq(environments.id, environmentId));
   return row ?? null;
+}
+
+/** An environment's rate limits, with nulls resolved to the documented defaults
+ * (FR-007, research R26).
+ *
+ * RESOLVED HERE RATHER THAN AT THE CALL SITE, because "null means use the
+ * default" is a property of the column and a caller that had to remember it
+ * would eventually forget. Null is NOT zero: zero means refuse everything, and an
+ * environment can be switched off deliberately.
+ *
+ * Returns null for an environment that does not exist, which the caller must tell
+ * apart from an environment with default limits — a request whose credential
+ * named a missing environment is not a request to serve generously. */
+export async function environmentLimits(
+  db: Db,
+  environmentId: string,
+): Promise<Record<LimitedOperation, number> | null> {
+  const [row] = await db
+    .select({
+      rest: environments.restLimitPerMinute,
+      send: environments.sendLimitPerMinute,
+      connect: environments.connectLimitPerMinute,
+    })
+    .from(environments)
+    .where(eq(environments.id, environmentId));
+  if (!row) return null;
+  return {
+    rest: row.rest ?? DEFAULT_LIMITS.rest,
+    send: row.send ?? DEFAULT_LIMITS.send,
+    connect: row.connect ?? DEFAULT_LIMITS.connect,
+  };
 }
 
 // ---------------------------------------------------------------------------

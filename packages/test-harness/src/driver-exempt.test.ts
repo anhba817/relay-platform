@@ -15,6 +15,12 @@ import { describe, expect, it } from "vitest";
 // the TREE, which makes the assertion here read the config's own text — and the
 // restricted module names are read out of the rule rather than restated, so
 // adding a third restricted module does not need this file edited.
+//
+// AND THE THIRD ONE ARRIVED, WHICH TESTED THAT CLAIM. The rate-limit chapter
+// restricted `ioredis`; the two checks that read the module names off the rule
+// picked it up with no edit here, exactly as intended. The last check needed one,
+// because it is not about modules at all — it is about which entries may be
+// PATTERNS, and the counter store is a second data-access layer.
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 const CONFIG = join(ROOT, "eslint.config.mjs");
@@ -78,7 +84,7 @@ describe("the driver exemption is checked in both directions", () => {
     }
   });
 
-  it("exempts the repository layer as a directory and everything else by path", () => {
+  it("exempts the two data-access layers as directories and everything else by path", () => {
     const text = config();
     // FOUND BY SCANNING BACK FROM THE RULE, NOT BY A WINDOW. This read `indexOf("ignores:
     // [", indexOf("no-restricted-imports") - 2000)` and the 2000 was the whole check: the
@@ -96,9 +102,16 @@ describe("the driver exemption is checked in both directions", () => {
     // a parse that found nothing would satisfy all of them.
     expect(entries.length, "parsed no entries at all — this test is broken, not passing")
       .toBeGreaterThan(0);
-    // The directory pattern is legitimate — `services/api/src/db` IS the layer the
-    // rule carves out. Any OTHER pattern would silently absorb the next file added
-    // under it, which is the thing this list exists instead of.
-    expect(entries.filter((g) => g.includes("*"))).toEqual(["services/api/src/db/**"]);
+    // TWO directory patterns and they are the two data-access LAYERS: `db/**` for the
+    // driver and the engine, `limits/**` for the counter store, each of them the thing
+    // the rule carves out rather than a file that happens to need it. Any other pattern
+    // would silently absorb the next file added under it, which is what this list
+    // exists instead of — and the rate-limit chapter arrived with twelve older Redis
+    // clients in the tree, every one of them listed by path above rather than swept up
+    // by `services/gateway/src/**`.
+    expect(entries.filter((g) => g.includes("*"))).toEqual([
+      "services/api/src/db/**",
+      "services/api/src/limits/**",
+    ]);
   });
 });
