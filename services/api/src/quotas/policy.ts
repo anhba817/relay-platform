@@ -26,7 +26,7 @@ export function thresholdsCrossed(
   const pct = (n: number) => (n / quota) * 100;
   const from = pct(before);
   const to = pct(after);
-  // `>` on the left and `>=` on the right: FR-014 says "reaches", so landing
+  // `>` on the left and `>=` on the right: FR-RTL-07 says "reaches", so landing
   // exactly on 50% crosses it, and starting exactly on 50% does not cross it
   // again.
   return THRESHOLDS.filter((t) => from < t && to >= t);

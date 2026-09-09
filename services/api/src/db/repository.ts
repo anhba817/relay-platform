@@ -3838,7 +3838,7 @@ export class Repository {
       // History stays readable while archived (FR-020). Only the write refuses.
       if (channel.archivedAt !== null) throw new ChannelArchivedError(channelId);
 
-      // THE CAP, CHECKED BEFORE THE MESSAGE IS WRITTEN (chapter 3.10, FR-007).
+      // THE CAP, CHECKED BEFORE THE MESSAGE IS WRITTEN (FR-RTL-08).
       //
       // Here rather than in middleware, because the rate-limit chapter's limiter never sees
       // `/internal/messages` — `operationsFor` returns [] for anything outside
@@ -3985,7 +3985,8 @@ export class Repository {
       // Same argument as the event above it, one requirement further on. A quota
       // is about THIS MONTH and must not forget, so the count cannot live in the
       // per-minute counter store the rate-limit chapter built — a flush there costs one
-      // window of over-service, a flush here costs the month (FR-002).
+      // window of over-service, a flush here costs the month. A quota must survive
+      // the counter store.
       //
       // It is an increment rather than a query because the alternative is a read
       // over `messages`, which carries no `environment_id` and no index on
@@ -4596,11 +4597,14 @@ export class Repository {
     return rows.length > 0;
   }
 
-  /** Refuse the send if a hard cap is already met (chapter 3.10, FR-007).
+  /** Refuse the send if a hard cap is already met (FR-RTL-08).
    *
-   * Reads the caps and the usage in the transaction that is about to write, with
-   * the usage row taken `FOR UPDATE`. Both dimensions, because FR-005 configures
-   * a cap for each.
+   * Reads the caps and the usage in ONE query, in the transaction that is about to
+   * write. Both dimensions, because FR-RTL-06 configures a cap for each.
+   *
+   * No lock: see the note at the call site. Postgres will not take `FOR UPDATE` on
+   * the nullable side of the outer join this read needs, and the overshoot it
+   * would have bounded is small enough to state instead.
    *
    * THE ACTIVE-USER CHECK ONLY BITES ON A NEW SENDER. A tenant at its user cap is
    * not cut off from the users it already has — the cap is on how many distinct
@@ -4659,7 +4663,7 @@ export class Repository {
     const sent = env?.messagesSent ?? 0;
 
     if (messages_.hard !== null && sent >= messages_.hard) {
-      // THE CROSSING IS WRITTEN BEFORE THE REFUSAL IS RAISED (FR-013a).
+      // THE CROSSING IS WRITTEN BEFORE THE REFUSAL IS RAISED (the ordering rule).
       //
       // Usually the send that reached the cap already recorded 100%. Two cases
       // where it did not: a cap lowered below current usage, which no send
@@ -4729,8 +4733,7 @@ export class Repository {
     return { caps: { messages: messages_, active_users: users_ }, sent };
   }
 
-  /** Write a row for each threshold a usage increase crossed (chapter 3.10,
-   * FR-014, FR-016).
+  /** Write a row for each threshold a usage increase crossed (FR-RTL-07).
    *
    * IN THE SAME TRANSACTION AS THE THING THAT CAUSED IT. The crossing and the
    * message commit together or neither does, which is the same argument the
@@ -4743,7 +4746,7 @@ export class Repository {
    * an email even though nothing will be refused.
    *
    * `ON CONFLICT DO NOTHING` against `quota_notifications_once_per_threshold` is
-   * what makes it at-most-once (FR-015) — the schema, not this code. A concurrent
+   * what makes it at-most-once (FR-RTL-07) — the schema, not this code. A concurrent
    * double-crossing resolves to one row rather than two emails. */
   private async recordCrossings(
     tx: Db,

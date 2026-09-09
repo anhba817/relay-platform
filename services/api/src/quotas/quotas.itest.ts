@@ -140,7 +140,7 @@ describe("the month's usage", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FR-002, and the reason the roll-up exists at all.
+// The durability rule, and the reason the roll-up exists at all.
 // ---------------------------------------------------------------------------
 //
 // A rate limit is about this second and forgets; a quota is about this month and
@@ -237,8 +237,9 @@ describe("running out", () => {
   };
 
   it("refuses the send and serves the history read, in the same second", async () => {
-    // SC-002. One refused request and one successful request against the same
-    // environment, in one test, because the requirement is about the pair.
+    // FR-RTL-08's "existing connections and history reads unaffected". One refused
+    // request and one successful request against the same environment, in one test,
+    // because the requirement is about the pair.
     const { environmentId, repo, channelId, userId } = await seed();
     await repo.sendMessage(channelId, { text: "one", userId });
     await setCaps(environmentId, { messages: { hard: 1 } });
@@ -271,7 +272,7 @@ describe("running out", () => {
   }, 30_000);
 
   it("refuses everything at a cap of zero and nothing at no cap", async () => {
-    // FR-006. Zero and absent cannot share a representation: an environment can
+    // FR-RTL-06. Zero and absent cannot share a representation: an environment can
     // be switched off deliberately.
     const { environmentId, repo, channelId, userId } = await seed();
 
@@ -287,7 +288,7 @@ describe("running out", () => {
   }, 30_000);
 
   it("lets a soft threshold refuse nothing", async () => {
-    // FR-013. A soft threshold alerts; it is not a cap. At 100% of one, with no
+    // FR-RTL-06. A soft threshold alerts; it is not a cap. At 100% of one, with no
     // hard cap configured, the tenant is still serving traffic.
     const { environmentId, repo, channelId, userId } = await seed();
     await setCaps(environmentId, { messages: { soft: 1 } });
@@ -299,7 +300,7 @@ describe("running out", () => {
   }, 30_000);
 
   it("resumes on the next request when the cap is raised, with no restart", async () => {
-    // SC-007, FR-012. Nothing is cached, so there is nothing to clear.
+    // the resume criterion, FR-RTL-08. Nothing is cached, so there is nothing to clear.
     const { environmentId, repo, channelId, userId } = await seed();
     await setCaps(environmentId, { messages: { hard: 1 } });
     await repo.sendMessage(channelId, { text: "one", userId });
@@ -345,7 +346,7 @@ describe("running out", () => {
   }, 30_000);
 
   it("keeps the outbox event for a message accepted before the cap", async () => {
-    // FR-011, constitution II. A quota exceeded afterwards does not retroactively
+    // FR-RTL-08, constitution II. A quota exceeded afterwards does not retroactively
     // un-acknowledge a message, so the event that drives webhook delivery is
     // still there to be drained.
     const { environmentId, repo, channelId, userId } = await seed();
@@ -489,7 +490,7 @@ describe("nobody is surprised", () => {
   }, 60_000);
 
   it("notifies every threshold a single send jumps over", async () => {
-    // FR-016. One message can take a tenant from comfortable to suspended, and
+    // FR-RTL-07. One message can take a tenant from comfortable to suspended, and
     // all three emails are owed. 40% to 100% in one step.
     const address = `jump-${randomUUID().slice(0, 8)}@example.test`;
     const { environmentId, repo, channelId, userId } = await seed([address]);
@@ -505,7 +506,7 @@ describe("nobody is surprised", () => {
   }, 60_000);
 
   it("sends no further email when a threshold is re-crossed", async () => {
-    // FR-015, and the constraint is what enforces it, not this code path.
+    // FR-RTL-07, and the constraint is what enforces it, not this code path.
     const address = `once-${randomUUID().slice(0, 8)}@example.test`;
     const { environmentId, repo, channelId, userId } = await seed([address]);
     await setCaps(environmentId, { messages: { hard: 2 } });
@@ -524,7 +525,7 @@ describe("nobody is surprised", () => {
   }, 60_000);
 
   it("records the crossing and enforces the cap for an organisation nobody can email", async () => {
-    // FR-018. `humans.email` is nullable, so this is a state the schema permits
+    // FR-WHK-07's precedent. `humans.email` is nullable, so this is a state the schema permits
     // rather than a defensive `if`. The obligation is discharged as far as it
     // can be and the failure is logged rather than swallowed.
     const { environmentId, repo, channelId, userId } = await seed([null, null]);
@@ -552,8 +553,8 @@ describe("nobody is surprised", () => {
   }, 60_000);
 
   it("cannot fail a send when the mail server is gone", async () => {
-    // FR-019. Writing a row is not sending one, and this is the requirement that
-    // says so out loud. The mail-transport chapter met the same hazard from the other side,
+    // WRITING A ROW IS NOT SENDING ONE, and this is the requirement that says so out
+    // loud. The mail-transport chapter met the same hazard from the other side,
     // where a drain's failure became a lane's failure.
     const address = `down-${randomUUID().slice(0, 8)}@example.test`;
     const { environmentId, repo, channelId, userId } = await seed([address]);
