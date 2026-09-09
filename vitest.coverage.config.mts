@@ -276,6 +276,50 @@ export default defineConfig({
           statements: 97,
         },
 
+        // The attachment shape and the REST door's schemas, both at 100 on
+        // all four metrics — which is why neither appears in the text reporter's table
+        // and why this pin was written from `coverage-summary.json` instead. Measured on
+        // this tree at 945 tests across 62 files: 100/100/100/100 for both.
+        //
+        // AND THE TWO FILES THIS CHAPTER ADDED THE MOST CODE TO DID NOT MOVE THEIR PINS.
+        // `messages.controller.ts` reads 97.95/92.85/100/97.91 — byte-identical to the
+        // revisions chapter's reading, on a file this chapter widened — and
+        // `repository.ts`'s branches went 92.66 (sender chapter) to 92.97 (revisions) to
+        // **93.35** here, still above the 92 it is pinned at. Three chapters of upward
+        // drift and no pin edit is the ratchet working, not the ratchet asleep.
+        //
+        // `attachments.ts` holds FR-MSG-11's whole contract: the two arms, the scheme
+        // allowlist, the ten-item bound, and the pair rule all three send doors call. A
+        // later chapter that adds an arm and no test turns this red, which is the job.
+        //
+        // AND A MEASURED CAVEAT ON THE BRANCH NUMBER, because 100 here means less than it
+        // reads. v8 records a `binary-expr` arm as covered when the OPERAND WAS
+        // EVALUATED, not when it went both ways: `typeof value.text === "string" &&
+        // value.text.length > 0` measures `[7, 7]`, and the `typeof` check has never once
+        // been false — no schema that calls the refinement declares `text` as anything
+        // but `z.string()`. The guard stays because the signature it narrows is
+        // deliberately `string | null | undefined` (see the comment on
+        // `refineTextAndAttachments`), so the compiler requires it. **A file at 100%
+        // branches is not a file whose every arm has run.**
+        "packages/protocol/src/attachments.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // The REST door, pinned for the first time because the attachments chapter is the first to
+        // find a defect in it: `editMessageBodySchema.text` was
+        // `sendMessageBodySchema.shape.text`, so relaxing the send's floor for FR-019
+        // relaxed the edit's, and an edit has no attachments field to restore it. Two
+        // schemas that must differ cannot share a reference at all.
+        "services/api/src/messages/messages.schema.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
         // THE PRESENCE CHAPTER'S TWO, both at 100 on every metric, and the pin is
         // NFR-MNT-02's MUST rather than a preference: presence keys are
         // `presence:{env}:{user}`, so this is tenant-isolation code and the clause asks
