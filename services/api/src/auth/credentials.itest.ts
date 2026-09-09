@@ -379,11 +379,20 @@ describe("credentials", () => {
     //
     //   26.9% of credentials  the last segment is 20 characters or fewer — the test
     //                         searched for a FRAGMENT and passed more easily than it
-    //                         should. A false negative, and the quiet half.
+    //                         should. A false negative, and the quiet half, true on
+    //                         MOST runs: a log line leaking the first thirty characters
+    //                         of a secret passed.
     //   1.57%                 the segment is one character or none, and `not.toContain`
     //                         on a single character fails against any haystack. That is
-    //                         the loud half, and it is what the battery hit: `expected
-    //                         '{"time":…' not to contain '0'`.
+    //                         the loud half.
+    //
+    // BOTH HALVES WERE FOUND TWICE, INDEPENDENTLY, AND THE FIXES AGREE. The published
+    // order hit it at this chapter's baseline, which ran the lane three times: the mint
+    // ended `…_I`, so the assertion had become "no log line contains the letter I" and
+    // the error body for a misused key says "this route expects an API key". This order
+    // hit it one chapter earlier, in the coverage battery, on a mint ending `_0`:
+    // `expected '{"time":…' not to contain '0'`. Two draws of the same 1.57%, and both
+    // readings arrived at the same parser and the same threshold.
     //
     // `parseApiKeyCredential` is the function the guard itself uses to split a
     // presented credential, so the needle is now the same substring the product calls
@@ -394,11 +403,17 @@ describe("credentials", () => {
     const secret = parsed!.secret;
     // AND THE NEEDLE IS CHECKED BEFORE IT IS USED. A short needle is found in any
     // haystack, so `not.toContain` on one is a test that always fails — the inverse of
-    // the vacuous assertion this file is otherwise full of guards against.
+    // the vacuous assertion this file is otherwise full of guards against. 32
+    // base64url-encoded bytes are never short.
     expect(secret.length, "the needle is too short to mean anything").toBeGreaterThan(20);
     expect(haystack).not.toContain(key.credential);
     expect(haystack).not.toContain(secret);
     expect(haystack).not.toContain(foreignKey.credential);
+    // AND THE FOREIGN KEY'S SECRET, PARSED THE SAME WAY. Checking the whole
+    // credential catches a verbatim echo; the secret alone is what a log line
+    // truncating a header would leak, and it is the half worth having.
+    expect(haystack).not.toContain(parseApiKeyCredential(foreignKey.credential)!.secret);
+    expect(haystack).not.toContain(parseApiKeyCredential(foreignKey.credential)!.secret);
     expect(haystack).not.toContain(token);
     // The prefix alone is not a secret and may legitimately appear.
   });
