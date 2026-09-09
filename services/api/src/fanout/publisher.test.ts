@@ -40,6 +40,7 @@ const message = {
   seq: 1,
   user: "outside-bot",
   text: "hello",
+  attachments: [],
   created_at: "2026-08-27T00:00:00.000Z",
 };
 const context = { requestId: "req-1", environmentId: "env-1" };
@@ -86,6 +87,7 @@ describe("the api's fan-out publisher", () => {
     const parsed = messageSchema.safeParse(JSON.parse(publishes[0]![1]));
     expect(parsed.success).toBe(true);
     expect(Object.keys(JSON.parse(publishes[0]![1])).sort()).toEqual([
+      "attachments",
       "channel",
       "created_at",
       "id",

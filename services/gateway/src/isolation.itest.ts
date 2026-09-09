@@ -780,6 +780,10 @@ function sample(type: string, channel: string, user: string): unknown {
     seq: 1,
     user,
     text: "forged",
+    // WELL-FORMED IS THE POINT. `messageSchema` requires
+    // attachments, and a forged frame missing them is refused for its SHAPE —
+    // `invalid_frame` — a phase before the direction check this suite is about.
+    attachments: [],
     created_at: new Date().toISOString(),
   };
   switch (type) {

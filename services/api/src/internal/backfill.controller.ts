@@ -112,6 +112,10 @@ function toFrame(row: MessageWithSender, channelId: string): Message[] {
       seq: row.seq,
       user: row.user,
       text: row.text,
+      // `[]` UNTIL PHASE 8 WIDENS THE READ. `MessageWithSender` carries no
+      // attachments column yet, and no row can hold one until phase 4 writes the
+      // INSERT — so this is the true value today rather than a placeholder.
+      attachments: [],
       created_at: row.created_at,
     },
   ];

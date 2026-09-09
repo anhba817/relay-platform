@@ -505,6 +505,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
       seq: 9_001,
       user: "tuan",
       text: "published by somebody else",
+      attachments: [],
       created_at: new Date(0).toISOString(),
     });
 
@@ -536,6 +537,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
       seq: 9_002,
       user: "tuan",
       text,
+      attachments: [],
       created_at: new Date(0).toISOString(),
     });
 
@@ -856,6 +858,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
       seq: 9_100,
       user: "tuan",
       text: "not for a stranger",
+      attachments: [],
       created_at: new Date(0).toISOString(),
     });
     await new Promise((r) => setTimeout(r, 800));
@@ -873,6 +876,10 @@ describe("the socket's delivery, with a fan-out attached", () => {
       seq: 1,
       user: "tuan",
       text: "forged",
+      // WELL-FORMED IS THE POINT. `messageSchema` requires
+      // attachments, and a forged frame missing them is refused for its SHAPE —
+      // `invalid_frame` — a phase before the direction check this suite is about.
+      attachments: [],
       created_at: new Date().toISOString(),
     };
     switch (type) {

@@ -36,6 +36,7 @@ function messageOn(channel: string, seq: number): Message {
     seq,
     user: "linh",
     text: `message ${seq}`,
+    attachments: [],
     created_at: new Date().toISOString(),
   };
 }
@@ -253,6 +254,7 @@ describe("fan-out across instances", () => {
         deleted_at: new Date().toISOString(),
         // @ts-expect-error the point of the test: a key the schema forbids
         text: "",
+        attachments: [],
       },
     });
     await expect(nextRevision(g2, 300)).rejects.toThrow("deadline");
