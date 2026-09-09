@@ -108,9 +108,15 @@ END $$;
 -- AND BEING IN THIS ARRAY IS NOT BEING WATCHED. The trigger fires only when
 -- `__is_sentinel(OLD.environment_id)` is true, which needs a sentinel row sitting
 -- in the table. A name added here without bait planted in `sentinel.ts` installs
--- a trigger that can never match, and it reads exactly like protection. That is
--- why the three go together: the name, the bait, and the case that turns red when
--- the name is removed.
+-- a trigger that can never match, and it reads exactly like protection. So the
+-- three go together: the name, the bait, and the case.
+--
+-- AND FOR A LONG TIME ONLY TWO OF THE THREE WERE CHECKED. `guard.itest.ts` compares
+-- this array against its own `SHAPES` and against `pg_trigger`, both directions each
+-- — and asserted nothing about the bait, because every case in it plants its own row.
+-- Deleting an insert from `plant()` left that suite entirely green. The quota chapter
+-- added the third assertion: `plant()` must leave a row in every table named here,
+-- asked of the database rather than of `sentinel.ts`'s source.
 --
 -- `members` IS THE COUNTER-EXAMPLE AND BELONGS NOWHERE NEAR THIS LIST. It has no
 -- `environment_id` — the catalogue classifies it `hop`, reaching the environment
@@ -139,7 +145,28 @@ BEGIN
     -- deliberately absent: no `environment_id`, so the catalogue calls it `hop` and
     -- `OLD.environment_id` would not compile in the WHEN clause above. The rule is the
     -- column, not the intuition that a table feels tenant-scoped.
-    'read_positions'
+    'read_positions',
+    -- THE QUOTA CHAPTER'S THREE, AND ALL THREE ARRIVE WITH THE TABLES. Every one
+    -- carries `environment_id` as its first primary-key column, which is the rule this
+    -- array follows — the column, not the intuition.
+    --
+    -- THEY ARE THE FIRST GUARDED TABLES WHOSE ROWS ARE MONEY. A cross-environment
+    -- DELETE on `channels` loses somebody's messages; one on `usage_periods` loses the
+    -- count a customer is billed against, and the platform cannot tell afterwards
+    -- whether the month was quiet or the row was dropped. `usage_active_users` is the
+    -- same fact one dimension over, and `quota_notifications` is the record that a
+    -- customer was warned — deleting it makes the platform willing to warn them twice
+    -- or, if `delivered_at` was set, not at all.
+    --
+    -- TWO OF THEM HAVE NO `id`, which is the case `read_positions` above changed the
+    -- refusal message for: `usage_periods` is keyed `(environment_id, period)` and
+    -- `usage_active_users` on a triple. The message interpolates
+    -- `coalesce(to_jsonb(OLD) ->> 'id', to_jsonb(OLD)::text)`, so both still name the
+    -- row they refused. `quota_notifications` does have one, and it is listed beside
+    -- them rather than apart, because the guard's rule has never been about the key.
+    'usage_periods',
+    'usage_active_users',
+    'quota_notifications'
   ] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS __sentinel_guard_%1$s ON %1$I', t);
     EXECUTE format(

@@ -54,6 +54,17 @@ export interface Sentinel {
    * as installed, and can never match. See `sentinel.sql`. */
   userId: string;
   channelId: string;
+  /** THE QUOTA CHAPTER'S BAIT, and its own three. `usage_periods`,
+   * `usage_active_users` and `quota_notifications` all carry `environment_id` and all
+   * three joined the trigger array, so all three need a row for the WHEN clause to
+   * have something to test.
+   *
+   * `quotaPeriod` is a FIXED month rather than the current one, because two of the
+   * three tables are keyed on it and a bait row whose key moved at midnight on the
+   * first would be a fixture that fails one day in thirty. It is far enough in the
+   * past that no product code will ever write the same key. */
+  quotaPeriod: string;
+  quotaNotificationId: string;
   /** `__sentinel__:<owner>`, on every row, so a failure says whose it is. */
   name: string;
 }
@@ -80,6 +91,8 @@ export function sentinelFor(owner: string): Sentinel {
     environmentId: id("environment"),
     userId: id("user"),
     channelId: id("channel"),
+    quotaPeriod: "1999-01-01",
+    quotaNotificationId: id("quota-notification"),
     name: `__sentinel__:${owner}`,
   };
 }
@@ -133,6 +146,11 @@ export async function plant(
   // a stale subject leaves every row it was meant to remove.
   await q(`DELETE FROM outbox         WHERE subject = $1`, [`events.${s.name}.bait`]);
   await q(`DELETE FROM read_positions WHERE environment_id = $1`, [s.environmentId]);
+  // The quota chapter's three, and they come before `users` for the reason the note
+  // above gives: `usage_active_users` references it.
+  await q(`DELETE FROM quota_notifications WHERE environment_id = $1`, [s.environmentId]);
+  await q(`DELETE FROM usage_active_users  WHERE environment_id = $1`, [s.environmentId]);
+  await q(`DELETE FROM usage_periods       WHERE environment_id = $1`, [s.environmentId]);
   await q(`DELETE FROM channels       WHERE environment_id = $1`, [s.environmentId]);
   await q(`DELETE FROM users          WHERE environment_id = $1`, [s.environmentId]);
 
@@ -200,6 +218,32 @@ export async function plant(
     `INSERT INTO read_positions (environment_id, channel_id, user_id, sequence)
      VALUES ($1, $2, $3, 0) ON CONFLICT (channel_id, user_id) DO NOTHING`,
     [s.environmentId, s.channelId, s.userId],
+  );
+
+  // THE QUOTA CHAPTER'S GUARD BAIT, one row per table it added to the array. Same
+  // rule as `read_positions` above: a name in that array with no row behind it
+  // installs a trigger that can never match, and reads as protection.
+  //
+  // `usage_active_users` reuses the sentinel's own user rather than minting one — the
+  // row only has to exist — and `quota_notifications` reuses the organisation, which
+  // it references and the sentinel already owns.
+  await q(
+    `INSERT INTO usage_periods (environment_id, period, messages_sent)
+     VALUES ($1, $2, 0) ON CONFLICT (environment_id, period) DO NOTHING`,
+    [s.environmentId, s.quotaPeriod],
+  );
+  await q(
+    `INSERT INTO usage_active_users (environment_id, period, user_id)
+     VALUES ($1, $2, $3) ON CONFLICT (environment_id, period, user_id) DO NOTHING`,
+    [s.environmentId, s.quotaPeriod, s.userId],
+  );
+  await q(
+    `INSERT INTO quota_notifications
+       (id, environment_id, organisation_id, period, dimension, threshold,
+        quota, usage_at_crossing)
+     VALUES ($1, $2, $3, $4, 'messages', 50, 1, 1)
+     ON CONFLICT (id) DO NOTHING`,
+    [s.quotaNotificationId, s.environmentId, s.organisationId, s.quotaPeriod],
   );
 
   // DRAIN BAIT: unpublished events. `outbox` carries no environment_id — it is

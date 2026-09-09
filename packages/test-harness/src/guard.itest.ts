@@ -5,7 +5,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { databaseUrl } from "./db-url.js";
-import { sentinelFor, type Sentinel } from "./sentinel.js";
+import { plant, sentinelFor, type Sentinel } from "./sentinel.js";
 
 // THE GUARD, DRIVEN ONE TABLE AT A TIME.
 //
@@ -45,6 +45,12 @@ const VICTIM = sentinelFor("packages/test-harness/src/guard.itest.ts#victim");
 // its permitted update to an id nothing held, and it stayed green with the WHEN
 // clause deleted from the trigger.
 const NEIGHBOUR = sentinelFor("packages/test-harness/src/guard.itest.ts#neighbour");
+
+// A THIRD SENTINEL THAT ONLY `plant()` EVER TOUCHES. Everything else in this file
+// plants the victim's rows through `SHAPES`, which is right for the refusal cases and
+// useless for asking whether `plant()` itself covers the array — a question about the
+// function every OTHER integration suite depends on.
+const CANARY = sentinelFor("packages/test-harness/src/guard.itest.ts#canary");
 
 // READ OUT OF `sentinel.sql`, not restated. A second copy of the list would agree
 // with the first by somebody remembering, and the cases below are generated from
@@ -139,6 +145,55 @@ const SHAPES: Readonly<Record<string, Shape>> = {
     read: `SELECT sequence AS v FROM read_positions WHERE environment_id = $1`,
     marked: (n) => n,
   },
+  // THE QUOTA CHAPTER'S THREE. Two of them have no `metadata` and no `id`, which is
+  // the shape `read_positions` above already forced this table to accommodate — so
+  // these three cost three entries and no change to the mechanism, which is what a
+  // table of shapes is for.
+  //
+  // Each marks a column nothing else in the fixture writes, and each reads back scoped
+  // by environment. `usage_periods.messages_sent` is a count, so the mark is a number
+  // and the `touch` is the no-op `messages_sent = messages_sent`: the refusal cases
+  // only have to REACH the trigger, and a case that changed the count would leave the
+  // suite unable to tell a refusal from an arithmetic mistake.
+  usage_periods: {
+    plant: `INSERT INTO usage_periods (environment_id, period, messages_sent)
+            VALUES ($1, $2, 0) ON CONFLICT (environment_id, period) DO NOTHING`,
+    values: (s) => [s.environmentId, s.quotaPeriod],
+    touch: `messages_sent = messages_sent`,
+    mark: `messages_sent = $1`,
+    read: `SELECT messages_sent AS v FROM usage_periods WHERE environment_id = $1`,
+    // `bigint` comes back from `pg` as a STRING, not a number — the driver will not
+    // narrow a 64-bit integer into a float — so the expectation is the string. Found
+    // by the case failing with `expected '7' to be 7`, which is the whole reason this
+    // is a per-table function rather than one shared expectation.
+    marked: (n) => String(n),
+  },
+  usage_active_users: {
+    plant: `INSERT INTO usage_active_users (environment_id, period, user_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (environment_id, period, user_id) DO NOTHING`,
+    values: (s) => [s.environmentId, s.quotaPeriod, s.userId],
+    // Every column of this table is either the key or `first_seen_at`, so the mark has
+    // to be the timestamp — there is nothing else to write. It takes an epoch offset so
+    // two marks in one run differ.
+    touch: `first_seen_at = first_seen_at`,
+    mark: `first_seen_at = to_timestamp($1)`,
+    read: `SELECT extract(epoch from first_seen_at)::bigint AS v
+             FROM usage_active_users WHERE environment_id = $1`,
+    marked: (n) => String(n),
+  },
+  quota_notifications: {
+    plant: `INSERT INTO quota_notifications
+              (id, environment_id, organisation_id, period, dimension, threshold,
+               quota, usage_at_crossing)
+            VALUES ($1, $2, $3, $4, 'messages', 50, 1, 1)
+            ON CONFLICT (id) DO NOTHING`,
+    values: (s) => [s.quotaNotificationId, s.environmentId, s.organisationId, s.quotaPeriod],
+    touch: `last_error = last_error`,
+    mark: `last_error = $1::text`,
+    read: `SELECT last_error AS v FROM quota_notifications WHERE environment_id = $1`,
+    marked: (n) => String(n),
+  },
 };
 
 let admin: pg.Client;
@@ -181,6 +236,10 @@ beforeAll(async () => {
     const shape = SHAPES[table]!;
     await admin.query(shape.plant, shape.values(VICTIM));
   }
+
+  // AND THE CANARY, THROUGH THE REAL FUNCTION. `plant()` is what `setup.ts` runs once
+  // per test file, so this is the only place in the suite where it is exercised at all.
+  await plant(admin, CANARY);
 
   // The neighbour's tenancy, DELIBERATELY NOT registered in
   // `__sentinel_environments` — that omission is the whole point of these rows.
@@ -245,6 +304,41 @@ describe("the guard refuses an unscoped mutation of a sentinel row", () => {
         WHERE t.tgname LIKE '__sentinel_guard_%' AND NOT t.tgisinternal`,
     );
     expect(rows.map((r) => r.relname).sort()).toEqual([...GUARDED].sort());
+  });
+
+  it("plants a sentinel row in every guarded table, so the canary is never missing", async () => {
+    // THE THIRD DIRECTION, AND IT WAS THE ONE NOBODY ASSERTED. `sentinel.sql` says the
+    // name, the bait and the case "go together" — and two of the three were checked
+    // against each other while the bait was checked by nothing. Measured: deleting the
+    // `usage_periods` insert from `plant()` left this suite at 32 of 32 green, and
+    // deleting `read_positions`' — an older chapter's — did too.
+    //
+    // WHAT THAT COSTS IS NOT THIS SUITE. Every case below plants its OWN row through
+    // `SHAPES`, so this file is unaffected by a missing insert. What `plant()` is for is
+    // every OTHER integration suite: `setup.ts` runs it once per test FILE, and the row
+    // it leaves is what makes an unscoped `DELETE FROM usage_periods` in somebody
+    // else's suite meet a trigger at all. A name added to the array with a shape and no
+    // bait leaves that table with no canary in any lane run, and reads as protection.
+    //
+    // ASKED OF THE DATABASE, not of `sentinel.ts`'s source. A source scan would pass on
+    // an insert that runs and inserts nothing — `ON CONFLICT DO NOTHING` against a row
+    // this fixture does not own, say — which is the shape a fixture fails in.
+    // AGAINST THE CANARY, AND THE FIRST VERSION OF THIS USED THE VICTIM — which is
+    // planted through `SHAPES` in `beforeAll`, so every count was nonzero for a reason
+    // that had nothing to do with `plant()`. It stayed green with the insert deleted,
+    // twice, which is exactly the vacuity this assertion was written to end.
+    const missing: string[] = [];
+    for (const table of GUARDED) {
+      const { rows } = await admin.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM ${table} WHERE environment_id = $1`,
+        [CANARY.environmentId],
+      );
+      if (rows[0]!.n === "0") missing.push(table);
+    }
+    expect(
+      missing,
+      `guarded, and plant() leaves no row to guard: ${missing.join(", ")}`,
+    ).toEqual([]);
   });
 
   for (const table of GUARDED) {
