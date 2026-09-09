@@ -1,5 +1,7 @@
 import type { QuotaConfig } from "./config";
 
+import { nextPeriod } from "./period";
+
 /** The dimensions a quota is measured in. `connection_minutes` belongs to the
  * connection-metering chapter. */
 export type Dimension = keyof QuotaConfig;
@@ -40,10 +42,7 @@ export class QuotaExceededError extends Error {
    * and retries is behaving correctly for a rate limit and wrongly for a quota,
    * which will still be exhausted in an hour and in a week. */
   resumesOn(): string {
-    const [y, m] = this.period.split("-").map(Number);
-    const nextMonth = m === 12 ? 1 : (m ?? 1) + 1;
-    const nextYear = m === 12 ? (y ?? 0) + 1 : y;
-    return `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
+    return nextPeriod(this.period);
   }
 
   /** The sentence a developer reads in a log at 3am. Four things in a fixed

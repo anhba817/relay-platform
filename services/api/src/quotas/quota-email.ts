@@ -1,5 +1,7 @@
 import type { Mail } from "../notifications/mailer";
 
+import { nextPeriod } from "./period";
+
 export interface CrossingFacts {
   /** "Fleet Ops / production" — how a dashboard would name it, never a uuid. */
   environmentName: string;
@@ -29,11 +31,11 @@ function monthName(period: string): string {
   return `${months[Number(m) - 1] ?? m} ${y}`;
 }
 
+/** The month name a refusal resumes in. The arithmetic is `period.ts`'s and the
+ * NAME is this file's: an email says "January 2027" where an error body says
+ * `2027-01-01`, and the difference is the audience rather than the rule. */
 function resumesOn(period: string): string {
-  const [y, m] = period.split("-").map(Number);
-  const nextMonth = m === 12 ? 1 : (m ?? 1) + 1;
-  const nextYear = m === 12 ? (y ?? 0) + 1 : y;
-  return `${monthName(`${nextYear}-${String(nextMonth).padStart(2, "0")}-01`)}`;
+  return monthName(nextPeriod(period));
 }
 
 /** What an organisation's admins are told when usage crosses a threshold

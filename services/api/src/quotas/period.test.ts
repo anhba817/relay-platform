@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { periodOf } from "./period";
+import { nextPeriod, periodOf } from "./period";
 
 // The month a usage row belongs to, and the one definition of it.
 //
@@ -48,5 +48,22 @@ describe("the period an instant belongs to", () => {
 
   it("handles a leap February", () => {
     expect(periodOf(new Date("2028-02-29T18:00:00.000Z"))).toBe("2028-02-01");
+  });
+});
+
+describe("nextPeriod", () => {
+  it("gives the first of the following month", () => {
+    expect(nextPeriod("2026-09-01")).toBe("2026-10-01");
+  });
+
+  it("rolls into the next year in December", () => {
+    // THE ARM BOTH CALLERS USED TO CARRY A COPY OF. `quota.error.ts` and
+    // `quota-email.ts` each had this wrap, and each had its own December test —
+    // two tests proving one rule, which is what two copies of a rule cost.
+    expect(nextPeriod("2026-12-01")).toBe("2027-01-01");
+  });
+
+  it("pads a single-digit month", () => {
+    expect(nextPeriod("2026-08-01")).toBe("2026-09-01");
   });
 });
