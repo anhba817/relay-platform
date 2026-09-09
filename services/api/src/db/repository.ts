@@ -248,7 +248,7 @@ export async function environmentSigningSecret(
 }
 
 /** An environment's rate limits, with nulls resolved to the documented defaults
- * (FR-007, research R26).
+ * (FR-RTL-04, research R26).
  *
  * RESOLVED HERE RATHER THAN AT THE CALL SITE, because "null means use the
  * default" is a property of the column and a caller that had to remember it

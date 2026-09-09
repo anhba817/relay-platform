@@ -355,11 +355,17 @@ describe("one counter, two services", () => {
     api.stop();
   });
 
-  it("counts a socket send ONCE, against the api's own key (FR-036a)", async () => {
-    // Not twice — the gateway's internal call to `/v1/... ` is exempt (FR-009),
+  it("counts a socket send ONCE, against the api's own key (FR-RTL-01)", async () => {
+    // Not twice — the gateway's internal call to `/v1/... ` is exempt BY ROUTE,
     // so the frame is counted by the gateway and not again when its HTTP hop
     // lands. And not zero times, which is what an exemption applied one layer
     // too broadly would produce.
+    //
+    // FR-RTL-01 is the clause: the limit is PER TENANT, and the gateway's hop is
+    // the platform's own traffic on the tenant's behalf. (An id sweep put
+    // `FR-WHK-05` here — *"webhook delivery shall be asynchronous"* — which is a
+    // real clause about something else entirely. A mechanical substitution that
+    // has no id to map to picks the nearest one it does have.)
     const socket = await connect(await mintToken());
     const before = await count("send");
     await frameSend(socket, "one");
@@ -367,7 +373,7 @@ describe("one counter, two services", () => {
     expect(await count("send")).toBe(before + 1);
   });
 
-  it("spends ONE budget across both transports (FR-036, research R11)", async () => {
+  it("spends ONE budget across both transports (FR-RTL-01, research R11)", async () => {
     // Five over REST and five over the socket. If the two services were
     // counting separately this would read 5 and 5.
     const socket = await connect(await mintToken());
@@ -382,9 +388,9 @@ describe("one counter, two services", () => {
     expect(await count("send")).toBe(10);
     // The REQUEST budget saw only the five REST calls: a frame is not an HTTP
     // request, and the gateway's hop to the api does not count as one either.
-    // This is the asymmetry FR-008 was rewritten to force into view — on one
-    // transport alone, the two counters move together and a limiter counting
-    // requests is indistinguishable from one counting messages.
+    // THE ASYMMETRY IS THE WHOLE TEST, and only two transports can show it: on one
+    // transport alone the two counters move together, and a limiter counting
+    // requests is indistinguishable from one counting messages (FR-RTL-01).
     expect(await count("rest")).toBe(5);
   });
 
@@ -405,7 +411,7 @@ describe("one counter, two services", () => {
     expect(res.headers.get("x-ratelimit-remaining")).toBe("14");
   });
 
-  it("names the limit that was reached when it refuses (FR-036)", async () => {
+  it("names the limit that was reached when it refuses (FR-RTL-01)", async () => {
     await api.setLimits({ rest: 100, send: 2 });
     await restSend("one");
     await restSend("two");
@@ -421,7 +427,7 @@ describe("one counter, two services", () => {
     expect(body.message).not.toMatch(/too many requests/);
   });
 
-  it("lets the gateway through an environment that is at its REST limit (FR-009)", async () => {
+  it("lets the gateway through an environment that is at its REST limit (FR-RTL-01)", async () => {
     // The exemption cannot key off the principal: the gateway forwards the END
     // USER's token, so its session and send calls resolve to `kind: "user"`
     // exactly like customer traffic. A rule that exempted only the platform
