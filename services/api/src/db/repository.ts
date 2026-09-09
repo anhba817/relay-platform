@@ -3867,7 +3867,7 @@ export class Repository {
       // The joined read is about 1.2ms of that and US1 needs it whether or not a
       // cap exists. An earlier uncontrolled benchmark reported 273% and sent three
       // separate hypotheses chasing what turned out to be warm-up (T033).
-      const quota = await this.assertWithinQuota(tx, period, userId);
+      const quota = await this.assertWithinQuota(tx, period, userId, senderIsPerson);
 
       const seq = channel.lastSequence + 1;
       const id = randomUUID();
@@ -4621,6 +4621,10 @@ export class Repository {
      * `users_.hard === null || userId === undefined`. Second dead `userId` comparison
      * this chapter's port has met; the first was the distinct-user insert's guard. */
     userId: string,
+    /** WHETHER THE SENDER IS A PERSON, computed at the ban check from the same row so
+     * this costs nothing beyond passing it. It decides the ENFORCED ceiling and not the
+     * bill — see the two notes below, which are the two halves of one exemption. */
+    senderIsPerson: boolean,
   ): Promise<{
     caps: { messages: Caps; active_users: Caps };
     sent: number;
@@ -4691,6 +4695,19 @@ export class Repository {
       });
     }
 
+    // A BOT IS EXEMPT FROM THE CEILING, AND BILLED FOR THE SEND (FR-RTL-05 as this
+    // project's own SRS amendment left it). The clause caps "unique active PERSONS";
+    // FR-ANL-05 still meters "unique active users", and the insert in `sendMessage`
+    // counts a bot like anyone — which is what makes a bot billed and exempt at once.
+    //
+    // THE REASON IS WHOSE SEND GETS REFUSED. The ceiling bounds a customer's human
+    // population, and a customer's own software must not be able to lock their people
+    // out of sending. It would: the block below refuses the FIRST send of a period by
+    // anyone once the count is reached, so the person refused is never whoever caused
+    // it.
+    if (!senderIsPerson) {
+      return { caps: { messages: messages_, active_users: users_ }, sent };
+    }
     // NO CAP ON USERS, NOTHING MORE TO CHECK. The `|| userId === undefined` that stood
     // beside this is gone with the parameter's type: a send with no sender is a state
     // no write path can produce since the sender chapter made `userId` required.
@@ -4712,13 +4729,28 @@ export class Repository {
       return { caps: { messages: messages_, active_users: users_ }, sent };
     }
 
+    // AND THIS IS THE EXEMPTION'S SECOND HALF, which is the one that decides whether
+    // it works. Returning early above is visible: a bot's send is not refused. But the
+    // count the ceiling compares against would still hold the bot's row, displacing a
+    // person — so a customer at a ceiling of five with two bots could seat three
+    // people. **A test that only watches a bot's send succeed passes with the first
+    // half alone**, which is why the one below sends as a PERSON after a bot.
+    //
+    // THE JOIN FILTERS `kind` AND NOT `deleted_at`, and the wrong version is the one a
+    // careful reader writes: three `users` joins in this file pair with
+    // `isNull(users.deletedAt)` and it is the house idiom. `deleteUser` is a SOFT
+    // delete and leaves `usage_active_users` alone, so adding that filter would make a
+    // deleted person's row stop counting — and deleting users would become a way to
+    // free ceiling slots, which it is not.
     const [count] = await tx
       .select({ n: sql<number>`count(*)::int` })
       .from(usageActiveUsers)
+      .innerJoin(users, eq(users.id, usageActiveUsers.userId))
       .where(
         and(
           eq(usageActiveUsers.environmentId, this.environmentId),
           eq(usageActiveUsers.period, period),
+          eq(users.kind, "person"),
         ),
       );
     const active = count?.n ?? 0;

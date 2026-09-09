@@ -236,6 +236,60 @@ describe("running out", () => {
       .where(eq(environments.id, environmentId));
   };
 
+  it("bills a bot's send and does not let it take a person's ceiling slot", async () => {
+    // THE EXEMPTION'S SECOND HALF, AND THE TEST IS SHAPED TO FAIL WITHOUT IT.
+    //
+    // FR-RTL-05 caps "unique active PERSONS"; FR-ANL-05 meters "unique active users".
+    // A bot's send writes a `usage_active_users` row like anyone's — it is billed —
+    // and is exempt from the enforced ceiling. Two clauses, two families, one insert.
+    //
+    // The obvious test sends as the BOT and watches it succeed. That passes with only
+    // the early return applied, while the bot's row still sits in the count and
+    // displaces a person. So this one sends as a bot FIRST, filling the ceiling if the
+    // count is wrong, and then as a PERSON who must still get through.
+    const { environmentId, repo, channelId } = await seed();
+    const { user: bot } = await repo.upsertUser(`b-${randomUUID().slice(0, 8)}`, {
+      kind: "bot",
+      description: "sends, is billed, takes no slot",
+    });
+    await setCaps(environmentId, { active_users: { hard: 1 } });
+
+    await repo.sendMessage(channelId, { userId: bot.id, text: "from software" });
+    // BILLED: the row is there, and `usageFor` counts users without asking what kind.
+    expect((await usageFor(db, environmentId, PERIOD)).activeUsers).toBe(1);
+
+    // AND THE CEILING OF ONE IS STILL FREE for the first person of the period.
+    await repo.sendMessage(channelId, { userId: (await repo.createUser(`p-${randomUUID().slice(0, 8)}`)).id, text: "from a person" });
+    expect((await usageFor(db, environmentId, PERIOD)).activeUsers).toBe(2);
+
+    // The ceiling is real, though: a SECOND person is refused.
+    await expect(
+      repo.sendMessage(channelId, { userId: (await repo.createUser(`p-${randomUUID().slice(0, 8)}`)).id, text: "one too many" }),
+    ).rejects.toThrow(QuotaExceededError);
+  }, 30_000);
+
+  it("lets a bot send while the person ceiling is already full", async () => {
+    // THE OTHER HALF, AND THE CASE ABOVE DOES NOT REACH IT. Measured: deleting the
+    // `!senderIsPerson` early return leaves that test green, because with the count
+    // filtered to persons a bot sending FIRST sees zero of one and passes the ceiling
+    // check on its way through. The early return only bites once the persons have
+    // filled the ceiling — which is the state a customer's integration meets on the
+    // day their team grows, and the one where refusing their software would be worst.
+    const { environmentId, repo, channelId } = await seed();
+    await setCaps(environmentId, { active_users: { hard: 1 } });
+
+    const person = (await repo.createUser(`p-${randomUUID().slice(0, 8)}`)).id;
+    await repo.sendMessage(channelId, { userId: person, text: "the only seat" });
+
+    const { user: bot } = await repo.upsertUser(`b-${randomUUID().slice(0, 8)}`, {
+      kind: "bot",
+      description: "sends past a full ceiling",
+    });
+    // Not refused, and still billed: two rows, one seat.
+    await repo.sendMessage(channelId, { userId: bot.id, text: "software still speaks" });
+    expect((await usageFor(db, environmentId, PERIOD)).activeUsers).toBe(2);
+  }, 30_000);
+
   it("refuses the send and serves the history read, in the same second", async () => {
     // FR-RTL-08's "existing connections and history reads unaffected". One refused
     // request and one successful request against the same environment, in one test,
