@@ -837,8 +837,9 @@ export const webhookDeadLetters = pgTable(
 // `deliveredAt` is the honest column, and it exists in this chapter solely in
 // order to be null. FR-WHK-07 asks for the endpoint to be disabled "and the
 // organisation notified by email", and this platform has no email transport of
-// any kind. the deduplication chapter needs the same transport for quotas, so building one here
-// would mean building it for its second consumer first.
+// any kind. A later chapter needs the same transport for quotas, so building one
+// here would mean building it for its second consumer first. (Named rather than
+// numbered: see the note on the dead-letter table above.)
 //
 // A schema that recorded only the disablement would let a future reader believe
 // the requirement was finished. This one says, in a column, which half is
