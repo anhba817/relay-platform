@@ -75,8 +75,15 @@ function publishContext(req: RequestWithPrincipal): {
 }
 
 // The api's first product endpoint (chapter 2.2). Validation is zod at the
-// boundary — the same schema family as @relay/protocol, so the REST body
-// and the WebSocket frame payload cannot drift (1.3's payoff, again).
+// boundary, from the same schema family as @relay/protocol.
+//
+// THAT IS NOT THE SAME AS "CANNOT DRIFT", which this comment claimed until this
+// chapter. They are two schemas validated at two controllers — this route
+// with `sendMessageBodySchema`, every socket send with
+// `internalSendRequestSchema` — and they have drifted three times: `idem_key`
+// against `idempotency_key`, the text bound, and FR-019b's pair rule, which this
+// chapter had to be told to carry across. What keeps them together is a shared
+// DEFINITION each applies, not a family resemblance.
 //
 // The credentials chapter swapped the guard. `EnvironmentContextGuard` resolved a tenant
 // from a header the caller asserted; `CredentialGuard` only asks whether the
