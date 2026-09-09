@@ -16,8 +16,10 @@ import { createLogger, serve, type Logger } from "@relay/service-kit";
 import { docsUrl, subjectForPresence } from "@relay/protocol";
 // A CLIENT BELONGING TO NEITHER MODULE, for one reason: the two rejection paths on
 // the receive half cannot be reached through `createPresence`, which only ever
-// publishes what its own schema produced. `eslint.config.mjs` carries the exemption
-// and the argument; this client publishes and reads nothing.
+// publishes what its own schema produced. THE ARGUMENT FOR IT, since the rule that
+// will need one does not exist yet: this client publishes and reads nothing — no key
+// is composed here and none is read, so there is no path by which it could reach a
+// key belonging to another tenant.
 import { Redis } from "ioredis";
 import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -879,9 +881,9 @@ describe("presence: a reconnection after the TTL would have lapsed (FR-007)", ()
   // at ~200 ms and the check would still have found it absent — so the tell is
   // that nothing arrives EARLY, and the frame lands after the grace.
   //
-  // Reading `PTTL` directly would need a raw ioredis client, which
-  // `eslint.config.mjs` restricts and this file is not exempted from. Asserting the
-  // behaviour is the stronger test anyway.
+  // Reading `PTTL` directly would assert the mechanism; asserting when the frame
+  // arrives asserts the behaviour, which is the stronger test and survives a change
+  // of mechanism.
   it("holds the key for the grace, not for the TTL", async () => {
     const who = takeSubject();
     const watcher = await arrive("linh");
