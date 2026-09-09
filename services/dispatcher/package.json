@@ -1,0 +1,23 @@
+{
+  "name": "@relay/dispatcher",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.mts"
+  },
+  "dependencies": {
+    "@relay/protocol": "workspace:*",
+    "@relay/service-kit": "workspace:*",
+    "nats": "^2.29.3"
+  },
+  "devDependencies": {
+    "@relay/api": "workspace:*",
+    "tsx": "^4.23.1"
+  }
+}
