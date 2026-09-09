@@ -226,6 +226,22 @@ export const ERROR_CODES = {
   // registry catching up, which is the direction `check-error-codes` cannot check
   // (it reads the built `dist` against the docs and counts, so a code documented and
   // unregistered looks like a code nobody has written a section for).
+  // THE QUOTA CHAPTER'S ONE CODE, AND THIS FILE HAS BEEN CITING IT SINCE BEFORE IT
+  // EXISTED. Two comments above argue against reusing it — the banned-user code says
+  // "the same argument this file already makes for `wrong_credential_type` and
+  // `quota_exceeded`", and `channel_member_limit_exceeded` says "NOT `quota_exceeded`.
+  // That is a monthly, billable, resets-on-a-date refusal whose message promises a
+  // resume date." Both were true and neither was checked: `quota_exceeded` was not in
+  // this object, and a registry that names a code only in prose is a registry that
+  // cannot refuse a typo of it.
+  //
+  // `402`, WHICH IS THE ONLY STATUS IN THIS FILE THAT MEANS MONEY. The rate limiter
+  // owns `429`, and a client that sleeps for `Retry-After` and retries is behaving
+  // correctly for a rate limit and wrongly for this: the month will still be exhausted
+  // in an hour. So the resume date goes in the MESSAGE, where a person reads it,
+  // rather than in a header a client acts on.
+  quota_exceeded:
+    "this environment has used its monthly quota; sends resume when the period rolls over",
   webhook_endpoint_limit_reached:
     "this environment already holds the maximum number of webhook endpoints; delete one, or use another environment",
   webhook_url_invalid: "the url is not a valid absolute URL — send scheme, host and path",
