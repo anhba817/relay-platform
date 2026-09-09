@@ -37,6 +37,8 @@ const pending = (id: string) =>
       seq: 1,
       user: "tuan",
       text: "B2, north ramp",
+      // `MessageCreatedData` requires the field, so this fixture says.
+      attachments: [],
       created_at: "2026-08-08T13:31:09.229Z",
     },
   });
