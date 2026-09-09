@@ -182,6 +182,20 @@ export default defineConfig({
         // silent loss. Pinned here because they measured 0% and 87.5% when the
         // service arrived, which is exactly what research R12 warned a new
         // deployable would do to a green instrument.
+        //
+        // MEASURED ON THIS TREE AT 1,038 TESTS ACROSS 68 FILES: `expand.ts`
+        // 92.3/92.3/100/100 and `deliver.ts` 100/90.9/100/100. Both pins hold as
+        // published wrote them.
+        //
+        // AND THE CHILD-PROCESS EFFECT IS VISIBLE IN THREE FILES NOBODY PINS, which is
+        // the same measurement read from the other end. `internal/dispatch.controller.ts`
+        // reads 9.09/0/20/11.11 and `webhooks/delivery-relay.ts` 28.12/25/22.22/31.03 —
+        // both are exercised almost entirely by `dispatcher.itest.ts`, which runs the api
+        // as a CHILD PROCESS whose coverage is not attributable to this lane. Pinning
+        // them would pin the harness rather than the code, and lowering the whole file's
+        // floor to match would be a ratchet describing a test topology. What was pinned
+        // instead is what a suite in THIS process can reach: the repository methods those
+        // two call, covered by `webhooks/deliveries.itest.ts`.
         "services/dispatcher/src/expand.ts": {
           branches: 92,
           functions: 100,
