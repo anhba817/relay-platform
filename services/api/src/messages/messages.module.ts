@@ -37,11 +37,11 @@ import { MessagesService } from "./messages.service";
  * The TOKEN lives in `../fanout/publisher` — this module imports the controller,
  * so a controller importing the token from here would be a cycle. */
 
-/** `limits/limits.module.ts:10` states the convention: "resource in this api
- * closes through `OnModuleDestroy`". Six modules implement it; this is
- * `CounterStoreLifecycle` for the analogous Redis client. A `close()` nothing
- * calls is a leaked handle in a service that boots once per integration
- * suite. */
+/** THE CONVENTION THIS FOLLOWS: a resource in this api closes through
+ * `OnModuleDestroy`. Two other modules implement it — the outbox relay's and the
+ * consumer's, both of which hold a broker connection — and this is the third, for
+ * the Redis client the publisher holds. A `close()` nothing calls is a leaked handle
+ * in a service that boots once per integration suite. */
 @Injectable()
 export class MessagePublisherLifecycle implements OnModuleDestroy {
   constructor(

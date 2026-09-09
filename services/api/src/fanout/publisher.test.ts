@@ -159,10 +159,9 @@ describe("the api's fan-out publisher", () => {
   });
 
   it("disconnects on close", async () => {
-    // Not a formality. `limits/limits.module.ts:10` states the api's convention —
-    // "resource in this api closes through `OnModuleDestroy`" — and a `close()`
-    // that nothing calls is a leaked handle in a service that boots once per
-    // integration suite. The coverage pin for this file requires 100% of
+    // Not a formality. A resource in this api closes through `OnModuleDestroy`, and
+    // a `close()` that nothing calls is a leaked handle in a service that boots once
+    // per integration suite. The coverage pin for this file requires 100% of
     // functions precisely so this cannot go untested.
     const { logger } = sink();
     await createMessagePublisher({ logger }).close();
