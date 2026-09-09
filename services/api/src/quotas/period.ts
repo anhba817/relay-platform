@@ -23,9 +23,3 @@ export function periodOf(at: Date): string {
   const month = String(at.getUTCMonth() + 1).padStart(2, "0");
   return `${year}-${month}-01`;
 }
-
-/** The period now belongs to. Separated so callers that already hold an instant
- * do not have to invent one, and so tests never have to stub a clock. */
-export function currentPeriod(): string {
-  return periodOf(new Date());
-}
