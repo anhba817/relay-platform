@@ -1944,12 +1944,20 @@ export class Repository {
         if (!membership) throw new ChannelNotFoundError(channelId);
       }
 
-      // THE SENDER'S KIND, LAST OF THE FIVE (FR-007, T032).
+      // THE SENDER'S KIND, FOURTH OF THE FIVE (FR-007, T032).
       //
-      // After the ban, the visibility and the archive, because this refusal names a
-      // fact about a USER — "that identifier is a person" — and a caller who could not
-      // otherwise reach this channel must not be able to ask it. Same reasoning as
-      // archive-after-visibility three checks below, one subject over.
+      // After the ban and the visibility, because this refusal names a fact about a
+      // USER — "that identifier is a person" — and a caller who could not otherwise
+      // reach this channel must not be able to ask it. Same reasoning as
+      // archive-after-visibility below, one subject over.
+      //
+      // BEFORE THE ARCHIVE CHECK, AND THAT PAIR IS THE ONE ORDERING HERE THAT DOES NOT
+      // MATTER. Both of these refusals are addressed to a caller who has already been
+      // shown the channel exists, and each names something that caller already knows —
+      // the identifier it chose, or a state it can read. Swapping them changes which
+      // code an integrator sees first and leaks nothing either way. Said explicitly
+      // because every other adjacency in this sequence is load-bearing, and a reader
+      // who finds one that is not should be told rather than left to test it.
       //
       // `senderIsPerson` was computed at the ban check from the same row, so this costs
       // nothing beyond the comparison.

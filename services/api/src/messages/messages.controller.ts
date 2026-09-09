@@ -32,8 +32,8 @@ import { ZodValidationPipe } from "./zod-validation.pipe";
  * THIS COMMENT SAID SOMETHING ELSE UNTIL THIS CHAPTER, and what it said was the reading
  * that made the gap invisible: *"A tenant's own server sending on a customer's behalf is
  * FR-MSG-13, not a mistake."* FR-MSG-13 said the system shall support sending **on behalf
- * of a user**, and this route named nobody — so the clause was cited for eleven chapters
- * by the code that did the opposite of it. The clause is now narrowed to a bot user of
+ * of a user**, and this route named nobody — so from the chapter that added this route
+ * until this one, the clause was cited by the code that did the opposite of it. The clause is now narrowed to a bot user of
  * that tenant, and the sender comes from the body (`user`), resolved below. */
 function actingUser(req: RequestWithPrincipal): string | undefined {
   return req.principal?.kind === "user" ? req.principal.userExternalId : undefined;
