@@ -23,6 +23,8 @@ import {
   messages,
   organisations,
   outbox,
+  usageActiveUsers,
+  usagePeriods,
   users,
   webhookDeadLetters,
   webhookDeliveries,
@@ -35,6 +37,8 @@ import {
   messageDeletedEvent,
   messageUpdatedEvent,
 } from "../outbox/event";
+import { capsFor } from "../quotas/config";
+import { periodOf } from "../quotas/period";
 import { nextAttemptAt } from "../webhooks/schedule";
 import {
   DISABLE_AFTER_MS,
@@ -275,6 +279,67 @@ export async function environmentLimits(
     rest: row.rest ?? DEFAULT_LIMITS.rest,
     send: row.send ?? DEFAULT_LIMITS.send,
     connect: row.connect ?? DEFAULT_LIMITS.connect,
+  };
+}
+
+/** What an environment has consumed in a period, and what it is allowed
+ * (FR-RTL-05).
+ *
+ * ZEROS FOR A PERIOD WITH NO ROWS, not null and not an error. An environment that
+ * has sent nothing has used nothing, and making every caller tell "no usage" apart
+ * from "no row" would push a schema detail into each of them.
+ *
+ * A NULL QUOTA IS CARRIED THROUGH AS NULL rather than resolved to `Infinity` or
+ * `-1`. The absent state stays absent all the way to the reader — the same rule
+ * the rate-limit chapter's nullable limit columns encode, and the reason `capsFor` returns
+ * `null` rather than a sentinel.
+ *
+ * Admin surface: takes an environment id rather than being scoped by construction,
+ * because the relay and the internal route both read it on behalf of the platform.
+ * Bounded by an id, so it crosses environments and cannot run away (the third
+ * category in this file's taxonomy). */
+export async function usageFor(
+  db: Db,
+  environmentId: string,
+  period: string,
+): Promise<{
+  period: string;
+  messagesSent: number;
+  activeUsers: number;
+  messageQuota: number | null;
+  activeUserQuota: number | null;
+}> {
+  const [row] = await db
+    .select({
+      messagesSent: usagePeriods.messagesSent,
+      quotaConfig: environments.quotaConfig,
+    })
+    .from(environments)
+    .leftJoin(
+      usagePeriods,
+      and(
+        eq(usagePeriods.environmentId, environments.id),
+        eq(usagePeriods.period, period),
+      ),
+    )
+    .where(eq(environments.id, environmentId));
+
+  const [users] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(usageActiveUsers)
+    .where(
+      and(
+        eq(usageActiveUsers.environmentId, environmentId),
+        eq(usageActiveUsers.period, period),
+      ),
+    );
+
+  return {
+    period,
+    messagesSent: row?.messagesSent ?? 0,
+    activeUsers: users?.n ?? 0,
+    messageQuota: capsFor(row?.quotaConfig, "messages").caps.hard,
+    activeUserQuota: capsFor(row?.quotaConfig, "active_users").caps.hard,
   };
 }
 
@@ -3797,6 +3862,55 @@ export class Repository {
         subject: event.subject,
         payload: event.payload,
       });
+
+      // THE MONTH'S USAGE COMMITS WITH THE MESSAGE (FR-RTL-05).
+      //
+      // Same argument as the event above it, one requirement further on. A quota
+      // is about THIS MONTH and must not forget, so the count cannot live in the
+      // per-minute counter store the rate-limit chapter built — a flush there costs one
+      // window of over-service, a flush here costs the month (FR-002).
+      //
+      // It is an increment rather than a query because the alternative is a read
+      // over `messages`, which carries no `environment_id` and no index on
+      // `created_at`: the month predicate becomes a Filter applied after every
+      // row the tenant has ever sent is read off the heap. Fast today, and
+      // proportional to lifetime traffic forever (research R1).
+      //
+      // On the INSERTED branch only, like the event. A recognised idempotent
+      // retry wrote no message and must consume no quota either, or a client
+      // retrying on a flaky link is billed twice for one message.
+      const period = periodOf(new Date(createdAt));
+      await tx
+        .insert(usagePeriods)
+        .values({ environmentId: this.environmentId, period, messagesSent: 1 })
+        .onConflictDoUpdate({
+          target: [usagePeriods.environmentId, usagePeriods.period],
+          set: { messagesSent: sql`${usagePeriods.messagesSent} + 1` },
+        });
+
+      // The distinct-user count.
+      // UNCONDITIONAL, AND THE GUARD THAT WAS HERE COULD NOT BE FALSE. It read
+      // `if (userId !== undefined)`, with a comment saying a key-authenticated REST
+      // send carries no `userId` and so counts toward the message quota and toward no
+      // user. That was true of a platform where the parameter was optional; the sender
+      // chapter made it REQUIRED — `userId: string`, and its own comment says required
+      // is the whole mechanism, because SC-003 asks that no write path be able to
+      // produce a senderless message.
+      //
+      // So there is no unattributed send left to guard against, and the arm was one
+      // the type system forbids. Deleted rather than covered, which is what this
+      // repository does with an unreachable arm — and the deletion is also the more
+      // honest statement: every message counted here has a sender, and the distinct-user
+      // count is exactly the senders.
+      //
+      // A row rather than a counter, and that has not changed: incrementing one would
+      // need to know whether this user already sent this period, which is a read. The
+      // row IS the answer, and `ON CONFLICT DO NOTHING` makes the second send of the
+      // month free.
+      await tx
+        .insert(usageActiveUsers)
+        .values({ environmentId: this.environmentId, period, userId })
+        .onConflictDoNothing();
 
       return {
         id,

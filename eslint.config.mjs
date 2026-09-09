@@ -93,6 +93,12 @@ export default tseslint.config(
       // A suite that used the repository here would be asserting that `periodOf` equals
       // itself.
       "services/api/src/quotas/period.itest.ts",
+      // AND THE QUOTA SUITE ITSELF, for a different reason from its sibling above.
+      // `period.itest.ts` writes a row the repository cannot; this one READS the two
+      // roll-up tables directly to check what a send left behind. Going through
+      // `usageFor` would mean asserting the roll-up against the function that reads
+      // it — the same circularity, one table over.
+      "services/api/src/quotas/quotas.itest.ts",
       // ── AND EVERY OTHER REDIS CLIENT, BY PATH, WITH THE ARGUMENT IT NEEDS ──
       //
       // The rule arrives here and TWELVE files older than it already import `ioredis`.
