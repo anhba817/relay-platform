@@ -51,6 +51,15 @@ describe("signup", () => {
   let provider: Awaited<ReturnType<typeof standInProvider>>;
 
   beforeAll(async () => {
+    // The rate-limit chapter limited account creation per source address (FR-041), and this
+    // suite drives the signup routes repeatedly from one loopback address — which
+    // is what a suite about signup does.
+    //
+    // Raised explicitly and visibly, rather than the default being chosen to suit
+    // the tests. The same move `credentials.itest.ts` makes for the
+    // failed-authentication threshold, and for the same reason: raising survives a
+    // shared count, lowering does not (research R21).
+    process.env["RELAY_AUTH_FAILURES_PER_MINUTE"] = "10000";
     db = createDb(createPool());
     provider = await standInProvider({
       id: 90210,

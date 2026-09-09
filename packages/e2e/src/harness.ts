@@ -400,6 +400,13 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       // unforwarded variable is not a missing feature — it is a mailer talking
       // confidently to a port nothing is listening on.
       "RELAY_SMTP_URL",
+      // The failed-authentication threshold and the counter's key
+      // prefix. Forwarded for the reason this list exists at all — turbo runs
+      // tasks in STRICT env mode, so an undeclared variable reaches a child as
+      // `undefined` and the `??` behind it silently wins. A suite that raised the
+      // threshold would raise it in the parent and not in the api the child runs.
+      "RELAY_AUTH_FAILURES_PER_MINUTE",
+      "RELAY_AUTH_KEY_PREFIX",
     ),
     // The api children run WITHOUT the outbox relay. This journey
     // asserts message delivery, and a background loop draining the outbox while
