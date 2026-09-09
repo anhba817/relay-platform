@@ -1171,7 +1171,24 @@ describe("the failure run", () => {
     // Still enabled: nothing has happened since, which is the whole point.
     expect((await runOf(endpoint.id)).enabled).toBe(true);
 
-    const disabled = await sweepDisabledEndpoints(db);
+    // A LIMIT BIG ENOUGH TO REACH THIS ENDPOINT. The sweep is global and takes the
+    // hundred oldest eligible endpoints; every earlier run of this suite leaves
+    // endpoints with an open failure run behind, and those are older than this
+    // one, so they fill the batch and this endpoint is never reached. The suite
+    // then fails on a shared database and passes on a fresh one.
+    //
+    // Found at the deduplication chapter's baseline, after 781 endpoints had
+    // accumulated an open run. Note which assertion caught it: `disabled >= 1`
+    // PASSED, because the sweep had just disabled a hundred endpoints belonging to
+    // nobody. Only the assertion about THIS endpoint could tell the difference.
+    //
+    // MEASURED IN THIS ORDER'S LANE AT THE MOMENT THE LIMIT WAS ADDED: 41 endpoints
+    // with an open run out of 723, against a default batch of 100. So the fault is
+    // NOT yet reachable here — the batch still has room — and the fix is arriving
+    // before its symptom rather than after it, which is the only reason this comment
+    // has to say which number it was written against. At 100 open runs it becomes
+    // the failure above, and nothing about the suite would change to announce it.
+    const disabled = await sweepDisabledEndpoints(db, 10_000);
     expect(disabled).toBeGreaterThanOrEqual(1);
 
     const after = await runOf(endpoint.id);
@@ -1200,9 +1217,9 @@ describe("the failure run", () => {
     await failTimes(scoped.id, scopedRepo, endpoint.id, 5, 503);
     await ageRun(endpoint.id, 64);
 
-    await sweepDisabledEndpoints(db);
-    await sweepDisabledEndpoints(db);
-    await sweepDisabledEndpoints(db);
+    await sweepDisabledEndpoints(db, 10_000);
+    await sweepDisabledEndpoints(db, 10_000);
+    await sweepDisabledEndpoints(db, 10_000);
 
     expect(await notificationsFor(endpoint.id)).toHaveLength(1);
   }, 120_000);
@@ -1219,7 +1236,7 @@ describe("the failure run", () => {
     // Inside the hour: five failures, but the window has not elapsed.
     await ageRun(recent.id, 30);
 
-    await sweepDisabledEndpoints(db);
+    await sweepDisabledEndpoints(db, 10_000);
 
     expect((await runOf(healthy.id)).enabled).toBe(true);
     expect((await runOf(recent.id)).enabled).toBe(true);
