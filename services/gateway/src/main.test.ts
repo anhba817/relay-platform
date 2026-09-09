@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 
@@ -62,5 +64,60 @@ describe("gateway skeleton", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("every fabric createServer builds is injected", () => {
+  // A MODULE BUILT, CLOSED, AND NEVER PASSED IN IS INERT AND GREEN.
+  //
+  // `signalTyping` calls `typing?.publish(...)`. If `typing` never reaches
+  // `attachSessions`, the optional chain makes every signal a silent no-op — and
+  // nothing fails, because `close()` is awaited in the shutdown path so lint sees a
+  // used variable, `/healthz` still advertises the frame, the seam still accepts
+  // `typing.send`, and **every test injects the option directly rather than reading
+  // it from here**. The feature is dead in the product and passing everywhere.
+  //
+  // That happened to `typing` in the order this book was first written and was found
+  // by the sealed client, which is eleven chapters away. Four fabrics are wired this
+  // way now and the fifth will be added by somebody working from the fourth.
+  //
+  // SOURCE-READING, for `bound-port.test.ts`'s reason: `main.ts` is excluded from
+  // coverage because it is reached by running the service, and what has to be true is
+  // a property of the text — every module built above the call appears inside it.
+  const SOURCE = readFileSync(
+    join(import.meta.dirname, "main.ts"),
+    "utf8",
+  );
+
+  /** `const x = createY({` — the fabrics, derived rather than listed, so a fifth
+   * arrives here without anyone remembering. */
+  function built(): string[] {
+    return [...SOURCE.matchAll(/\bconst (\w+) = create[A-Z]\w*\(\{/g)].map((m) => m[1]!);
+  }
+
+  /** The object literal `attachSessions` is called with. */
+  function injected(): string {
+    const open = SOURCE.indexOf("attachSessions({");
+    const close = SOURCE.indexOf("\n  });", open);
+    return SOURCE.slice(open, close);
+  }
+
+  it("derives the fabrics and the call, and finds both", () => {
+    // THE POSITIVE CONTROL. Every assertion below is about which names are missing,
+    // and a derivation that found nothing satisfies all of them.
+    expect(built().length, "no `const x = createY({` found in main.ts").toBeGreaterThan(1);
+    expect(injected(), "no attachSessions call found").toContain("server,");
+  });
+
+  it("passes each one into attachSessions", () => {
+    const call = injected();
+    const missing = built().filter(
+      (name) =>
+        !new RegExp(`^\\s*${name}\\s*(,|:)`, "m").test(call),
+    );
+    expect(
+      missing,
+      `built by createServer and never injected: ${missing.join(", ")}`,
+    ).toEqual([]);
   });
 });
