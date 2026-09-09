@@ -103,9 +103,8 @@ describe("the api's fan-out publisher", () => {
 
   it("does not touch the client again inside the down-window", async () => {
     // T009b. The window is what makes a dead Redis cheap rather than merely
-    // survivable: without it every send pays the connect timeout, which is
-    // `limits/store.ts`'s recorded mistake — "each request paid a second or
-    // more, twice".
+    // survivable: without it every send pays the connect timeout, so an outage
+    // costs every request in it rather than the first one.
     //
     // The assertion is that the client is NOT CALLED, not that the publish
     // resolved: it resolves either way, window or no window.

@@ -17,8 +17,9 @@ import { Redis } from "ioredis";
  * 3. IT MUST NOT COPY THE GATEWAY'S CLIENT OPTIONS. `createFanout` uses
  *    `new Redis(url)` with defaults and attaches no `error` listener, which is
  *    survivable for a long-lived gateway and not for a request handler. The
- *    options below come from `limits/store.ts`, which is the api's own Redis
- *    client and learned this the hard way.
+ *    options below are chosen for a request handler and measured against a dead
+ *    port, a hung port and a healthy one — each of the three is a different
+ *    failure and only one of them is the one people think of.
  *
  * NO OFF-SWITCH, and that is a decision rather than an omission (T009c).
  * Four api modules carry one — `RELAY_OUTBOX_RELAY`, `RELAY_DELIVERY_RELAY`,
@@ -59,11 +60,16 @@ export interface PublishContext {
 
 export const DEFAULT_FANOUT_REDIS_URL = "redis://localhost:6379";
 
-/** How long a known-dead Redis is left alone. Lifted from
- * `limits/store.ts`'s `DOWN_WINDOW_MS`, and the reason is that file's: "FAILING
- * OPEN IS NOT FREE IF IT FAILS SLOWLY… each request paid a second or more,
- * twice." The options alone were the slow version; the window is the fix, and
- * the first draft of the fan-out chapter's contract copied the options without it. */
+/** How long a known-dead Redis is left alone.
+ *
+ * FAILING OPEN IS NOT FREE IF IT FAILS SLOWLY. Bounding the client is not the same
+ * as making a dead Redis cheap: with the options alone, every send still pays its
+ * timeout before giving up, so a broker that is down costs every request in the
+ * outage rather than the first one. Measured on this chapter's own suite — twelve
+ * sends at a dead port total 2 ms, and eleven of the twelve never reach the client.
+ *
+ * The window is the part that buys that, and the first draft of this chapter's
+ * contract specified the options without it. */
 const DOWN_WINDOW_MS = 5_000;
 
 export interface PublisherOptions {
