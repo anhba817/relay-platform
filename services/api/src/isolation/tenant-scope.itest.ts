@@ -86,4 +86,27 @@ describe("every table has a path to one tenant", () => {
       expect(t.via.length, `${t.table} is a hop to nowhere`).toBeGreaterThan(0);
     }
   });
+
+  it("reads the direct tables a chain arrives at, not the ones it passes through", () => {
+    // THE REACH BECAME TRANSITIVE IN THIS CHAPTER, and this test is the half of it that
+    // NOTHING ABOVE CAN SEE. `message_edits` is the first table two links away — it
+    // references `messages`, which references `channels`, which carries the column — and
+    // the one-hop query classified it as having no tenant at all.
+    //
+    // Reverting the walk to one hop turns three tests red, this one included, so the
+    // transitive half is well covered. THE SECOND EXPECTATION IS THE ONE THAT STANDS
+    // ALONE: drop the `IN (SELECT table_name FROM direct)` filter from `fk_targets` and
+    // the walk starts reporting the tables it passed THROUGH — six of them here — and
+    // every other test in this file stays green, because "a hop has some target" is truer
+    // with intermediates in the list, not less true.
+    //
+    // A `via` naming `messages` would be the catalogue reporting its own intermediate
+    // step, and `tenant-scope`'s whole claim is that `via` names tables a repository can
+    // scope by. Asserting "every via is itself direct" would not catch it: the SQL filter
+    // makes that true by construction whenever the filter is there at all.
+    const edits = tables.find((t) => t.table === "message_edits");
+    expect(edits?.path).toBe("hop");
+    expect(edits?.via).not.toContain("messages");
+    expect([...(edits?.via ?? [])].sort()).toEqual(["channels", "users"]);
+  });
 });
