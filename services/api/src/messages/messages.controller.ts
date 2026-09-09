@@ -348,9 +348,10 @@ export class MessagesController {
           seq: edited.seq,
           user: actingExternalId,
           text: edited.text!,
-          // `[]` UNTIL PHASE 7. An edit does not change attachments (FR-016), so
-          // this becomes the message's existing list rather than a new one.
-          attachments: [],
+          /** FR-015 and FR-022. THE MESSAGE'S EXISTING LIST, not a new one — an edit
+           * changes text and nothing else, and FR-015 asks that the creation and edit
+           * payloads carry attachments identically so a consumer needs one shape. */
+          attachments: edited.attachments,
           created_at: edited.created_at,
         },
       },
@@ -368,6 +369,9 @@ export class MessagesController {
       channel_id: edited.channel_id,
       seq: edited.seq,
       text: edited.text,
+      /** FR-001 and FR-022. The same list the event above carries, so a caller that
+       * edits and a consumer that watches see one message rather than two. */
+      attachments: edited.attachments,
       created_at: edited.created_at,
       edited_at: edited.edited_at,
       user: actingExternalId,
