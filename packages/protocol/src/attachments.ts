@@ -79,6 +79,18 @@ const mediaArm = z
   .refine(() => false, {
     message:
       "hosted media is not available yet — attach an http or https url instead (FR-MSG-11 §4.14)",
+    /** THE SCHEMA NAMES ITS OWN REFUSAL, and that is what puts FR-003a on both doors
+     * with one mechanism.
+     *
+     * `ZodValidationPipe` answers every validation failure with `invalid_request` and a
+     * 400, which is right for a malformed body and wrong here: `media_id` is published
+     * in FR-MSG-11, so the honest answer is that the platform cannot serve it yet — its
+     * own code, and a 422 because the request is understood.
+     *
+     * Checking for a media arm in the CONTROLLER cannot work: `@Body(new
+     * ZodValidationPipe(...))` runs before the handler, so the schema has already
+     * refused with a 400 and control never arrives. The pipe reads this instead. */
+    params: { protocolCode: "media_not_available", status: 422 },
   });
 
 const urlArm = z.strictObject({

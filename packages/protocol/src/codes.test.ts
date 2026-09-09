@@ -200,3 +200,20 @@ describe("the refusal this chapter's edit path adds", () => {
     expect(ERROR_CODES.message_deleted).toMatch(/history/);
   });
 });
+
+describe("the refusal this chapter's attachments add", () => {
+  // NAMED, NOT COUNTED, for the reason the blocks above give — and this chapter is the
+  // one that pays for it twice over: the count it replaced would have read a single
+  // arithmetic edit where what happened is that a field the CONTRACT publishes got an
+  // answer of its own.
+  //
+  // `invalid_request` IS THE WRONG ANSWER FOR `media_id`, and that is the whole
+  // argument. Every other refusal in this pipe is about a body the contract does not
+  // allow; `media_id` is in FR-MSG-11 and the caller made no mistake. A 400 saying
+  // "invalid" tells them to fix a request that is already correct.
+  it("names the unhosted-media refusal apart from a malformed request", () => {
+    expect(ERROR_CODES).toHaveProperty("media_not_available");
+    expect(ERROR_CODES.media_not_available).not.toBe(ERROR_CODES.invalid_request);
+    expect(ERROR_CODES.media_not_available).toMatch(/media/);
+  });
+});

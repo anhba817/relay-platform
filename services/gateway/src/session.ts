@@ -116,13 +116,28 @@ function send(socket: WebSocket, frame: Frame): void {
 }
 
 /** EIR-API-04's envelope, wearing its WebSocket clothes. */
-function sendError(socket: WebSocket, code: ErrorCode, message: string): void {
+function sendError(
+  socket: WebSocket,
+  code: ErrorCode,
+  message: string,
+  /** WHICH FIELD, on the socket door (FR-005).
+   *
+   * `errorFrameSchema` has published this key since chapter 1.3 and no gateway code path
+   * had ever set it — the same habit `zod-validation.pipe.ts` ended for the api at the
+   * channel-endpoints chapter, whose comment cites THIS schema while fixing only its own
+   * side.
+   *
+   * Omitted when there is no path, exactly as the pipe does: an empty path means the
+   * whole frame failed and there is no field to name. */
+  field?: string,
+): void {
   send(socket, {
     type: "error",
     payload: {
       code,
       message,
       docs_url: docsUrl(code),
+      ...(field !== undefined && field.length > 0 ? { field } : {}),
     },
   });
 }
@@ -1304,6 +1319,9 @@ export function attachSessions({
         connection.socket,
         "invalid_frame",
         frame.error.issues[0]?.message ?? "frame failed schema validation",
+        // The joined path, which is what a developer reading their own frame sees —
+        // `payload.attachments.3.kind` rather than "somewhere in this frame".
+        frame.error.issues[0]?.path.join("."),
       );
       return;
     }
