@@ -6,6 +6,7 @@ import { createLogger } from "@relay/service-kit";
 import { AppModule } from "./app.module";
 import { EventConsumerService } from "./consumer/consumer.module";
 import { OutboxRelayService } from "./outbox/outbox.module";
+import { DeliveryRelayService } from "./webhooks/webhooks.module";
 
 // Nest's own banner logger stays off: this workspace already decided what a
 // log line looks like (one JSON object, NFR-OBS-01), and the framework does
@@ -31,6 +32,10 @@ async function bootstrap(): Promise<void> {
   // publisher connects lazily, so an unreachable broker leaves events accumulating in
   // Postgres instead of preventing the api from serving writes (research R9).
   app.get(OutboxRelayService).start();
+  // And the second relay: the same loop over a different table,
+  // publishing deliveries that have become due. Started here for the outbox chapter's reason —
+  // a retry schedule that only runs when someone remembers is not a schedule.
+  app.get(DeliveryRelayService).start();
   // And the first thing that reads what the relay publishes.
   // Same placement, same reason, same lazy connection: an unreachable broker
   // leaves the api serving writes.
