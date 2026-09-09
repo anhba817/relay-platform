@@ -383,7 +383,17 @@ export async function drainDisableNotifications(
   db: Db,
   limit: number,
   deliver: (row: DisableNotificationRow) => Promise<void>,
-  onError: (row: DisableNotificationRow, error: unknown) => void = () => {},
+  /** REQUIRED, AND IT CARRIED A DEFAULT UNTIL THE RATCHET ASKED. `= () => {}` was
+   * never constructed: the one caller is `notification-relay.ts`'s `drainOnce`, which
+   * has always passed a logging callback, so v8 counted the default as a function that
+   * exists and never runs — `repository.ts` functions 99.12% against a pin of 100.
+   *
+   * DELETED RATHER THAN COVERED, which is what this file's ratchet is for and the sixth
+   * time it has produced a deletion. A default that swallows a delivery failure silently
+   * is the wrong default anyway: this parameter is how a caller learns that a row was
+   * claimed and not sent, and making it required means the compiler asks the question
+   * rather than a reviewer. */
+  onError: (row: DisableNotificationRow, error: unknown) => void,
 ): Promise<number> {
   return db.transaction(async (tx) => {
     const claimed = (await tx.execute(
