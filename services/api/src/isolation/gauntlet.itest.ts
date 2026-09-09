@@ -1,5 +1,7 @@
 import "reflect-metadata";
 
+import { randomUUID } from "node:crypto";
+
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -994,6 +996,152 @@ describe("the isolation gauntlet", () => {
       expect(rowsOf({ data: [1] })).toHaveLength(1);
       expect(rowsOf({ items: [1, 2, 3] })).toEqual([]);
       expect(rowsOf(null)).toEqual([]);
+    });
+  });
+
+  // ── the webhook surface (this chapter) ─────────────────────────────────────────
+  //
+  // WRITTEN BECAUSE THE LEDGER OWED THEM AND THE ACCOUNTING TEST COLLECTED. Eleven
+  // routes were classified here and none attacked; the failure named all eleven by
+  // path. Seven are the customer's endpoint surface and four are the internal seam
+  // beneath it, of which one can be attacked at all — see `targets.ts` for why the
+  // other three are `exempt` rather than silently unattacked.
+  describe("webhooks: a foreign endpoint id is another tenant's", () => {
+    const victimEndpoints = () => t.victim.repo.listEndpoints();
+
+    it("GET /v1/webhooks/:id — a foreign endpoint reads as an absent one", async () => {
+      attacked.add("GET /v1/webhooks/:id");
+      const verdict = await readAttack(
+        url,
+        t.attacker.credential,
+        { method: "GET", path: `/v1/webhooks/${t.victim.endpointId}` },
+        { method: "GET", path: `/v1/webhooks/${ABSENT_UUID}` },
+      );
+      expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+      // A PAIR CAN AGREE BY BOTH LEAKING. The status says it refused, and the body
+      // says the victim's url never came back — an endpoint's url is the customer's
+      // own infrastructure and is exactly what must not cross.
+      expect(verdict.foreign.status).toBe(404);
+      expect(JSON.stringify(verdict.foreign.body)).not.toContain("victim");
+    });
+
+    it("GET /v1/webhooks — the listing carries its own rows and none of the victim's", async () => {
+      attacked.add("GET /v1/webhooks");
+      const verdict = await listAttack(
+        url,
+        t.attacker.credential,
+        { method: "GET", path: "/v1/webhooks" },
+        [t.victim.endpointId, t.victim.environmentId],
+      );
+      expect(verdict.status).toBe(200);
+      expect(verdict.leaked, `leaked: ${verdict.leaked.join(", ")}`).toEqual([]);
+      // AND ITS OWN ENDPOINT IS THERE. A listing that returned nothing at all would
+      // pass the leak check while being broken, which is the `list` shape's own trap.
+      expect(verdict.count, "the attacker's own listing came back empty").toBeGreaterThan(0);
+    });
+
+    it("POST /v1/webhooks — a create by one tenant cannot appear in another's list", async () => {
+      attacked.add("POST /v1/webhooks");
+      // NO IDENTIFIER TO FORGE on this route: the tenant comes from the key. So the
+      // pair is two legitimate creates and the assertion is about the VICTIM's state —
+      // this is the one webhook write whose attack is entirely the state read.
+      const body = (n: string) => ({
+        url: `https://attacker.example/${n}`,
+        event_types: ["message.created"],
+      });
+      const verdict = await writeAttack(
+        url,
+        t.attacker.credential,
+        { method: "POST", path: "/v1/webhooks", body: body("x") },
+        { method: "POST", path: "/v1/webhooks", body: body("y") },
+        victimEndpoints,
+      );
+      expect(verdict.foreign.status).toBe(201);
+      expect(verdict.stateChanged, "the victim's endpoints moved").toBe(false);
+    });
+
+    it.each(["rotate-secret", "enable", "disable"])(
+      "POST /v1/webhooks/:id/%s — refused on a foreign endpoint, and nothing moves",
+      async (action) => {
+        attacked.add(`POST /v1/webhooks/:id/${action}`);
+        const verdict = await writeAttack(
+          url,
+          t.attacker.credential,
+          { method: "POST", path: `/v1/webhooks/${t.victim.endpointId}/${action}` },
+          { method: "POST", path: `/v1/webhooks/${ABSENT_UUID}/${action}` },
+          victimEndpoints,
+        );
+        expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+        expect(verdict.foreign.status).toBe(404);
+        // ROTATE IS THE ONE THAT WOULD HURT MOST. A successful rotation on somebody
+        // else's endpoint breaks every signature they verify, and the state read is
+        // what sees it: `secret_rotated_at` is on the row this returns.
+        expect(verdict.stateChanged, "the victim's endpoints moved").toBe(false);
+      },
+    );
+
+    it("DELETE /v1/webhooks/:id — a foreign endpoint is not deleted", async () => {
+      attacked.add("DELETE /v1/webhooks/:id");
+      const verdict = await writeAttack(
+        url,
+        t.attacker.credential,
+        { method: "DELETE", path: `/v1/webhooks/${t.victim.endpointId}` },
+        { method: "DELETE", path: `/v1/webhooks/${ABSENT_UUID}` },
+        victimEndpoints,
+      );
+      expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+      expect(verdict.foreign.status).toBe(404);
+      // DELETION IS SOFT, so the row survives either way and only the listing can
+      // tell: `listEndpoints` excludes soft-deleted rows, which is what makes this
+      // state read able to see a successful attack.
+      expect(verdict.stateChanged, "the victim's endpoints moved").toBe(false);
+    });
+  });
+
+  // ── the platform credential (this chapter) ─────────────────────────────────────
+  //
+  // A PLATFORM CREDENTIAL IS NOT TENANT-SCOPED AND IS NOT MEANT TO BE. One dispatcher
+  // serves every tenant, so its credential reaches every tenant's deliveries and a
+  // FOREIGN CREDENTIAL cannot be forged for it. What is attackable is the one route
+  // that names an environment alongside an identifier.
+  describe("the platform routes", () => {
+    const dispatcher = process.env["RELAY_INTERNAL_CREDENTIAL"];
+
+    const expand = async (environmentId: string) =>
+      send(url, dispatcher ?? "", {
+        method: "POST",
+        path: "/internal/dispatch/expand",
+        body: {
+          event_id: randomUUID(),
+          environment_id: environmentId,
+          type: "message.created",
+          payload: { text: "expand names one environment" },
+        },
+      });
+
+    it("expand reaches only the endpoints of the environment it names", async () => {
+      attacked.add("POST /internal/dispatch/expand");
+      if (dispatcher === undefined) return; // not configured in this lane
+
+      const before = (await t.victim.repo.listEndpoints()).length;
+      const answer = await expand(t.attacker.environmentId);
+      expect(answer.status).toBe(200);
+      // THE POSITIVE CONTROL FIRST. The attacker's own endpoint subscribes to this
+      // type, so the call did something — without this the assertion below passes on
+      // a no-op, which is how this shape of test goes green while proving nothing.
+      expect((answer.body as { created?: number }).created ?? 0).toBeGreaterThan(0);
+      const rows = await t.victim.repo.listDeliveriesForEvent(
+        (answer.body as { event_id?: string }).event_id ?? randomUUID(),
+      );
+      expect(rows, "a delivery reached the victim's environment").toEqual([]);
+      expect((await t.victim.repo.listEndpoints()).length).toBe(before);
+    });
+
+    it("expand naming an environment that exists nowhere creates nothing", async () => {
+      if (dispatcher === undefined) return;
+      const answer = await expand(ABSENT_UUID);
+      expect(answer.status).toBe(200);
+      expect((answer.body as { created?: number }).created ?? -1).toBe(0);
     });
   });
 

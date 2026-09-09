@@ -608,7 +608,15 @@ export const consumedEvents = pgTable(
 // the platform's own bookkeeping AND no tenant-visible content. An endpoint is
 // customer configuration; a dead letter holds a payload that was being sent to a
 // customer. Both fail the test on both halves, so both are scoped and both join
-// the deduplication chapter's cross-tenant gauntlet as targets.
+// the cross-tenant gauntlet as targets.
+//
+// NAMED, NOT NUMBERED. This line used to say "chapter 3.7's cross-tenant
+// gauntlet". The gauntlet was 3.7 when that was written, became 3.8 when a chapter
+// was inserted ahead of it, and is now 3.9 after a second insertion — and the
+// comment was carried neither time. A chapter number in a source comment is a
+// reference that ages every time the plan changes, and this file is fenced
+// byte-exact into a published chapter, so correcting it costs a fence amendment.
+// The subject does not move; the ordinal does.
 // ---------------------------------------------------------------------------
 
 // DECISION: no source document defines this table. FR-WHK-01 and

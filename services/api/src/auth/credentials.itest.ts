@@ -16,6 +16,7 @@ import {
   Repository,
   revokeApiKey,
 } from "../db/repository";
+import { parseApiKeyCredential } from "./api-key";
 import { MAX_TOKEN_LIFETIME_SECONDS } from "./user-token";
 
 // The refusals, over real HTTP against the compose Postgres.
@@ -370,7 +371,31 @@ describe("credentials", () => {
     }
 
     const haystack = captured.join("") + bodies.join("");
-    const secret = key.credential.split("_").at(-1)!;
+    // PARSED WITH THE PRODUCT'S OWN PARSER, NOT SPLIT ON AN UNDERSCORE.
+    //
+    // `key.credential.split("_").at(-1)` was the secret only by luck, and MEASURED OVER
+    // 200,000 MINTS it is luck that runs out both ways. The secret is base64url of 32
+    // bytes and `_` IS IN THAT ALPHABET:
+    //
+    //   26.9% of credentials  the last segment is 20 characters or fewer — the test
+    //                         searched for a FRAGMENT and passed more easily than it
+    //                         should. A false negative, and the quiet half.
+    //   1.57%                 the segment is one character or none, and `not.toContain`
+    //                         on a single character fails against any haystack. That is
+    //                         the loud half, and it is what the battery hit: `expected
+    //                         '{"time":…' not to contain '0'`.
+    //
+    // `parseApiKeyCredential` is the function the guard itself uses to split a
+    // presented credential, so the needle is now the same substring the product calls
+    // the secret. A test that re-derives what the code under test already computes is
+    // a second definition, and the two can disagree.
+    const parsed = parseApiKeyCredential(key.credential);
+    expect(parsed, "the fixture minted something this api cannot parse").not.toBeNull();
+    const secret = parsed!.secret;
+    // AND THE NEEDLE IS CHECKED BEFORE IT IS USED. A short needle is found in any
+    // haystack, so `not.toContain` on one is a test that always fails — the inverse of
+    // the vacuous assertion this file is otherwise full of guards against.
+    expect(secret.length, "the needle is too short to mean anything").toBeGreaterThan(20);
     expect(haystack).not.toContain(key.credential);
     expect(haystack).not.toContain(secret);
     expect(haystack).not.toContain(foreignKey.credential);

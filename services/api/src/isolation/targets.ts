@@ -127,6 +127,11 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     accepts: "application",
     shape: "list",
   },
+  // THE ENDPOINT LISTING. A `list` for the same reason: its refusal is an
+  // EMPTY page, not an error. There is no identifier in the path at all — the tenant
+  // comes from the key — so what the attack shows is that a key for one environment
+  // sees none of another's endpoints in a 200.
+  { method: "GET", path: "/v1/webhooks", accepts: "application", shape: "list" },
 
   // The bulk upsert and the deletion. Both `write`: the upsert's attack is
   // an entry naming another tenant's user, which must create a NEW row in the caller's
@@ -194,6 +199,7 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     accepts: "either",
     shape: "read",
   },
+  { method: "GET", path: "/v1/webhooks/:id", accepts: "application", shape: "read" },
   // THE REVISIONS CHAPTER'S EDIT HISTORY (T033h, FR-023, FR-023a). `accepts: "application"`
   // because the route carries a method-level `@Accepts("application")` that narrows the
   // controller's class-level `("application", "user")` — FR-MOD-01 names the audience,
@@ -275,6 +281,24 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   { method: "POST", path: "/v1/channels/:channelId/archive", accepts: "application", shape: "write" },
   { method: "DELETE", path: "/v1/channels/:channelId/archive", accepts: "application", shape: "write" },
 
+  // ── the webhook surface (this chapter), and the derivation named all seven ─────
+  //
+  // ELEVEN ROUTES ARRIVED AND THE LEDGER SAID SIX. This chapter's rows were deferred
+  // from the harness chapter by a note that counted the `/v1/webhooks*` paths and not
+  // the internal seam beneath them; `targets.itest.ts` went red naming eleven, which is
+  // the third time a count in this feature's own records has been low and the first time
+  // the instrument corrected it rather than a reader.
+  //
+  // ALL `application` AND NONE `either`. A webhook endpoint is customer CONFIGURATION —
+  // FR-WHK-01 gives them to an environment, not to a person — and `WebhooksController`
+  // declares `@Accepts("application")` for the whole class. A `"user"` here would send
+  // the gauntlet at these routes with a token the guard refuses at the door.
+  { method: "POST", path: "/v1/webhooks", accepts: "application", shape: "write" },
+  { method: "POST", path: "/v1/webhooks/:id/rotate-secret", accepts: "application", shape: "write" },
+  { method: "POST", path: "/v1/webhooks/:id/enable", accepts: "application", shape: "write" },
+  { method: "POST", path: "/v1/webhooks/:id/disable", accepts: "application", shape: "write" },
+  { method: "DELETE", path: "/v1/webhooks/:id", accepts: "application", shape: "write" },
+
   // ── the internal surface: an end-user token, so a FOREIGN CREDENTIAL is the attack
   { method: "POST", path: "/internal/messages", accepts: "user", shape: "write" },
   { method: "POST", path: "/internal/backfill", accepts: "user", shape: "write" },
@@ -288,6 +312,60 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     path: "/internal/session",
     accepts: "user",
     shape: "credential",
+  },
+
+  // ── write, internal, PLATFORM credential: it carries no environment ──────────
+  //
+  // THE FIRST ROUTES IN THIS LIST THAT TAKE `platform`, and the class exists for exactly
+  // this: one dispatcher serves every tenant, so its credential resolves to no
+  // environment and a FOREIGN CREDENTIAL cannot be forged for it. What the attack has to
+  // show instead is that a request naming one environment with an identifier from
+  // another is refused on the row rather than on the caller — the tenant comes from the
+  // delivery, and the delivery knows which environment it belongs to.
+  //
+  // A `write` SHAPE ALONE CANNOT TELL THOSE APART, which is the sentence at the top of
+  // this file, written before any route needed it.
+  { method: "POST", path: "/internal/dispatch/expand", accepts: "platform", shape: "write" },
+  //
+  // AND THREE OF THE FOUR ARE `exempt`, WHICH PUBLISHED PART 3 CLASSIFIED `write` AND
+  // NEVER ATTACKED. Only `expand` names an environment ALONGSIDE an identifier, so only
+  // `expand` can be told to act on one tenant while carrying something from another.
+  // `material`, `outcome` and `replay` take a single opaque delivery id and DERIVE the
+  // environment from the row they find: there is no cross-environment request to make,
+  // because the caller never says which environment it means.
+  //
+  // That is not an attack this suite declines to write. It is the absence of the
+  // parameter an attack would forge — and `exempt` with a reason is how this list says
+  // so, where `write` with no attack says nothing and reads as an oversight. The
+  // accounting test at the foot of `gauntlet.itest.ts` is what turned the difference
+  // into a failure.
+  //
+  // WHAT GUARDS THEM IS THE CREDENTIAL AND NOTHING ELSE, which is why `material` — the
+  // one response in this platform that returns a decrypted customer secret — is the
+  // route to read first if a platform credential ever leaks.
+  {
+    method: "POST",
+    path: "/internal/dispatch/material",
+    accepts: "platform",
+    shape: "exempt",
+    because:
+      "one opaque delivery id and no environment parameter: the tenant comes from the row, so a cross-environment request cannot be expressed. Returns a decrypted secret, and the credential is its only guard.",
+  },
+  {
+    method: "POST",
+    path: "/internal/dispatch/outcome",
+    accepts: "platform",
+    shape: "exempt",
+    because:
+      "one opaque delivery id and no environment parameter, as `material` above: there is no foreign identifier to pair with a named tenant.",
+  },
+  {
+    method: "POST",
+    path: "/internal/dispatch/replay",
+    accepts: "platform",
+    shape: "exempt",
+    because:
+      "one opaque delivery id and no environment parameter, as `material` above: there is no foreign identifier to pair with a named tenant.",
   },
 
   // ── credential, internal, end-user token ─────────────────────────────────────

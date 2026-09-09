@@ -1,4 +1,5 @@
 import { createApiKey, createEnvironment, Repository } from "../db/repository";
+import { encryptSecret, mintSigningSecret } from "../webhooks/secret";
 
 import type { Db } from "../db/client";
 
@@ -32,6 +33,12 @@ export interface Tenant {
    * external id rather than only its uuid. */
   channelExternalId: string;
   messageId: string;
+  /** One webhook endpoint, because the webhook routes take an endpoint id and the
+   * gauntlet's unit of assertion is another tenant's identifier. Its secret is
+   * encrypted the way the product encrypts one — `mintSigningSecret` then
+   * `encryptSecret` — so a `material` response that leaked one would leak a real
+   * ciphertext rather than a fixture's placeholder. */
+  endpointId: string;
   repo: Repository;
 }
 
@@ -65,11 +72,21 @@ async function seedTenant(db: Db, label: string): Promise<Tenant> {
     text: `${label} says something`,
     userId: user.id,
   });
+  // SUBSCRIBED TO `message.created`, which is what makes the expand attack able to
+  // fail. An endpoint subscribed to nothing would make `created: 0` the answer for
+  // every environment, and the assertion that a named environment reached its OWN
+  // endpoints would pass on a no-op.
+  const endpoint = await repo.createEndpoint({
+    url: `https://${label}.example/hook`,
+    eventTypes: ["message.created"],
+    secretCiphertext: encryptSecret(mintSigningSecret()),
+  });
 
   return {
     environmentId: environment.id,
     credential: key.credential,
     botExternalId: bot.external_id,
+    endpointId: endpoint.id,
     userId: user.id,
     userExternalId,
     channelId: channel.id,
