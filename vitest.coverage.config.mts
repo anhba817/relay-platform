@@ -205,6 +205,13 @@ export default defineConfig({
         // floor to match would be a ratchet describing a test topology. What was pinned
         // instead is what a suite in THIS process can reach: the repository methods those
         // two call, covered by `webhooks/deliveries.itest.ts`.
+        //
+        // THE MAIL-TRANSPORT CHAPTER ADDED A THIRD FILE TO THAT LIST:
+        // `notifications/notification-relay.ts` measures 58.06/50/62.5/62.06 for the same
+        // reason — its loop is started by `main.ts` in a spawned api, and what this
+        // process reaches is `drainOnce`, which the suite calls directly. Three files now
+        // read low because of where their code RUNS rather than whether it is tested, and
+        // the honest place for that fact is here rather than in three lowered pins.
         "services/dispatcher/src/expand.ts": {
           branches: 92,
           functions: 100,
