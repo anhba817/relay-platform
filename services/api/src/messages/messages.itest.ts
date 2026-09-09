@@ -402,7 +402,9 @@ describe("POST /v1/channels/:channelId/messages", () => {
     );
     expect(foreign.status).toBe(404);
     expect(missing.status).toBe(404);
-    expect(await foreign.json()).toEqual(await missing.json());
+    expect(withoutRequestId(await foreign.json())).toEqual(
+      withoutRequestId(await missing.json()),
+    );
   });
 
   it("answers a FOREIGN channel id with the same 404 as a missing one", async () => {
@@ -411,7 +413,9 @@ describe("POST /v1/channels/:channelId/messages", () => {
     expect(foreign.status).toBe(404);
     expect(missing.status).toBe(404);
     // Indistinguishable — no data, and no reveal that the id exists.
-    expect(await foreign.json()).toEqual(await missing.json());
+    expect(withoutRequestId(await foreign.json())).toEqual(
+      withoutRequestId(await missing.json()),
+    );
   });
 
   // ── THE ROUTE A CUSTOMER'S CLIENT ACTUALLY CALLS (FR-001) ─────────────────────

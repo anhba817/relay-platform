@@ -16,6 +16,7 @@ import {
   Repository,
 } from "../db/repository";
 import { encryptSecret, mintSigningSecret } from "./secret";
+import { withoutRequestId } from "../isolation/compare";
 
 // Proving an endpoint works again (FR-WHK-09, research R8).
 //
@@ -478,7 +479,9 @@ describe("the test event", () => {
     // other — and nothing was delivered.
     const missing = await sendTest(randomUUID(), myKey.credential);
     expect(missing.status).toBe(404);
-    expect(await response.json()).toEqual(await missing.json());
+    expect(withoutRequestId(await response.json())).toEqual(
+      withoutRequestId(await missing.json()),
+    );
     expect(received).toHaveLength(0);
   }, 60_000);
 

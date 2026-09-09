@@ -18,6 +18,7 @@ import {
 } from "../db/repository";
 import { parseApiKeyCredential } from "./api-key";
 import { MAX_TOKEN_LIFETIME_SECONDS } from "./user-token";
+import { withoutRequestId } from "../isolation/compare";
 
 // The refusals, over real HTTP against the compose Postgres.
 // Invariants 1-7, 9 and 11 of contracts/credentials.md live here; 8 and 12 are
@@ -217,7 +218,9 @@ describe("credentials", () => {
     );
     expect(foreignAnswer.status).toBe(404);
     expect(absentAnswer.status).toBe(404);
-    expect(await foreignAnswer.json()).toEqual(await absentAnswer.json());
+    expect(withoutRequestId(await foreignAnswer.json())).toEqual(
+      withoutRequestId(await absentAnswer.json()),
+    );
 
     // And the reverse direction, so the test cannot pass by both being broken.
     expect(

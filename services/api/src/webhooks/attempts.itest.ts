@@ -21,6 +21,7 @@ import {
 } from "../db/repository";
 import { encryptSecret, mintSigningSecret } from "./secret";
 import { MAX_ATTEMPTS } from "./schedule";
+import { withoutRequestId } from "../isolation/compare";
 
 // The attempt record, against a real broker and a real api.
 //
@@ -388,7 +389,9 @@ describe("the attempt record", () => {
     const second = await report(body);
     // The dispatcher is told the same thing both times — that is what idempotent
     // means here — so the repeat is invisible to it.
-    expect(await first.json()).toEqual(await second.json());
+    expect(withoutRequestId(await first.json())).toEqual(
+      withoutRequestId(await second.json()),
+    );
 
     // Spend a real budget looking for a second event rather than checking once.
     const events = await collected(scoped.id, 2, 5_000);
