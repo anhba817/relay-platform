@@ -23,11 +23,22 @@ export class RequestContextMiddleware implements NestMiddleware {
     // traceability from one. Until now the id existed only here and on the response
     // header, which a handler cannot read without taking over the response.
     (req as { requestId?: string }).requestId = requestId;
+    // `originalUrl` first, and this line was WRONG from chapter 2.2 until this chapter.
+    // Express rewrites `req.url` relative to the mount point, and this middleware
+    // is applied through `forRoutes("{*path}")`, so `req.url` is `/` — every
+    // request this api has logged recorded `/` as its path. NFR-OBS-06 asks for
+    // one structured line per request that an operator can grep; a line whose
+    // path is always `/` is one they cannot.
+    //
+    // Found by probe while wiring the rate limiter, which reads the same value
+    // to decide which routes it counts and would have counted nothing.
+    const path =
+      (req as { originalUrl?: string }).originalUrl ?? req.url ?? "/";
     res.on("finish", () => {
       this.logger.log("info", "request", {
         request_id: requestId,
         method: req.method,
-        path: req.url,
+        path,
         status: res.statusCode,
       });
     });

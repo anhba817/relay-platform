@@ -55,14 +55,24 @@ export function counterKey(
 export function createCounterStore(
   url: string = process.env["RELAY_REDIS_URL"] ?? DEFAULT_REDIS_URL,
 ): CounterStore {
-  // `lazyConnect` so constructing the store never blocks start-up, and
-  // `maxRetriesPerRequest: 0` so a command against a dead Redis fails fast
-  // instead of queueing — a limiter that waits is worse than one that does not
-  // count, because the request it is holding is a customer's.
+  // `lazyConnect` so constructing the store never blocks start-up.
+  //
+  // THE OFFLINE QUEUE STAYS ON, and the first draft had it off. With it off, the
+  // very first command is rejected because the lazy connection has not been
+  // established yet — so the first request an api instance ever serves reports no
+  // count, degrades, and looks like a Redis outage. The integration suite caught
+  // it as `expected null to be '599'` on the first test and three passes after
+  // it.
+  //
+  // Failing fast on a store that is genuinely down is then `maxRetriesPerRequest:
+  // 0` and a short `connectTimeout`: a queued command rejects as soon as the
+  // connection attempt fails rather than waiting out a retry schedule. A limiter
+  // that waits is worse than one that does not count, because the request it is
+  // holding is a customer's.
   const redis = new Redis(url, {
     lazyConnect: true,
     maxRetriesPerRequest: 0,
-    enableOfflineQueue: false,
+    connectTimeout: 1_000,
   });
   // A dead store is an expected state here, not an exception. Without a listener
   // ioredis emits `error` on an EventEmitter with none attached, which Node turns
