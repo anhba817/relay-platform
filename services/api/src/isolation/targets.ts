@@ -229,6 +229,20 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     accepts: "user",
     shape: "write",
   },
+  // THE REVISIONS CHAPTER'S DELETION (T041a, FR-006, FR-012, FR-013). `accepts: "either"` — an
+  // existing value, used by the read-position route above — because the author OR a
+  // tenant key may delete (FR-MOD-02), which is the class-level declaration this route
+  // correctly inherits rather than overrides.
+  //
+  // **THIS ENTRY IS WHERE AN INHERITED DECLARATION BECOMES VISIBLE.** In the controller
+  // an inherited `@Accepts` and a forgotten one read identically; here the intent is
+  // written down, so a later reader can tell that both classes are meant.
+  {
+    method: "DELETE",
+    path: "/v1/channels/:channelId/messages/:messageId",
+    accepts: "either",
+    shape: "write",
+  },
 
   // ── the two routes this chapter adds, and the ORDER MATTERS ────────────────────
   //

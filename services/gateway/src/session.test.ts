@@ -1,5 +1,6 @@
 import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -803,6 +804,57 @@ describe("the socket (chapter 2.5)", () => {
     // resume work, and a channel the caller is not in is not a question.
     expect(seen).toEqual({ [CHANNEL]: 41 });
     socket.close();
+  });
+});
+
+describe("FR-RTM-05's six event kinds, each with a producer in this service", () => {
+  /** SC-008 — FR-RTM-05 NAMES SIX KINDS AND UNTIL THIS CHAPTER TWO HAD NO PRODUCER.
+   *
+   * *"The system shall emit real-time events for message creation, edit, deletion,
+   * membership change, presence change, and typing."* Six, and the edit and the deletion
+   * were the two the platform could not send.
+   *
+   * **READ AS TEXT, because nothing else can see a producer.** A zod union knows its
+   * members and knows nothing about what emits them; coverage sees a line execute and
+   * cannot see a line that was never written. `main.test.ts` established this shape in
+   * the connection-cap chapter — it parses `main.ts` and asserts every fabric it builds
+   * is injected — and the reason it had to is that the defect that chapter shipped was
+   * an ARGUMENT THAT WAS NOT THERE, with every line around it executing.
+   *
+   * **THE FIRST DRAFT PUT THIS IN `packages/protocol/src/frames.test.ts`**, where it
+   * cannot be written: that file tests schemas, and `grep` for "producer" in it returns
+   * nothing.
+   *
+   * THE SIX ARE WRITTEN OUT AND AN UNKNOWN MEMBER FAILS. A loop over some derived list
+   * would pass on a list that had quietly lost a member, which is the failure mode this
+   * repository has paid for five times — a pattern matching the examples in front of it
+   * rather than the set the rule names. */
+  it("sends every one of the six kinds the clause names", async () => {
+    const source = await readFile(new URL("session.ts", import.meta.url), "utf8");
+
+    // FR-RTM-05's six, in its own order, mapped to the frame type this service sends.
+    const PRODUCERS: ReadonlyArray<readonly [string, string]> = [
+      ["message creation", "message.created"],
+      ["message edit", "message.updated"],
+      ["message deletion", "message.deleted"],
+      ["membership change", "membership.changed"],
+      ["presence change", "presence.changed"],
+      ["typing", "typing"],
+    ];
+    expect(PRODUCERS).toHaveLength(6);
+
+    for (const [clause, type] of PRODUCERS) {
+      // `type: "x"` as a literal in a send position. A mention in a comment does not
+      // count, which is why the pattern demands the `type:` key.
+      expect(source, `${clause} has no producer: no \`type: "${type}"\` in session.ts`).toMatch(
+        new RegExp(`type:\\s*"${type.replace(".", "\\.")}"`),
+      );
+    }
+
+    // AND THE CHECK CAN FAIL, which a grep that only ever passes cannot show. A frame
+    // type this service does NOT send must not match — `connection.ack` does send, so
+    // the negative case has to be a real frame nothing here emits.
+    expect(source).not.toMatch(/type:\s*"message.forged"/);
   });
 });
 
