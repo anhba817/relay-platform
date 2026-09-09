@@ -213,7 +213,16 @@ interface ApiUnderTest {
 }
 
 async function startApi(): Promise<ApiUnderTest> {
-  const port = 4900 + Math.floor(Math.random() * 200);
+  // `PORT=0`, AND THE PORT READ BACK FROM THE CHILD — not a hand-allocated band.
+  //
+  // The first draft of this function picked one: 5400–5599, after two earlier drafts
+  // that overlapped `isolation.itest.ts`'s range. A band is a table somebody maintains
+  // in a comment, nothing checks it, and **5400–5599 contains 5432**, which is where
+  // this machine's Postgres listens. A child that cannot bind fails in a way the health
+  // probe below cannot distinguish from one that is merely slow.
+  //
+  // `PORT=0` asks the operating system for a free port, and the child prints the one it
+  // got. There is no table, so there is nothing to keep in step.
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error(
@@ -241,23 +250,44 @@ async function startApi(): Promise<ApiUnderTest> {
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     env: {
       ...process.env,
-      PORT: String(port),
+      PORT: "0",
       RELAY_OUTBOX_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",
       RELAY_EVENT_CONSUMER: "off",
     },
-    stdio: "ignore",
+    // PIPED, NOT IGNORED, and the two decisions are one decision: a child whose
+    // output is discarded cannot report the port it bound.
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  const port = await new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("api never reported a port")), 30_000);
+    let buffered = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      buffered += chunk.toString();
+      for (const line of buffered.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { msg?: string; port?: number };
+          if (parsed.msg === "listening" && typeof parsed.port === "number") {
+            clearTimeout(timer);
+            resolve(parsed.port);
+            return;
+          }
+        } catch {
+          /* a partial line; the next chunk completes it */
+        }
+      }
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`api exited before listening (code ${String(code)})`));
+    });
+  });
+  // AND NO HEALTH LOOP. The `listening` line IS the readiness signal — the process has
+  // bound the port by the time it prints one. The loop this replaced probed `/health`
+  // against an api that serves `/healthz`, so it ran a hundred failed requests, slept
+  // ten seconds, and returned the url anyway. It had never once succeeded.
   const url = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      const res = await fetch(`${url}/health`);
-      if (res.ok) break;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
   return {
     url,
     environmentId: environment.id,

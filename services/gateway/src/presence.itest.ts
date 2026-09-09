@@ -94,7 +94,9 @@ interface ApiUnderTest {
  * `seedSocketTenants` gives one user per tenant, and presence needs a watcher and
  * a subject who share a channel. */
 async function startApi(): Promise<ApiUnderTest> {
-  const port = 4700 + Math.floor(Math.random() * 200);
+  // `PORT=0`, AND THE PORT READ BACK FROM THE CHILD. This picked 4700–4899 from a
+  // table of bands maintained in comments across seven files; nothing checks such a
+  // table, and this one already overlapped another suite's range by sixty ports.
   const dist = join(REPO, "services", "api", "dist");
   if (!existsSync(join(dist, "main.js"))) {
     throw new Error(
@@ -177,23 +179,45 @@ async function startApi(): Promise<ApiUnderTest> {
   const child: ChildProcess = spawn("node", [join(dist, "main.js")], {
     env: {
       ...process.env,
-      PORT: String(port),
+      PORT: "0",
       RELAY_OUTBOX_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",
       RELAY_EVENT_CONSUMER: "off",
     },
-    stdio: "ignore",
+    // PIPED, NOT IGNORED: a child whose output is discarded cannot report the port it
+    // bound, which is why the two decisions are one decision.
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  const port = await new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("api never reported a port")), 30_000);
+    let buffered = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      buffered += chunk.toString();
+      for (const line of buffered.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { msg?: string; port?: number };
+          if (parsed.msg === "listening" && typeof parsed.port === "number") {
+            clearTimeout(timer);
+            resolve(parsed.port);
+            return;
+          }
+        } catch {
+          /* a partial line; the next chunk completes it */
+        }
+      }
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`api exited before listening (code ${String(code)})`));
+    });
+  });
+  // AND NO HEALTH LOOP. The `listening` line IS the readiness signal. The loop this
+  // replaced probed `/health` against an api that serves `/healthz` — a hundred failed
+  // requests, ten seconds of sleeping, and the url returned anyway. It had never once
+  // succeeded, and nothing could tell: a flat sleep long enough for the api to boot
+  // reports success either way.
   const url = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      const res = await fetch(`${url}/health`);
-      if (res.ok) break;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
   return {
     url,
     credential: key.credential,
