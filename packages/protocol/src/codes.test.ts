@@ -217,3 +217,44 @@ describe("the refusal this chapter's attachments add", () => {
     expect(ERROR_CODES.media_not_available).toMatch(/media/);
   });
 });
+
+describe("the five refusals this chapter's webhook surface adds", () => {
+  // NAMED, NOT COUNTED, for the reason the blocks above give — and here the names were
+  // decided somewhere else. `docs/08-error-reference.md` published a section for each of
+  // these five before the registry held any of them, so what this asserts is CLOSURE in
+  // the direction no gate covers: `check-error-codes` reads the built `dist` against the
+  // docs and counts, so a code documented and unregistered is indistinguishable from a
+  // section nobody has written.
+  const WEBHOOK_CODES = [
+    "webhook_endpoint_limit_reached",
+    "webhook_url_invalid",
+    "webhook_url_insecure",
+    "webhook_url_private_address",
+    "webhook_event_types_empty",
+  ] as const;
+
+  it.each(WEBHOOK_CODES)("registers %s with a description a client can act on", (code) => {
+    expect(ERROR_CODES).toHaveProperty(code);
+    expect(ERROR_CODES[code]).not.toBe("");
+  });
+
+  it("keeps all five distinct from internal_error, which is what they shipped as", () => {
+    // THE DEFECT, AS AN ASSERTION. Every one of these was an unnamed 422, and an unnamed
+    // 422 becomes `internal_error` in `ProtocolErrorFilter`'s ladder — a correct status
+    // and a correct message with a body telling the client the server had broken.
+    for (const code of WEBHOOK_CODES) {
+      expect(ERROR_CODES[code]).not.toBe(ERROR_CODES.internal_error);
+    }
+    // AND DISTINCT FROM EACH OTHER. Five copied lines would satisfy the loop above.
+    const meanings = WEBHOOK_CODES.map((c) => ERROR_CODES[c]);
+    expect(new Set(meanings).size).toBe(meanings.length);
+  });
+
+  it("says which of the two url refusals is about the scheme", () => {
+    // The pair a caller is most likely to confuse: an unparseable url and a parseable
+    // one this platform will not deliver to. The wording is the contract `docs_url`
+    // resolves to, and a developer reads it rather than the code.
+    expect(ERROR_CODES.webhook_url_insecure).toMatch(/https/);
+    expect(ERROR_CODES.webhook_url_invalid).toMatch(/absolute/);
+  });
+});

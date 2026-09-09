@@ -116,6 +116,54 @@ describe("expansion", () => {
     expect(await timesHandled(db, DISPATCHER, e.eventId)).toBe(1);
   });
 
+  it("a subscriber to the two message revision events is told about an edit and a deletion", async () => {
+    // OWED FORWARD FROM THE REVISIONS CHAPTER, which built the outbox rows and could
+    // not show the FILTER: no endpoint existed to subscribe. `messages.itest.ts` there
+    // asserts that every edit writes an outbox row and a repeated deletion writes none;
+    // an outbox row is not a delivery, and what decides whether a customer hears about
+    // an edit is this expansion.
+    //
+    // **`seedEndpoint` IS PARAMETERISED AND EVERY EXISTING CALL SITE PASSES
+    // `["message.created"]`.** A test that forgot to pass the new types would seed an
+    // endpoint subscribed to creations, receive nothing, and read as though the
+    // expansion were broken rather than as though the test were — so the types are
+    // passed explicitly and the negative control below is what proves the filter works.
+    const scratch = await createEnvironment(db, { name: "deliveries-itest-revisions" });
+    const scratchRepo = new Repository(db, scratch.id);
+    const secret = encryptSecret(mintSigningSecret());
+
+    const both = await scratchRepo.createEndpoint({
+      url: "https://example.test/edits-and-deletions",
+      eventTypes: ["message.updated", "message.deleted"],
+      secretCiphertext: secret,
+    });
+    // SUBSCRIBED TO CREATIONS ONLY. FR-WHK-02 spells the message events as separate
+    // names rather than one `message.*` with a discriminator precisely so this endpoint
+    // hears nothing below — and that is the half a test with one endpoint cannot show.
+    const creationsOnly = await scratchRepo.createEndpoint({
+      url: "https://example.test/creations-only",
+      eventTypes: ["message.created"],
+      secretCiphertext: secret,
+    });
+
+    for (const type of ["message.updated", "message.deleted"] as const) {
+      const e = {
+        eventId: randomUUID(),
+        environmentId: scratch.id,
+        type,
+        payload: { id: randomUUID(), type },
+      };
+      const result = await expandEventToDeliveries(db, e);
+      expect(result.duplicate, type).toBe(false);
+      // ONE ROW, NOT TWO. The subscriber to both types gets it; the creations-only
+      // endpoint does not.
+      expect(result.created, type).toBe(1);
+      const rows = await scratchRepo.listDeliveriesForEvent(e.eventId);
+      expect(rows.map((r) => r.endpoint_id), type).toEqual([both.id]);
+      expect(rows.map((r) => r.endpoint_id), type).not.toContain(creationsOnly.id);
+    }
+  });
+
   it("invariant 8: a disabled or deleted endpoint receives nothing", async () => {
     const scratch = await createEnvironment(db, { name: "deliveries-itest-off" });
     const scratchRepo = new Repository(db, scratch.id);

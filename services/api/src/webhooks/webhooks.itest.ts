@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../app.module";
 import { createDb, createPool, type Db } from "../db/client";
 import { createApiKey, createEnvironment } from "../db/repository";
+import { docsUrl, type ErrorCode } from "@relay/protocol";
 import { MAX_ENDPOINTS_PER_ENVIRONMENT } from "./webhooks.service";
 
 // The webhook management surface, over real HTTP against the compose Postgres
@@ -88,10 +89,46 @@ describe("webhook endpoints", () => {
     });
 
     expect(refused.status).toBe(422);
+    // THE CODE, NOT ONLY THE STATUS AND THE TEXT — and this assertion is the one that
+    // was missing. `ProtocolErrorFilter` derives a code from the status for 400, 401,
+    // 403 and 404 only, so an unnamed 422 shipped
+    // `{"code":"internal_error", …}` with a correct status and a correct message beside
+    // it. This test asserted exactly those two and passed through the lie for as long as
+    // it has existed. A client branches on `code`.
+    const body = (await refused.json()) as Record<string, unknown>;
+    expect(body["code"]).toBe("webhook_endpoint_limit_reached");
+    expect(body["docs_url"]).toBe(docsUrl("webhook_endpoint_limit_reached"));
     // The credentials chapter's lesson about error messages that name the mistake, applied
     // to a limit: "too many endpoints" leaves the reader counting.
-    const body = await refused.text();
-    expect(body).toContain(String(MAX_ENDPOINTS_PER_ENVIRONMENT));
+    expect(String(body["message"])).toContain(String(MAX_ENDPOINTS_PER_ENVIRONMENT));
+  });
+
+  it("names every one of the five refusals the reference publishes for this route", async () => {
+    // ONE TEST FOR THE WHOLE VOCABULARY, because the defect was not one refusal — it
+    // was that NONE of them carried a code. Each row is the body the error reference
+    // documents: a code, and the field it is about where the reference names one.
+    const scratchEnv = await createEnvironment(db, { name: "webhooks-itest-codes" });
+    const scratchKey = await createApiKey(db, { environmentId: scratchEnv.id });
+
+    const cases: ReadonlyArray<
+      readonly [Record<string, unknown>, ErrorCode, string | undefined]
+    > = [
+      [{ url: "not-a-url" }, "webhook_url_invalid", "url"],
+      [{ url: "http://example.test/x" }, "webhook_url_insecure", "url"],
+      [{ url: "https://127.0.0.1/x" }, "webhook_url_private_address", "url"],
+      [{ url: "https://example.test/x", event_types: [] }, "webhook_event_types_empty", "event_types"],
+    ];
+
+    for (const [body, code, field] of cases) {
+      const res = await create(scratchKey.credential, body);
+      expect(res.status, code).toBe(422);
+      const answer = (await res.json()) as Record<string, unknown>;
+      expect(answer["code"], JSON.stringify(body)).toBe(code);
+      expect(answer["docs_url"], code).toBe(docsUrl(code));
+      if (field !== undefined) expect(answer["field"], code).toBe(field);
+      // AND NEVER `internal_error`, which is what all four said before this chapter.
+      expect(answer["code"], code).not.toBe("internal_error");
+    }
   });
 
   // --- invariant 2 -------------------------------------------------------

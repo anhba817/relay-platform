@@ -1,9 +1,6 @@
-import {
-  Injectable,
-  NotFoundException,
-  UnprocessableEntityException,
-} from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 
+import { protocolError } from "../protocol-error";
 import { Repository, type WebhookEndpointRow } from "../db/repository";
 import { encryptSecret, mintSigningSecret } from "./secret";
 
@@ -56,8 +53,10 @@ export class WebhooksService {
 
     const existing = await this.repo.countEndpoints();
     if (existing >= MAX_ENDPOINTS_PER_ENVIRONMENT) {
-      throw new UnprocessableEntityException(
+      throw protocolError(
+        "webhook_endpoint_limit_reached",
         `an environment may have at most ${MAX_ENDPOINTS_PER_ENVIRONMENT} webhook endpoints; this one already has ${existing}`,
+        422,
       );
     }
 
@@ -108,25 +107,39 @@ export class WebhooksService {
     try {
       parsed = new URL(raw);
     } catch {
-      throw new UnprocessableEntityException("url must be a valid absolute URL");
+      throw protocolError(
+        "webhook_url_invalid",
+        "url must be a valid absolute URL",
+        422,
+        "url",
+      );
     }
     if (parsed.protocol !== "https:") {
-      throw new UnprocessableEntityException(
+      throw protocolError(
+        "webhook_url_insecure",
         "url must use https — a signature over a plaintext channel protects the body, not the reader",
+        422,
+        "url",
       );
     }
     const host = parsed.hostname;
     if (BLOCKED_HOSTS.test(host) || BLOCKED_RANGES.some((r) => r.test(host))) {
-      throw new UnprocessableEntityException(
+      throw protocolError(
+        "webhook_url_private_address",
         "url must not point at a loopback, link-local or private address",
+        422,
+        "url",
       );
     }
   }
 
   private assertEventTypes(types: string[]): void {
     if (!Array.isArray(types) || types.length === 0) {
-      throw new UnprocessableEntityException(
+      throw protocolError(
+        "webhook_event_types_empty",
         "event_types must list at least one event type",
+        422,
+        "event_types",
       );
     }
   }

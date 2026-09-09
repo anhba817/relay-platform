@@ -206,6 +206,34 @@ export const ERROR_CODES = {
    * platform no longer has — at which point it is deleted, not repurposed. */
   media_not_available:
     "hosted media is not available yet; attach an http or https url instead",
+  // ── THE WEBHOOK REFUSALS (THIS CHAPTER) ─────────────────────────────────────
+  //
+  // FIVE CODES THE ERROR REFERENCE ALREADY PUBLISHED AND THIS REGISTRY DID NOT HAVE.
+  // `docs/08-error-reference.md` carries a section for each — status, retryability and
+  // the field — and `webhooks.service.ts` threw a bare `UnprocessableEntityException`
+  // for every one of them. `ProtocolErrorFilter` derives a code from the status for
+  // 400, 401, 403 and 404 only, so all five went out as:
+  //
+  //     {"code":"internal_error","docs_url":".../internal_error",
+  //      "message":"url must use https — a signature over a plaintext channel …"}
+  //
+  // Measured on this tree, not inferred: the status was right, the message was right,
+  // and the code told the client the server had broken. `webhooks.itest.ts` asserted
+  // the status and the message text and passed straight through it, which is why this
+  // survived — only the code could have caught it.
+  //
+  // THE VOCABULARY WAS NOT INVENTED HERE. The reference decided it; this is the
+  // registry catching up, which is the direction `check-error-codes` cannot check
+  // (it reads the built `dist` against the docs and counts, so a code documented and
+  // unregistered looks like a code nobody has written a section for).
+  webhook_endpoint_limit_reached:
+    "this environment already holds the maximum number of webhook endpoints; delete one, or use another environment",
+  webhook_url_invalid: "the url is not a valid absolute URL — send scheme, host and path",
+  webhook_url_insecure:
+    "the url must use https; a signature over a plaintext channel protects the body, not the reader",
+  webhook_url_private_address:
+    "the url points at a loopback, link-local or private address, which this platform will not deliver to",
+  webhook_event_types_empty: "event_types must list at least one event type",
   not_found:
     "no such resource for this tenant — and DELIBERATELY the same answer as for a resource in another tenant (FR-TEN-05)",
   internal_error:
