@@ -142,10 +142,27 @@ describe("every fabric createServer builds is injected", () => {
     "utf8",
   );
 
-  /** `const x = createY({` — the fabrics, derived rather than listed, so a fifth
-   * arrives here without anyone remembering. */
+  /** `const x = createY(` — the fabrics, derived rather than listed, so a sixth
+   * arrives here without anyone remembering.
+   *
+   * TWO CHANGES, AND THE FIRST ONE MISSED A MODULE. The pattern required an OBJECT
+   * ARGUMENT — `create[A-Z]\w*\(\{` — and the counter store takes none:
+   * `createGatewayLimits()` reads its url from the environment. So the ninth Redis
+   * client in this file was invisible to the check written to make exactly that
+   * impossible, and it was invisible in the direction that passes. Measured: the old
+   * pattern derives five names, the new one six.
+   *
+   * SCOPED TO `createServer`'S BODY, which is what this describe's title always
+   * claimed. Dropping the `{` widens the match to `createLogger` and `createServer`
+   * in the `import.meta.main` block below the function — neither a fabric, both
+   * `const x = createY(`. Slicing to the text between the function and the call it
+   * has to appear in is the honest boundary; an exclusion list would be the thing
+   * this file exists instead of. */
   function built(): string[] {
-    return [...SOURCE.matchAll(/\bconst (\w+) = create[A-Z]\w*\(\{/g)].map((m) => m[1]!);
+    const start = SOURCE.indexOf("export function createServer");
+    const end = SOURCE.indexOf("attachSessions({", start);
+    return [...SOURCE.slice(start, end).matchAll(/\bconst (\w+) = create[A-Z]\w*\(/g)]
+      .map((m) => m[1]!);
   }
 
   /** The object literal `attachSessions` is called with. */
@@ -158,7 +175,18 @@ describe("every fabric createServer builds is injected", () => {
   it("derives the fabrics and the call, and finds both", () => {
     // THE POSITIVE CONTROL. Every assertion below is about which names are missing,
     // and a derivation that found nothing satisfies all of them.
-    expect(built().length, "no `const x = createY({` found in main.ts").toBeGreaterThan(1);
+    expect(built().length, "no `const x = createY(` found in main.ts").toBeGreaterThan(1);
+    // AND THE COUNT, because "more than one" was satisfied by a pattern that found
+    // five of six. A number here goes red when a fabric is added without a thought
+    // about this file, which is the moment to have it.
+    expect(built(), "the fabrics createServer builds").toEqual([
+      "fanout",
+      "presence",
+      "membership",
+      "typing",
+      "connections",
+      "limits",
+    ]);
     expect(injected(), "no attachSessions call found").toContain("server,");
   });
 
