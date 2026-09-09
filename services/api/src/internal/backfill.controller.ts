@@ -112,10 +112,15 @@ function toFrame(row: MessageWithSender, channelId: string): Message[] {
       seq: row.seq,
       user: row.user,
       text: row.text,
-      // `[]` UNTIL PHASE 8 WIDENS THE READ. `MessageWithSender` carries no
-      // attachments column yet, and no row can hold one until phase 4 writes the
-      // INSERT — so this is the true value today rather than a placeholder.
-      attachments: [],
+      /** FR-010 and FR-006. A REPLAY MUST NOT BE A LESSER MESSAGE than the live frame it
+       * replaces — a client that was away sees what a client that stayed saw, which is
+       * SC-005's whole claim.
+       *
+       * NO `?? []` HERE, and that is the point of putting the conversion in
+       * `listMessages`' map: `MessageWithSender` extends `MessageRow`, whose
+       * `attachments` is a required `Attachment[]`, so by the time a row reaches this
+       * mapping the NULL is already an empty list. One conversion, at the read. */
+      attachments: row.attachments,
       created_at: row.created_at,
     },
   ];
