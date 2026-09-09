@@ -197,8 +197,9 @@ export const ERROR_CODES = {
    * be done is the thing it asks for. `ProtocolErrorFilter` derives a code from the
    * status for 400/401/403/404 and answers `internal_error` for everything else, so a
    * 422 MUST supply this code explicitly through `protocolError` — an unnamed 422 ships
-   * a body calling itself an internal error, which is `gaps.md`'s five bare 422s in
-   * `webhooks.service.ts`, still open.
+   * a body calling itself an internal error. The webhook chapter has five of those still
+   * open, on a service this tree has not built yet; this is the first 422 in the platform
+   * that names its own code, and it names it because the schema raises it.
    *
    * §4.14 REPLACES THE ARM RATHER THAN THIS CODE. When hosted media ships, the
    * `{ type: "media" }` arm starts accepting and this entry describes a state the

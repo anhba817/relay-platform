@@ -218,9 +218,12 @@ describe("POST /v1/channels/:channelId/messages", () => {
       // done is the thing it asks for.
       expect(res.status).toBe(422);
       const body = (await res.json()) as Record<string, unknown>;
-      // THE BODY, NOT ONLY THE STATUS (T039a). `webhooks.itest.ts:90` asserts a 422 and
-      // its message text, and the five bare 422s behind it have been emitting
-      // `internal_error` for four chapters — a status assertion cannot see that.
+      // THE BODY, NOT ONLY THE STATUS. A 422 is the easy half: `ProtocolErrorFilter`
+      // derives a code from the status for 400, 401, 403 and 404 only, so every OTHER
+      // status ships a body calling itself `internal_error` while the status line reads
+      // correctly. A test that asserts the status and the message text passes through
+      // exactly that — which is a finding the webhook chapter owns, on a suite this tree
+      // does not have yet. What is asserted here instead is the code itself.
       expect(body.code).toBe("media_not_available");
       // DERIVED, NOT SPELLED. `codes.test.ts` owns the URL RULE — one assertion, in the
       // package that builds the URL — and restating its shape here would be a second
