@@ -1,0 +1,17 @@
+# Build contexts are the whole workspace — without this, every image build ships
+# every node_modules directory and every dist/ into the daemon before a single
+# layer is cached. The install happens INSIDE the image, from the lockfile.
+node_modules
+**/node_modules
+dist
+**/dist
+coverage
+**/coverage
+.turbo
+**/.turbo
+.git
+*.log
+.env*
+Dockerfile
+**/Dockerfile
+.dockerignore
