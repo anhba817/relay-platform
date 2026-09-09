@@ -52,8 +52,8 @@ export const DEFAULT_MARGIN_MS = 1_000;
  * `SET … NX` answers `"OK"` for the one caller that found the key absent and null
  * for everyone else. Factored out because the module builds its own Redis clients
  * from a url and cannot be handed a double — the gateway's shape is pure logic in
- * `.test.ts` and Redis in `.itest.ts`, which is why `limits.ts` exports
- * `overLimit` and `windowStartFor` the same way. */
+ * `.test.ts` and Redis in `.itest.ts`, so the part worth unit-testing has to be a
+ * function of the reply rather than a method on the client. */
 export function wonTransition(reply: string | null): boolean {
   return reply === "OK";
 }
@@ -136,11 +136,11 @@ export function createPresence({
   });
   const subscriber = new Redis(url);
 
-  // THE STATED REASON FOR THESE LISTENERS IS NOT THE ONE THE LIMITER GIVES.
-  // `limits.ts` says a missing listener means "the gateway would die"; chapter
-  // 3.18 measured that against ioredis 6.0.0 by reproducing the exact client, and
-  // the process STAYS ALIVE — ioredis prints `[ioredis] Unhandled error event: …`
-  // itself and continues. Seven lines in four seconds against a dead port.
+  // THE USUAL REASON GIVEN FOR THESE LISTENERS IS NOT THE TRUE ONE. "A missing
+  // `error` listener means the process dies" is the folklore; measured against
+  // ioredis 6.0.0 by reproducing this exact client, the process STAYS ALIVE —
+  // ioredis prints `[ioredis] Unhandled error event: …` itself and continues.
+  // Seven lines in four seconds against a dead port.
   //
   // The accurate reason is that those lines are unstructured and unbounded, which
   // defeats NFR-OBS-01. A presence path that cannot reach Redis is an expected
