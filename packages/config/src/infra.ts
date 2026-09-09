@@ -13,7 +13,7 @@ export const INFRA_SERVICES = [
   "clickhouse",
   // The fifth, and the only one that is not a store: Mailpit
   // catches the SMTP the notification relay sends so a test can read what was
-  // RECEIVED rather than what was passed (FR-WHK-07).
+  // RECEIVED rather than what was passed (FR-021).
   "mailpit",
 ] as const;
 
