@@ -4,8 +4,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, createPool, type Db } from "../db/client";
 import {
   createEnvironment,
+  deliveryMaterial,
+  DeliveryNotFoundError,
   drainDueDeliveries,
   expandEventToDeliveries,
+  pendingDeliveryDepth,
   recordAttemptOutcome,
   replayDeadLetter,
   Repository,
@@ -507,5 +510,241 @@ describe("dead letters", () => {
       (d) => d.event_id === eventId,
     );
     expect(still).toHaveLength(1);
+  });
+});
+
+// The material for one attempt.
+//
+// This block exists because coverage said the two functions below were never
+// executed by any test in the instrument. They ARE exercised constantly — the
+// dispatcher calls both over HTTP on every pass — but the dispatcher's suite
+// runs the api as a CHILD PROCESS, and a child's coverage is not attributable.
+// So the one function in the platform that hands a customer's signing secret
+// back in plaintext was, by the only measure the constitution names, untested.
+describe("the material for one attempt", () => {
+  let db: Db;
+
+  /** A FRESH ENVIRONMENT per delivery, and the reason is a bug this suite had
+   * for exactly one run: expansion matches every subscribed endpoint in the
+   * environment, so a second test seeding a second endpoint made
+   * `listDeliveriesForEvent[0]` the FIRST test's delivery. The assertions then
+   * rotated one endpoint's secret and read another one's material. One
+   * environment per case is the same isolation the top of this file describes,
+   * applied one level down. */
+  const seedDelivery = async (): Promise<{
+    deliveryId: string;
+    endpointId: string;
+    secret: string;
+    eventId: string;
+    envId: string;
+    repo: Repository;
+  }> => {
+    const env = await createEnvironment(db, {
+      name: `material-itest-${randomUUID().slice(0, 8)}`,
+    });
+    const repo = new Repository(db, env.id);
+    const secret = mintSigningSecret();
+    const endpoint = await repo.createEndpoint({
+      url: `https://example.test/${randomUUID()}`,
+      eventTypes: ["message.created"],
+      secretCiphertext: encryptSecret(secret),
+    });
+    const eventId = randomUUID();
+    await expandEventToDeliveries(db, {
+      eventId,
+      environmentId: env.id,
+      type: "message.created",
+      payload: { id: eventId, type: "message.created" },
+    });
+    const deliveries = await repo.listDeliveriesForEvent(eventId);
+    expect(deliveries).toHaveLength(1);
+    return {
+      deliveryId: deliveries[0]!.id,
+      endpointId: endpoint.id,
+      secret,
+      eventId,
+      envId: env.id,
+      repo,
+    };
+  };
+
+  beforeAll(() => {
+    db = createDb(createPool());
+  });
+
+  it("hands back the url, the payload and the DECRYPTED secret", async () => {
+    const { deliveryId, endpointId, secret, eventId, envId } = await seedDelivery();
+
+    const material = await deliveryMaterial(db, deliveryId);
+
+    expect(material).not.toBeNull();
+    expect(material!.endpoint_id).toBe(endpointId);
+    expect(material!.event_id).toBe(eventId);
+    expect(material!.environment_id).toBe(envId);
+    expect(material!.attempt).toBe(1);
+    // Plaintext, on purpose and exactly once in the platform. The dispatcher
+    // cannot sign with a ciphertext, and it holds no key.
+    expect(material!.secrets).toEqual([secret]);
+  });
+
+  it("hands back BOTH secrets inside the rotation window", async () => {
+    const { deliveryId, endpointId, secret: original, repo } = await seedDelivery();
+    const replacement = mintSigningSecret();
+    await repo.rotateEndpointSecret(endpointId, encryptSecret(replacement));
+
+    const material = await deliveryMaterial(db, deliveryId);
+
+    // The new one FIRST — a customer verifying against the current secret
+    // succeeds on the first comparison, and the old one is only there so a
+    // deployment still running yesterday's configuration is not cut off
+    // mid-rotation.
+    expect(material!.secrets).toEqual([replacement, original]);
+  });
+
+  it("hands back nothing for a disabled endpoint", async () => {
+    const { deliveryId, endpointId, repo } = await seedDelivery();
+    await repo.setEndpointEnabled(endpointId, false);
+
+    // The spec's edge case: deliveries already in the schedule for an endpoint
+    // the customer paused must not be delivered. `null` is what the dispatcher
+    // turns into `skipped`, which acknowledges the message rather than retrying
+    // a delivery that can never succeed.
+    expect(await deliveryMaterial(db, deliveryId)).toBeNull();
+  });
+
+  it("hands back nothing for a deleted endpoint", async () => {
+    const { deliveryId, endpointId, repo } = await seedDelivery();
+    await repo.deleteEndpoint(endpointId);
+
+    // Soft-deleted, so the row is still joinable — which is exactly why this
+    // check has to be explicit. A hard delete would have made the join fail and
+    // hidden the requirement behind a foreign key.
+    expect(await deliveryMaterial(db, deliveryId)).toBeNull();
+  });
+
+  it("hands back nothing for a delivery id that does not exist", async () => {
+    expect(await deliveryMaterial(db, randomUUID())).toBeNull();
+  });
+
+  it("counts what is pending and stops counting it once it is delivered", async () => {
+    const { deliveryId } = await seedDelivery();
+
+    // GLOBAL, and asserted as a delta for that reason — this is the number an
+    // operator watches, so it counts every tenant's backlog, and another suite
+    // seeding rows beside this one must not be able to break it.
+    const before = await pendingDeliveryDepth(db);
+    expect(before).toBeGreaterThan(0);
+
+    await recordAttemptOutcome(db, { deliveryId, attempt: 1, status: 200 });
+
+    expect(await pendingDeliveryDepth(db)).toBe(before - 1);
+  });
+});
+
+// The answers nobody asks for on a good day.
+//
+// Every case here is a branch the happy path never reaches: a delivery id that
+// is not there, a report that arrives after the schedule has already finished
+// with it, a dead-letter with no status because there was never a response. They
+// are cheap to write and they are exactly what an on-call engineer meets first,
+// because the ordinary paths are the ones that do not page anyone.
+describe("the outcome of an attempt, off the happy path", () => {
+  let db: Db;
+
+  /** Fresh environment per delivery — one endpoint, one delivery row, no
+   * borrowing another case's rows. */
+  const seedOne = async () => {
+    const env = await createEnvironment(db, {
+      name: `outcome-edge-${randomUUID().slice(0, 8)}`,
+    });
+    const repo = new Repository(db, env.id);
+    await repo.createEndpoint({
+      url: `https://example.test/${randomUUID()}`,
+      eventTypes: ["message.created"],
+      secretCiphertext: encryptSecret(mintSigningSecret()),
+    });
+    const eventId = randomUUID();
+    await expandEventToDeliveries(db, {
+      eventId,
+      environmentId: env.id,
+      type: "message.created",
+      payload: { id: eventId },
+    });
+    const rows = await repo.listDeliveriesForEvent(eventId);
+    expect(rows).toHaveLength(1);
+    return { delivery: rows[0]!, repo };
+  };
+
+  beforeAll(() => {
+    db = createDb(createPool());
+  });
+
+  it("refuses an outcome for a delivery that does not exist", async () => {
+    // A CALLER error, not a platform one. The dispatcher can only produce this
+    // by reporting against an id it invented, so it becomes a 404 rather than a
+    // 500 — and the distinction matters, because a 500 would tell the dispatcher
+    // to leave the message unacknowledged and try the same impossible report
+    // until the broker gave up.
+    await expect(
+      recordAttemptOutcome(db, { deliveryId: randomUUID(), attempt: 1, status: 200 }),
+    ).rejects.toBeInstanceOf(DeliveryNotFoundError);
+  });
+
+  it("answers a late report about a DELIVERED delivery with what was decided", async () => {
+    const { delivery } = await seedOne();
+    await recordAttemptOutcome(db, { deliveryId: delivery.id, attempt: 1, status: 200 });
+
+    // The dispatcher crashed after reporting and before acknowledging, so the
+    // broker handed the job back and it reported again. The answer must be the
+    // ORIGINAL decision — anything else would have it retry a delivery the
+    // customer already received.
+    const late = await recordAttemptOutcome(db, {
+      deliveryId: delivery.id,
+      attempt: 1,
+      status: 200,
+    });
+
+    expect(late.outcome).toBe("delivered");
+    expect(late.nextAttemptAt).toBeNull();
+  });
+
+  it("answers a late report about a DEAD delivery with what was decided", async () => {
+    const { delivery } = await seedOne();
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      await recordAttemptOutcome(db, { deliveryId: delivery.id, attempt, status: 503 });
+    }
+
+    const late = await recordAttemptOutcome(db, {
+      deliveryId: delivery.id,
+      attempt: MAX_ATTEMPTS,
+      status: 503,
+    });
+
+    expect(late.outcome).toBe("dead_lettered");
+    expect(late.nextAttemptAt).toBeNull();
+  });
+
+  it("dead-letters a delivery that never produced a status at all", async () => {
+    const { delivery, repo } = await seedOne();
+    // Every attempt a timeout: no response, so no status and no body. The
+    // dead-letter record has to be writable from nothing but the fact that
+    // nothing came back, or the endpoints that fail most completely are the ones
+    // that leave the least evidence.
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      await recordAttemptOutcome(db, { deliveryId: delivery.id, attempt });
+    }
+
+    const mine = (await repo.listDeadLetters()).filter(
+      (d) => d.event_id === delivery.event_id,
+    );
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.last_status).toBeNull();
+    expect(mine[0]!.attempts).toBe(MAX_ATTEMPTS);
+  });
+
+  it("refuses to replay a dead letter that does not exist", async () => {
+    // `false`, not a throw: the controller turns it into the same 404 a foreign
+    // tenant gets, so a probe cannot tell "no such record" from "not yours".
+    expect(await replayDeadLetter(db, randomUUID())).toBe(false);
   });
 });

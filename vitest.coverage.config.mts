@@ -82,7 +82,7 @@ export default defineConfig({
         // isolation MUST have 100% BRANCH coverage (NFR-MNT-02).
         //
         // They do not. `repository.ts` — which holds all three — measures
-        // 85.91%. These per-file numbers are therefore a RATCHET pinned at
+        // 89.51%. These per-file numbers are therefore a RATCHET pinned at
         // today's measurement, not the bar: they stop the figure sliding
         // backwards while the gap is closed, and they are deliberately not the
         // 100% the constitution asks for, because a threshold nothing can pass
@@ -162,6 +162,37 @@ export default defineConfig({
           functions: 100,
           lines: 97,
           statements: 95,
+        },
+        //
+        // THE WEBHOOK CHAPTER RAISED THESE IN THE PUBLISHED ORDER AND CANNOT HERE, which
+        // is worth one paragraph because the direction is the interesting part. There, the
+        // webhook work added six operations to this file and branches fell 85.91 -> 78.22
+        // — `deliveryMaterial` and `pendingDeliveryDepth` were called only by the
+        // dispatcher, whose suite runs the api as a CHILD PROCESS whose coverage is not
+        // attributable — and the answer was to write `webhooks/deliveries.itest.ts` rather
+        // than lower the pin. This order has already run the chapters that took this file
+        // to 92, so the same tests arrive against a HIGHER floor than they were written
+        // for. The pin stays where the later chapters put it; what the webhook tests buy
+        // here is that it does not move DOWN.
+        //
+        // The dispatcher's two decision-bearing files. `expand.ts`
+        // decides whether a redelivered event produces a second set of webhooks
+        // — constitution VI names idempotency explicitly — and `deliver.ts`
+        // holds the post-then-report ordering that chooses a duplicate over a
+        // silent loss. Pinned here because they measured 0% and 87.5% when the
+        // service arrived, which is exactly what research R12 warned a new
+        // deployable would do to a green instrument.
+        "services/dispatcher/src/expand.ts": {
+          branches: 92,
+          functions: 100,
+          lines: 100,
+          statements: 92,
+        },
+        "services/dispatcher/src/deliver.ts": {
+          branches: 90,
+          functions: 100,
+          lines: 100,
+          statements: 100,
         },
         // THE DEDUPLICATION CHAPTER RAISED THIS, 93 -> 95. The chapter added two pure functions
         // to this file — the live-path suppression predicate and the scoping that

@@ -33,18 +33,59 @@ function serviceMains(): string[] {
     .filter((p) => existsSync(join(ROOT, p)));
 }
 
+/** A SERVICE THAT BINDS NOTHING, DECLARED BY NAME.
+ *
+ * The derivation above found the dispatcher the moment it arrived, which is what it is
+ * for — and then asserted a property the dispatcher cannot have. It is not a server: no
+ * `listen`, no `createServer`, no `PORT`. It consumes a stream and posts to the api, and
+ * a test that spawns it probes nothing.
+ *
+ * DECLARED RATHER THAN FILTERED OUT BY A PATTERN, and asserted in BOTH directions
+ * below. A `.filter()` on the derivation would silently absorb the next service that
+ * forgets to read its address back; an entry here that starts listening fails too. That
+ * is the driver-exemption lesson this repository has already paid for once: a list
+ * checked one way can only grow, and a stale entry holds a standing exemption over a
+ * file that no longer needs one. */
+const BINDS_NOTHING: ReadonlyArray<readonly [string, string]> = [
+  [
+    "services/dispatcher/src/main.ts",
+    "a stream consumer with no inbound surface: it fetches from JetStream and posts to " +
+      "the api over the internal seam, so there is no port for a test to be handed",
+  ],
+];
+
+const LISTENERS = serviceMains().filter(
+  (rel) => !BINDS_NOTHING.some(([name]) => name === rel),
+);
+
 describe("a spawned service reports the port it bound", () => {
   it("finds a main.ts for more than one service", () => {
     // A derivation that finds one file passes vacuously for the other.
     expect(serviceMains().length).toBeGreaterThan(1);
   });
 
-  it.each(serviceMains())("%s reads the bound address back", (rel) => {
+  it("declares every service that binds nothing, and no others", () => {
+    // BOTH DIRECTIONS. An exempted file that has started listening is the failure this
+    // half catches, and it is the half a `.filter()` cannot have: the entry would go on
+    // excusing a service that now needs the assertion.
+    for (const [rel, why] of BINDS_NOTHING) {
+      expect(serviceMains(), `${rel} is declared here and is not a service`).toContain(rel);
+      expect(why.length, `${rel} is exempted with no reason`).toBeGreaterThan(20);
+      const text = readFileSync(join(ROOT, rel), "utf8");
+      expect(text, `${rel} binds a port now and must not be exempt`).not.toMatch(
+        /\.listen\(|createServer\(|process\.env(?:\.PORT|\["PORT"\])/,
+      );
+    }
+    // And the exemption cannot swallow the suite: something still has to be asserted.
+    expect(LISTENERS.length, "every service is exempt").toBeGreaterThan(1);
+  });
+
+  it.each(LISTENERS)("%s reads the bound address back", (rel) => {
     const text = readFileSync(join(ROOT, rel), "utf8");
     expect(text, `${rel} never calls address()`).toMatch(/\.address\(\)/);
   });
 
-  it.each(serviceMains())("%s does not log the port it asked for", (rel) => {
+  it.each(LISTENERS)("%s does not log the port it asked for", (rel) => {
     const text = readFileSync(join(ROOT, rel), "utf8");
     // THE FAILURE THIS CATCHES, written as the pattern that caused it:
     //   const port = Number(process.env.PORT ?? 4001);
