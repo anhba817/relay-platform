@@ -74,12 +74,17 @@ export default defineConfig({
         // down to pass measures nothing. Currently met with room to spare
         // (86.55% statements, 78.07% branches at the time of writing).
         //
-        // THE LIMITS CHAPTER'S TEN FILES MOVED BOTH FIGURES UP in published Part 3 —
-        // 89.50% statements, 82.73% branches — which is not the usual direction for a
-        // chapter that adds code, and worth naming for that reason: eight of the ten
-        // are small and heavily branched. THAT PAIR IS NOT RE-MEASURED HERE. This
-        // tree's file set and test count differ from the tree those numbers came off,
-        // so the reading is carried as published's rather than restated as this one's.
+        // THE LIMITS CHAPTER'S TEN FILES MOVE BOTH FIGURES UP, which is not the usual
+        // direction for a chapter that adds code and is worth naming for that reason:
+        // eight of the ten are small and heavily branched.
+        //
+        // MEASURED ON THIS TREE at the limits chapter's close: 80 files, 1,183 tests,
+        // 368.17 s, exit 0 — **92.39% statements, 86.50% branches**, 92.09% functions,
+        // 93.83% lines. Published Part 3 read 89.50 / 82.73 at the same chapter, and the
+        // two are NOT comparable: this tree reaches this chapter with a different file
+        // set in a different order. Both are recorded because the pins below were taken
+        // from published's readings and held on this one, which is the fact that
+        // mattered when they were ported.
         lines: 70,
         functions: 70,
         statements: 70,
