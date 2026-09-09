@@ -126,7 +126,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       url: `https://example.test/${n}.png`,
     });
 
-    it("refuses eleven and writes no row (T035, FR-005, SC-002)", async () => {
+    it("refuses eleven and writes no row (FR-005, SC-002)", async () => {
       const before = await fetch(`${url}/v1/channels/${channelId}/messages?limit=200`, {
         headers: { authorization: `Bearer ${credential}` },
       });
@@ -152,7 +152,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(((await after.json()) as { messages: unknown[] }).messages.length).toBe(countBefore);
     });
 
-    it("accepts exactly ten and returns all ten (T036, FR-005)", async () => {
+    it("accepts exactly ten and returns all ten (FR-005)", async () => {
       // A BOUND TESTED ONLY FROM ABOVE IS A BOUND THAT COULD BE NINE.
       const res = await send({
         text: "ten",
@@ -164,7 +164,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(created.attachments).toHaveLength(10);
     });
 
-    it("stores the same url twice, twice (T036a, FR-021)", async () => {
+    it("stores the same url twice, twice (FR-021)", async () => {
       // THE SPEC ASKED THIS AS AN OPEN QUESTION AND ANSWERED IT: two identical links are
       // two attachments, because the platform does not compare them — the same argument
       // the revisions chapter made for not comparing message texts to decide whether an edit
@@ -180,7 +180,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(created.attachments[0]!.url).toBe(created.attachments[1]!.url);
     });
 
-    it("refuses a kind outside the three (T037, FR-002)", async () => {
+    it("refuses a kind outside the three (FR-002)", async () => {
       const res = await send({
         text: "a spreadsheet",
         user: "courier",
@@ -208,7 +208,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(((await res.json()) as { field: string }).field, bad).toBe("attachments.0.url");
     });
 
-    it("answers a media_id with its own code and a 422 (T040, T039a, FR-003a)", async () => {
+    it("answers a media_id with its own code and a 422 (FR-003a)", async () => {
       const res = await send({
         text: "hosted media",
         user: "courier",
@@ -239,7 +239,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
   });
 
   // T029, T031 and T032a. THE REST DOOR, END TO END.
-  describe("attachments through the send and history routes (T029, SC-001)", () => {
+  describe("attachments through the send and history routes (SC-001)", () => {
     const png = (n: string) => ({
       type: "url",
       kind: "image",
@@ -279,7 +279,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       ]);
     });
 
-    it("reads back an empty list, not an absent field (T031, FR-007)", async () => {
+    it("reads back an empty list, not an absent field (FR-007)", async () => {
       const posted = await send({ text: "no pictures", user: "courier" });
       const created = (await posted.json()) as { seq: number };
       const res = await fetch(`${url}/v1/channels/${channelId}/messages?limit=10`, {
@@ -294,7 +294,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(read).toHaveProperty("attachments", []);
     });
 
-    it("shows a non-member nothing, and therefore no attachment (T032a, FR-014)", async () => {
+    it("shows a non-member nothing, and therefore no attachment (FR-014)", async () => {
       // WHAT THIS DOES NOT PROVE, said here rather than left to be assumed: the attachment
       // adds no second surface BY CONSTRUCTION, not by this assertion. `channelVisibleTo`
       // runs as a gate before the read, so a non-member's answer contains no message and
@@ -342,7 +342,7 @@ describe("POST /v1/channels/:channelId/messages", () => {
   //     neither text nor attachments   field = text
   //     eleven attachments             field = attachments
   //     a bad kind at index 3          field = attachments.3.kind
-  describe("the refusals name a field (T020b, FR-019b)", () => {
+  describe("the refusals name a field (FR-019b)", () => {
     const png = (n: number) => ({
       type: "url",
       kind: "image",
@@ -1287,7 +1287,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId", () => {
       { type: "url", kind: "audio", url: "https://example.test/keep-two.mp3" },
     ];
 
-    it("leaves attachments untouched through an edit, in order (T045, FR-016)", async () => {
+    it("leaves attachments untouched through an edit, in order (FR-016)", async () => {
       // THE FAILURE THIS CATCHES IS SILENT. An `UPDATE … SET text = ?, attachments = ?`
       // written without care drops the photograph and answers 200 — there is no error
       // anywhere in that sequence, which is why T046 falsifies it from the other side.
@@ -1318,7 +1318,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId", () => {
       ]);
     });
 
-    it("reports the same two on the edit's own answers, in order (T046b, FR-015)", async () => {
+    it("reports the same two on the edit's own answers, in order (FR-015)", async () => {
       // T045 ASSERTS THE DATABASE KEPT THEM; THIS ASSERTS WHAT THE EDIT REPORTS. Neither
       // implies the other — an empty array on either answer passes T045 and fails this.
       //
@@ -1348,7 +1348,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId", () => {
       expect(read.attachments.map((a) => a.url)).toEqual(expected);
     });
 
-    it("says nothing about attachments in the edit history (T047, FR-016)", async () => {
+    it("says nothing about attachments in the edit history (FR-016)", async () => {
       // `message_edits` HAS THREE COLUMNS AND THE SAD PUBLISHES THREE. THE REVISIONS CHAPTER built
       // that table to a published DDL, and an attachment column would be a fourth nobody
       // published — so the edit history records what the text WAS and says nothing about
@@ -1369,7 +1369,7 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId", () => {
       expect(Object.keys(edits[0]!).sort()).toEqual(["edited_at", "prior_text"]);
     });
 
-    it("returns a tombstone with no attachments on every read that carries them (T043, FR-012, SC-003)", async () => {
+    it("returns a tombstone as an empty list through the history route (FR-012, SC-003)", async () => {
       // THE SIX READ SHAPES `data-model.md` NAMES, and the assertion differs by shape
       // because the shapes do. Two carry the field and get `[]`; four never carried it
       // and the field stays ABSENT — which is the stronger answer, not a weaker one.
@@ -1386,20 +1386,18 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId", () => {
       expect(tomb["text"]).toBeNull();
       expect(tomb).toHaveProperty("attachments", []);
 
-      // `listChannelsForUser.last_message` — the preview. It carries no attachments
-      // column at all, and T053 asserts that from the repository side.
-      const listing = await fetch(`${url}/v1/channels?limit=50`, {
-        headers: { authorization: `Bearer ${await tokenFor("author")}` },
-      });
-      if (listing.status === 200) {
-        const { channels } = (await listing.json()) as {
-          channels: Array<{ id: string; last_message?: Record<string, unknown> }>;
-        };
-        const row = channels.find((c) => c.id === channelId);
-        if (row?.last_message !== undefined) {
-          expect(row.last_message).not.toHaveProperty("attachments");
-        }
-      }
+      // THE PREVIEW IS NOT REACHABLE FROM HERE, and the first version of this test did
+      // not know that. It fetched `GET /v1/channels?limit=50` inside an
+      // `if (status === 200)` — and there IS no such route: `channels.controller.ts`
+      // exposes `GET /v1/channels/:channelId` and nothing that lists them. The
+      // conditional turned a request to a route that answers 404 into an assertion that
+      // silently did not run, and the title above it claimed "every read that carries
+      // them". `repository.itest.ts` asserts the preview where it is reachable, against
+      // `listChannelsForUser` directly.
+
+      // The other two carriers are asserted where they are reachable: the retry replay
+      // in `idempotency.itest.ts`'s recovered-tombstone test, and the edit path's read
+      // not at all — editing a tombstone is refused before any read of it returns.
     });
   });
 

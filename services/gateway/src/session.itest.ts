@@ -365,7 +365,7 @@ describe("the socket's credentials", () => {
   // an error — `session.ts`'s inbound destructure, `internal.controller.ts`'s named build,
   // and `session.ts`'s outbound payload — and a message that commits without its
   // attachments is acked as though it worked.
-  it("refuses eleven at the GATEWAY, naming the field (T041, T041a, FR-005)", async () => {
+  it("refuses eleven at the GATEWAY, naming the field (FR-005)", async () => {
     // NAME THE LAYER AND THE CODE. The bound is on `messageSendSchema`, so the gateway
     // refuses the frame before the api sees it and the client gets `invalid_frame` —
     // not the api's `invalid_request`. Two doors, two refusals, one bound, and a test
@@ -397,7 +397,7 @@ describe("the socket's credentials", () => {
     expect(refusal.payload.field).toBe("payload.attachments");
   }, 20_000);
 
-  it("refuses a media_id and SAYS hosted media is unavailable (T040a, FR-003a)", async () => {
+  it("refuses a media_id and SAYS hosted media is unavailable (FR-003a)", async () => {
     // THE MESSAGE, BECAUSE THE CODE IS THE SAME ONE EVERY MALFORMED FRAME GETS. A one-arm
     // union would also refuse this — with "Invalid discriminator value. Expected 'url'",
     // which is the sentence FR-003a forbids by name. This assertion is the only thing
@@ -425,7 +425,7 @@ describe("the socket's credentials", () => {
     expect(refusal.payload.message).toMatch(/hosted media is not available/i);
   }, 20_000);
 
-  it("commits TWO attachments sent over the socket, in order (T022c, FR-001, FR-006)", async () => {
+  it("commits TWO attachments sent over the socket, in order (FR-001, FR-006)", async () => {
     const socket = connect(await mintToken("tuan", 3600));
     await firstFrame(socket, "connection.ack");
     socket.send(
@@ -475,7 +475,7 @@ describe("the socket's credentials", () => {
     ]);
   }, 20_000);
 
-  it("accepts an attachments-only message and refuses one with neither (T020a, FR-019, FR-019b)", async () => {
+  it("accepts an attachments-only message and refuses one with neither (FR-019, FR-019b)", async () => {
     const socket = connect(await mintToken("tuan", 3600));
     await firstFrame(socket, "connection.ack");
 
@@ -676,7 +676,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
     expect(delivered.payload.seq).toBe(9_001);
   });
 
-  it("delivers to EVERY connection the same person holds (T021)", async () => {
+  it("delivers to EVERY connection the same person holds", async () => {
     // Spec edge case 5. What is under test is the registry's fan-out to local
     // sockets, so who published is irrelevant — this publishes directly. Two
     // sockets for one user is the case a naive registry keyed by user id gets
@@ -717,7 +717,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
   const urlsOf = (payload: { attachments: Array<{ url?: string }> }) =>
     payload.attachments.map((a) => a.url);
 
-  it("delivers attachments SOCKET to SOCKET, in order (T028b, FR-008, SC-001)", async () => {
+  it("delivers attachments SOCKET to SOCKET, in order (FR-008, SC-001)", async () => {
     // ONE MEMBER SENDS OVER ITS SOCKET AND ANOTHER RECEIVES. The REST delivery test below
     // cannot see this path: the api builds the fan-out payload for a REST send and the
     // GATEWAY builds it for a socket send, so they are two constructions of one frame.
@@ -766,7 +766,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
     ]);
   }, 20_000);
 
-  it("delivers a deletion with NO attachment field at all (T044, FR-013)", async () => {
+  it("delivers a deletion with NO attachment field at all (FR-013)", async () => {
     // AN EXACT KEY SET, NOT `payload.attachments === undefined`. An absent key and an
     // undefined value are the same to a truthiness check and different to a contract —
     // and the contract is the point: `message.deleted` carries no text because a payload
@@ -813,7 +813,7 @@ describe("the socket's delivery, with a fan-out attached", () => {
     ]);
   }, 20_000);
 
-  it("carries only `seq` on the sender's ack (T029a, FR-008)", async () => {
+  it("carries only `seq` on the sender's ack (FR-008)", async () => {
     // THE ACK HAS NEVER CARRIED A MESSAGE AND THIS CHAPTER DOES NOT WIDEN IT. A sender
     // learns its attachments landed from the `message.created` frame the fan-out returns
     // to it, not from the ack — so the ack's exact key set is the assertion.
