@@ -126,6 +126,12 @@ services:
       RELAY_API_URL: http://api:4000
       RELAY_NATS_URL: nats://nats:4222
       RELAY_INTERNAL_CREDENTIAL: ${RELAY_INTERNAL_CREDENTIAL:-rk_svc_local_development_credential_0000}
+    # So a webhook endpoint running on the DEVELOPER'S machine is reachable from
+    # inside the container. Without it, `scripts/hostile-endpoint.mjs` listens on
+    # the host's loopback and the dispatcher resolves 127.0.0.1 to its own — the
+    # quickstart's V6 step could not be run as written.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       api: { condition: service_healthy }
       nats: { condition: service_healthy }
