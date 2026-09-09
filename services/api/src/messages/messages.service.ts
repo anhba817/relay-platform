@@ -75,6 +75,10 @@ export class MessagesService {
       return await this.repo.sendMessage(channelId, {
         text: body.text,
         metadata: body.metadata,
+        // (FR-001). Spelled rather than spread, like every field above
+        // it: this method's own comment on `userExternalId` explains why threading a
+        // value costs nothing where a lookup would cost a query per message.
+        ...(body.attachments !== undefined && { attachments: body.attachments }),
         userId,
         senderMustBeBot,
         ...(userExternalId !== undefined && { userExternalId }),
