@@ -83,6 +83,16 @@ export default tseslint.config(
       // an invisible exemption is worse than a listed one.
       "services/api/src/internal/backfill.itest.ts",
       "services/api/src/messages/history.itest.ts",
+      // THE QUOTA CHAPTER'S PERIOD SUITE, and its case is the two above's in a third
+      // shape: the state under test is one the repository cannot reach. `periodOf`
+      // returns the month a timestamp falls in, and the property is that a row INSERTED
+      // under that value is FOUND by it — which needs a `usage_periods` row written
+      // directly, because every repository path that writes one derives the period from
+      // the clock and so cannot disagree with the function under test.
+      //
+      // A suite that used the repository here would be asserting that `periodOf` equals
+      // itself.
+      "services/api/src/quotas/period.itest.ts",
       // ── AND EVERY OTHER REDIS CLIENT, BY PATH, WITH THE ARGUMENT IT NEEDS ──
       //
       // The rule arrives here and TWELVE files older than it already import `ioredis`.
