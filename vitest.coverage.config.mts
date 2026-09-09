@@ -658,6 +658,90 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
+
+        // HOW THESE SIX WERE VALIDATED, STATED BECAUSE THE USUAL PROBE DOES NOT WORK
+        // HERE. The re-pin ritual is "demand 101% of a real key and watch it name
+        // itself; demand 101% of a key naming no file and watch nothing happen".
+        // Running that against ONE test file is vacuous twice over: without
+        // `--coverage` the thresholds are not evaluated at all, and with it the global
+        // floor fires first — `Coverage for lines (0.28%) does not meet global
+        // threshold (70%)` — and drowns the per-file signal. Both were measured.
+        //
+        // So these are validated by the FULL run, which is the instrument: 87 files,
+        // 1,263 tests, exit 0 with every key below holding. The silent-key half is
+        // carried from the previous chapter's probe rather than re-run.
+        //
+        // THE QUOTA CHAPTER'S SIX, AND PUBLISHED PINNED NONE OF THEM. The chapter
+        // before this one pinned all eight of its files; this one shipped seven and
+        // left the ratchet nothing to hold, which is visible only by comparing two
+        // chapters that are adjacent in THIS order and were not in the published one.
+        //
+        // `policy.ts` and `quota.error.ts` are pure — no clock, no store, no
+        // framework — and reach 100 on every metric. A branch they miss is a case
+        // nobody thought of rather than one nobody could reach.
+        "services/api/src/quotas/policy.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/quotas/quota.error.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // AND THREE WHOSE ONLY SHORTFALL IS A `??` THE COMPILER DEMANDS AND THE DATA
+        // NEVER REACHES. Each is a fallback on a value `noUncheckedIndexedAccess`
+        // will not narrow:
+        //
+        //   config.ts:65      `parsed.error.issues[0]?.message ?? "invalid"` — a zod
+        //                     failure carries at least one issue, always
+        //   period.ts:43-44   `(m ?? 1)` and `(y ?? 0)` in `nextPeriod`, on a period
+        //                     that came from `periodOf` or from a `date` column
+        //   quota-email.ts:31 `months[Number(m) - 1] ?? m` — a month outside 1..12
+        //
+        // NOT DELETED, WHICH IS THIS RATCHET'S USUAL ANSWER, because deleting them
+        // means a non-null assertion: the same assumption moved somewhere a type
+        // change cannot invalidate. Pinned at the reading with the arm named instead.
+        //
+        // AND THE FIGURE IMPROVED BY REMOVING A COPY RATHER THAN ADDING A TEST.
+        // `quota.error.ts` and `quota-email.ts` each carried this arithmetic and each
+        // paid for its own pair of unreachable arms; the extraction into `period.ts`
+        // left one pair, and this directory's branches went 86.53% to 88.63%.
+        "services/api/src/quotas/config.ts": {
+          branches: 90,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/quotas/period.ts": {
+          branches: 75,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/quotas/quota-email.ts": {
+          branches: 75,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // The relay's loop, and the shortfall is the one every relay in this codebase
+        // reports: `start`, `stop` and the `run` loop are entered by no test, because
+        // every suite drives `drainOnce()` directly — which is the right way to assert
+        // on rows and the wrong way to learn whether the loop that calls it in
+        // production works. Line 118 is the catch inside that loop. Three files
+        // already sit in this config unpinned for the same reason; this one is pinned
+        // because the rest of it IS covered and a floor at 70 would hold nothing.
+        "services/api/src/quotas/quota-relay.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 96,
+          statements: 96,
+        },
       },
     },
   },
