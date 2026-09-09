@@ -109,9 +109,22 @@ export function createDeliveryRelay({
       // was drawn in the right place.
       await publisher.publish({
         subject: deliverySubjectFor(row.environment_id),
-        // The delivery id is the broker's deduplication key here, as the event
-        // id was in 3.3 — a republished delivery is recognisably the same one.
-        id: row.id,
+        // The deduplication key is the delivery id AND THE ATTEMPT, and the
+        // second half was missing until a walk against a failing endpoint went
+        // looking for attempt 2 and found nothing had been sent.
+        //
+        // `row.id` alone is stable across all seven attempts, so every retry
+        // republished under the key the first attempt had already used and
+        // JetStream collapsed it inside the duplicate window. The publish
+        // reported success, no message reached the dispatcher, and the row kept
+        // the `dispatched_at` its claim had set — which only an outcome report
+        // clears, and no outcome was ever coming. Every failing delivery stopped
+        // dead after one attempt and the retry schedule below it never ran.
+        //
+        // Per attempt, a republish after a crash is still recognisably the same
+        // work, which is what the deduplication is for. A NEW attempt is
+        // genuinely new work and has to be allowed to say so.
+        id: `${row.id}:${row.attempt}`,
         payload: {
           delivery_id: row.id,
           endpoint_id: row.endpoint_id,
