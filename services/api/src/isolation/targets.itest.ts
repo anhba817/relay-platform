@@ -151,6 +151,13 @@ describe("the gauntlet's target list derives from the running application", () =
       "DELETE /v1/users/:externalId",
       "POST /v1/users/:externalId/ban",
       "DELETE /v1/users/:externalId/ban",
+      // THE REVISIONS CHAPTER, AND IT CAUGHT ITS OWN MISTAKE IN BOTH DIRECTIONS AT
+      // ONCE. Both keys went into `targets.ts` before the second route was written, so
+      // one run named `GET …/:messageId/edits` as an entry matching no derived target —
+      // the direction a rename breaks — while the accounting test above named the other.
+      // The deletion's route arrives in the next phase, deliberately not here.
+      "GET /v1/channels/:channelId/messages/:messageId/edits",
+      "PATCH /v1/channels/:channelId/messages/:messageId",
     ];
     const keys = derived.map(targetKey);
     const missing = ADDED.filter((k) => !keys.includes(k));

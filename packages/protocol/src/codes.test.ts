@@ -174,4 +174,29 @@ describe("the refusal this chapter's edit path adds", () => {
     expect(ERROR_CODES.not_message_author).not.toBe(ERROR_CODES.forbidden);
     expect(ERROR_CODES.not_message_author).toMatch(/author/);
   });
+
+  // A SECOND CODE IN ONE CHAPTER, which the plan did not expect — and the count that
+  // used to sit at the top of this file is exactly what would have caught it as an
+  // arithmetic edit rather than as a decision. Named instead: what makes
+  // `message_deleted` a code of its own is that a client acts on it, and the three it
+  // could have reused all misdirect that action.
+  //
+  //   not_message_author   false. The author of a tombstone IS its author, and the
+  //                        client goes looking for a permission problem.
+  //   not_found            a lie with a witness — FR-011 keeps a deleted message in
+  //                        history, so the client holds the thing it is told is absent.
+  //   forbidden            the same objection as above: no credential un-deletes.
+  //
+  // `codes.ts` argues the fourth candidate, a bare 409, which is about the filter
+  // rather than about the client.
+  it("names a deleted message's refusal apart from every refusal about the caller", () => {
+    expect(ERROR_CODES).toHaveProperty("message_deleted");
+    for (const other of ["not_message_author", "not_found", "forbidden"] as const) {
+      expect(ERROR_CODES.message_deleted).not.toBe(ERROR_CODES[other]);
+    }
+    // THE WORDING IS THE CONTRACT: the remedy is to stop offering an edit, and the
+    // sentence has to say the history is unharmed or a client re-reads it as a loss.
+    expect(ERROR_CODES.message_deleted).toMatch(/deleted/);
+    expect(ERROR_CODES.message_deleted).toMatch(/history/);
+  });
 });
