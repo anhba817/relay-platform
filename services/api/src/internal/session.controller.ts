@@ -14,7 +14,8 @@ import { AUTH_DB } from "../auth/authenticate.middleware";
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import type { RequestWithPrincipal } from "../auth/principal";
 import type { Db } from "../db/client";
-import { Repository } from "../db/repository";
+import { environmentLimits, Repository } from "../db/repository";
+import { DEFAULT_LIMITS } from "../limits/policy";
 
 // `POST /internal/session` — the route that replaced
 // `GET /internal/memberships`.
@@ -75,6 +76,11 @@ export class SessionController {
     // identity forensics — 2.5's rule, and the reason a first connect from a
     // brand-new user works before anything is seeded.
     const channels = user ? await this.repo.channelsForUser(user.id) : [];
+    // The gateway's limits, resolved here because the gateway has no
+    // database and must not gain one (research R12). Null columns are already
+    // defaults by the time they leave the repository, so the gateway never has to
+    // know that "no override" is a state.
+    const limits = await environmentLimits(this.db, principal.environmentId);
     return {
       environment_id: principal.environmentId,
       user: principal.userExternalId,
@@ -95,6 +101,10 @@ export class SessionController {
       revisions: Object.fromEntries(
         channels.map((c) => [c.channel_id, c.revision_sequence]),
       ),
+      limits: {
+        connect: limits?.connect ?? DEFAULT_LIMITS.connect,
+        send: limits?.send ?? DEFAULT_LIMITS.send,
+      },
     };
   }
 }

@@ -82,3 +82,33 @@ describe("the fallback counter", () => {
     expect(c.size()).toBe(3);
   });
 });
+
+describe("peek at the cap", () => {
+  it("REPORTS AN UNKNOWN KEY AS UNKNOWN, not as zero, once the map is full", () => {
+    // The other side of "stop admitting rather than evict". `increment` refuses
+    // to add a key past the cap; `peek` has to answer honestly about one it
+    // therefore never learned. Returning 0 would mean "this address has failed
+    // no auths", which for the auth limiter is the wrong direction — the whole
+    // point of R3 is that this counter does not fail open. `null` says "I do
+    // not know", and the caller decides.
+    const counter = createFallbackCounter({ windowMs: MINUTE, maxKeys: 2 });
+    counter.increment("ip-1", 0);
+    counter.increment("ip-2", 0);
+    expect(counter.peek("ip-1", 0)).toBe(1);
+    expect(counter.peek("ip-3", 0)).toBeNull();
+  });
+
+  it("reports an unknown key as zero while there is still room", () => {
+    // Under the cap, "I have never seen this address" and "this address has
+    // failed nothing" are the same statement.
+    const counter = createFallbackCounter({ windowMs: MINUTE, maxKeys: 2 });
+    counter.increment("ip-1", 0);
+    expect(counter.peek("ip-3", 0)).toBe(0);
+  });
+
+  it("forgets a count from a previous window without being swept", () => {
+    const counter = createFallbackCounter({ windowMs: MINUTE, maxKeys: 2 });
+    counter.increment("ip-1", 0);
+    expect(counter.peek("ip-1", MINUTE)).toBe(0);
+  });
+});

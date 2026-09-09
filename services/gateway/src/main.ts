@@ -7,6 +7,7 @@ import { createMembership } from "./membership.js";
 import { createPresence } from "./presence.js";
 import { createConnections } from "./connections.js";
 import { createTyping } from "./typing.js";
+import { createGatewayLimits } from "./limits.js";
 import { attachSessions } from "./session.js";
 
 // The gateway — SAD §4.1: terminates WebSockets and never writes to the
@@ -60,6 +61,11 @@ export function createServer(logger?: Logger) {
   // this module another environment's id, which the session layer takes from the
   // api's verified identity and never from a payload.
   const connections = createConnections({ logger: log });
+  // THE NINTH REDIS CLIENT, AND THE FIRST THAT ONLY COUNTS. Not one of fanout's
+  // two: one of those is a subscriber, and a connection in subscribe mode cannot run
+  // `INCR`. Created here rather than inside `attachSessions` so the tests that call
+  // that function directly stay Redis-free, and so its close has an owner.
+  const limits = createGatewayLimits();
   const sessions = attachSessions({
     server,
     api: createApiClient(process.env.RELAY_API_URL ?? DEFAULT_API_URL),
@@ -75,6 +81,7 @@ export function createServer(logger?: Logger) {
     // half and neither substitutes for the other: without this line the cap is inert,
     // without that one every gateway leaks a Redis client.
     connections,
+    limits,
   });
   server.on("close", () => {
     // `void`, LIKE ITS SIBLINGS. `sessions.close()` returns a promise as of the
@@ -86,6 +93,7 @@ export function createServer(logger?: Logger) {
     void membership.close();
     void typing.close();
     void connections.close();
+    void limits.close();
   });
   return server;
 }

@@ -196,6 +196,23 @@ export const internalSessionResponseSchema = z.strictObject({
    * which is the pre-chapter behaviour and the safe direction to be wrong in for one
    * deploy window. */
   banned: z.boolean().default(false),
+  /** The two limits the gateway enforces, resolved from the
+   * environment's policy with nulls already turned into defaults.
+   *
+   * THEY RIDE THIS RESPONSE BECAUSE THE GATEWAY HAS NO DATABASE, and must not
+   * gain one — `registry.ts` states that as a design property: "no pg, no
+   * drizzle-orm, no repository import". The policy is three columns in Postgres
+   * and the api is the only service that reads Postgres, so the limits travel on
+   * the one call the gateway was already making at connect.
+   *
+   * The same move the credentials chapter made on this call, whose comment records it: the
+   * api "answers with the identity AND the memberships … it just asks a better
+   * question than 'what may this user hear'". This asks it for one thing more
+   * (research R12). */
+  limits: z.strictObject({
+    connect: z.number().int().nonnegative(),
+    send: z.number().int().nonnegative(),
+  }),
 });
 
 /** The deliveries stream, and its subject grammar.

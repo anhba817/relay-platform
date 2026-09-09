@@ -24,7 +24,9 @@ export default tseslint.config(
     // calls that a correctness property rather than a convention.
     // `services/api/src/limits/**` is the Redis analogue of the repository layer, and
     // it is exempt as a DIRECTORY for the same reason `db/**` is: it IS the layer the
-    // rule carves out. Every other Redis client in the tree is listed by path.
+    // rule carves out. Every other Redis client in the tree is listed by path —
+    // including the gateway's half of this same store, `services/gateway/src/limits.ts`,
+    // which is one file rather than a layer.
     //
     // AND THE LANE'S OWN INFRASTRUCTURE, NAMED FILE BY FILE. The harness opens raw
     // connections deliberately: one carrying the guard's exemption and one without,
@@ -99,6 +101,15 @@ export default tseslint.config(
       // way.)
       "services/api/src/fanout/publisher.ts",
       "services/api/src/membership/publisher.ts",
+      //
+      // (2) THE COUNTER STORE'S OTHER HALF. `rl:{environment_id}:…` is the key shape
+      // the whole restriction is about, and this file composes it — so it is exempt as
+      // the rule's own subject, not against its reason. `limits.itest.ts` is listed
+      // beside it for something the rule cannot express at all: its subject is that
+      // the api and the gateway increment the SAME key, and the only way to check that
+      // is to read the key with NEITHER of their code.
+      "services/gateway/src/limits.ts",
+      "services/gateway/src/limits.itest.ts",
       "services/gateway/src/fanout.ts",
       // `member:{env}:{user}` — the principal-addressed half of that fabric — DOES
       // carry an environment id, and that still does not make it the limiter's case:
@@ -168,7 +179,7 @@ export default tseslint.config(
             {
               name: "ioredis",
               message:
-                "The counter store lives in services/api/src/limits only (constitution I). Its keys are per environment; an unrestricted client is a cross-tenant read.",
+                "The counter store lives in services/api/src/limits and services/gateway/src/limits.ts only (constitution I). Its keys are per environment; an unrestricted client is a cross-tenant read.",
             },
           ],
           patterns: [

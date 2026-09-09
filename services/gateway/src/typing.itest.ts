@@ -110,6 +110,10 @@ async function boot(options: {
       banned: false,
       channel_ids: options.channels,
       revisions: {},
+      // The limits ride this response as of the limits chapter, and this fixture is
+      // generous on purpose: T048b below asserts that a typing signal spends NO send
+      // budget, and a tight number here would make that pass for the wrong reason.
+      limits: { connect: 3_000, send: 600 },
     }),
     memberships: async () => options.channels,
     backfill: async () => {

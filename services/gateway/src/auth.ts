@@ -35,6 +35,11 @@ export type Authentication =
        * ack and never compared here: the gateway has no opinion about staleness, and
        * no database to form one with. */
       revisions: Record<string, number>;
+      /** The environment's two socket allowances, read from
+       * Postgres by the api and carried on the same response — the gateway has
+       * no database client and R12 spent its whole argument on keeping it that
+       * way. */
+      limits: { connect: number; send: number };
     }
   | { outcome: "refused" }
   | { outcome: "unavailable"; error: string }
@@ -73,6 +78,7 @@ export async function authenticate(
       },
       channelIds: session.channel_ids,
       revisions: session.revisions,
+      limits: session.limits,
     };
   } catch (error) {
     return { outcome: "unavailable", error: String(error) };

@@ -123,6 +123,9 @@ describe("resume across a real fabric", () => {
         banned: false,
         channel_ids: [CHANNEL],
         revisions: {},
+        // The limits ride the session response now. Generous, and
+        // beside the point of every test in this file.
+        limits: { connect: 3_000, send: 600 },
       }),
       backfill: async () => {
         await publishFromElsewhere(frame(43));
@@ -162,6 +165,9 @@ describe("resume across a real fabric", () => {
         banned: false,
         channel_ids: [CHANNEL],
         revisions: {},
+        // The limits ride the session response now. Generous, and
+        // beside the point of every test in this file.
+        limits: { connect: 3_000, send: 600 },
       }),
       backfill: async () => {
         await publishFromElsewhere(frame(43));
@@ -195,6 +201,9 @@ describe("resume across a real fabric", () => {
         banned: false,
         channel_ids: [CHANNEL],
         revisions: {},
+        // The limits ride the session response now. Generous, and
+        // beside the point of every test in this file.
+        limits: { connect: 3_000, send: 600 },
       }),
       backfill: async () => ({
         [CHANNEL]: { messages: [frame(42)], truncated: false },
@@ -246,6 +255,9 @@ describe("resume across a real fabric", () => {
         banned: false,
         channel_ids: [CHANNEL],
         revisions: {},
+        // The limits ride the session response now. Generous, and
+        // beside the point of every test in this file.
+        limits: { connect: 3_000, send: 600 },
       }),
       backfill: async () => ({
         [CHANNEL]: { messages: [frame(42)], truncated: false },
@@ -290,6 +302,9 @@ describe("resume across a real fabric", () => {
         banned: false,
         channel_ids: [CHANNEL],
         revisions: {},
+        // The limits ride the session response now. Generous, and
+        // beside the point of every test in this file.
+        limits: { connect: 3_000, send: 600 },
       }),
       backfill: async () => ({
         [CHANNEL]: { messages: [frame(42)], truncated: false },
@@ -394,6 +409,9 @@ describe("resume across a real fabric", () => {
         banned: false,
         channel_ids: [CHANNEL],
         revisions: {},
+        // The limits ride the session response now. Generous, and
+        // beside the point of every test in this file.
+        limits: { connect: 3_000, send: 600 },
       }),
       backfill: async () => {
         throw new Error("backfill unavailable");
