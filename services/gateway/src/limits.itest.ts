@@ -123,17 +123,20 @@ async function startApi(): Promise<ApiUnderTest> {
   const user = await repo.createUser("tuan", "Tuan");
   const channel = await repo.createChannel("fleet", "public");
   await repo.addMember(channel.id, user.id);
-  // AND A BOT MEMBER FOR THE REST HALF. The socket half sends as `tuan` through a
-  // user token; the REST half presents an APPLICATION credential, which carries no
-  // user of its own — so it must name a sender, the sender must be a bot, and the
-  // bot must be a member. Each of those is refused with a 4xx that is not a 429,
-  // which reads exactly like a limiter that never counted.
-  const bot = await repo.upsertUser("meter", {
+  // AND A BOT FOR THE REST HALF. The socket half sends as `tuan` through a user
+  // token; the REST half presents an APPLICATION credential, which carries no user
+  // of its own — so it must name a sender and that sender must be a BOT. A person
+  // named by a key is 403, an unknown name 400, and neither is a 429.
+  //
+  // Seeded here rather than per send, because this file's whole subject is how many
+  // requests fit under one limit: an extra call per send would move every number in
+  // it and leave the assertions passing for the wrong reason. No channel membership
+  // — measured, not assumed: the suite is green without it.
+  await repo.upsertUser("meter", {
     display_name: "Meter",
     kind: "bot",
     description: "spends this suite's REST budget",
   });
-  await repo.addMember(channel.id, bot.user.id);
   const key = await seeder.createApiKey(db, { environmentId: environment.id });
 
   // `PORT: "0"` AND THE PORT READ OFF THE CHILD'S OWN LOG LINE, which is what the

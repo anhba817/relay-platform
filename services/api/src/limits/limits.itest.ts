@@ -51,18 +51,27 @@ describe("the limiter", () => {
     }
     const repo = new Repository(db, env.id);
     const channel = await repo.createChannel("c", "public");
-    // AND THE SENDER HAS TO EXIST, BE A BOT, AND BE A MEMBER — three requirements
-    // this suite's published ancestor met by not having any of them. Each one
-    // refuses with a status that looks like something else: an unknown user gives
-    // 400 `the sender named in \`user\` is not a user of this environment`, a person
-    // named by an application credential gives 403, and a non-member gives 403 as
-    // well. None of them is a 429, so every reading is "the limiter never ran".
-    const { user } = await repo.upsertUser("meter", {
+    // A BOT SENDER, SEEDED HERE AND NOT IN `send`. An application credential
+    // carries no user of its own, so FR-MSG-15 makes the body name one — and it
+    // must be a BOT: a person named by a key is refused 403, an unknown name 400
+    // (`the sender named in \`user\` is not a user of this environment`). Neither is
+    // a 429, so a fixture short of either turns every assertion in this file into
+    // "the limiter never ran".
+    //
+    // SEEDED ONCE, THROUGH THE REPOSITORY, BECAUSE THIS SUITE COUNTS REQUESTS.
+    // Upserting the bot inside the send helper would add an HTTP call per send,
+    // which moves every number below — and the assertions would still pass, for
+    // the wrong reason.
+    //
+    // NO `addMember`, AND THAT WAS MEASURED RATHER THAN ASSUMED. The first draft
+    // added one on the theory that a non-member send is refused; removing it left
+    // the suite green at 18 of 18, so the row was a claim this fixture does not
+    // need to make.
+    await repo.upsertUser("meter", {
       display_name: "Meter",
       kind: "bot",
       description: "spends this suite's allowance",
     });
-    await repo.addMember(channel.id, user.id);
     const { credential } = await createApiKey(db, { environmentId: env.id });
     return { env, channelId: channel.id, credential };
   };
@@ -506,17 +515,16 @@ describe("when the counter store is gone", () => {
     const env = await createEnvironment(db, { name: "limits-degraded" });
     const repo = new Repository(db, env.id);
     channelId = (await repo.createChannel("c", "public")).id;
-    // A BOT MEMBER, for the reason the suite's first fixture gives: an
-    // application credential must name a sender, the sender must exist, be a bot
-    // and be a member, and each refusal is a 4xx that is not a 429. The test
-    // below asserts a 201 — a fixture short of any of the three turns "the
+    // Its own bot, because this block seeds its own environment rather than
+    // calling `seed()`. Same name, so the sends below read the same as the
+    // others, and the reason is the note on that fixture: the test under this one
+    // asserts a 201, and a 4xx for a missing or non-bot sender would turn "the
     // limiter failed OPEN" into "the request was refused for something else".
-    const { user } = await repo.upsertUser("meter", {
+    await repo.upsertUser("meter", {
       display_name: "Meter",
       kind: "bot",
-      description: "spends this suite's allowance",
+      description: "spends this suite's allowance while the store is gone",
     });
-    await repo.addMember(channelId, user.id);
     credential = (await createApiKey(db, { environmentId: env.id })).credential;
 
     // Port 1 is reserved and nothing listens on it.
