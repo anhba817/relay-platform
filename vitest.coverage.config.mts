@@ -175,6 +175,15 @@ export default defineConfig({
         // for. The pin stays where the later chapters put it; what the webhook tests buy
         // here is that it does not move DOWN.
         //
+        // AND THE DISABLEMENT CHAPTER RAISED THEM AGAIN IN THE PUBLISHED ORDER, 89 -> 90,
+        // which this order cannot do either: the pin is already 92 and the webhook
+        // chapter's battery measured 93.48. Published's account is worth keeping for its
+        // shape — measured mid-chapter with the failure run written and its tests not
+        // yet, that file read 96.46 statements and 88.80 branches, which is the instrument
+        // saying "you added five operations and tested none of them" in the only language
+        // it has. The tests were written rather than the pin lowered. Here they arrive
+        // against a floor five chapters of later work already raised.
+        //
         // The dispatcher's two decision-bearing files. `expand.ts`
         // decides whether a redelivered event produces a second set of webhooks
         // — constitution VI names idempotency explicitly — and `deliver.ts`
@@ -204,6 +213,35 @@ export default defineConfig({
         },
         "services/dispatcher/src/deliver.ts": {
           branches: 90,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // The retry-and-disable chapter's two new files, pinned at 100 on every metric because both
+        // reached it and neither has an excuse not to.
+        //
+        // `disable.ts` is here because constitution VI NAMES this case: it is the
+        // predicate the at-most-once disablement rests on, so it is idempotency
+        // logic, and NFR-MNT-02 asks for 100% branch coverage of that. It is also
+        // pure — no database, no clock, no broker — which is precisely why it was
+        // separated from both triggers that call it. A file with nothing to mock has
+        // no reason to be partially tested.
+        //
+        // `analytics.ts` is here for a different reason: everything it does is
+        // decide what NOT to put on a stream. Its allow-list is the mechanism
+        // standing between a customer's payload and seven days of retention
+        // (FR-004, SC-006), and its `catch` is what stops an analytics outage
+        // becoming a delivery outage (contract invariant 4). Both are branches, and
+        // an unmeasured branch here fails silently in the direction nobody checks.
+        "services/api/src/webhooks/disable.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/webhooks/analytics.ts": {
+          branches: 100,
           functions: 100,
           lines: 100,
           statements: 100,
