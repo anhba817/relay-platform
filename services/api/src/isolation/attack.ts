@@ -39,7 +39,12 @@ export interface Verdict {
   absent: Answer;
 }
 
-async function send(
+/** EXPORTED FOR THE ATTACK NO PAIR CAN EXPRESS. Every helper below forges BOTH
+ * identifiers, which a nested route can satisfy while checking only the outer one — so
+ * the revisions chapter's three routes are also attacked with the attacker's OWN
+ * channel and the victim's message id, and that request is neither a pair nor a list.
+ * One caller, one reason, rather than a fourth helper for a single shape. */
+export async function send(
   baseUrl: string,
   credential: string,
   req: AttackRequest,

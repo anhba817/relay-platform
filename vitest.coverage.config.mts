@@ -217,11 +217,63 @@ export default defineConfig({
         // `text` as non-nullable and a null would publish a frame the delivery side
         // drops silently. A guard against a state the type system forbids is cheap; the
         // alternative is a silent drop.
+        //
+        // THIS CHAPTER MOVED THIS FILE IN BOTH DIRECTIONS, and the LINES number is the one
+        // that had to come down. The chapter added two routes to it — an edit and a
+        // deletion, each resolving a caller, each publishing — against inherited pins of
+        // 96 statements / 87 branches / 100 functions / 100 lines.
+        //
+        // MEASURED, WITH THE DELETIONS BELOW ALREADY MADE AND THE NARROWING TEST HELD
+        // BACK: **91.83 / 85.71 / 100 / 93.75**, three uncovered statements at lines 297,
+        // 303 and 401. Statements and lines both red.
+        //
+        // WHAT WAS TESTED, and it was the largest part: every one of those routes throws a
+        // 400 when the token's subject has no user row, and nothing exercised it. The send
+        // path had had that test since the channel-control chapter; the two new routes and
+        // the history route beside them did not. **One test covering all three is worth
+        // +6.12 statements, +7.14 branches and +4.16 lines**, and it clears 303 and 401 —
+        // measured by skipping that one test and running the battery again, rather than by
+        // reasoning about which lines it touches.
+        //
+        // WHAT WAS REMOVED RATHER THAN TESTED, which is the ratchet's preferred outcome
+        // and the fifth time it has produced one:
+        //
+        //   - `deleted.user ?? "unknown"` on the deletion frame. `deleteMessage` refuses
+        //     a senderless row (FR-018) before it can return, so the arm was
+        //     unreachable — AND the value it would have produced was a lie: the word
+        //     "unknown" on the wire as somebody's name. The narrowing moved to the
+        //     repository, where the foreign-key argument for it lives.
+        //   - Three copies of `req.requestId ?? "unknown"` and
+        //     `req.principal?.environmentId ?? "unknown"`, one per publish site, which is
+        //     six uncovered arms for two distinct ones. `publishContext(req)` is one
+        //     function called three times. The fallbacks stay — a log line saying
+        //     `unknown` is findable where one saying `undefined` reads like a broken
+        //     logger — but the count stops growing with every route that publishes.
+        //
+        // FINAL: **97.95 / 92.85 / 100 / 97.91**. Branches finished ABOVE the 87 this
+        // chapter inherited, so that pin goes UP to 92 — 0.85 of headroom, which is the
+        // margin `repository.ts` above was pinned with (92 against a measured 92.66) and
+        // for the same reason: a floor at the reading itself goes red on the next run for
+        // no change to the code.
+        //
+        // AND `repository.ts` MOVED UP RATHER THAN DOWN, which is worth one line because
+        // it is the file this chapter added the most code to: 92.66 when the sender chapter
+        // pinned it, **92.97 measured here**, with four routes' worth of new methods in
+        // between. Its pin is left at 92 — the headroom widened on its own, and a ratchet
+        // that follows every upward reading is a ratchet somebody has to lower later.
+        //
+        // LINES DROP FROM 100 TO 97, and the one statement still uncovered is named: line
+        // 297, the narrowing throw in `edit`, which fires when a request reaches that
+        // handler with no user subject. `@Accepts("user")` on the method means the guard
+        // has already refused every credential that could produce it, so it is unreachable
+        // while that decorator is there — and it is there to be loud if somebody removes
+        // it. A `!` would restore 100% by moving the assumption somewhere a decorator
+        // change cannot invalidate, which is the trade this file declines to make.
         "services/api/src/messages/messages.controller.ts": {
-          branches: 87,
+          branches: 92,
           functions: 100,
-          lines: 100,
-          statements: 96,
+          lines: 97,
+          statements: 97,
         },
 
         // THE PRESENCE CHAPTER'S TWO, both at 100 on every metric, and the pin is

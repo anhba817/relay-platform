@@ -671,7 +671,7 @@ describe("the repository's own refusals", () => {
 
 // ══ EDITING A MESSAGE (US1) ═══════════════════════════════════
 describe("editMessage", () => {
-  it("T027: keeps the sequence, the channel, the author and the creation time (FR-002)", async () => {
+  it("keeps the sequence, the channel, the author and the creation time (FR-002)", async () => {
     // A THING NOT DONE LEAVES NO TRACE TO ASSERT ON, so this asserts the VALUES rather
     // than the absence of an assignment. `editMessage`'s `SET` list is the guarantee —
     // `sequence`, `channelId`, `userId` and `createdAt` are not in it — and this is
@@ -707,7 +707,7 @@ describe("editMessage", () => {
     expect(new Date(row!.created_at).toISOString()).toBe(before.created_at);
   });
 
-  it("T027: records edited_at, and it was null before (FR-003)", async () => {
+  it("records edited_at, and it was null before (FR-003)", async () => {
     const author = await repoA.createUser("t027b-author", "Author");
     const channel = await repoA.createChannel("t027b", "public");
     await repoA.addMember(channel.id, author.id);
@@ -730,7 +730,7 @@ describe("editMessage", () => {
     expect(edited.edited_at).not.toBe(edited.created_at);
   });
 
-  it("T028: three edits leave three history rows, oldest first, none overwritten (FR-004)", async () => {
+  it("three edits leave three history rows, oldest first, none overwritten (FR-004)", async () => {
     const author = await repoA.createUser("t028-author", "Author");
     const channel = await repoA.createChannel("t028", "public");
     await repoA.addMember(channel.id, author.id);
@@ -759,7 +759,7 @@ describe("editMessage", () => {
     expect(text).toBe("four");
   });
 
-  it("T034: an edit does not move the channel in the activity ordering (FR-015)", async () => {
+  it("an edit does not move the channel in the activity ordering (FR-015)", async () => {
     // Two channels, one edited afterwards. The listing orders by most recent activity
     // and FR-014 decided what that means: a message. Correcting a typo is not a
     // new message, so the order must not change.
@@ -782,7 +782,7 @@ describe("editMessage", () => {
     expect(orderAfter).toEqual(orderBefore);
   });
 
-  it("T036: an edit on a row with no author is refused (FR-018)", async () => {
+  it("an edit on a row with no author is refused (FR-018)", async () => {
     // PLANTED WITH RAW SQL, because no write path can produce one any more — the sender
     // chapter made `userId` required — and 19,965 of them exist in the lane out of
     // 125,076, written before chapter 2.6 recorded a sender.
@@ -844,7 +844,7 @@ describe("editMessage", () => {
     expect(await repoA.listMessageEdits(channel.id, sent.id)).toEqual([]);
   });
 
-  it("T036b: the history survives its channel being archived and its author deleted", async () => {
+  it("the history survives its channel being archived and its author deleted", async () => {
     const author = await repoA.createUser("t036b-author", "Author");
     const channel = await repoA.createChannel("t036b", "public");
     await repoA.addMember(channel.id, author.id);
@@ -861,7 +861,7 @@ describe("editMessage", () => {
     expect(edits.map((e) => e.prior_text)).toEqual(["before"]);
   });
 
-  it("lists no edits for a message that has never been edited, and for one that does not exist", async () => {
+  it("lists no edits for a message never edited, for one that does not exist, and for another tenant's", async () => {
     // TWO FACTS, ONE VALUE, which is why the route asks `messageExistsIn` separately.
     const author = await repoA.createUser("t033f-author", "Author");
     const channel = await repoA.createChannel("t033f", "public");
@@ -898,7 +898,7 @@ describe("deleteMessage", () => {
     return res[0]!;
   };
 
-  it("T040: keeps the sequence, author and created_at; drops text and attachments (FR-006)", async () => {
+  it("keeps the sequence, author and created_at; drops text and attachments (FR-006)", async () => {
     // THE COLUMNS ARE `docs/05-sad.md:342`'s, and this is the first tombstone the
     // PLATFORM writes. the channel-control chapter's suite plants one by hand a few describes above,
     // and the two agree column for column — which is what makes that chapter's reader
@@ -932,7 +932,7 @@ describe("deleteMessage", () => {
     );
   });
 
-  it("T040: records WHO deleted it, in two shapes (FR-006a)", async () => {
+  it("records WHO deleted it, in two shapes, without erasing a key already in metadata (FR-006a)", async () => {
     // **THIS CHAPTER IS `messages.metadata`'S FIRST WRITER ANYWHERE.** Every row in the
     // platform carries the `'{}'` default today, which is why the merge below matters:
     // a later chapter's key must survive a deletion.
@@ -972,7 +972,7 @@ describe("deleteMessage", () => {
     });
   });
 
-  it("T042: a second deletion changes nothing and writes no second event (FR-009)", async () => {
+  it("a second deletion changes nothing and writes no second event (FR-009)", async () => {
     const author = await repoA.createUser("t042-author", "Author");
     const channel = await repoA.createChannel("t042", "public");
     await repoA.addMember(channel.id, author.id);
@@ -1011,7 +1011,7 @@ describe("deleteMessage", () => {
     expect(events[0]!.n).toBe(1);
   });
 
-  it("T042a: a deletion of a row with no author is refused (FR-018)", async () => {
+  it("a deletion of a row with no author is refused (FR-018)", async () => {
     // FR-018 says "an edit OR deletion" and the first draft of the task list tested only
     // the edit. **The deletion is the half a tenant API key can reach** — FR-012 lets a
     // key delete anybody's message — so it is the more exposed one, and it is checked
@@ -1035,7 +1035,7 @@ describe("deleteMessage", () => {
     expect((await rowOf(sent.id)).text).toBe("orphan");
   });
 
-  it("T048: a deleted message still counts as one unread", async () => {
+  it("a deleted message still counts as one unread", async () => {
     // The channel-control chapter decided this against a planted tombstone and stated the
     // approximation: unread is `last_sequence - read_position`, so a tombstone keeps its
     // sequence and therefore its place in the arithmetic. Counting rows instead would
@@ -1053,7 +1053,7 @@ describe("deleteMessage", () => {
     expect(row.unread).toBe(2);
   });
 
-  it("T049: deleting the NEWEST message leaves the preview at that sequence with a null text", async () => {
+  it("deleting the NEWEST message leaves the preview at that sequence with a null text", async () => {
     // Not "the message before it". The listing's preview is the channel's last message
     // and a tombstone is still the last message — reporting the previous one would make
     // a deletion look like the conversation had rewound.
@@ -1071,7 +1071,7 @@ describe("deleteMessage", () => {
     expect(row.last_message?.user).not.toBeNull();
   });
 
-  it("T047: history returns the tombstone in its original position, with a real writer behind it", async () => {
+  it("history returns the tombstone in its original position, with a real writer behind it", async () => {
     // The twin of T009's test a few describes above, which proved the READER against a
     // hand-planted tombstone. This proves the reader and the WRITER agree — the thing
     // that would break is a writer whose columns differ from what that test planted.

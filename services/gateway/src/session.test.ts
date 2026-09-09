@@ -829,7 +829,7 @@ describe("FR-RTM-05's six event kinds, each with a producer in this service", ()
    * would pass on a list that had quietly lost a member, which is the failure mode this
    * repository has paid for five times — a pattern matching the examples in front of it
    * rather than the set the rule names. */
-  it("sends every one of the six kinds the clause names", async () => {
+  it("names every one of FR-RTM-05's six event kinds in a send position in session.ts", async () => {
     const source = await readFile(new URL("session.ts", import.meta.url), "utf8");
 
     // FR-RTM-05's six, in its own order, mapped to the frame type this service sends.

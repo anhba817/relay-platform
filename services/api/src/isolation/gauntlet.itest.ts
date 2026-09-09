@@ -8,7 +8,14 @@ import { AppModule } from "../app.module";
 import { mintUserToken } from "../auth/user-token";
 import { environmentSigningSecret, Repository } from "../db/repository";
 import { createDb, createPool } from "../db/client";
-import { credentialAttack, listAttack, readAttack, rowsOf, writeAttack } from "./attack";
+import {
+  credentialAttack,
+  listAttack,
+  readAttack,
+  rowsOf,
+  send,
+  writeAttack,
+} from "./attack";
 import { withoutRequestId } from "./compare";
 import {
   nowhereId,
@@ -138,6 +145,123 @@ describe("the isolation gauntlet", () => {
     // THE STATE READ IS THE POINT: a 404 that completed the write is the case no
     // status code reveals.
     expect(verdict.stateChanged, "the victim's messages moved").toBe(false);
+  });
+
+  // ── the revisions chapter's three routes ────────────────────────────────────────
+  //
+  // WRITTEN BECAUSE THE ACCOUNTING TEST AT THE BOTTOM OF THIS FILE ASKED FOR THEM. The
+  // classification went in with the routes; the attacks did not, and the run that
+  // followed named all three by path. That is the direction published Part 3 never
+  // checked — a `write` classification with no attack written for it is the same hole as
+  // an unclassified route, one level up.
+  //
+  // AND THE CREDENTIAL DIFFERS PER ROUTE, which is the whole reason `accepts` is on the
+  // classification: the edit takes a user token only, the history an application
+  // credential only, the deletion either. Attacking one with the wrong class would be
+  // refused at the door and recorded as isolated without the handler ever running.
+  it("GET .../messages/:messageId/edits — a foreign message's history reads as an absent one", async () => {
+    attacked.add("GET /v1/channels/:channelId/messages/:messageId/edits");
+    const verdict = await readAttack(
+      url,
+      t.attacker.credential,
+      {
+        method: "GET",
+        path: `/v1/channels/${t.victim.channelId}/messages/${t.victim.messageId}/edits`,
+      },
+      {
+        method: "GET",
+        path: `/v1/channels/${ABSENT_UUID}/messages/${ABSENT_UUID}/edits`,
+      },
+    );
+    expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+    // THE REFUSAL IS THE TENANCY ONE, and without this the pair agrees on any shared
+    // answer — including the `@Accepts("application")` guard's 403, which is what a key
+    // swapped for a token here would produce on BOTH halves.
+    expect(verdict.foreign.status).toBe(404);
+    // AND THE PRIOR TEXT IS NOT IN THE BODY. FR-023a makes this the one route whose
+    // 200 carries what a message USED to say, so an id-shaped comparison is not enough.
+    expect(JSON.stringify(verdict.foreign.body)).not.toContain("victim");
+  });
+
+  it("PATCH .../messages/:messageId — a foreign message is not edited, and says so like an absent one", async () => {
+    attacked.add("PATCH /v1/channels/:channelId/messages/:messageId");
+    const verdict = await writeAttack(
+      url,
+      // A USER TOKEN, because `@Accepts("user")` is on the method: FR-MOD-02 grants a
+      // tenant key deletion and is silent on editing. The attacker's token names the
+      // attacker's OWN user, minted in `beforeAll` — the forged identifier is the
+      // channel and the message, not the caller.
+      attackerToken,
+      {
+        method: "PATCH",
+        path: `/v1/channels/${t.victim.channelId}/messages/${t.victim.messageId}`,
+        body: { text: "rewritten by the attacker" },
+      },
+      {
+        method: "PATCH",
+        path: `/v1/channels/${ABSENT_UUID}/messages/${ABSENT_UUID}`,
+        body: { text: "rewritten by the attacker" },
+      },
+      () => t.victim.repo.listMessages(t.victim.channelId, { limit: 50 }),
+    );
+    expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+    expect(verdict.foreign.status).toBe(404);
+    // THE STATE READ IS WHAT A STATUS CANNOT SAY. The listing carries `text` and
+    // `edited_at`, so a 404 that completed the edit shows up here and nowhere else.
+    expect(verdict.stateChanged, "the victim's message text or edited_at moved").toBe(false);
+  });
+
+  it("DELETE .../messages/:messageId — a foreign message is not tombstoned", async () => {
+    attacked.add("DELETE /v1/channels/:channelId/messages/:messageId");
+    const verdict = await writeAttack(
+      url,
+      // A KEY, and this route inherits `@Accepts("application", "user")` from the class
+      // rather than narrowing it, so the application half is the one attacked here — a
+      // key may delete anybody's message WITHIN ITS OWN TENANT (FR-MOD-02), which is
+      // precisely the permission that makes the tenancy boundary the only thing
+      // standing between this credential and the victim's message.
+      t.attacker.credential,
+      {
+        method: "DELETE",
+        path: `/v1/channels/${t.victim.channelId}/messages/${t.victim.messageId}`,
+      },
+      {
+        method: "DELETE",
+        path: `/v1/channels/${ABSENT_UUID}/messages/${ABSENT_UUID}`,
+      },
+      () => t.victim.repo.listMessages(t.victim.channelId, { limit: 50 }),
+    );
+    expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+    expect(verdict.foreign.status).toBe(404);
+    // A DELETION IS THE ONE WRITE WHOSE SUCCESS LOOKS LIKE ITS REFUSAL from outside:
+    // the route answers 204 with no body, so `stateChanged` is the entire assertion
+    // that the tombstone was not written.
+    expect(verdict.stateChanged, "the victim's message became a tombstone").toBe(false);
+  });
+
+  it("the three of them refuse the victim's message id inside the ATTACKER'S OWN channel", async () => {
+    // THE SHAPE ONLY A NESTED ROUTE HAS, and the pair attacks above cannot express it:
+    // they forge BOTH identifiers, so a route that checked only the channel would pass
+    // them. Here the channel is the attacker's, legitimately visible, and the message
+    // id is the victim's — which is the request a broken `messageExistsIn` answers.
+    const before = await t.victim.repo.listMessages(t.victim.channelId, { limit: 50 });
+    const own = `/v1/channels/${t.attacker.channelId}/messages/${t.victim.messageId}`;
+
+    for (const [label, req, credential] of [
+      ["history", { method: "GET", path: `${own}/edits` }, t.attacker.credential],
+      ["edit", { method: "PATCH", path: own, body: { text: "reached" } }, attackerToken],
+      ["deletion", { method: "DELETE", path: own }, t.attacker.credential],
+    ] as const) {
+      const answer = await send(url, credential, req);
+      expect(answer.status, `${label} accepted a foreign message id`).toBe(404);
+      expect(
+        JSON.stringify(answer.body ?? ""),
+        `${label} echoed the victim's message id`,
+      ).not.toContain(t.victim.messageId);
+    }
+
+    const after = await t.victim.repo.listMessages(t.victim.channelId, { limit: 50 });
+    expect(JSON.stringify(after), "the victim's message moved").toBe(JSON.stringify(before));
   });
 
   it("POST /internal/messages — a foreign channel_id refuses, and writes nothing", async () => {
