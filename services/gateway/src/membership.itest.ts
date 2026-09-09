@@ -777,8 +777,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
     // bound asserted here is loose on purpose, because a tight one would be a
     // timing flake in a lane that runs nine files at once.
     const elapsed = Date.now() - started;
-    // eslint-disable-next-line no-console
-    console.log(`[T066] request-return to notice: ${String(elapsed)} ms`);
+    console.log(`request-return to notice: ${String(elapsed)} ms`);
     expect(elapsed).toBeLessThan(1_000);
   });
 
