@@ -702,6 +702,18 @@ export default defineConfig({
         //                     that came from `periodOf` or from a `date` column
         //   quota-email.ts:31 `months[Number(m) - 1] ?? m` — a month outside 1..12
         //
+        // READ THE FRACTION, NOT THE PERCENTAGE, because 75 reads like a hole and is
+        // not one. These files are small enough that one arm moves the figure a long
+        // way, and the counts say what the percentages hide:
+        //
+        //   config.ts       9/10 branches   the one is the `?? "invalid"`
+        //   period.ts       6/8             the two are `?? 1` and `?? 0`
+        //   quota-email.ts  6/8             the two are `?? m`, both arms of one guard
+        //   quota-relay.ts  29/30 statements  the one is the catch inside `run()`
+        //
+        // A pin of 75 on an eight-branch file leaves room for exactly the two arms
+        // named above and nothing else: lose a third and it goes red.
+        //
         // NOT DELETED, WHICH IS THIS RATCHET'S USUAL ANSWER, because deleting them
         // means a non-null assertion: the same assumption moved somewhere a type
         // change cannot invalidate. Pinned at the reading with the arm named instead.
