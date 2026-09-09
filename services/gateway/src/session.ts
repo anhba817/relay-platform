@@ -281,18 +281,15 @@ export function attachSessions({
     socket.on("message", (raw) => void handle(connection, raw.toString()));
     socket.on("close", (code) => {
       registry.remove(connection.id);
-      // THE PRESENCE CHAPTER, AND THIS HANDLER NOW CARRIES THREE ORDERING CONSTRAINTS, not
-      // one. The meter is told BEFORE `registry.remove` — a socket that opened and
-      // closed between two reports would otherwise be counted zero, which is the one
-      // thing the wall-clock-minute unit was chosen to charge. Presence is told
-      // AFTER it, because it asks whether this was the user's last connection on
-      // this instance and must not count the one that is leaving. The unsubscribes
-      // come last.
+      // THIS HANDLER NOW CARRIES TWO ORDERING CONSTRAINTS, not none. Presence is told
+      // AFTER `registry.remove`, because it asks whether this was the user's last
+      // connection on this instance and must not count the one that is leaving. The
+      // unsubscribes come last.
       //
-      // Swapping the middle two is not a style change. With `registry.remove` after
-      // this block, `connectionsFor` still sees the closing connection, the count is
-      // 1 rather than 0, no grace check is ever scheduled, and the user stays online
-      // for ever. A test asserts the scheduling for that reason.
+      // The first of those is not a style change. With `registry.remove` after this
+      // block, `connectionsFor` still sees the closing connection, the count is 1
+      // rather than 0, no grace check is ever scheduled, and the user stays online for
+      // ever. A test asserts the scheduling for that reason.
       //
       // The condition asks a local question only. Closing one of two connections on
       // this instance must publish nothing (FR-006); whether the user is still
