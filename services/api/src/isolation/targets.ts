@@ -297,6 +297,9 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   { method: "POST", path: "/v1/webhooks/:id/rotate-secret", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks/:id/enable", accepts: "application", shape: "write" },
   { method: "POST", path: "/v1/webhooks/:id/disable", accepts: "application", shape: "write" },
+  // AND THE SYNTHETIC TEST EVENT, which the derivation named on the build that added
+  // it — the fifth time in this repository and the second in two chapters.
+  { method: "POST", path: "/v1/webhooks/:id/test", accepts: "application", shape: "write" },
   { method: "DELETE", path: "/v1/webhooks/:id", accepts: "application", shape: "write" },
 
   // ── the internal surface: an end-user token, so a FOREIGN CREDENTIAL is the attack

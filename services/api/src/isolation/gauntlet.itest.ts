@@ -1060,7 +1060,7 @@ describe("the isolation gauntlet", () => {
       expect(verdict.stateChanged, "the victim's endpoints moved").toBe(false);
     });
 
-    it.each(["rotate-secret", "enable", "disable"])(
+    it.each(["rotate-secret", "enable", "disable", "test"])(
       "POST /v1/webhooks/:id/%s — refused on a foreign endpoint, and nothing moves",
       async (action) => {
         attacked.add(`POST /v1/webhooks/:id/${action}`);
@@ -1076,6 +1076,11 @@ describe("the isolation gauntlet", () => {
         // ROTATE IS THE ONE THAT WOULD HURT MOST. A successful rotation on somebody
         // else's endpoint breaks every signature they verify, and the state read is
         // what sees it: `secret_rotated_at` is on the row this returns.
+        //
+        // AND `test` IS THE ONE THAT REACHES OUTWARD. It makes the platform POST to the
+        // url on the row, so a successful attack on a foreign endpoint would have this
+        // tenant's request arriving at another customer's server — the only route in
+        // this list whose damage lands outside the platform.
         expect(verdict.stateChanged, "the victim's endpoints moved").toBe(false);
       },
     );
