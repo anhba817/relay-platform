@@ -829,13 +829,22 @@ function sample(type: string, channel: string, user: string): unknown {
     case "typing":
       return { type, payload: { channel, user } };
     case "error":
-      // NO `request_id`. The payload is a `strictObject`, so an extra field is refused
-      // as `invalid_frame` — and this loop asserts `unknown_frame_type`, which is a
-      // claim about DIRECTION. A sample that fails validation tests the validator
-      // instead, and the assertion then passes or fails for the wrong reason.
+      // A `request_id`, AND THIS COMMENT USED TO SAY *"NO `request_id`"* — for the
+      // right reason, until the field existed. The payload is a `strictObject`, so it
+      // refused an extra field then and refuses a MISSING one now that the limits
+      // chapter made `request_id` required. Either way the sample must be exactly
+      // what the schema of the day accepts, because this loop asserts
+      // `unknown_frame_type`, a claim about DIRECTION: a sample that fails validation
+      // tests the validator instead, and the assertion then passes or fails for the
+      // wrong reason. `session.itest.ts`'s builder carries the same correction.
       return {
         type,
-        payload: { code: "forged", message: "forged", docs_url: "/x" },
+        payload: {
+          code: "forged",
+          message: "forged",
+          docs_url: "/x",
+          request_id: randomUUID(),
+        },
       };
     default:
       return { type, payload: { idem_key: randomUUID(), channel, text: "forged" } };

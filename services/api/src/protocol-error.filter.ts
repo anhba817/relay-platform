@@ -75,11 +75,24 @@ export class ProtocolErrorFilter implements ExceptionFilter {
         : "unexpected internal error";
     res.statusCode = status;
     res.setHeader("content-type", "application/json");
+    // FOUR FIELDS AS OF THE RATE-LIMIT CHAPTER, and constitution V has asked for four since
+    // chapter 1.3. `request_id` was promised "in Part 2, when a gateway exists to
+    // mint one"; the gateway arrived and the field did not. It is read back off
+    // the response rather than threaded through, because `RequestContextMiddleware`
+    // has already set `X-Request-Id` by the time anything can throw — one id, in
+    // the header and the body, from one place.
+    //
+    // TOP-LEVEL, NOT NESTED. EIR-API-04's worked example wrapped these in an
+    // `error` key until this chapter checked what the platform actually sends;
+    // it never sent that shape. Wrapping every error response would be a breaking
+    // change and CON-05 makes breaking changes a URL-versioning event, so the
+    // document was brought to the code — SRS 1.3 (research R27).
     res.end(
       JSON.stringify({
         code,
         message,
         docs_url: docsUrl(code),
+        request_id: String(res.getHeader("X-Request-Id") ?? ""),
         ...(field !== null ? { field } : {}),
       }),
     );

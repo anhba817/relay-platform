@@ -12,11 +12,26 @@
  * the identifier back makes the foreign answer differ from the absent one while both
  * are 404, which is exactly the leak constitution I is about.
  *
- * So status and whole body are compared. There is nothing to exclude from the
- * comparison yet: the error envelope is `code`, `message` and `docs_url`, all three of
- * which must match. When a per-request field joins it, the chapter that adds it owns
- * the decision to drop it here — and it will have to argue that the field reveals
- * nothing about the resource. */
+ * So status and body are compared — and ONE FIELD IS EXCLUDED, which the paragraph
+ * this replaces asked the next chapter to argue for. It said: *"There is nothing to
+ * exclude from the comparison yet … when a per-request field joins it, the chapter
+ * that adds it owns the decision to drop it here — and it will have to argue that the
+ * field reveals nothing about the resource."*
+ *
+ * THE ARGUMENT. `request_id` is minted per request, so two requests never carry the
+ * same one and a whole-body comparison of any two answers fails for a reason that has
+ * nothing to do with tenancy. It is also the one field in the envelope that is not
+ * derived from the resource at all: `code`, `message` and `docs_url` are answers about
+ * what was asked for, and the id is an answer about the asking. Dropping it removes no
+ * leak, because there is nothing in it to leak.
+ *
+ * AND THE INSTRUCTION IS WHY THIS WAS ONE LINE RATHER THAN A DEBUGGING SESSION. The
+ * field's arrival turned twenty-two attacks and one channel-surface test red at once,
+ * every one of them with two identical bodies and two different ids. The file that
+ * broke had already written down what to do about it, in the place the reader of the
+ * failure would land. */
+
+import { withoutRequestId } from "./compare";
 
 export interface AttackRequest {
   method: string;
@@ -76,8 +91,11 @@ export function comparePair(foreign: Answer, absent: Answer): string[] {
   if (foreign.status !== absent.status) {
     differences.push(`status ${foreign.status} (foreign) vs ${absent.status} (absent)`);
   }
-  const f = JSON.stringify(foreign.body);
-  const a = JSON.stringify(absent.body);
+  const f = JSON.stringify(withoutRequestId(foreign.body));
+  const a = JSON.stringify(withoutRequestId(absent.body));
+  // REPORTED WITHOUT THE ID TOO, not merely compared without it. A message that
+  // printed the raw bodies would show two ids differing on every real failure and
+  // send the reader after the field this function has just decided to ignore.
   if (f !== a) differences.push(`body ${f} (foreign) vs ${a} (absent)`);
   return differences;
 }

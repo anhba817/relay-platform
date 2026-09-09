@@ -200,11 +200,13 @@ describe("the public channel surface", () => {
       const foreign = await addMembers(foreignChannelId, { user_ids: ["intruder"] });
       const nowhere = await addMembers(absent, { user_ids: ["intruder"] });
       expect(foreign.status).toBe(nowhere.status);
-      // COMPARED WHOLE. The envelope is `code`, `message` and `docs_url`, and all
-      // three must match for a foreign channel to be indistinguishable from an absent
-      // one. Nothing here is per-request yet, so nothing is excluded.
-      expect(await foreign.json()).toEqual(
-        await nowhere.json(),
+      // COMPARED WHOLE EXCEPT THE ID, and this line asked for that in advance: it read
+      // *"nothing here is per-request yet, so nothing is excluded"* until the limits
+      // chapter put `request_id` in the envelope. `code`, `message` and `docs_url` are
+      // answers about the resource and all three must match; the id is an answer about
+      // the request and never matches.
+      expect(withoutRequestId(await foreign.json())).toEqual(
+        withoutRequestId(await nowhere.json()),
       );
       // And the other tenant's channel gained nobody. Read through ITS OWN
       // repository — a repository scoped to the empty string is not a scope, it is

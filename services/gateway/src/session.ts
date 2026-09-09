@@ -15,7 +15,7 @@ import {
   type MembershipFabric,
   type PresenceFabric,
 } from "@relay/protocol";
-import type { Logger } from "@relay/service-kit";
+import { newRequestId, type Logger } from "@relay/service-kit";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { ApiError, type ApiClient } from "./api-client.js";
@@ -115,11 +115,25 @@ function send(socket: WebSocket, frame: Frame): void {
   socket.send(JSON.stringify(frame));
 }
 
-/** EIR-API-04's envelope, wearing its WebSocket clothes. */
+/** EIR-API-04's envelope, wearing its WebSocket clothes.
+ *
+ * `request_id` ARRIVED IN THE RATE-LIMIT CHAPTER, and the gateway had none to give — it
+ * minted no ids at all. The field is required on the frame rather than optional,
+ * because an optional fourth field would have been the fourth instance of the
+ * habit that chapter is about: `rate_limited`, close code 4008 and this field
+ * were all declared in 1.3 and left unenforced (research R13).
+ *
+ * WHAT THE ID IS FOR decides its shape. A developer quoting one in a support
+ * ticket needs it to find a single server-side log line, and on a socket the
+ * useful unit is the frame that failed — a client whose tenth `message.send` was
+ * refused needs to point at that refusal, not at the connection. So callers pass
+ * the id of the frame they are answering, and `sendError` mints one only for a
+ * frame nobody asked for. */
 function sendError(
   socket: WebSocket,
   code: ErrorCode,
   message: string,
+  requestId: string = newRequestId(),
   /** WHICH FIELD, on the socket door (FR-005).
    *
    * `errorFrameSchema` has published this key since chapter 1.3 and no gateway code path
@@ -137,6 +151,7 @@ function sendError(
       code,
       message,
       docs_url: docsUrl(code),
+      request_id: requestId,
       ...(field !== undefined && field.length > 0 ? { field } : {}),
     },
   });
@@ -1319,6 +1334,17 @@ export function attachSessions({
         connection.socket,
         "invalid_frame",
         frame.error.issues[0]?.message ?? "frame failed schema validation",
+        // AN EXPLICIT `undefined`, AND TYPESCRIPT COULD NOT ASK FOR IT. `requestId`
+        // was inserted BEFORE `field` in the signature above, and this is the only
+        // call that passed a fourth argument — so the joined path silently became the
+        // `request_id` and the `field` silently disappeared. Both parameters are
+        // `string`, so nothing went red: the typecheck passed, the lint passed, and
+        // the frame carried a zod path where a support ticket expects an id.
+        //
+        // The published order added `field` LAST and never met this. Inserting a
+        // parameter in front of an optional one is a rename of every later argument,
+        // and only reading the call sites finds it.
+        undefined,
         // The joined path, which is what a developer reading their own frame sees —
         // `payload.attachments.3.kind` rather than "somewhere in this frame".
         frame.error.issues[0]?.path.join("."),

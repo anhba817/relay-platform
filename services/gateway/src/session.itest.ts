@@ -1252,16 +1252,25 @@ describe("the socket's delivery, with a fan-out attached", () => {
       case "typing":
         return { type, payload: { channel, user: "tuan" } };
       default:
-      // NO `request_id` IN THE ERROR SAMPLE. The payload is a `strictObject`, so an
-      // extra field is refused as `invalid_frame` — and this loop asserts
-      // `unknown_frame_type`, which is a claim about DIRECTION. A sample that fails
-      // validation tests the validator instead.
+      // A `request_id` IN THE ERROR SAMPLE, AND THIS COMMENT USED TO SAY THE OPPOSITE.
+      // It read *"NO `request_id` IN THE ERROR SAMPLE — the payload is a `strictObject`,
+      // so an extra field is refused as `invalid_frame`"*, and it was right for exactly
+      // as long as the field did not exist. The limits chapter makes it REQUIRED, so
+      // the same `strictObject` now refuses the sample for its ABSENCE, and the loop's
+      // nine direction assertions came back `invalid_frame` — the failure this
+      // builder's own header warns about, arriving from the other side.
+      //
+      // The unchanged half is the reason: this loop asserts `unknown_frame_type`, a
+      // claim about DIRECTION, and a sample that fails validation tests the validator
+      // instead. Which fields make a sample valid is a fact about the schema on the
+      // day, not a rule to be stated once.
         return {
           type,
           payload: {
             code: "forged",
             message: "forged",
             docs_url: "/x",
+            request_id: randomUUID(),
           },
         };
     }
