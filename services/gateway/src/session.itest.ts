@@ -169,7 +169,13 @@ async function startApi(): Promise<ApiUnderTest> {
     // No outbox relay in this child. This suite is about the socket's credentials; a
     // background loop draining a table the outbox chapter's suite is asserting on
     // turns two unrelated test files into a race.
-    env: { ...process.env, PORT: "0", RELAY_OUTBOX_RELAY: "off" },
+    env: {
+      ...process.env,
+      PORT: "0",
+      RELAY_OUTBOX_RELAY: "off",
+      // Nor the notification relay, for the same reason.
+      RELAY_NOTIFICATION_RELAY: "off",
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   // DRAINED, AND KEPT. Two reasons, and the second is why this exists at all: an

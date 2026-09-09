@@ -5,6 +5,7 @@ import { createLogger } from "@relay/service-kit";
 
 import { AppModule } from "./app.module";
 import { EventConsumerService } from "./consumer/consumer.module";
+import { NotificationRelayService } from "./notifications/notifications.module";
 import { OutboxRelayService } from "./outbox/outbox.module";
 import { DeliveryRelayService } from "./webhooks/webhooks.module";
 
@@ -32,6 +33,11 @@ async function bootstrap(): Promise<void> {
   // publisher connects lazily, so an unreachable broker leaves events accumulating in
   // Postgres instead of preventing the api from serving writes (research R9).
   app.get(OutboxRelayService).start();
+  // The disablement notifications the retry-and-disable chapter wrote and nothing
+  // delivered. Its backlog drains on this first start as ordinary undelivered
+  // work — no migration and no special case, because `delivered_at IS NULL` was
+  // already true of every one of those rows.
+  app.get(NotificationRelayService).start();
   // And the second relay: the same loop over a different table,
   // publishing deliveries that have become due. Started here for the outbox chapter's reason —
   // a retry schedule that only runs when someone remembers is not a schedule.

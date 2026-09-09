@@ -17,6 +17,7 @@ import { ChannelsModule } from "./channels/channels.module";
 // chapter fences it.
 import { UsersModule } from "./users/users.module";
 import { ConsumerModule } from "./consumer/consumer.module";
+import { NotificationsModule } from "./notifications/notifications.module";
 import { OutboxModule } from "./outbox/outbox.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 import { TenancyModule } from "./tenancy/tenancy.module";
@@ -37,6 +38,7 @@ import { RequestContextMiddleware } from "./request-context.middleware";
     InternalModule,
     TenancyModule,
     OutboxModule,
+    NotificationsModule,
     ConsumerModule,
     WebhooksModule,
   ],

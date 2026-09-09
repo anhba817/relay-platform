@@ -395,6 +395,11 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
       // would be a second source of truth for a credential.
       "RELAY_WEBHOOK_SECRET_KEY",
       "RELAY_INTERNAL_CREDENTIAL",
+      // The rate-limit chapter's other half: where the notification relay posts its SMTP.
+      // The lane runs Mailpit on 11025 and the default is 1025, so an
+      // unforwarded variable is not a missing feature — it is a mailer talking
+      // confidently to a port nothing is listening on.
+      "RELAY_SMTP_URL",
     ),
     // The api children run WITHOUT the outbox relay. This journey
     // asserts message delivery, and a background loop draining the outbox while
@@ -402,6 +407,10 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
     // files, not a property of the system. The relay has its own suite, which
     // drives it explicitly.
     RELAY_OUTBOX_RELAY: "off",
+    // The rate-limit chapter: and no notification relay either, for the same reason. This
+    // journey asserts message delivery; a loop marking rows delivered while
+    // the rate-limit chapter's own suite asserts on that column is a race between test files.
+    RELAY_NOTIFICATION_RELAY: "off",
     // No event consumer in these children either, for the reason
     // the line above exists — this journey asserts message delivery, and a
     // background consumer writing to a table the broker chapter's suite asserts on is a race
