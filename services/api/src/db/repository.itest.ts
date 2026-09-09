@@ -1112,7 +1112,7 @@ describe("deleteMessage", () => {
   });
 });
 
-// A CONCURRENT EDIT AND DELETION OF ONE MESSAGE (feature 043, FR-007).
+// A CONCURRENT EDIT AND DELETION OF ONE MESSAGE (FR-007).
 //
 // `gaps.md` 3.23-3 has carried this since this chapter built both writes. Neither takes
 // a row lock — no `FOR UPDATE`, following `assertWithinQuota`'s recorded decision to
@@ -1124,7 +1124,7 @@ describe("deleteMessage", () => {
 // that two operations issued on one connection serialise at the socket, so a test built
 // that way proves the code cannot race by never letting it. The third case below uses
 // TWO POOLS, which is what that chapter found it needed.
-describe("the channel's revision counter (feature 044, FR-002, FR-003, FR-011)", () => {
+describe("the channel's revision counter (FR-002, FR-003, FR-011)", () => {
   const countFor = async (channelId: string): Promise<number> => {
     const [row] = (
       await db.execute<{ revision_sequence: string }>(
@@ -1358,5 +1358,87 @@ describe("a concurrent edit and deletion (feature 043, FR-007)", () => {
 
     // And the row is untouched: still a tombstone, still no text.
     expect(await tombstoned(sent.id)).toBe(true);
+  });
+});
+
+// T004 — THE READER TEST, RUN AGAINST UNCHANGED CODE.
+//
+// FR-019 decides that an attachments-only message stores `text = ""` rather than
+// a null, so the revisions chapter's tombstone predicate is untouched. That decision rests on a
+// claim about code this chapter has not written yet: every read path already treats an
+// empty string as a live message. **This test must pass today.** If it fails, the
+// decision is wrong and the plan changes before a line of production code exists.
+//
+// The revisions chapter ran the equivalent and it paid twice: it proved the read path was already
+// correct, and it stopped a later phase from "fixing" something that worked.
+//
+// The row is planted with raw SQL because no write path accepts an empty text yet — the
+// send schema is `z.string().min(1)` at both doors until phase 4. `attachments` is left
+// NULL, which is a VALID value (data-model.md: NULL and `[]` are different and NULL means
+// no attachments): the read paths do not re-validate, so a malformed array planted here
+// would surface as a 1011 socket close in some later phase rather than as a failure here.
+describe("an empty text is a live message on every read path (T004, FR-019)", () => {
+  it("reads back as live through history both ways, the listing's preview, and the tombstone predicate", async () => {
+    const user = await repoA.createUser("t004-reader", "Reader");
+    const channel = await repoA.createChannel("t004", "public");
+    await repoA.addMember(channel.id, user.id);
+    const before = await repoA.sendMessage(channel.id, { text: "has words", userId: user.id });
+
+    // The row this chapter's phase 4 will make sendable. `sequence` continues the
+    // channel's series by hand, which is what makes this a reader test and not a
+    // writer one: the writer is not involved and must not be.
+    const plantedId = randomUUID();
+    await db.execute(sql`
+      INSERT INTO messages (id, channel_id, sequence, user_id, text, attachments, created_at)
+      VALUES (${plantedId}, ${channel.id}, ${before.seq + 1}, ${user.id}, '', NULL, now())
+    `);
+    // The listing reads `channels.last_sequence`, not the messages table (the channel-control chapter's
+    // keyset), so a hand-planted row is invisible to the preview until this moves.
+    await db.execute(
+      sql`UPDATE channels SET last_sequence = ${before.seq + 1}, last_activity_at = now()
+          WHERE id = ${channel.id}`,
+    );
+
+    // 1 and 2 — history, both directions. `afterSeq: 0` is the forward page; its absence
+    // is the backward one. Both, because they are two queries in `listMessages` and a
+    // single-direction test cannot tell which one it proved.
+    for (const [label, page] of [
+      ["backward", await repoA.listMessages(channel.id, { userId: user.id, limit: 10 })],
+      [
+        "forward",
+        await repoA.listMessages(channel.id, { userId: user.id, limit: 10, afterSeq: 0 }),
+      ],
+    ] as const) {
+      const planted = page.find((m) => m.id === plantedId);
+      expect(planted, label).toBeDefined();
+      // `toBe("")` and not a falsy check. `expect(planted!.text).toBeFalsy()` would pass
+      // on a null too, which is the exact distinction this test exists to make.
+      expect(planted!.text, label).toBe("");
+      expect(planted!.text, label).not.toBeNull();
+    }
+
+    // 3 — the channel listing's preview. It shows what was said, and what was said here
+    // is nothing; the point is that it is not read as a deletion.
+    const { rows } = await repoA.listChannelsForUser(user.id, { limit: 10 });
+    const row = rows.find((r) => r.external_id === "t004")!;
+    expect(row.last_message?.sequence).toBe(before.seq + 1);
+    expect(row.last_message?.text).toBe("");
+    expect(row.last_message?.text).not.toBeNull();
+
+    // 4 — the tombstone predicate does not fire. `editMessage` and `deleteMessage` both
+    // read the row and throw `MessageDeletedError` on `text === null`; an empty string
+    // must reach neither. The edit is the sharper of the two because it PROVES the row
+    // was writable, not merely that a refusal was skipped.
+    const edited = await repoA.editMessage(channel.id, plantedId, {
+      userId: user.id,
+      text: "words now",
+    });
+    expect(edited.text).toBe("words now");
+
+    // And the same row, deleted, still becomes a tombstone the normal way — so the
+    // empty string is not a state the delete path mishandles either.
+    await repoA.deleteMessage(channel.id, plantedId, { userId: user.id });
+    const after = await repoA.listMessages(channel.id, { userId: user.id, limit: 10 });
+    expect(after.find((m) => m.id === plantedId)!.text).toBeNull();
   });
 });
