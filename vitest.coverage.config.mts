@@ -272,6 +272,77 @@ export default defineConfig({
         // (FR-004, SC-006), and its `catch` is what stops an analytics outage
         // becoming a delivery outage (contract invariant 4). Both are branches, and
         // an unmeasured branch here fails silently in the direction nobody checks.
+        // ── THIS CHAPTER'S NEW FILES, PINNED DELIBERATELY ─────────────────────
+        //
+        // T079 asked for an explicit decision either way, and the answer is: pin
+        // the ones that decide something, at what they measure. All of these sit
+        // inside the coverage `include` glob, so an unpinned file here is bounded
+        // by nothing but the aggregate 70 — the connection-metering chapter's T033c made the same
+        // call for the same reason, and its comment is the one to read: an
+        // unpinned file is a figure that can slide.
+        //
+        // `catalogue.ts` matters most of the four. It lands in
+        // `services/api/src/db/`, the one directory that already carries a
+        // per-file ratchet and the directory constitution VI's 100%-branch clause
+        // is about. It reaches 100 on every metric — but only after the
+        // classification was separated from the query, because the arm that
+        // returns `null` cannot execute against a database that has no
+        // unclassified table, which is the state the check exists to keep. The
+        // separation is the finding; the number is what it bought.
+        "services/api/src/db/catalogue.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // The gauntlet's own instruments. Test infrastructure that the include
+        // glob cannot tell from product code — and rather than adding an exclude
+        // entry to hide them, they are pinned, because Phase 7's whole argument
+        // applies one layer down: an instrument that has never produced output has
+        // never had its output checked. Both reached 100 only after the arms a
+        // PASSING suite cannot reach were driven with fakes: the router shapes the
+        // live adapter does not have, and the difference strings a healthy
+        // platform never produces.
+        "services/api/src/isolation/targets.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/isolation/compare.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // `attack.ts` is NOT at 100, and the remaining arms are named rather than
+        // chased. `send`'s empty-body arm and `credentialAttack`'s mint-failure arm
+        // both need an HTTP fake to reach, and faking the transport in a file whose
+        // subject is real HTTP would test the fake. `rowsOf` was extracted and
+        // closed because it holds a real decision — zero rows from an unrecognised
+        // shape reads exactly like zero rows from a correctly-scoped list, and only
+        // one of those is a pass.
+        "services/api/src/isolation/attack.ts": {
+          branches: 83,
+          functions: 100,
+          lines: 100,
+          statements: 96,
+        },
+
+        // The channel surface's decisions: the scoped read that comes FIRST so a
+        // foreign channel and an absent one answer alike, and the ceiling counted
+        // from storage before any user is created. The one uncovered branch is the
+        // `not_found` outcome after a successful scoped read — the channel deleted
+        // between two statements of one call — which nothing in the api can do.
+        "services/api/src/channels/channels.service.ts": {
+          branches: 75,
+          functions: 100,
+          lines: 94,
+          statements: 94,
+        },
+
         "services/api/src/webhooks/disable.ts": {
           branches: 100,
           functions: 100,

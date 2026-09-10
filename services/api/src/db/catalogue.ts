@@ -182,8 +182,10 @@ export async function classifyTables(db: Db): Promise<TableClassification[]> {
  * this check exists to keep. So the branch that fires only when somebody adds a table
  * is the one branch a live run can never reach.
  *
- * Pure, so a unit test can drive all four arms with rows it makes up. A file with
- * nothing to mock has no reason to be partially tested. */
+ * Pure, so `catalogue.test.ts` drives all four arms with rows it makes up — the same
+ * argument as `webhooks/disable.ts` and `webhooks/analytics.ts`, both pure and both
+ * pinned at 100 for it. A file with nothing to mock has no reason to be partially
+ * tested. */
 export function classifyRow(row: CatalogueRow): TableClassification {
   const via = row.fk_targets ?? [];
   // ORDER MATTERS, AND ONLY IN ONE PLACE: a spine table with no environment_id and no
