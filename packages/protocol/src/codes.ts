@@ -226,6 +226,19 @@ export const ERROR_CODES = {
   // registry catching up, which is the direction `check-error-codes` cannot check
   // (it reads the built `dist` against the docs and counts, so a code documented and
   // unregistered looks like a code nobody has written a section for).
+  // THE CONNECTION-METERING CHAPTER'S. A connection belongs to one environment for
+  // its lifetime, and a second report naming a different one is a bug in the reporter
+  // rather than a state to reconcile — so it is refused rather than absorbed.
+  //
+  // IT ARRIVES WITH ITS THROWER, AND IN PUBLISHED IT DID NOT. There the error registry
+  // came a chapter LATER and hardened this filter at the same time it added this code,
+  // so for one chapter `usage.controller.ts` threw a 409 naming a code no registry
+  // held — and nothing could say so, because the check that would have said it did not
+  // exist yet. Here the registry is upstream, the filter refuses an unregistered name,
+  // and the suite went red the moment the controller was ported:
+  // `expected 'internal_error' to be 'connection_environment_conflict'`.
+  connection_environment_conflict:
+    "this connection was first reported for a different environment; a connection belongs to one environment for its whole life",
   // THE QUOTA CHAPTER'S ONE CODE, AND THIS FILE HAS BEEN CITING IT SINCE BEFORE IT
   // EXISTED. Two comments above argue against reusing it — the banned-user code says
   // "the same argument this file already makes for `wrong_credential_type` and

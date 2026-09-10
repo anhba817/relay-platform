@@ -99,6 +99,17 @@ export default tseslint.config(
       // `usageFor` would mean asserting the roll-up against the function that reads
       // it — the same circularity, one table over.
       "services/api/src/quotas/quotas.itest.ts",
+      // AND THE CONNECTION-METERING CHAPTER'S, WHICH MAKES THE SAME CLAIM ONE
+      // DIMENSION OVER: a credited minute survives a `FLUSHALL` of the counter store,
+      // because a quota is about THIS MONTH and the rate limiter's store is allowed to
+      // lose things. Proving that needs the flush, and the flush needs a raw client.
+      //
+      // LISTED RATHER THAN DODGED. Published's version reached for
+      // `await import("ioredis")` inside the test, which this rule cannot see — an
+      // exemption that is invisible, which the note at the top of this block calls
+      // worse than a listed one. The static import puts it back under the rule and
+      // this entry is the answer.
+      "services/api/src/quotas/connections.itest.ts",
       // ── AND EVERY OTHER REDIS CLIENT, BY PATH, WITH THE ARGUMENT IT NEEDS ──
       //
       // The rule arrives here and TWELVE files older than it already import `ioredis`.

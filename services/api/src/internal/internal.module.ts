@@ -15,6 +15,7 @@ import { InternalController } from "./internal.controller";
 import { DispatchController } from "./dispatch.controller";
 import { MembershipsController } from "./memberships.controller";
 import { SessionController } from "./session.controller";
+import { UsageController } from "./usage.controller";
 
 // The internal routes reuse MessagesModule's providers wholesale — the
 // request-scoped Repository, the guard, the service. One write path, two
@@ -37,6 +38,9 @@ import { SessionController } from "./session.controller";
     // REGISTERED HERE, and a controller nobody registers is a route that does not
     // exist — which an analysis pass has found in this repository once already.
     MembershipsController,
+    // And this chapter's, for the same reason and in the same place: `app.module.ts`
+    // carries only `HealthController` and already imports this module.
+    UsageController,
   ],
   providers: [
     {

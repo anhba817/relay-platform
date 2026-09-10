@@ -105,7 +105,9 @@ export function createServer(logger?: Logger) {
   server.on("close", () => {
     // `void`, LIKE ITS SIBLINGS. `sessions.close()` returns a promise as of the
     // connection cap — it frees the places this instance holds before closing the
-    // socket server — and `server.on("close")` has nowhere to await one.
+    // socket server — and it has a second thing to await as of this chapter: a final
+    // usage report. `server.on("close")` has nowhere to await one, so it is voided
+    // HERE and awaited in the signal handler below, where the process IS leaving.
     void sessions.close();
     void fanout.close();
     void presence.close();

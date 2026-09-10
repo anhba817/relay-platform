@@ -29,6 +29,7 @@ import {
 import type { Fanout } from "./fanout.js";
 import type { Decision, GatewayLimits } from "./limits.js";
 import { type Membership } from "./membership.js";
+import { createMeter, METER_INTERVAL_MS, type Meter } from "./meter.js";
 import { type Presence } from "./presence.js";
 import { Registry, type Connection } from "./registry.js";
 import { type Typing } from "./typing.js";
@@ -263,6 +264,12 @@ export interface SessionServerOptions {
    * says why that is a decision each module has to make for itself rather than a
    * house style: for a counter, optional means UNCOUNTED. */
   limits?: GatewayLimits;
+  /** Optional for the reason `limits` and `fanout` are: 2.5's
+   * tests and a single-process dev run have no api credential, and a socket
+   * server that refused to start without one would be a worse default than an
+   * unmetered one. `main.ts` always supplies the interval; the meter itself is
+   * built here so its timer has the same owner as the heartbeat's. */
+  meterIntervalMs?: number;
 }
 
 // THE FOUR PRESENCE TIMINGS ARE NOT HERE, and an earlier draft of this chapter put
@@ -290,14 +297,24 @@ export function attachSessions({
   connections,
   heartbeatMs = DEFAULT_HEARTBEAT_MS,
   limits,
+  meterIntervalMs = METER_INTERVAL_MS,
 }: SessionServerOptions): {
   registry: Registry;
-  /** ASYNC AS OF THIS CHAPTER, and `releaseAll` below is the reason. Freeing the
-   * places this instance holds is a round trip to Redis that has to COMPLETE before
-   * `wss.close()`, or the deploy case the method exists for is a race it can lose. */
+  meter: Meter;
+  /** ASYNC AS OF THE CONNECTION CAP, and `releaseAll` below was the reason. Freeing
+   * the places this instance holds is a round trip to Redis that has to COMPLETE
+   * before `wss.close()`, or the deploy case the method exists for is a race it can
+   * lose. This chapter gives it a second thing to finish: a final usage report. */
   close: () => Promise<void>;
 } {
   const registry = new Registry();
+  // A second timer beside the heartbeat, not a second job for it.
+  const meter: Meter = createMeter({
+    api,
+    registry,
+    logger,
+    intervalMs: meterIntervalMs,
+  });
   /** FR-011a. What this instance holds, so a shutdown can free it
    * all at once.
    *
@@ -910,6 +927,12 @@ export function attachSessions({
       // succeeds, and leaves it null when it degrades.
       marks: null,
       sendLimit,
+      // Stamped BEFORE the resume and before the ack, because the
+      // socket is already open and already costing a minute — a connection that
+      // started being metered only once it was fully established would give a
+      // reconnect storm a free window on every attempt.
+      openedAt: new Date(),
+      environmentId: identity.environmentId,
     };
 
     registry.add(connection);
@@ -1090,6 +1113,16 @@ export function attachSessions({
           slot,
         );
       }
+      // AND THE METER BEFORE THE REGISTRY, WHICH IS THE ORDER THAT MATTERS. The line
+      // below removes this connection from the registry the meter walks, so a socket
+      // that opened and closed between two reports would otherwise be counted zero.
+      // That is not a rounding error: it is the one thing the wall-clock-minute unit
+      // was chosen to charge (research R19).
+      //
+      // Handing over totals rather than reporting them. This handler is already
+      // documented as the last place that should throw, and a mass disconnect would
+      // turn one event into a burst of HTTP requests.
+      meter.closed(connection, new Date());
       registry.remove(connection.id);
       // THIS HANDLER NOW CARRIES TWO ORDERING CONSTRAINTS, not none. Presence is told
       // AFTER `registry.remove`, because it asks whether this was the user's last
@@ -1607,8 +1640,17 @@ export function attachSessions({
 
   return {
     registry,
+    meter,
+    // ASYNC, AND NOW FOR TWO REASONS (research R11, FR-031). The connection cap made
+    // it async to free this instance's places; this chapter adds a final report,
+    // which takes the graceful case's loss to zero and leaves R10's one-interval
+    // bound for the case that cannot be helped. A flush that is not awaited is the
+    // same non-guarantee one line further down: the process leaves before the request
+    // does.
     close: async () => {
       clearInterval(heartbeat);
+      meter.stop();
+      await meter.reportOnce(new Date());
       // FR-011a. Before `wss.close()`, because that call does not
       // close established sockets — so their own close handlers may never run and
       // this is the last chance to free their places. SC-013: after a deployment a
