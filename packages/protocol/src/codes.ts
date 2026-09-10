@@ -367,9 +367,36 @@ export function isErrorCode(value: string): value is ErrorCode {
  * vocabulary.
  *
  * The host stays a placeholder until the docs site exists. What stops being a
- * placeholder is the NUMBER OF PLACES that have to change when it does: one. */
-export const ERROR_DOCS_BASE = "https://relay.example/docs/errors";
+ * placeholder is the NUMBER OF PLACES that have to change when it does: one.
+ *
+ * ── AN ANCHOR, NOT A PATH, AND THE REFERENCE IS WHY ──────────────────────────────
+ *
+ * This was `${base}/${code}`, and `docs/08-error-reference.md` is ONE document with
+ * `## <code>` headings. So every `docs_url` this platform has ever sent named a page
+ * that does not exist — 27 codes, 27 dead links, and the error reference sitting there
+ * with an anchor for each one.
+ *
+ * NOTHING COULD CATCH IT, because the function and its test were written together. The
+ * error-registry chapter shipped `it("appends the code VERBATIM — no slug transform, no
+ * case change")` asserting the path form, so the test agreed with the defect and went
+ * green on it for twenty-two chapters. A test written beside the code it tests inherits
+ * the code's assumptions; the reference document is the only thing that could have
+ * disagreed, and no instrument reads it.
+ *
+ * PARTS 1 AND 2 STILL TEACH THE PATH FORM and are not renumbered by this work. That is
+ * deliberate rather than overlooked: they publish `docs/errors/not_found` at a point
+ * where there is no reference document to anchor into, and this chapter is where a
+ * reader sees it corrected — which is also where the platform stops sending it.
+ *
+ * ── AND THE BASE IS READ PER CALL ────────────────────────────────────────────────
+ *
+ * `RELAY_DOCS_BASE_URL` at call time, not at import. A `const` evaluated when the module
+ * is first loaded cannot be changed by a test that sets the variable in `beforeAll`, and
+ * a preview deployment cannot point its error links at its own docs. One env read per
+ * refusal is not a cost anything can measure. */
+export const DEFAULT_DOCS_BASE_URL = "https://relay.example/docs/error-reference";
 
 export function docsUrl(code: ErrorCode): string {
-  return `${ERROR_DOCS_BASE}/${code}`;
+  const base = process.env["RELAY_DOCS_BASE_URL"] ?? DEFAULT_DOCS_BASE_URL;
+  return `${base}#${code}`;
 }

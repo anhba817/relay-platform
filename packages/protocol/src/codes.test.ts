@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { CLOSE_CODES, docsUrl, ERROR_CODES, ERROR_DOCS_BASE, type ErrorCode } from "./codes.js";
+import {
+  CLOSE_CODES,
+  DEFAULT_DOCS_BASE_URL,
+  docsUrl,
+  ERROR_CODES,
+  type ErrorCode,
+} from "./codes.js";
 
 // The failure vocabulary stays coherent: EIR-WS-06's four classes are all
 // present, exactly once, with distinct meanings — and error codes never
@@ -122,11 +128,34 @@ describe("the three refusals this chapter's channel adds", () => {
 });
 
 describe("the docs URL is built in one place, with the code as the anchor", () => {
-  it("appends the code VERBATIM — no slug transform, no case change", () => {
+  it("appends the code VERBATIM as an ANCHOR — no slug transform, no case change", () => {
+    // THIS DESCRIBE SAID "ANCHOR" AND THIS ASSERTION CHECKED A PATH, for twenty-two
+    // chapters. `docs/08-error-reference.md` is one document with `## <code>` headings,
+    // so `…/errors/not_found` named a page that does not exist — 27 codes, 27 dead
+    // links — and the test agreed with the defect because it was written beside the
+    // function. The title and the assertion disagreed and nothing compared them.
     for (const code of Object.keys(ERROR_CODES) as ErrorCode[]) {
-      expect(docsUrl(code)).toBe(`${ERROR_DOCS_BASE}/${code}`);
-      expect(docsUrl(code).endsWith(`/${code}`)).toBe(true);
+      expect(docsUrl(code)).toBe(`${DEFAULT_DOCS_BASE_URL}#${code}`);
+      expect(docsUrl(code).endsWith(`#${code}`)).toBe(true);
     }
+  });
+
+  it("reads the base URL per call, not at import", () => {
+    // A `const` evaluated at import cannot be changed by a test that sets the variable
+    // in `beforeAll`, and a preview deployment cannot point its error links at its own
+    // docs. The assertion is that the value MOVES — which a module-level constant makes
+    // impossible however the test is written.
+    const saved = process.env["RELAY_DOCS_BASE_URL"];
+    try {
+      process.env["RELAY_DOCS_BASE_URL"] = "https://preview.example/errors";
+      expect(docsUrl("not_found")).toBe("https://preview.example/errors#not_found");
+    } finally {
+      if (saved === undefined) delete process.env["RELAY_DOCS_BASE_URL"];
+      else process.env["RELAY_DOCS_BASE_URL"] = saved;
+    }
+    // And back to the default the moment it is unset, so one test cannot leak into
+    // another through the environment.
+    expect(docsUrl("not_found")).toBe(`${DEFAULT_DOCS_BASE_URL}#not_found`);
   });
 
   it("gives every code a distinct URL", () => {
