@@ -107,4 +107,26 @@ describe("the third dimension's copy", () => {
       expect(mail.text).not.toContain("4008");
     }
   });
+
+  it("says something true for a dimension it has never heard of", () => {
+    // A DIMENSION IS A STRING OFF A ROW, NOT A MEMBER OF A UNION. `quota-relay.ts`
+    // reads it out of `usage_periods`, so a fourth dimension added to the database
+    // and not to these two maps arrives here — and what a customer would then read
+    // in an email about their own bill is the word `undefined`.
+    //
+    // BOTH MAPS, because both have the same hole and only one of them is this
+    // chapter's. The noun falls back to the column name, which is ugly and true;
+    // the consequence falls back to the sentence that is right for two dimensions
+    // out of the three, which is the honest default when the third is the special
+    // case. Neither fallback was reached by any test until this one.
+    const mail = quotaThreshold(facts({ dimension: "storage_bytes" }));
+    expect(mail.subject).toContain("monthly storage_bytes quota");
+    expect(mail.text).toContain("Sends are now being refused with `quota_exceeded`.");
+    expect(mail.text).not.toContain("4008");
+    // THE ASSERTION THE OTHER THREE ARE FOR. A `Record<string, string>` read with
+    // `noUncheckedIndexedAccess` off would put this in the mail and every other
+    // expectation here would still pass.
+    expect(mail.text).not.toContain("undefined");
+    expect(mail.subject).not.toContain("undefined");
+  });
 });

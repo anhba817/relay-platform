@@ -700,7 +700,7 @@ export default defineConfig({
         //                     failure carries at least one issue, always
         //   period.ts:43-44   `(m ?? 1)` and `(y ?? 0)` in `nextPeriod`, on a period
         //                     that came from `periodOf` or from a `date` column
-        //   quota-email.ts:31 `months[Number(m) - 1] ?? m` — a month outside 1..12
+        //   quota-email.ts:51 `months[Number(m) - 1] ?? m` — a month outside 1..12
         //
         // READ THE FRACTION, NOT THE PERCENTAGE, because 75 reads like a hole and is
         // not one. These files are small enough that one arm moves the figure a long
@@ -708,7 +708,7 @@ export default defineConfig({
         //
         //   config.ts       9/10 branches   the one is the `?? "invalid"`
         //   period.ts       6/8             the two are `?? 1` and `?? 0`
-        //   quota-email.ts  6/8             the two are `?? m`, both arms of one guard
+        //   quota-email.ts  9/10            the one is `?? m`; see the note on its pin
         //   quota-relay.ts  29/30 statements  the one is the catch inside `run()`
         //
         // A pin of 75 on an eight-branch file leaves room for exactly the two arms
@@ -734,8 +734,20 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
+        // 9/10, RAISED FROM 6/8 BY A TEST RATHER THAN LOWERED BY A CHAPTER. The
+        // connection-metering chapter added a third guard here —
+        // `STOPPAGE[facts.dimension] ?? DEFAULT_STOPPAGE` — which took the reading to
+        // 7/10 and turned this pin red at 75. That is the ratchet working: a pin set
+        // at the previous reading catches the arm the new code did not cover.
+        //
+        // The answer was NOT 70. Two of the three fallbacks are reachable — a
+        // dimension is a string off `usage_periods`, not a member of a union — and
+        // "says something true for a dimension it has never heard of" reaches both,
+        // asserting that neither map puts the word `undefined` in a customer's email.
+        // Only `months[…] ?? m` is left, and a month outside 1..12 cannot come from a
+        // `date` column.
         "services/api/src/quotas/quota-email.ts": {
-          branches: 75,
+          branches: 90,
           functions: 100,
           lines: 100,
           statements: 100,
