@@ -67,7 +67,7 @@ describe("reportUsage carries the gateway's own credential", () => {
   it("sends NOTHING when no credential is configured", async () => {
     // A gateway with no metering credential serves sockets. It does not throw,
     // it does not retry, and it does not send an unauthenticated report for the
-    // api to refuse (FR-012).
+    // api to refuse (constitution III).
     const calls = captureFetch();
     const api = createApiClient("http://api.test");
 

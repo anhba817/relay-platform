@@ -183,7 +183,7 @@ describe("a signal, and what it does to a bill", () => {
     return previous;
   }
 
-  it("SIGKILL: the figure stops where the last report left it (SC-005)", async () => {
+  it("SIGKILL: the figure stops where the last report left it", async () => {
     const child = await startGateway(gatewayPort);
     const socket = await connect(gatewayPort);
     const before = await settle();
@@ -206,11 +206,11 @@ describe("a signal, and what it does to a bill", () => {
     socket.close();
   }, 90_000);
 
-  it("SIGTERM: the connection's minutes are recorded in full (SC-023)", async () => {
+  it("SIGTERM: the connection's minutes are recorded in full", async () => {
     // The case a deploy takes, and the one the gateway had no path for. Until
     // this chapter `serve()` handed back a bare `node:http` Server, nothing
     // called `server.close()`, and no signal handler existed — so the flush that
-    // R11, FR-008, `contracts/metering.md` §5 and its own task all described ran
+    // R11, FR-RTL-05, `contracts/metering.md` §5 and its own task all described ran
     // on no path at all.
     const port = gatewayPort + 1;
     const child = await startGateway(port);
@@ -234,15 +234,15 @@ describe("a signal, and what it does to a bill", () => {
     socket.close();
   }, 90_000);
 
-  it("a report the api refuses breaks nothing a customer can see (SC-019, FR-012)", async () => {
+  it("a report the api refuses breaks nothing a customer can see (constitution III)", async () => {
     // A credential the api has never heard of, so EVERY report comes back 401
     // and `reportUsage` throws on every tick. Metering may not close a socket,
-    // refuse a connect, or fail a send — this is the whole of FR-012, and the
+    // refuse a connect, or fail a send — this is the whole of constitution III, and the
     // way to test it is to break the reporting and then use the service.
     const port = gatewayPort + 2;
     // Scoped to what this test changes, not to zero. The two tests above have
     // already credited this environment, and an assertion that ignored them
-    // would be the shared-resource mistake FR-032 exists to forbid — caught
+    // would be the shared-resource mistake constitution VI exists to forbid — caught
     // here by writing it and watching it fail.
     const before = await minutes();
     const child = await startGateway(
@@ -270,7 +270,7 @@ describe("a signal, and what it does to a bill", () => {
 
     // And the api recorded nothing NEW, because nothing it accepted was ever
     // sent. The failure is total and it is invisible from the outside, which is
-    // the trade FR-012 asks for.
+    // the trade constitution III asks for.
     expect(await minutes()).toBe(before);
 
     socket.close();
