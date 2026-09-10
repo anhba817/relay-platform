@@ -146,6 +146,10 @@ async function boot(options: {
     sendMessage: async () => {
       throw new Error("not used");
     },
+    // NULL, WHICH IS WHAT A GATEWAY WITH NO METERING CREDENTIAL GETS. This suite is
+    // about the connection cap and reports nothing; the api's side takes the same safe direction, so
+    // with nothing configured no report is sent and no route is reached.
+    reportUsage: async () => null,
   };
   const registry: Connections | undefined =
     options.cap === undefined

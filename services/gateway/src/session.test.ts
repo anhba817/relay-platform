@@ -68,6 +68,10 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
         // own connect — which is the state every test in this file that is not about
         // membership wants.
         memberships: async () => [CHANNEL],
+        // Null is what a gateway with no metering credential gets, and it is the right
+        // default here: every test in this file is about the socket, and a meter that
+        // reported would only add a call nobody asserts on.
+        reportUsage: async () => null,
     ...overrides,
   };
 }

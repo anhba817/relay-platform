@@ -130,6 +130,10 @@ async function boot(options: {
     sendMessage: async () => {
       throw new Error("not used");
     },
+    // NULL, WHICH IS WHAT A GATEWAY WITH NO METERING CREDENTIAL GETS. This suite is
+    // about typing delivery and reports nothing; the api's side takes the same safe direction, so
+    // with nothing configured no report is sent and no route is reached.
+    reportUsage: async () => null,
   };
   const fanout = options.allFabrics ? createFanout({ url, logger: silent }) : undefined;
   const presence = options.allFabrics
