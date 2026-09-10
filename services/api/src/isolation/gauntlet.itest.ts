@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
 import { mintUserToken } from "../auth/user-token";
-import { environmentSigningSecret, Repository } from "../db/repository";
+import { environmentSigningSecret, Repository, usageFor } from "../db/repository";
 import { createDb, createPool } from "../db/client";
 import {
   credentialAttack,
@@ -28,6 +28,7 @@ import {
   type SameTenant,
   type TwoTenants,
 } from "./fixtures";
+import { periodOf } from "../quotas/period";
 import { CLASSIFICATIONS, targetKey } from "./targets";
 
 import type { Db } from "../db/client";
@@ -1147,6 +1148,69 @@ describe("the isolation gauntlet", () => {
       const answer = await expand(ABSENT_UUID);
       expect(answer.status).toBe(200);
       expect((answer.body as { created?: number }).created ?? -1).toBe(0);
+    });
+
+    // AND THE SECOND PLATFORM ROUTE THAT NAMES AN ENVIRONMENT ALONGSIDE AN IDENTIFIER.
+    //
+    // The derivation named it the moment this chapter added it, which is the whole
+    // reason the target list is derived and not typed: `POST /internal/usage/connections`
+    // arrived unclassified and three tests went red at once, in a file the chapter was
+    // not editing.
+    //
+    // `expand` was the only attackable platform route until now, and the argument
+    // transfers exactly. A usage report carries a connection id AND the environment to
+    // bill it to, so a caller can name one tenant while carrying an identifier from
+    // another — and the refusal has to come from the ROW, because the caller is the
+    // platform and is allowed to reach every tenant.
+    const period = periodOf(new Date());
+    const report = (connectionId: string, environmentId: string, minutes: number) =>
+      send(url, dispatcher ?? "", {
+        method: "POST",
+        path: "/internal/usage/connections",
+        body: {
+          connections: [
+            { connection_id: connectionId, environment_id: environmentId, period, minutes },
+          ],
+        },
+      });
+
+    it("a connection billed to one environment cannot be re-billed to another", async () => {
+      attacked.add("POST /internal/usage/connections");
+      if (dispatcher === undefined) return; // not configured in this lane
+
+      // THE POSITIVE CONTROL FIRST, and it is a legitimate call: the platform may
+      // report the victim's own connection. Without it the refusal below would also
+      // arrive from a route that credits nothing at all.
+      const connection = randomUUID();
+      expect((await report(connection, t.victim.environmentId, 3)).status).toBe(200);
+
+      const attackerBefore = (await usageFor(db, t.attacker.environmentId, period))
+        .connectionMinutes;
+      const victimBefore = (await usageFor(db, t.victim.environmentId, period))
+        .connectionMinutes;
+      // AND THE READER IS CHECKED BEFORE IT IS COMPARED. Both assertions at the foot
+      // of this test compare a number against itself, which is exactly the shape that
+      // passes when the reader returns nothing at all.
+      expect(victimBefore, "usageFor read no minutes for a connection just credited")
+        .toBeGreaterThanOrEqual(3);
+
+      const stolen = await report(connection, t.attacker.environmentId, 90);
+      expect(stolen.status).toBe(409);
+      expect((stolen.body as { code?: string }).code).toBe(
+        "connection_environment_conflict",
+      );
+
+      // BOTH SIDES, because only one of them is the obvious assertion. The attacker
+      // gained nothing — and the victim did not LOSE the minutes it already had, which
+      // a refusal that moved the row and then failed would still satisfy.
+      expect(
+        (await usageFor(db, t.attacker.environmentId, period)).connectionMinutes,
+        "the attacker was credited a connection it does not own",
+      ).toBe(attackerBefore);
+      expect(
+        (await usageFor(db, t.victim.environmentId, period)).connectionMinutes,
+        "the victim's minutes moved",
+      ).toBe(victimBefore);
     });
   });
 

@@ -371,6 +371,16 @@ export const CLASSIFICATIONS: readonly Classification[] = [
       "one opaque delivery id and no environment parameter, as `material` above: there is no foreign identifier to pair with a named tenant.",
   },
 
+  //
+  // AND THE METERING CHAPTER'S REPORT, `write` FOR `expand`'S REASON. It names an
+  // environment alongside a connection id, so a request can claim one tenant's
+  // connection for another's bill — and that is refused on the ROW, because the caller
+  // is the platform and reaching every tenant is what a platform credential is for.
+  //
+  // The derivation found this route unclassified on the build that added it. That is
+  // the sixth time in this repository, and the list has never once been ahead of it.
+  { method: "POST", path: "/internal/usage/connections", accepts: "platform", shape: "write" },
+
   // ── credential, internal, end-user token ─────────────────────────────────────
   //
   // `credential` AND NOT `read`, WHICH IS THE SIBLING ROUTE'S ARGUMENT VERBATIM. The

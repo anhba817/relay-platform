@@ -158,6 +158,10 @@ describe("the gauntlet's target list derives from the running application", () =
       "GET /v1/channels/:channelId/messages/:messageId/edits",
       "PATCH /v1/channels/:channelId/messages/:messageId",
       "DELETE /v1/channels/:channelId/messages/:messageId",
+      // THE METERING CHAPTER'S USAGE REPORT, and the only `/internal` key on this
+      // list — the four `/internal/dispatch` routes and `/internal/memberships` were
+      // added while nobody was adding to it, which is filed rather than swept here.
+      "POST /internal/usage/connections",
     ];
     const keys = derived.map(targetKey);
     const missing = ADDED.filter((k) => !keys.includes(k));
