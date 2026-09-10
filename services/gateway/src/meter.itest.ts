@@ -51,6 +51,46 @@ async function waitForHealth(url: string, what: string): Promise<void> {
   }
 }
 
+/** THE PORT COMES FROM THE CHILD, NOT FROM A BAND.
+ *
+ * This file allocated two — 4610-4669 for the gateway, 4710-4769 for the api — and a
+ * hand-allocated band is a table nothing checks. Two suites eventually overlap, or a
+ * band grows to contain a port the lane itself runs, and the failure is a health check
+ * that succeeds against the WRONG service: the child could not bind, and the probe gets
+ * its 200 from whatever did.
+ *
+ * `isolation-fixtures.ts` established the mechanism for the api and `main.ts` reads its
+ * bound address back for both services. Asking the operating system removes the table. */
+async function boundPort(child: ChildProcess, what: string): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${what} never reported a port`)),
+      30_000,
+    );
+    let buffered = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      buffered += chunk.toString();
+      for (const line of buffered.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { msg?: string; port?: number };
+          if (parsed.msg === "listening" && typeof parsed.port === "number") {
+            clearTimeout(timer);
+            resolve(parsed.port);
+            return;
+          }
+        } catch {
+          /* a partial line; the next chunk completes it */
+        }
+      }
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`${what} exited before listening (code ${String(code)})`));
+    });
+  });
+}
+
 describe("a signal, and what it does to a bill", () => {
   let api: ChildProcess;
   let gateway: ChildProcess;
@@ -61,8 +101,20 @@ describe("a signal, and what it does to a bill", () => {
   let token: string;
   const period = `${new Date().toISOString().slice(0, 7)}-01`;
 
-  const gatewayPort = 4610 + Math.floor(Math.random() * 60);
-  const apiPort = 4710 + Math.floor(Math.random() * 60);
+  /** **`.resume()` DRAINS A STREAM AND KEEPS NOTHING**, which is the third variant of
+   * one fault and the most deceptive of the three: `stdio: "ignore"` never creates the
+   * output, a pipe nobody reads leaves it in a kernel buffer, and `.resume()` actively
+   * reads it and throws it away — while looking like somebody handled the stream.
+   *
+   * Four streams were resumed here, so a failing run of this file offers a log with ZERO
+   * `"service":"gateway"` lines in it and every aggregate identical to a green run. A
+   * ring per child, so the next occurrence has something to read. */
+  const childOutput: string[] = [];
+  const keep = (chunk: unknown): void => {
+    childOutput.push(String(chunk));
+    if (childOutput.length > 300) childOutput.splice(0, childOutput.length - 300);
+  };
+  const childTail = (): string => childOutput.join("");
 
   beforeAll(async () => {
     const apiDist = join(REPO, "services", "api", "dist");
@@ -91,7 +143,7 @@ describe("a signal, and what it does to a bill", () => {
     api = spawn("node", [join(apiDist, "main.js")], {
       env: {
         ...process.env,
-        PORT: String(apiPort),
+        PORT: "0",
         // ITS OWN FAILED-AUTHENTICATION KEYSPACE, and the twenty-run battery is
         // what found this. The rate-limit chapter's auth limiter counts failures per SOURCE
         // ADDRESS in Redis, which the whole lane shares, and the allowance is ten
@@ -120,9 +172,12 @@ describe("a signal, and what it does to a bill", () => {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    api.stdout?.resume();
-    api.stderr?.resume();
-    apiUrl = `http://127.0.0.1:${apiPort}`;
+    api.stdout?.on("data", keep);
+    api.stderr?.on("data", keep);
+    api.on("exit", (code, signal) => {
+      keep(`\n[api child exited code=${String(code)} signal=${String(signal)}]\n`);
+    });
+    apiUrl = `http://127.0.0.1:${await boundPort(api, "api")}`;
     await waitForHealth(`${apiUrl}/healthz`, "api");
 
     token = (
@@ -148,16 +203,15 @@ describe("a signal, and what it does to a bill", () => {
   /** A gateway of its own per test, because each of these tests ends by killing
    * one and the two signals must not share a victim. */
   async function startGateway(
-    port: number,
     credential = PLATFORM,
-  ): Promise<ChildProcess> {
+  ): Promise<{ child: ChildProcess; port: number }> {
     const child = spawn(
       "node",
       [join(REPO, "services", "gateway", "dist", "main.js")],
       {
         env: {
           ...process.env,
-          PORT: String(port),
+          PORT: "0",
           // The gateway child talks to THIS api child, not to whatever else is
           // listening on this machine.
           RELAY_API_URL: apiUrl,
@@ -167,11 +221,15 @@ describe("a signal, and what it does to a bill", () => {
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
-    child.stdout?.resume();
-    child.stderr?.resume();
+    child.stdout?.on("data", keep);
+    child.stderr?.on("data", keep);
+    child.on("exit", (code, signal) => {
+      keep(`\n[gateway child exited code=${String(code)} signal=${String(signal)}]\n`);
+    });
+    const port = await boundPort(child, "gateway");
     await waitForHealth(`http://127.0.0.1:${port}/healthz`, "gateway");
     gateway = child;
-    return child;
+    return { child, port };
   }
 
   const minutes = async () =>
@@ -203,8 +261,8 @@ describe("a signal, and what it does to a bill", () => {
   }
 
   it("SIGKILL: the figure stops where the last report left it", async () => {
-    const child = await startGateway(gatewayPort);
-    const socket = await connect(gatewayPort);
+    const { child, port } = await startGateway();
+    const socket = await connect(port);
     const before = await settle();
     expect(before).toBeGreaterThan(0);
 
@@ -231,8 +289,7 @@ describe("a signal, and what it does to a bill", () => {
     // called `server.close()`, and no signal handler existed — so the flush that
     // R11, FR-RTL-05, `contracts/metering.md` §5 and its own task all described ran
     // on no path at all.
-    const port = gatewayPort + 1;
-    const child = await startGateway(port);
+    const { child, port } = await startGateway();
     const socket = await connect(port);
     const before = await settle();
     expect(before).toBeGreaterThan(0);
@@ -258,14 +315,12 @@ describe("a signal, and what it does to a bill", () => {
     // and `reportUsage` throws on every tick. Metering may not close a socket,
     // refuse a connect, or fail a send — this is the whole of constitution III, and the
     // way to test it is to break the reporting and then use the service.
-    const port = gatewayPort + 2;
     // Scoped to what this test changes, not to zero. The two tests above have
     // already credited this environment, and an assertion that ignored them
     // would be the shared-resource mistake constitution VI exists to forbid — caught
     // here by writing it and watching it fail.
     const before = await minutes();
-    const child = await startGateway(
-      port,
+    const { child, port } = await startGateway(
       "rk_svc_nobody_knows_this_one_0123456789ab",
     );
 
@@ -275,7 +330,10 @@ describe("a signal, and what it does to a bill", () => {
         const frame = JSON.parse(raw.toString()) as { type: string };
         if (frame.type === "connection.ack") resolve(frame);
       });
-      setTimeout(() => reject(new Error("no ack within 5s")), 5_000);
+      setTimeout(
+        () => reject(new Error(`no ack within 5s\n--- child output ---\n${childTail()}`)),
+        5_000,
+      );
     });
     expect(await acked).toBeTruthy();
 
