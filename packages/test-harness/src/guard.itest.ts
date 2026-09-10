@@ -194,6 +194,21 @@ const SHAPES: Readonly<Record<string, Shape>> = {
     read: `SELECT last_error AS v FROM quota_notifications WHERE environment_id = $1`,
     marked: (n) => String(n),
   },
+  // The connection-metering chapter's, and the first guarded table whose key does not
+  // start with the environment. `minutes` is the mark for the same reason
+  // `usage_periods` uses its count: it is the column nothing else in this fixture
+  // writes, and a `bigint` comes back from `pg` as a string.
+  usage_connections: {
+    plant: `INSERT INTO usage_connections
+              (connection_id, period, environment_id, minutes)
+            VALUES ($1, $2, $3, 0)
+            ON CONFLICT (connection_id, period) DO NOTHING`,
+    values: (s) => [s.usageConnectionId, s.quotaPeriod, s.environmentId],
+    touch: `minutes = minutes`,
+    mark: `minutes = $1`,
+    read: `SELECT minutes AS v FROM usage_connections WHERE environment_id = $1`,
+    marked: (n) => String(n),
+  },
 };
 
 let admin: pg.Client;

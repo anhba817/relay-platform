@@ -166,7 +166,24 @@ BEGIN
     -- them rather than apart, because the guard's rule has never been about the key.
     'usage_periods',
     'usage_active_users',
-    'quota_notifications'
+    'quota_notifications',
+    -- THE CONNECTION-METERING CHAPTER'S ONE, AND IT IS KEYED DIFFERENTLY FROM EVERY
+    -- NAME ABOVE IT. `usage_connections` is keyed `(connection_id, period)` — the
+    -- environment is a column it carries rather than the first thing it is keyed on,
+    -- because a connection's identity is the connection and its period is which month
+    -- the minutes fall in.
+    --
+    -- The rule this array follows is the COLUMN, not the key, and the column is there:
+    -- `environment_id uuid NOT NULL REFERENCES environments(id)`, written by the api
+    -- from the authenticated identity and never by the gateway. So the trigger's WHEN
+    -- clause compiles and a cross-environment delete meets it, exactly as for the four
+    -- above.
+    --
+    -- AND ITS BAIT NEEDS NO `delivered_at` CONCESSION. Nothing drains this table: the
+    -- credit path looks a row up by its own key and the reporting path reads one
+    -- environment. It is the first guarded table since `read_positions` whose bait can
+    -- sit there claimable because there is no claim to be made.
+    'usage_connections'
   ] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS __sentinel_guard_%1$s ON %1$I', t);
     EXECUTE format(

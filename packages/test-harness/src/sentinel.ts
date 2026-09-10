@@ -65,6 +65,10 @@ export interface Sentinel {
    * past that no product code will ever write the same key. */
   quotaPeriod: string;
   quotaNotificationId: string;
+  /** The connection-metering chapter's, and the fifth guarded table's. Keyed
+   * `(connection_id, period)`, so the bait needs an id of its own rather than
+   * borrowing the sentinel's user or channel. */
+  usageConnectionId: string;
   /** `__sentinel__:<owner>`, on every row, so a failure says whose it is. */
   name: string;
 }
@@ -93,6 +97,7 @@ export function sentinelFor(owner: string): Sentinel {
     channelId: id("channel"),
     quotaPeriod: "1999-01-01",
     quotaNotificationId: id("quota-notification"),
+    usageConnectionId: id("usage-connection"),
     name: `__sentinel__:${owner}`,
   };
 }
@@ -148,6 +153,7 @@ export async function plant(
   await q(`DELETE FROM read_positions WHERE environment_id = $1`, [s.environmentId]);
   // The quota chapter's three, and they come before `users` for the reason the note
   // above gives: `usage_active_users` references it.
+  await q(`DELETE FROM usage_connections   WHERE environment_id = $1`, [s.environmentId]);
   await q(`DELETE FROM quota_notifications WHERE environment_id = $1`, [s.environmentId]);
   await q(`DELETE FROM usage_active_users  WHERE environment_id = $1`, [s.environmentId]);
   await q(`DELETE FROM usage_periods       WHERE environment_id = $1`, [s.environmentId]);
@@ -270,6 +276,17 @@ export async function plant(
      VALUES ($1, $2, $3, $4, 'messages', 50, 1, 1, now() - interval '2 hours')
      ON CONFLICT (id) DO UPDATE SET delivered_at = EXCLUDED.delivered_at`,
     [s.quotaNotificationId, s.environmentId, s.organisationId, s.quotaPeriod],
+  );
+
+  // AND THE CONNECTION-METERING CHAPTER'S. `DO UPDATE` on `minutes` for the reason the
+  // notification's insert gives: a sentinel's ids are derived from its owner, so this
+  // row's key is the same on every run for ever, and a fixture that only guarantees
+  // EXISTENCE guarantees whatever the first run happened to write.
+  await q(
+    `INSERT INTO usage_connections (connection_id, period, environment_id, minutes)
+     VALUES ($1, $2, $3, 0)
+     ON CONFLICT (connection_id, period) DO UPDATE SET minutes = EXCLUDED.minutes`,
+    [s.usageConnectionId, s.quotaPeriod, s.environmentId],
   );
 
   // DRAIN BAIT: unpublished events. `outbox` carries no environment_id — it is
