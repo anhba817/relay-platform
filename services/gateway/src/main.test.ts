@@ -108,13 +108,29 @@ describe("gateway skeleton", () => {
     // reads. The loop below is the assertion; this line only says the derivation
     // found something to loop over.
     expect(closeable.length, "no `const x = createY(` found in main.ts").toBeGreaterThan(1);
-    // DERIVED, NOT NAMED. The closing site is wherever this file registers one —
-    // `server.on("close", …)` here — and reading the whole source rather than a
-    // named function means a refactor that moves the calls cannot silently pass.
+    // SCOPED TO `shutdown()`, AND IT USED TO BE THE WHOLE SOURCE. The note here read
+    // "reading the whole source rather than a named function means a refactor that
+    // moves the calls cannot silently pass", which was right while every close was a
+    // `void x.close()` in the `server.on("close")` listener: any of them, anywhere,
+    // was as good as any other.
+    //
+    // The connection-metering chapter ends that. A signal handler now awaits
+    // `shutdown()`, because a final usage report that is not awaited is the same
+    // non-guarantee as no report — the process leaves before the request does. A
+    // fabric closed by a stray `void` somewhere else is closed on no path a deploy
+    // takes, and the wider check would have called that closed.
+    //
+    // So the scope narrows and the derivation does not: the list is still read out of
+    // `main.ts`, `NOT_CLOSEABLE` is still the only thing named, and a refactor that
+    // renames `shutdown` fails loudly on the line below rather than passing quietly.
+    const open = source.indexOf("async function shutdown(): Promise<void> {");
+    expect(open, "main.ts has no `shutdown()` — the shape this test reads changed")
+      .toBeGreaterThan(-1);
+    const body = source.slice(open, source.indexOf("\n  }", open));
     for (const name of closeable) {
       expect(
-        new RegExp(`(void |await )${String(name)}\\.close\\(\\)`).test(source),
-        `${String(name)} is built but never closed`,
+        body.includes(`await ${String(name)}.close()`),
+        `${String(name)} is built but never awaited in shutdown()`,
       ).toBe(true);
     }
   });
