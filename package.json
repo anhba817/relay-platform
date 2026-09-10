@@ -12,7 +12,8 @@
     "lint:root": "eslint .",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "test:integration": "turbo run test:integration --concurrency=1",
+    "test:integration": "turbo run test:integration --concurrency=1 --filter=!@relay/outsider",
+    "test:outsider": "turbo run test:integration --filter=@relay/outsider",
     "coverage": "vitest run --config vitest.coverage.config.mts --coverage",
     "build": "turbo run build"
   },
