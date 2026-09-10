@@ -81,6 +81,43 @@ export interface MembershipChangedData {
  * WIDENED FROM A LITERAL. `type` was `"message.created"` alone, which is the shape a
  * consumer narrows on: every `switch` and every `===` against it sees this change,
  * which is what a typecheck catches and an integration lane does not. */
+/** WHAT THIS PLATFORM DECLARES, AND WHICH OF IT IT ACTUALLY EMITS.
+ *
+ * TWO LISTS THAT MUST AGREE WITH NOTHING COMPARING THEM — this project's most-recorded
+ * defect, and here it is FR-WHK-02's eight against the array below's five. The only thing
+ * connecting them was somebody remembering.
+ *
+ * `emitted` IS NOT OPTIONAL, AND THAT IS THE POINT. `satisfies Record<string, { emitted:
+ * boolean }>` makes a type added without deciding a compile error. A type declared and
+ * not emitted is a subscription a customer can create and never hear from — survivable
+ * when it is written down, a silent trap when it is not.
+ *
+ * THE THREE FALSE ONES ARE NOT OVERSIGHTS. `channel.created`, `user.connected` and
+ * `user.disconnected` are declared by FR-WHK-02 and unbuilt. **Published measured 741
+ * stored subscriptions naming `channel.created`** — declared, published, not yet built —
+ * and validating against the EMITTED set would refuse every one of them. Those customers
+ * made no mistake: they subscribed to a published event type and are waiting for the
+ * feature. Refusing them is feature 044's FR-016 defect exactly, which had to be amended
+ * rather than shipped.
+ *
+ * SO THE VALIDATION USES THIS SET AND NOT THE ARRAY BELOW. A name outside the declared
+ * eight is a typo and is refused; a declared name this platform does not emit yet is
+ * accepted. `event.test.ts` asserts the two lists agree in the direction that matters —
+ * every `emitted: true` key is in the array, and every array member is an `emitted: true`
+ * key — so neither can drift without a red test. */
+export const WEBHOOK_EVENT_TYPES = {
+  "message.created": { emitted: true },
+  "message.updated": { emitted: true },
+  "message.deleted": { emitted: true },
+  "channel.created": { emitted: false },
+  "channel.member_added": { emitted: true },
+  "channel.member_removed": { emitted: true },
+  "user.connected": { emitted: false },
+  "user.disconnected": { emitted: false },
+} as const satisfies Record<string, { emitted: boolean }>;
+
+export type WebhookEventType = keyof typeof WEBHOOK_EVENT_TYPES;
+
 /** THE ARRAY IS THE SOURCE AND THE TYPE IS DERIVED, so the set has a size a test can
  * read. A bare union has no runtime form: "the union has exactly three members" is
  * unassertable, and the presence chapter's `codes.test.ts` earned its keep precisely by

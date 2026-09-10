@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 
+import { WEBHOOK_EVENT_TYPES } from "../outbox/event";
 import { protocolError } from "../protocol-error";
 import { Repository, type WebhookEndpointRow } from "../db/repository";
 import { encryptSecret, mintSigningSecret } from "./secret";
@@ -133,11 +134,32 @@ export class WebhooksService {
     }
   }
 
+  /** AGAINST THE DECLARED SET, NOT THE EMITTED ONE, and the difference is a customer's
+   * subscription. `OUTBOX_EVENT_TYPES` holds the five this platform emits; FR-WHK-02
+   * declares eight. Comparing against the five would refuse a subscription to a
+   * published event type whose feature has not shipped — published measured 741 rows
+   * naming one — and those customers made no mistake.
+   *
+   * So a name outside the declared eight is a typo and is refused; a declared name this
+   * platform does not emit yet is accepted, and the refusal names the set so a customer
+   * can see which they meant. A typo used to be STORED: the endpoint was created, a 201
+   * came back, and nothing was ever delivered to it. */
   private assertEventTypes(types: string[]): void {
     if (!Array.isArray(types) || types.length === 0) {
       throw protocolError(
         "webhook_event_types_empty",
         "event_types must list at least one event type",
+        422,
+        "event_types",
+      );
+    }
+    const declared = Object.keys(WEBHOOK_EVENT_TYPES);
+    const unknown = types.filter((t) => !declared.includes(t));
+    if (unknown.length > 0) {
+      throw protocolError(
+        "webhook_event_type_unknown",
+        `not an event type this platform declares: ${unknown.join(", ")}. ` +
+          `The accepted set is ${declared.join(", ")}.`,
         422,
         "event_types",
       );

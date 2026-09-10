@@ -117,6 +117,16 @@ describe("webhook endpoints", () => {
       [{ url: "http://example.test/x" }, "webhook_url_insecure", "url"],
       [{ url: "https://127.0.0.1/x" }, "webhook_url_private_address", "url"],
       [{ url: "https://example.test/x", event_types: [] }, "webhook_event_types_empty", "event_types"],
+      // A TYPO USED TO BE STORED. `mesage.updated` was accepted, the endpoint was
+      // created with a 201, and nothing was ever delivered to it — a permanently silent
+      // subscription the customer had no way to notice. Refused against the DECLARED
+      // eight, not the emitted five, so a subscription to a published-but-unbuilt type
+      // still succeeds.
+      [
+        { url: "https://example.test/x", event_types: ["mesage.updated"] },
+        "webhook_event_type_unknown",
+        "event_types",
+      ],
     ];
 
     for (const [body, code, field] of cases) {

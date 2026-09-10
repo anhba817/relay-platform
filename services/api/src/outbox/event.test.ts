@@ -8,6 +8,7 @@ import {
   OUTBOX_EVENT_TYPES,
   outboxEventSchema,
   subjectFor,
+  WEBHOOK_EVENT_TYPES,
 } from "./event";
 
 // The envelope, Docker-free. What a consumer eventually receives
@@ -489,5 +490,35 @@ describe("outboxEventSchema — what a CONSUMER will accept", () => {
         data: MESSAGE,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("the declared set and the emitted set", () => {
+  // TWO LISTS THAT MUST AGREE, AND THIS IS THE THING COMPARING THEM. FR-WHK-02 declares
+  // eight event types and this platform emits five; the only connection between
+  // `WEBHOOK_EVENT_TYPES` and `OUTBOX_EVENT_TYPES` was somebody remembering, which is
+  // the defect this repository has recorded more often than any other.
+  //
+  // BOTH DIRECTIONS, because each catches a different mistake. A type marked
+  // `emitted: true` and absent from the array is a producer that does not exist; an
+  // array member missing from the declared set is an event this platform sends and no
+  // subscription may name.
+  const emitted = Object.entries(WEBHOOK_EVENT_TYPES)
+    .filter(([, v]) => v.emitted)
+    .map(([k]) => k)
+    .sort();
+
+  it("declares every type it emits, and emits every type it declares as emitted", () => {
+    expect(emitted).toEqual([...OUTBOX_EVENT_TYPES].sort());
+  });
+
+  it("declares more than it emits, which is the whole reason the flag exists", () => {
+    // A POSITIVE CONTROL FOR THE ASSERTION ABOVE. If the two sets were identical the
+    // agreement test would pass against a `WEBHOOK_EVENT_TYPES` with no `emitted: false`
+    // member at all — and the flag it is built on would be dead weight nobody noticed.
+    const declared = Object.keys(WEBHOOK_EVENT_TYPES);
+    expect(declared.length).toBeGreaterThan(emitted.length);
+    expect(declared).toContain("channel.created");
+    expect(WEBHOOK_EVENT_TYPES["channel.created"].emitted).toBe(false);
   });
 });

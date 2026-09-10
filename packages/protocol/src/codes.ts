@@ -233,6 +233,13 @@ export const ERROR_CODES = {
     "the url must use https; a signature over a plaintext channel protects the body, not the reader",
   webhook_url_private_address:
     "the url points at a loopback, link-local or private address, which this platform will not deliver to",
+  // DOCUMENTED SINCE THIS CHAPTER'S OWN REFERENCE PAGE AND UNREGISTERED UNTIL NOW, which
+  // is the pair of defects one file held at once: five codes documented and unregistered,
+  // and this one documented with nothing to emit it. `check:errors` compares the registry
+  // with the sections and is satisfied by both being present — it cannot ask whether any
+  // code path constructs the refusal.
+  webhook_event_type_unknown:
+    "that event type is not one this platform declares; the message names the accepted set",
   webhook_event_types_empty: "event_types must list at least one event type",
   not_found:
     "no such resource for this tenant — and DELIBERATELY the same answer as for a resource in another tenant (FR-TEN-05)",
