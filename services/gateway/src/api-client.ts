@@ -78,7 +78,9 @@ export interface ApiClient {
    * hear. Null means the api answered "not valid" — distinct from a throw, which
    * means it could not answer at all, and the two must not close a socket the
    * same way. */
-  session(token: string): Promise<InternalSessionResponse | null>;
+  session(
+    token: string,
+  ): Promise<InternalSessionResponse | { quotaExceeded: string } | null>;
   /** The backstop: what this connection may hear, now.
    *
    * The one question a periodic re-read has, asked of the route that answers only
@@ -171,6 +173,21 @@ export function createApiClient(
       // it. Everything else falls through to `parse`, which throws — the api
       // being unreachable is a different event with a different close code.
       if (res.status === 401 || res.status === 403) return null;
+      // The connection-metering chapter. So is 402, and it is a DIFFERENT answer: the credential is
+      // good and the month is spent. Without this branch it would fall into
+      // `parse`, throw, and close the socket 1011 — "we are broken, retry" —
+      // which is wrong about whose fault it is and wrong about whether retrying
+      // helps.
+      //
+      // The message travels rather than the status, because what a client needs
+      // is the date it resumes and only the api knows that.
+      if (res.status === 402) {
+        const body = (await res.json()) as { message?: string };
+        return {
+          quotaExceeded:
+            body.message ?? "this environment's monthly quota is exhausted",
+        };
+      }
       return parse(res, internalSessionResponseSchema, "session");
     },
     async memberships(identity) {

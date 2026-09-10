@@ -253,8 +253,15 @@ export const ERROR_CODES = {
   // correctly for a rate limit and wrongly for this: the month will still be exhausted
   // in an hour. So the resume date goes in the MESSAGE, where a person reads it,
   // rather than in a header a client acts on.
+  //
+  // AND THE CONNECTION-METERING CHAPTER SENDS IT ON A FRAME TOO, immediately before
+  // close code 4008 — the same code, the same fact, two transports. The message names
+  // the dimension, the figures and the resume date, because a close reason is a short
+  // string with nowhere to put them. ONE entry rather than two: the quota chapter
+  // registered this and the metering chapter's port arrived registering it again, and
+  // a duplicate key is a `codes.test.ts` failure rather than a second meaning.
   quota_exceeded:
-    "this environment has used its monthly quota; sends resume when the period rolls over",
+    "a monthly quota is exhausted; the message names the dimension, the figures and the date it resumes",
   webhook_endpoint_limit_reached:
     "this environment already holds the maximum number of webhook endpoints; delete one, or use another environment",
   webhook_url_invalid: "the url is not a valid absolute URL — send scheme, host and path",
@@ -303,6 +310,15 @@ export const ERROR_CODES = {
     // the remedy is to close one, which no amount of waiting does.
     connection_limit_reached:
       "the user already holds the maximum concurrent connections; the message names the limit and the count, and the remedy is to close one and reconnect",
+  // The socket's half of a quota refusal: an error frame carrying
+  // the dimension, the figures and the resume date, sent immediately before
+  // close code 4008.
+  //
+  // REGISTERED RATHER THAN WRITTEN INLINE, and the entry is above beside the REST
+  // half. The frame schema types `code` as `z.string().min(1)`, so nothing forces it —
+  // but the registry is the documented vocabulary and `codes.test.ts` enforces its
+  // uniqueness, which is why the credentials chapter put `wrong_credential_type` in it
+  // instead of inventing it at the call site.
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

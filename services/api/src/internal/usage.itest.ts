@@ -15,6 +15,7 @@ import {
   usageFor,
 } from "../db/repository";
 import { mintUserToken } from "../auth/user-token";
+import { periodOf } from "../quotas/period";
 
 // `POST /internal/usage/connections` — who may reach it, and what a refusal
 // leaves behind.
@@ -40,7 +41,19 @@ import { mintUserToken } from "../auth/user-token";
 // configuration mistake.
 
 const PLATFORM = "rk_svc_usage_itest_0123456789abcdef012345";
-const AUGUST = "2026-08-01";
+/** THE PERIOD THE SUBJECT WILL READ, not a month somebody typed.
+ *
+ * This was `"2026-08-01"` and it expires at midnight UTC on 1 September 2026: the
+ * fixture credits connection-minutes to August while `session.controller.ts` asks
+ * `periodOf(new Date())` whether the cap is spent, so from September the quota reads
+ * zero used and a session that should be refused 402 is allowed 200.
+ *
+ * **A fixture that names a month while its subject reads the clock is a test with an
+ * expiry date.** Published met this during a chapter nine later, in a file that
+ * chapter never touched; here it arrives with the code, because the port ran after
+ * the date it expired on and the suite said so. Derived, so the two agree in every
+ * month. */
+const PERIOD = periodOf(new Date());
 
 describe("POST /internal/usage/connections", () => {
   let app: INestApplication;
@@ -102,14 +115,14 @@ describe("POST /internal/usage/connections", () => {
       {
         connection_id: randomUUID(),
         environment_id: environment,
-        period: AUGUST,
+        period: PERIOD,
         minutes,
       },
     ],
   });
 
   const minutes = async (environment = environmentId) =>
-    (await usageFor(db, environment, AUGUST)).connectionMinutes;
+    (await usageFor(db, environment, PERIOD)).connectionMinutes;
 
   describe("who may write a bill (FR-011, SC-010)", () => {
     it("accepts the platform credential and says what it credited", async () => {
@@ -153,14 +166,14 @@ describe("POST /internal/usage/connections", () => {
     it("refuses a second environment for a connection that already has one", async () => {
       const connection = randomUUID();
       const first = await post(
-        { connections: [{ connection_id: connection, environment_id: environmentId, period: AUGUST, minutes: 3 }] },
+        { connections: [{ connection_id: connection, environment_id: environmentId, period: PERIOD, minutes: 3 }] },
         PLATFORM,
       );
       expect(first.status).toBe(200);
 
       const before = await minutes(otherEnvironmentId);
       const stolen = await post(
-        { connections: [{ connection_id: connection, environment_id: otherEnvironmentId, period: AUGUST, minutes: 90 }] },
+        { connections: [{ connection_id: connection, environment_id: otherEnvironmentId, period: PERIOD, minutes: 90 }] },
         PLATFORM,
       );
 
@@ -175,7 +188,7 @@ describe("POST /internal/usage/connections", () => {
       // a state the caller would have to reason about, and it does not exist.
       const stolen = randomUUID();
       await post(
-        { connections: [{ connection_id: stolen, environment_id: environmentId, period: AUGUST, minutes: 2 }] },
+        { connections: [{ connection_id: stolen, environment_id: environmentId, period: PERIOD, minutes: 2 }] },
         PLATFORM,
       );
 
@@ -183,8 +196,8 @@ describe("POST /internal/usage/connections", () => {
       const res = await post(
         {
           connections: [
-            { connection_id: randomUUID(), environment_id: otherEnvironmentId, period: AUGUST, minutes: 5 },
-            { connection_id: stolen, environment_id: otherEnvironmentId, period: AUGUST, minutes: 5 },
+            { connection_id: randomUUID(), environment_id: otherEnvironmentId, period: PERIOD, minutes: 5 },
+            { connection_id: stolen, environment_id: otherEnvironmentId, period: PERIOD, minutes: 5 },
           ],
         },
         PLATFORM,
@@ -223,6 +236,67 @@ describe("POST /internal/usage/connections", () => {
       const res = await post(oneReport(3, randomUUID()), PLATFORM);
       expect(res.status).toBe(500);
       expect((await res.json()).code).toBe("internal_error");
+    });
+  });
+
+  describe("the api's half of the refusal (US3, FR-016)", () => {
+    const setCap = (config: unknown) =>
+      db
+        ? fetch(`${url}/healthz`).then(async () => {
+            const { createPool } = await import("../db/client.js");
+            const p = createPool();
+            await p.query(
+              "UPDATE environments SET quota_config = $1 WHERE id = $2",
+              [JSON.stringify(config), environmentId],
+            );
+            await p.end();
+          })
+        : Promise.resolve();
+
+    const session = (credential: string) =>
+      fetch(`${url}/internal/session`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${credential}` },
+      });
+
+    it("answers 402 with a named code when the cap is spent", async () => {
+      await setCap({ connection_minutes: { hard: 1 } });
+      await post(oneReport(50), PLATFORM);
+
+      const res = await session(userToken);
+      expect(res.status).toBe(402);
+
+      const body = (await res.json()) as Record<string, string>;
+      // NAMED BY THE THROWER. `ProtocolErrorFilter` infers a code for four
+      // statuses and 402 is not one of them, so an unnamed refusal would arrive
+      // as `internal_error` — the quota chapter's H3.
+      expect(body.code).toBe("quota_exceeded");
+      expect(body.message).toContain("connection-minute");
+      expect(body.message).toContain("connections resume on");
+      // Four fields, as every refusal on this contract has since the rate-limit
+      // chapter.
+      expect(body.docs_url).toBeTruthy();
+      expect(body.request_id).toBeTruthy();
+    });
+
+    it("carries NO Retry-After, which is the whole difference from a rate limit", async () => {
+      await setCap({ connection_minutes: { hard: 1 } });
+      const res = await session(userToken);
+      expect(res.status).toBe(402);
+      // A client that sleeps for a header and retries is right for a rate limit
+      // and wrong for a quota, which will still be exhausted in an hour.
+      expect(res.headers.get("retry-after")).toBeNull();
+    });
+
+    it("answers 200 again the moment the cap is raised", async () => {
+      await setCap({ connection_minutes: { hard: 100_000 } });
+      const res = await session(userToken);
+      expect(res.status).toBe(200);
+    });
+
+    it("answers 200 with no cap configured", async () => {
+      await setCap({});
+      expect((await session(userToken)).status).toBe(200);
     });
   });
 });

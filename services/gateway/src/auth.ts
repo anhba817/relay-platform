@@ -21,11 +21,20 @@ import type { ApiClient, Identity } from "./api-client.js";
 
 export type { Identity } from "./api-client.js";
 
-/** Three outcomes, not two. A refused token and an unreachable api both fail to
- * open a socket, but they are not the same event and must not close the same
- * way: 4001 tells a client its credential is wrong (retrying will not help),
- * 1011 tells it we are broken (retrying will). 2.5 drew that line for the
- * memberships lookup; moving verification here must not erase it. */
+/** FOUR outcomes, and the connection-metering chapter added the fourth. A refused token, an
+ * unreachable api and an exhausted quota all fail to open a socket, and none of
+ * them is the same event: 4001 tells a client its credential is wrong (retrying
+ * will not help), 1011 tells it we are broken (retrying will), and 4008 tells it
+ * the month ran out (retrying will not help until a date the message names).
+ * 2.5 drew the first line for the memberships lookup; moving verification here
+ * must not erase it, and neither must adding a commercial refusal to it.
+ *
+ * WHY THE FOURTH IS NOT ONE OF THE OTHER THREE. Before this chapter a 402 fell
+ * through `api-client.ts`'s status check into `parse`, which throws — so it
+ * arrived here as `unavailable` and closed the socket 1011, telling the client
+ * we were broken and that retrying would help. Both wrong. Mapping it to
+ * `refused` instead would close 4001, "your credential is bad", which a client
+ * acts on by re-authenticating for ever. */
 export type Authentication =
   | {
       outcome: "ok";
@@ -48,7 +57,11 @@ export type Authentication =
    * `refused`: 4001 means "your credential is bad", which a client acts on by
    * re-authenticating — and re-authenticating succeeds and connects to the same
    * refusal. A client that cannot tell those apart retries for ever. */
-  | { outcome: "banned" };
+  | { outcome: "banned" }
+  /** The api answered, and the answer was "this environment has spent its month".
+   * Carries the api's own message, because the resume date is in it and a close
+   * reason string has nowhere to put one. */
+  | { outcome: "over_quota"; message: string };
 
 export async function authenticate(
   api: ApiClient,
@@ -57,12 +70,23 @@ export async function authenticate(
   if (token === null || token.length === 0) return { outcome: "refused" };
   try {
     const session = await api.session(token);
-    // The api answered, and the answer was "no". Every refusal — expired,
-    // malformed, mis-signed, for another environment, over-long — arrives here
-    // as one outcome, because the socket has one close code for all of them.
+    // The api answered, and the answer was "no". Every CREDENTIAL refusal —
+    // expired, malformed, mis-signed, for another environment, over-long —
+    // arrives here as one outcome, because the socket has one close code for all
+    // of them.
     if (session === null) return { outcome: "refused" };
-    // A quota refusal is not a credential refusal: the token is perfectly good
-    // and the month is not.
+    // A quota refusal is not a credential refusal: the token is perfectly good and
+    // the month is not.
+    //
+    // FIRST, AND THE API DECIDES THAT RATHER THAN THIS FILE. `{ quotaExceeded }` is a
+    // different response SHAPE — it carries no `banned`, no `user`, no `channel_ids` —
+    // because an environment over its quota is refused before the api looks a user up
+    // at all. So the narrowing has to come first for the check below to compile, and
+    // the precedence it implies is a fact about the route rather than a choice made
+    // here: quota beats ban, because the api never reached the ban.
+    if ("quotaExceeded" in session) {
+      return { outcome: "over_quota", message: session.quotaExceeded };
+    }
     // A BAN IS NOT A CREDENTIAL REFUSAL EITHER. The api read `users.banned_at` and put a
     // boolean on this response; the gateway has no database and does not need one to
     // enforce it.
