@@ -29,30 +29,46 @@ function config(): string {
   return readFileSync(CONFIG, "utf8");
 }
 
-/** The paths the config exempts from the driver rule, read off the `ignores` array
- * after the DRIVER_EXEMPT marker. Parsed, not restated. */
-function exemptPaths(): string[] {
+/** The paths the config exempts from the driver rule, read off the `DRIVER_EXEMPT`
+ * const. Parsed, not restated.
+ *
+ * BY NAMED CONST AND NOT BY POSITION, since the gauntlet chapter composed the rule
+ * sets. The list used to live inline in the all-TypeScript block's `ignores` and was read
+ * from a marker comment to the next `]`; it is hoisted now, because a second block
+ * has to reference the same list rather than repeat it. A position is a claim about
+ * layout, and this file has already been wrong about layout once. */
+function block(name: string): string {
   const text = config();
-  const marker = text.indexOf("// DRIVER_EXEMPT");
-  if (marker === -1) {
-    throw new Error(
-      "eslint.config.mjs has no DRIVER_EXEMPT marker — the shape this test reads changed",
-    );
+  const start = text.indexOf(`const ${name} = `);
+  if (start === -1) {
+    throw new Error(`eslint.config.mjs has no ${name} — the shape this test reads changed`);
   }
-  const end = text.indexOf("]", marker);
-  return [...text.slice(marker, end).matchAll(/"([^"]+\.ts)"/g)].map((m) => m[1]!);
+  const rest = text.slice(start);
+  // THE NEARER TERMINATOR, NOT A PREFERRED ONE. This asked for `\n};` first and fell
+  // back to `\n];`, which reads an ARRAY const to the end of the next OBJECT const —
+  // so `DRIVER_EXEMPT` swallowed `DRAIN_EXEMPT_TESTS` whole and this file reported
+  // `outbox.itest.ts` as driver-exempt and importing nothing restricted. It was right
+  // about the import and wrong about the list, which is the failure that sends somebody
+  // to the wrong file.
+  const ends = ["\n};", "\n];"].map((e) => rest.indexOf(e)).filter((i) => i !== -1);
+  if (ends.length === 0) throw new Error(`${name} is not terminated the way this test reads it`);
+  return rest.slice(0, Math.min(...ends));
 }
 
-/** The module names the rule restricts, read off its `paths` entries. */
+function exemptPaths(): string[] {
+  return [...block("DRIVER_EXEMPT").matchAll(/"([^"]+\.ts)"/g)].map((m) => m[1]!);
+}
+
+/** The module names the DRIVER rule restricts, read off `DRIVER_AND_ENGINE`.
+ *
+ * THIS USED TO SCAN FORWARD FROM THE FIRST `"no-restricted-imports"` to the next
+ * `paths: [ … ], patterns:`. After the hoisting the first occurrence is
+ * `["error", DRIVER_AND_ENGINE]`, and the next matching `paths:` belongs to the
+ * UNION block — whose entries are spreads, carrying no `name:` at all. The parse
+ * returned `[]` and every check reading it went vacuous, which the first assertion
+ * below catches and is the only reason this was a nuisance rather than a hole. */
 function restricted(): string[] {
-  const text = config();
-  const block = /"no-restricted-imports":[\s\S]*?paths:\s*\[([\s\S]*?)\],\s*patterns:/.exec(text);
-  if (block === null) {
-    throw new Error(
-      "eslint.config.mjs's no-restricted-imports rule is not shaped the way this test reads it",
-    );
-  }
-  return [...block[1]!.matchAll(/name:\s*"([^"]+)"/g)].map((m) => m[1]!);
+  return [...block("DRIVER_AND_ENGINE").matchAll(/name:\s*"([^"]+)"/g)].map((m) => m[1]!);
 }
 
 describe("the driver exemption is checked in both directions", () => {
@@ -85,19 +101,13 @@ describe("the driver exemption is checked in both directions", () => {
   });
 
   it("exempts the two data-access layers as directories and everything else by path", () => {
-    const text = config();
-    // FOUND BY SCANNING BACK FROM THE RULE, NOT BY A WINDOW. This read `indexOf("ignores:
-    // [", indexOf("no-restricted-imports") - 2000)` and the 2000 was the whole check: the
-    // block grew by a comment, the real `ignores` fell 2,027 characters before the anchor
-    // — 27 outside the window — and the search silently found the NEXT one instead and
-    // reported `[]`. An empty list is a legitimate-looking answer, so nothing said broken.
-    const anchor = text.indexOf("no-restricted-imports");
-    expect(anchor, "the rule this test reads is not in the config").toBeGreaterThan(-1);
-    const start = text.lastIndexOf("ignores: [", anchor);
-    expect(start, "no ignores list precedes the rule").toBeGreaterThan(-1);
-    const entries = [...text.slice(start, text.indexOf("]", start)).matchAll(/"([^"]+)"/g)].map(
-      (m) => m[1]!,
-    );
+    // BY NAME, AND THE TWO EARLIER SHAPES ARE WHY. This read a window around the rule
+    // (`indexOf("ignores: [", indexOf("no-restricted-imports") - 2000)`) until a comment
+    // grew the block past 2,000 characters and the search silently found the NEXT
+    // `ignores` and reported `[]`. It then scanned backwards from the rule, until the
+    // list was hoisted out of the block entirely and there was no `ignores: [` to find.
+    // Both failures are the same one: a position is a claim about layout.
+    const entries = [...block("DRIVER_EXEMPT").matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
     // THE POSITIVE CONTROL. Every assertion below is about which of these are globs, and
     // a parse that found nothing would satisfy all of them.
     expect(entries.length, "parsed no entries at all — this test is broken, not passing")
