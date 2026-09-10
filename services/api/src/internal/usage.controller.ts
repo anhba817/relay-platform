@@ -33,14 +33,21 @@ import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 // controller would make the class-level decorator stop being the answer to "who
 // may call this", which is what `dispatch.controller.ts` avoided the same way.
 //
-// `@Accepts("platform")` AND NOTHING ELSE. An `application` credential is scoped
-// to one environment by construction and a report names environments in its
-// body: a route that accepted one would either be useless to the gateway or
-// would have to ignore that scope, and ignoring a tenant scope is the shape a
-// cross-tenant hole takes.
+// NO TENANT CREDENTIAL, AND THEN NOT EVERY PLATFORM ONE EITHER. An `application`
+// credential is scoped to one environment by construction and a report names
+// environments in its body: a route that accepted one would either be useless to
+// the gateway or would have to ignore that scope, and ignoring a tenant scope is
+// the shape a cross-tenant hole takes.
+//
+// This comment said `@Accepts("platform")` and nothing else, which was true for one
+// chapter. The decorator below now names a SERVICE, because the class stopped being
+// enough the moment a second service held it.
 @Controller("internal/usage")
 @UseGuards(CredentialGuard)
-@Accepts("platform")
+// FR-044: the CLASS was never enough. Two platform credentials
+// exist, `service` said which one answered, and nothing checked it — so the more
+// exposed service set the blast radius for both. Here: metering is the gateway's, and the gateway's only.
+@Accepts({ platform: ["gateway"] })
 export class UsageController {
   constructor(@Inject("DB") private readonly db: Db) {}
 

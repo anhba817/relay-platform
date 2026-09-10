@@ -41,14 +41,22 @@ import type { Publisher } from "../outbox/publisher";
 // workaround, it is the reason the broker chapter's claim-and-effect-in-one-transaction
 // pattern stops applying and the chapter has something to say.
 //
-// `@Accepts("platform")` and nothing else. These routes reach EVERY environment,
-// which is exactly why no tenant credential may use them: an API key is scoped to
-// one environment by construction, and a route that accepted one here would
-// either be useless to the dispatcher or would have to ignore the scope — and
-// ignoring a tenant scope is the shape a cross-tenant hole takes.
+// NO TENANT CREDENTIAL, AND THEN NOT EVERY PLATFORM ONE EITHER. These routes reach
+// EVERY environment, which is exactly why no tenant credential may use them: an API
+// key is scoped to one environment by construction, and a route that accepted one
+// here would either be useless to the dispatcher or would have to ignore the scope —
+// and ignoring a tenant scope is the shape a cross-tenant hole takes.
+//
+// This comment said `@Accepts("platform")` and nothing else, and the decorator below
+// no longer does. `replay` takes a dead-letter id and no environment, so the class
+// alone put every tenant's dead letters behind whichever platform secret leaked
+// first.
 @Controller("internal/dispatch")
 @UseGuards(CredentialGuard)
-@Accepts("platform")
+// FR-044: the CLASS was never enough. Two platform credentials
+// exist, `service` said which one answered, and nothing checked it — so the more
+// exposed service set the blast radius for both. Here: delivery is the dispatcher's; the gateway has no business replaying a dead letter.
+@Accepts({ platform: ["dispatcher"] })
 export class DispatchController {
   constructor(
     @Inject("DB") private readonly db: Db,

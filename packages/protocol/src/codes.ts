@@ -319,6 +319,22 @@ export const ERROR_CODES = {
   // but the registry is the documented vocabulary and `codes.test.ts` enforces its
   // uniqueness, which is why the credentials chapter put `wrong_credential_type` in it
   // instead of inventing it at the call site.
+
+  // THE REFUSAL BESIDE `wrong_credential_type`, ONE DIMENSION OVER: the class
+  // presented is RIGHT and the service is not. Two platform credentials exist — the
+  // dispatcher's and the gateway's — and until this chapter a route could say which
+  // CLASS may call it and not which SERVICE, so the gateway's credential reached
+  // `POST /internal/dispatch/replay`.
+  //
+  // NOT `forbidden`. The credentials chapter made this argument when it added
+  // `wrong_credential_type` rather than answering a wrong-credential mistake with a
+  // generic 403: the response has to say what actually happened, and "you lack a
+  // permission" is a different fact from "that credential belongs to another
+  // service". The MESSAGE names the service and the permitted set and never the
+  // credential — a service name is a deployment label, a credential is a secret
+  // (NFR-SEC-06).
+  wrong_credential_service:
+    "the credential's service is not permitted on this route; the message names the service presented and the services allowed",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
