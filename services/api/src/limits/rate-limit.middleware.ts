@@ -28,11 +28,23 @@ const now0 = (): number => Date.now();
 // by environment and the environment comes from the credential.
 //
 // COUNT EACH OPERATION ONCE, AT THE DOOR IT ENTERED (research R17). The exemption
-// cannot key off the principal, because the gateway forwards the END USER's token
-// on all three of its api calls — `/internal/session`, `/internal/backfill`,
+// cannot key off the principal, and this chapter STRENGTHENED THAT RATHER THAN
+// WEAKENING IT.
+//
+// FOUR of the gateway's FIVE api calls forward the END USER's token.
+// `/internal/session`, `/internal/memberships`, `/internal/backfill` and
 // `/internal/messages` are all `@Accepts("user")` and resolve exactly like
-// customer traffic. Only the dispatcher carries the platform credential. So the
-// route decides, not the caller:
+// customer traffic. The fifth, `/internal/usage/connections`, is
+// `@Accepts("platform")` and carries the gateway's own credential: this chapter
+// gave the gateway `RELAY_INTERNAL_CREDENTIAL_GATEWAY`, so the dispatcher is no
+// longer the sole holder of one.
+//
+// THE COUNT IS THE PART THAT ROTS. This comment said three and only the
+// dispatcher; both had been false for chapters, and the fence chain cannot see a
+// comment go stale — only a reader can. The calls are all in one place,
+// `services/gateway/src/api-client.ts`, which is where to re-count them.
+//
+// So the caller's class now tells you even less than it did. The route decides:
 //
 //   /v1/…            counted. A message send decrements both budgets (FR-RTL-01).
 //   /internal/…      not counted. The gateway already counted the handshake

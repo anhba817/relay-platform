@@ -26,10 +26,10 @@ import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 // (constitution IV).
 //
 // A SEPARATE CONTROLLER FROM THE OTHER `/internal` ROUTES, and the reason is the
-// decorator two lines below. `/internal/session`, `/internal/backfill` and
-// `/internal/messages` are all `@Accepts("user")` — each is a user's action
-// taken through a socket, and the gateway forwards the token it was handed. A
-// usage report is nobody's action. Mixing the two credential classes inside one
+// decorator two lines below. `/internal/session`, `/internal/memberships`,
+// `/internal/backfill` and `/internal/messages` are all `@Accepts("user")` —
+// each is a user's action taken through a socket, and the gateway forwards the
+// token it was handed. A usage report is nobody's action. Mixing the two credential classes inside one
 // controller would make the class-level decorator stop being the answer to "who
 // may call this", which is what `dispatch.controller.ts` avoided the same way.
 //
