@@ -877,9 +877,20 @@ describe("the socket's delivery, with a fan-out attached", () => {
     };
     switch (type) {
       case "connection.ack":
+      // AND `revisions` FOR THE SAME REASON, ONE FIELD LATER. This chapter made it
+      // required on the ack, so the sample above stopped satisfying
+      // `connectionAckSchema` and the forged frame came back `invalid_frame` —
+      // the refusal a phase before the one this loop asserts. Identical to the
+      // `message.deleted` split below, in the same two files, in the same feature.
         return {
           type,
-          payload: { user: "tuan", cursor: {}, resume_ok: true, truncated: [] },
+          payload: {
+            user: "tuan",
+            cursor: {},
+            resume_ok: true,
+            truncated: [],
+            revisions: {},
+          },
         };
       case "message.ack":
         return { type, payload: { seq: 1 } };

@@ -51,6 +51,7 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
             // that does not say is a stub that has not thought about it.
             banned: false,
             channel_ids: [CHANNEL],
+            revisions: {},
           }
         : null,
     backfill: async () => ({}),

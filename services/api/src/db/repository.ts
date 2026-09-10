@@ -1328,18 +1328,39 @@ export class Repository {
     return rows.map((r) => r.user_id);
   }
 
-  async channelsForUser(userId: string): Promise<string[]> {
-    const rows = await this.db
-      .select({ channel_id: members.channelId })
+  /** The channels a user belongs to, each with its revision count (feature 044, FR-014).
+   *
+   * ONE QUERY, NOT TWO. The count could have come from a second call, and giving each
+   * caller its own is the two-lists-that-must-agree defect `gaps.md` 3.23-4 records about
+   * `targets.ts` — two things that must match, maintained separately, with nothing
+   * comparing them. The join costs nothing: `members` is already reached and `channels` is
+   * one hop from it on a primary key.
+   *
+   * FR-014 IS WHY THE COUNT RIDES THIS QUERY AT ALL. At 10,000 connections a per-channel
+   * read per handshake is 10,000 extra reads, and the reconnect rate measured before this
+   * feature was 1,402 per second. The count has to arrive on work the api already does.
+   *
+   * TWO CALLERS, AND BOTH ARE REPAIRED IN THE SAME CHANGE. `session.controller.ts` wants
+   * the counts; `memberships.controller.ts` wants ids alone and maps them. Widening the
+   * return without fixing both leaves the second assigning objects to a `string[]`, which
+   * is a typecheck failure at exactly the boundary this project commits at. */
+  async channelsForUser(
+    userId: string,
+  ): Promise<{ channel_id: string; revision_sequence: number }[]> {
+    return await this.db
+      .select({
+        channel_id: members.channelId,
+        revision_sequence: channels.revisionSequence,
+      })
       .from(members)
       .innerJoin(users, eq(users.id, members.userId))
+      .innerJoin(channels, eq(channels.id, members.channelId))
       .where(
         and(
           eq(members.userId, userId),
           eq(users.environmentId, this.environmentId),
         ),
       );
-    return rows.map((r) => r.channel_id);
   }
 
   /** Upsert a user by external id, updating the profile fields present
@@ -2416,12 +2437,52 @@ export class Repository {
       // would be two instants, and the history row's own primary key is
       // (message_id, edited_at), so a caller reading the history could not match an
       // entry to the message state it produced.
+      // THE WRITE REFUSES, NOT ONLY THE READ (feature 043, FR-007).
+      //
+      // This was `.where(eq(messages.id, messageId))`, and the `row.text === null`
+      // check above it is a read taken earlier in the same transaction. Neither this
+      // method nor `deleteMessage` takes a row lock, so a deletion committing in that
+      // window left the edit free to overwrite it: `text` restored, `deleted_at` still
+      // set — **a row one filter calls deleted and another calls alive**, and a
+      // deletion that returned successfully undone by an edit already in flight.
+      //
+      // `gaps.md` 3.23-3 recorded the opposite — *"both interleavings end in a
+      // tombstone… there is no order of the two that leaves a message saying something
+      // nobody wrote"* — and the test that item asked for is what disproved it: three
+      // of five runs, and four incoherent rows left behind in the lane.
+      //
+      // A COMPARE-AND-SET, NOT A LOCK. `SELECT … FOR UPDATE` in both methods would
+      // close it too, and would serialise a pair `assertWithinQuota` deliberately
+      // declined to serialise on the send path. A conditional UPDATE costs nothing
+      // when there is no race and refuses exactly when there is one: zero rows
+      // affected means the row stopped being editable between the read and the write,
+      // which is what `MessageDeletedError` already says.
       const [updated] = await tx
         .update(messages)
         .set({ text, editedAt: sql`now()` })
-        .where(eq(messages.id, messageId))
+        .where(and(eq(messages.id, messageId), isNull(messages.deletedAt)))
         .returning({ editedAt: messages.editedAt });
-      const editedAt = updated!.editedAt!;
+      if (!updated) throw new MessageDeletedError(messageId);
+      const editedAt = updated.editedAt!;
+
+      // FEATURE 044, FR-002/FR-003. The channel's revision counter rises by one, inside the
+      // transaction that applies the revision — so a revision that commits and a count that
+      // rises are the same event, and a count can never describe a revision the transaction
+      // refused.
+      //
+      // AFTER THE COMPARE-AND-SET ABOVE, deliberately. That statement refuses an edit to an
+      // already-deleted message by affecting zero rows; bumping before it would raise the
+      // count for an edit that then threw.
+      //
+      // AN EXTRA ROUND TRIP, AND THE RIGHT SIDE OF THE TRADE. The send path updates this row
+      // anyway, so `lastActivityAt` there "costs an extra assignment rather than an extra
+      // round trip"; this path touches `messages` and `message_edits` only, so the counter
+      // costs one UPDATE. Revisions are rare and reconnects are not, and the alternative puts
+      // a scan on the handshake (FR-014).
+      await tx
+        .update(channels)
+        .set({ revisionSequence: sql`${channels.revisionSequence} + 1` })
+        .where(eq(channels.id, channelId));
 
       // FR-004. The row carries what the message said BEFORE this edit — `row.text`,
       // read above and narrowed to a string by the tombstone check.
@@ -2643,6 +2704,14 @@ export class Repository {
       // Read back rather than recomputed: the row carries the instant the database
       // assigned, and the event and the frame must both quote that one.
       const deletedAt = toIso(updated!.deletedAt!);
+
+      // FEATURE 044, FR-002/FR-003. A DELETION IS A REVISION and raises the count exactly as
+      // an edit does — US1's third acceptance scenario fails if only edits are counted. Same
+      // transaction, same argument as the edit path.
+      await tx
+        .update(channels)
+        .set({ revisionSequence: sql`${channels.revisionSequence} + 1` })
+        .where(eq(channels.id, channelId));
 
       // THE EVENT COMMITS WITH THE TOMBSTONE (ADR-06), on the send path's argument at
       // its own outbox insert: publishing after the commit leaves a gap where the row

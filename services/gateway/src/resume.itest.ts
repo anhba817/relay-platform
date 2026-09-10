@@ -121,6 +121,7 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        revisions: {},
       }),
       backfill: async () => {
         await publishFromElsewhere(frame(43));
@@ -159,6 +160,7 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        revisions: {},
       }),
       backfill: async () => {
         await publishFromElsewhere(frame(43));
@@ -191,6 +193,7 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        revisions: {},
       }),
       backfill: async () => ({
         [CHANNEL]: { messages: [frame(42)], truncated: false },
@@ -241,6 +244,7 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        revisions: {},
       }),
       backfill: async () => ({
         [CHANNEL]: { messages: [frame(42)], truncated: false },
@@ -284,6 +288,7 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        revisions: {},
       }),
       backfill: async () => ({
         [CHANNEL]: { messages: [frame(42)], truncated: false },
@@ -340,6 +345,7 @@ describe("resume across a real fabric", () => {
         user: "tuan",
         banned: false,
         channel_ids: [CHANNEL],
+        revisions: {},
         limits: { connect: 3_000, send: 600 },
       }),
       // The api's backfill returns ROWS AS THEY ARE NOW — which for an edited message
@@ -386,6 +392,7 @@ describe("resume across a real fabric", () => {
         // that does not say is a stub that has not thought about it.
         banned: false,
         channel_ids: [CHANNEL],
+        revisions: {},
       }),
       backfill: async () => {
         throw new Error("backfill unavailable");
@@ -450,6 +457,7 @@ describe("two instances on one fabric", () => {
       user: "tuan",
       banned: false,
       channel_ids: channels,
+      revisions: {},
       limits: { connect: 3_000, send: 600 },
     }),
     backfill: async () => ({}),

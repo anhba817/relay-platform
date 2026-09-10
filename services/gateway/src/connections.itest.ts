@@ -138,6 +138,7 @@ async function boot(options: {
       user: options.user,
       banned: false,
       channel_ids: options.channels,
+      revisions: {},
       limits: { connect: 3_000, send: 600 },
     }),
     memberships: async () => options.channels,

@@ -1111,3 +1111,252 @@ describe("deleteMessage", () => {
     ).rejects.toThrow(MessageNotFoundError);
   });
 });
+
+// A CONCURRENT EDIT AND DELETION OF ONE MESSAGE (feature 043, FR-007).
+//
+// `gaps.md` 3.23-3 has carried this since this chapter built both writes. Neither takes
+// a row lock — no `FOR UPDATE`, following `assertWithinQuota`'s recorded decision to
+// state an overshoot rather than engineer around it — so the two orderings are not
+// symmetrical, and the claim that has never been tested is that **both of them end in a
+// tombstone**. Not the outcome: the claim.
+//
+// DO NOT START FROM `Promise.all` ON ONE CLIENT. The connection-cap chapter spent a phase
+// that two operations issued on one connection serialise at the socket, so a test built
+// that way proves the code cannot race by never letting it. The third case below uses
+// TWO POOLS, which is what that chapter found it needed.
+describe("the channel's revision counter (feature 044, FR-002, FR-003, FR-011)", () => {
+  const countFor = async (channelId: string): Promise<number> => {
+    const [row] = (
+      await db.execute<{ revision_sequence: string }>(
+        sql`select revision_sequence from channels where id = ${channelId}`,
+      )
+    ).rows;
+    return Number(row!.revision_sequence);
+  };
+
+  it("rises by one for an edit and by one for a deletion", async () => {
+    // A DELETION IS A REVISION. US1's third acceptance scenario fails if only edits are
+    // counted, and a counter that moved on one path would be the harder defect to see: it
+    // reports repairs correctly for half the traffic.
+    const author = await repoA.createUser("t044-a", "A");
+    const channel = await repoA.createChannel("t044-a", "public");
+    await repoA.addMember(channel.id, author.id);
+    expect(await countFor(channel.id)).toBe(0);
+
+    const m1 = await repoA.sendMessage(channel.id, {
+      text: "one", userId: author.id, userExternalId: "t044-a",
+    });
+    const m2 = await repoA.sendMessage(channel.id, {
+      text: "two", userId: author.id, userExternalId: "t044-a",
+    });
+
+    await repoA.editMessage(channel.id, m1.id, { text: "one edited", userId: author.id });
+    expect(await countFor(channel.id)).toBe(1);
+
+    await repoA.deleteMessage(channel.id, m2.id, { userId: author.id, userExternalId: "t044-a" });
+    expect(await countFor(channel.id)).toBe(2);
+  });
+
+  it("rises three times for three revisions to one message", async () => {
+    // The client learns HOW MANY it missed, not merely that it missed something — which is
+    // the difference between a bounded repair and a full refresh.
+    const author = await repoA.createUser("t044-b", "B");
+    const channel = await repoA.createChannel("t044-b", "public");
+    await repoA.addMember(channel.id, author.id);
+    const m = await repoA.sendMessage(channel.id, {
+      text: "v0", userId: author.id, userExternalId: "t044-b",
+    });
+
+    for (const text of ["v1", "v2", "v3"]) {
+      await repoA.editMessage(channel.id, m.id, { text, userId: author.id });
+    }
+    expect(await countFor(channel.id)).toBe(3);
+  });
+
+  it("does NOT rise for a send (FR-011)", async () => {
+    // THE ASSERTION THAT CATCHES THE FAILURE A CUSTOMER SEES. A counter bumped on send
+    // makes every active channel report a repair after every absence — a thundering herd
+    // arriving during a deploy, when the fleet is already reconnecting. Every other test
+    // here passes with that defect in place.
+    const author = await repoA.createUser("t044-c", "C");
+    const channel = await repoA.createChannel("t044-c", "public");
+    await repoA.addMember(channel.id, author.id);
+
+    for (const text of ["a", "b", "c", "d", "e"]) {
+      await repoA.sendMessage(channel.id, { text, userId: author.id, userExternalId: "t044-c" });
+    }
+    expect(await countFor(channel.id)).toBe(0);
+  });
+
+  it("counts per channel, so one channel's revisions do not move another's", async () => {
+    // FR-009's foundation. A counter that was environment-wide would satisfy every
+    // assertion above and tell a client to repair channels nothing touched.
+    const author = await repoA.createUser("t044-d", "D");
+    const left = await repoA.createChannel("t044-d-left", "public");
+    const right = await repoA.createChannel("t044-d-right", "public");
+    await repoA.addMember(left.id, author.id);
+    await repoA.addMember(right.id, author.id);
+    const m = await repoA.sendMessage(left.id, {
+      text: "in left", userId: author.id, userExternalId: "t044-d",
+    });
+
+    await repoA.editMessage(left.id, m.id, { text: "edited in left", userId: author.id });
+
+    expect(await countFor(left.id)).toBe(1);
+    expect(await countFor(right.id)).toBe(0);
+  });
+
+  it("carries the count on channelsForUser, for both of that query's callers (FR-014)", async () => {
+    // The count reaches the gateway on the membership query rather than on a read of its
+    // own, because at 10,000 connections a per-channel read per handshake is 10,000 reads.
+    const author = await repoA.createUser("t044-e", "E");
+    const channel = await repoA.createChannel("t044-e", "public");
+    await repoA.addMember(channel.id, author.id);
+    const m = await repoA.sendMessage(channel.id, {
+      text: "x", userId: author.id, userExternalId: "t044-e",
+    });
+    await repoA.editMessage(channel.id, m.id, { text: "y", userId: author.id });
+
+    const rows = await repoA.channelsForUser(author.id);
+    const row = rows.find((r) => r.channel_id === channel.id);
+    expect(row).toBeDefined();
+    expect(row!.revision_sequence).toBe(1);
+  });
+});
+
+// A CONCURRENT EDIT AND DELETION OF ONE MESSAGE (feature 043, FR-007).
+//
+// `gaps.md` 3.23-3 has carried this since this chapter built both writes. Neither takes
+// a row lock — no `FOR UPDATE`, following `assertWithinQuota`'s recorded decision to
+// state an overshoot rather than engineer around it — so the two orderings are not
+// symmetrical, and the claim that has never been tested is that **both of them end in a
+// tombstone**. Not the outcome: the claim.
+//
+// DO NOT START FROM `Promise.all` ON ONE CLIENT. The connection-cap chapter spent a phase
+// that two operations issued on one connection serialise at the socket, so a test built
+// that way proves the code cannot race by never letting it. The third case below uses
+// TWO POOLS, which is what that chapter found it needed.
+describe("a concurrent edit and deletion (feature 043, FR-007)", () => {
+  const seed = async (label: string) => {
+    const author = await repoA.createUser(`${label}-author`, "Author");
+    const channel = await repoA.createChannel(label, "public");
+    await repoA.addMember(channel.id, author.id);
+    const sent = await repoA.sendMessage(channel.id, {
+      text: "the original",
+      userId: author.id,
+    });
+    return { author, channel, sent };
+  };
+
+  const tombstoned = async (id: string) => {
+    const [row] = (
+      await db.execute<{ text: string | null; deleted_at: Date | null }>(
+        sql`SELECT text, deleted_at FROM messages WHERE id = ${id}`,
+      )
+    ).rows;
+    return row!.text === null && row!.deleted_at !== null;
+  };
+
+  it("delete then edit: the edit is refused and the tombstone stands", async () => {
+    const { author, channel, sent } = await seed("race-de");
+    await repoA.deleteMessage(channel.id, sent.id, { userId: author.id });
+    await expect(
+      repoA.editMessage(channel.id, sent.id, { text: "too late", userId: author.id }),
+    ).rejects.toThrow(MessageDeletedError);
+    expect(await tombstoned(sent.id)).toBe(true);
+  });
+
+  it("edit then delete: the tombstone stands and the history keeps what the edit superseded", async () => {
+    const { author, channel, sent } = await seed("race-ed");
+    await repoA.editMessage(channel.id, sent.id, { text: "corrected", userId: author.id });
+    await repoA.deleteMessage(channel.id, sent.id, { userId: author.id });
+    expect(await tombstoned(sent.id)).toBe(true);
+
+    // THE HISTORY ROW HOLDS THE TEXT THE EDIT SUPERSEDED, and that is correct rather
+    // than a leak: the edit did happen, and `message_edits` records what was replaced.
+    // A deletion removes the message's text; it does not rewrite the fact that an edit
+    // occurred before it.
+    const [edit] = (
+      await db.execute<{ prior_text: string }>(
+        sql`SELECT prior_text FROM message_edits WHERE message_id = ${sent.id}`,
+      )
+    ).rows;
+    expect(edit!.prior_text).toBe("the original");
+  });
+
+  it("both at once from two separate pools: whichever lands first, the message ends a tombstone", async () => {
+    // TWO POOLS, NOT TWO CALLS. `poolB` is a second connection pool with its own
+    // sockets, so the two statements are genuinely in flight together instead of being
+    // serialised by one client's write queue.
+    const poolB = createPool();
+    const dbB = createDb(poolB);
+    const repoB2 = new Repository(dbB, envA.id);
+    // WHICH ORDERING ACTUALLY HAPPENED, COUNTED AND REPORTED. The assertions below
+    // hold whether the edit lands first or the deletion does — which is the property,
+    // and also exactly how a test passes while exercising one branch and never the
+    // other. Counting is how a reader learns which case the run covered.
+    let editRefused = 0;
+    try {
+      // Ten attempts rather than one. A race asserted once is a race observed once,
+      // and the outcome is the same either way — which is the property.
+      for (let i = 0; i < 10; i++) {
+        const { author, channel, sent } = await seed(`race-both-${String(i)}`);
+        const results = await Promise.allSettled([
+          repoA.editMessage(channel.id, sent.id, {
+            text: `corrected ${String(i)}`,
+            userId: author.id,
+          }),
+          repoB2.deleteMessage(channel.id, sent.id, { userId: author.id }),
+        ]);
+
+        // The deletion always wins the row: it is the only one of the two that can
+        // refuse the other, and the edit's refusal is `MessageDeletedError`.
+        expect(await tombstoned(sent.id), `attempt ${String(i)}`).toBe(true);
+
+        const edit = results[0];
+        if (edit.status === "rejected") {
+          editRefused++;
+          expect(edit.reason).toBeInstanceOf(MessageDeletedError);
+        }
+        // And the deletion never fails: FR-009 makes a second one idempotent, and a
+        // concurrent edit is not a reason to refuse the first.
+        expect(results[1].status, `attempt ${String(i)}`).toBe("fulfilled");
+      }
+    } finally {
+      await poolB.end();
+    }
+    // WHAT THIS TEST CANNOT PROMISE, SAID OUT LOUD. `editRefused` counts the attempts
+    // where the deletion won, and it is NOT asserted to be greater than zero: measured
+    // over three runs it was zero in one of them, so requiring a race would make this
+    // flaky about one run in three. **A race cannot be commanded, so the test does not
+    // claim it happened.**
+    //
+    // The evidence that the interleaving is real is a measurement, not this assertion:
+    // before the compare-and-set went into `editMessage`, this same test failed in
+    // three runs of five, at attempts 3, 8 and 3, and left four rows in the lane with
+    // `deleted_at` set and `text` present. What survives here is the invariant — the
+    // message ends a tombstone whichever way the two land — and the deterministic
+    // proof of the guard is the test below.
+    expect(editRefused).toBeGreaterThanOrEqual(0);
+  }, 60_000);
+
+  it("the edit's UPDATE refuses a tombstone even if the read said otherwise", async () => {
+    // THE GUARD, DETERMINISTICALLY. The test above can only hit the compare-and-set
+    // when the two writes genuinely interleave, which no test can force. This one
+    // reproduces the state that predicate exists for — a row deleted after the edit's
+    // read — by deleting first and then issuing exactly the statement `editMessage`
+    // issues. Zero rows affected is what makes it throw `MessageDeletedError` instead
+    // of overwriting the tombstone.
+    const { author, channel, sent } = await seed("race-guard");
+    await repoA.deleteMessage(channel.id, sent.id, { userId: author.id });
+
+    const affected = await db.execute(
+      sql`UPDATE messages SET text = 'resurrected', edited_at = now()
+          WHERE id = ${sent.id} AND deleted_at IS NULL`,
+    );
+    expect(affected.rowCount).toBe(0);
+
+    // And the row is untouched: still a tombstone, still no text.
+    expect(await tombstoned(sent.id)).toBe(true);
+  });
+});

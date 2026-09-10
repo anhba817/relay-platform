@@ -27,7 +27,15 @@ export type { Identity } from "./api-client.js";
  * 1011 tells it we are broken (retrying will). 2.5 drew that line for the
  * memberships lookup; moving verification here must not erase it. */
 export type Authentication =
-  | { outcome: "ok"; identity: Identity; channelIds: string[] }
+  | {
+      outcome: "ok";
+      identity: Identity;
+      channelIds: string[];
+      /** Per channel, how many revisions it has seen. Reported to the client on the
+       * ack and never compared here: the gateway has no opinion about staleness, and
+       * no database to form one with. */
+      revisions: Record<string, number>;
+    }
   | { outcome: "refused" }
   | { outcome: "unavailable"; error: string }
   /** FR-031. The api answered, the token is perfectly good, and the user is banned in
@@ -64,6 +72,7 @@ export async function authenticate(
         token,
       },
       channelIds: session.channel_ids,
+      revisions: session.revisions,
     };
   } catch (error) {
     return { outcome: "unavailable", error: String(error) };

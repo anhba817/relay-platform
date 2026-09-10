@@ -15,6 +15,10 @@ import type { ResumePhase } from "./resume.js";
 // 2.1 makes the mistake a build failure, not a review comment.
 
 export interface Connection {
+  /** Per channel, how many revisions it had when this connection was accepted.
+   * Read once, at the ack, and never updated: a client wanting a fresher count
+   * reconnects, which is the only moment the number is useful to it. */
+  revisions: Record<string, number>;
   readonly id: string;
   readonly identity: Identity;
   readonly socket: WebSocket;

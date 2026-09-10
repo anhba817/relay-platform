@@ -74,6 +74,7 @@ export class SessionController {
     // error: it is a user with no channels. The gateway's job is delivery, not
     // identity forensics — 2.5's rule, and the reason a first connect from a
     // brand-new user works before anything is seeded.
+    const channels = user ? await this.repo.channelsForUser(user.id) : [];
     return {
       environment_id: principal.environmentId,
       user: principal.userExternalId,
@@ -86,7 +87,14 @@ export class SessionController {
       // verified token naming somebody with no row, which chapter 2.5 decided is a user
       // with no channels rather than an error — and a user with no row has no ban either.
       banned: user?.banned_at != null,
-      channel_ids: user ? await this.repo.channelsForUser(user.id) : [],
+      // IDS AND COUNTS OFF ONE READ. `channelsForUser` returns a row per channel, so
+      // the two fields cannot disagree about which channels this user belongs to — and
+      // the counter costs no extra query, because the membership join already touches
+      // `channels` to answer the ids.
+      channel_ids: channels.map((c) => c.channel_id),
+      revisions: Object.fromEntries(
+        channels.map((c) => [c.channel_id, c.revision_sequence]),
+      ),
     };
   }
 }

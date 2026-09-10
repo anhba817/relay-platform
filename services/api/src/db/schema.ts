@@ -286,6 +286,22 @@ export const channels = pgTable(
     lastSequence: bigint("last_sequence", { mode: "number" })
       .notNull()
       .default(0), // ADR-03
+    /** How many revisions this channel's messages have received (feature 044, FR-001).
+     *
+     * A REVISION IS AN EDIT OR A DELETION, and each raises this by exactly one. A SEND
+     * DOES NOT (FR-011): a new message is delivered by the ordinary replay, and counting
+     * sends here would make every active channel report a repair after every absence.
+     *
+     * WHAT IT ANSWERS. Resume is ordered by `lastSequence` above, and a revision carries
+     * the sequence of the message it changes rather than a new one — so a message revised
+     * below a client's cursor reaches it on no frame and consumes no sequence, leaving no
+     * gap to notice. This is the number a reconnecting client compares against to learn
+     * that it holds something stale.
+     *
+     * `{ mode: "number" }` and `bigint`, matching `lastSequence` for the same reason. */
+    revisionSequence: bigint("revision_sequence", { mode: "number" })
+      .notNull()
+      .default(0),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     // WHEN THIS CHANNEL LAST TOOK A MESSAGE (FR-014).
     //

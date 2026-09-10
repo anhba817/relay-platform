@@ -742,12 +742,13 @@ export function attachSessions({
           return;
         }
         // NO SEND LIMIT ARGUMENT YET. `authenticate` returns the limits with the
-        // session in movement VII, where the limiter is written; `open` takes four
-        // parameters until then rather than a fifth nothing can supply.
+        // session in movement VII, where the limiter is written; until then `open`
+        // takes what the session answer actually carries and nothing more.
         void open(
           ws,
           result.identity,
           result.channelIds,
+          result.revisions,
           req.url ?? "/",
           pendingId,
           claimed,
@@ -760,6 +761,11 @@ export function attachSessions({
     socket: WebSocket,
     identity: Identity,
     channelIds: string[],
+    /** BESIDE `channelIds` AND NOT AFTER `url`, because it arrives with them from one
+     * session answer — and because `claimedId` below is optional: gaps.md 045-18 records
+     * a parameter inserted ahead of an optional one silently renaming every later
+     * argument. A required parameter here makes the compiler name every call site. */
+    revisions: Record<string, number>,
     url: string,
     /** The id the cap claimed a place with, so the connection and
      * its slot agree — FR-011's "exactly one place for its lifetime". Absent when
@@ -780,6 +786,8 @@ export function attachSessions({
       // still the only source of membership (ADR-05), it just answers both
       // questions at once, and a failure now closes the socket before it opens.
       channelIds: new Set(channelIds),
+      // Reported on the ack and never read again by this service.
+      revisions,
       missedPings: 0,
       phase: presented === undefined ? "live" : "buffering",
       buffer: [],
@@ -1076,7 +1084,14 @@ export function attachSessions({
   ): void {
     send(connection.socket, {
       type: "connection.ack",
-      payload: { user: connection.identity.userExternalId, ...payload },
+      payload: {
+        user: connection.identity.userExternalId,
+        // EVERY CHANNEL THIS USER BELONGS TO, ZEROS INCLUDED, on every ack — a resume
+        // and a fresh connect report the same way, because a client cannot act on a
+        // number it only sometimes receives.
+        revisions: connection.revisions,
+        ...payload,
+      },
     });
   }
 

@@ -18,7 +18,15 @@ const message = {
 const valid: Record<string, unknown> = {
   "connection.ack": {
     type: "connection.ack",
-    payload: { user: "u1", cursor: { c1: 42 }, resume_ok: true, truncated: [] },
+    payload: {
+      user: "u1",
+      cursor: { c1: 42 },
+      resume_ok: true,
+      truncated: [],
+      // A COUNT FOR THE CHANNEL THE CURSOR NAMES, and zero is a
+      // legal value: a channel nobody has revised reports 0 rather than being absent.
+      revisions: { c1: 0 },
+    },
   },
   "message.send": {
     type: "message.send",

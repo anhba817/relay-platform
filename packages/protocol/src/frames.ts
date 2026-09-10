@@ -32,6 +32,21 @@ export const connectionAckSchema = z.strictObject({
     cursor: cursorSchema,
     resume_ok: z.boolean(),
     truncated: z.array(z.string().min(1)),
+    /** How many revisions each of this user's channels has seen.
+     *
+     * EVERY CHANNEL THE USER BELONGS TO, ZEROS INCLUDED. A channel absent from this map
+     * would be indistinguishable from a channel at zero, and a client cannot tell "no
+     * revisions" from "not reported" — so the map is total over the membership and a
+     * client that holds a count for a channel missing here knows the membership changed
+     * rather than guessing.
+     *
+     * THE PLATFORM REPORTS AND NEVER COMPARES. Nothing on the server reads the number a
+     * client holds; the client decides whether to re-read history. A draft had the client
+     * present its counts on the upgrade URL so the gateway could answer with the stale
+     * channels, and it was built and then removed — a count the server ACTS on is a number
+     * the client controls, and a fabricated one becomes a denial of service the platform
+     * performs on itself. */
+    revisions: z.record(z.string().min(1), z.number().int().nonnegative()),
   }),
 });
 

@@ -109,6 +109,7 @@ async function boot(options: {
       user: options.user,
       banned: false,
       channel_ids: options.channels,
+      revisions: {},
     }),
     memberships: async () => options.channels,
     backfill: async () => {

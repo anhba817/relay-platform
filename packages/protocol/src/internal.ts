@@ -137,6 +137,13 @@ export const internalSessionResponseSchema = z.strictObject({
   environment_id: z.string().min(1),
   user: z.string().min(1),
   channel_ids: z.array(z.string().min(1)),
+  /** Per channel, how many revisions it has seen — the same keys as `channel_ids`.
+   *
+   * ONE QUERY, TWO FIELDS. The membership read already joins `channels` to answer
+   * `channel_ids`, so the counter comes back on rows the api was fetching anyway: no
+   * second round trip, and no possibility of the two disagreeing about which channels
+   * the user belongs to. */
+  revisions: z.record(z.string().min(1), z.number().int().nonnegative()),
   /** FR-031. Whether this user is banned in this environment.
    *
    * IT RIDES THE RESPONSE THE GATEWAY ALREADY ASKS FOR: the gateway has no database and

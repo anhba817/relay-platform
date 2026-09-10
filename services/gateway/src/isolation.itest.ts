@@ -784,7 +784,15 @@ function sample(type: string, channel: string, user: string): unknown {
   };
   switch (type) {
     case "connection.ack":
-      return { type, payload: { user, cursor: {}, resume_ok: true, truncated: [] } };
+      // AND `revisions` FOR THE SAME REASON, ONE FIELD LATER. This chapter made it
+      // required on the ack, so this sample stopped satisfying `connectionAckSchema`
+      // and the forged frame came back `invalid_frame` — the refusal a phase before
+      // the one this loop asserts. The same finding as the `message.deleted` split
+      // below, in the same two files, one field later.
+      return {
+        type,
+        payload: { user, cursor: {}, resume_ok: true, truncated: [], revisions: {} },
+      };
     case "message.ack":
       return { type, payload: { seq: 1 } };
     case "message.created":
