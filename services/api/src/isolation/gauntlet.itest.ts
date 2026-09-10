@@ -1112,6 +1112,15 @@ describe("the isolation gauntlet", () => {
   // that names an environment alongside an identifier.
   describe("the platform routes", () => {
     const dispatcher = process.env["RELAY_INTERNAL_CREDENTIAL"];
+    // AND THE GATEWAY'S, WHICH IS A DIFFERENT SECRET SINCE FR-044. Both are `platform`
+    // and neither reaches the other's routes: the usage report is
+    // `@Accepts({ platform: ["gateway"] })` and dispatch is the dispatcher's.
+    //
+    // This suite presented the dispatcher's here and the positive control below caught
+    // it — `expected 403 to be 200` on the SETUP call, before any attack was made. A
+    // narrowing that goes unnoticed by the suite it narrows is a narrowing nobody has
+    // measured; this one announced itself on the first run.
+    const gateway = process.env["RELAY_INTERNAL_CREDENTIAL_GATEWAY"];
 
     const expand = async (environmentId: string) =>
       send(url, dispatcher ?? "", {
@@ -1164,7 +1173,7 @@ describe("the isolation gauntlet", () => {
     // platform and is allowed to reach every tenant.
     const period = periodOf(new Date());
     const report = (connectionId: string, environmentId: string, minutes: number) =>
-      send(url, dispatcher ?? "", {
+      send(url, gateway ?? "", {
         method: "POST",
         path: "/internal/usage/connections",
         body: {
@@ -1176,7 +1185,7 @@ describe("the isolation gauntlet", () => {
 
     it("a connection billed to one environment cannot be re-billed to another", async () => {
       attacked.add("POST /internal/usage/connections");
-      if (dispatcher === undefined) return; // not configured in this lane
+      if (gateway === undefined) return; // not configured in this lane
 
       // THE POSITIVE CONTROL FIRST, and it is a legitimate call: the platform may
       // report the victim's own connection. Without it the refusal below would also
