@@ -55,7 +55,25 @@ export default defineConfig({
     // The e2e journey spawns real services and is excluded on purpose: it
     // measures the system, not any file's branches, and its child processes'
     // coverage is not attributable here anyway.
-    exclude: ["**/node_modules/**", "packages/e2e/**"],
+    //
+    // AND `packages/outsider` FOR A DIFFERENT REASON. That suite integrates against a
+    // platform it does not start: without `RELAY_API_URL`, `RELAY_WS_URL` and
+    // `RELAY_DEMO_CREDENTIAL` it throws on purpose and prints the five commands that
+    // would satisfy it. `pnpm coverage` sets none of them.
+    //
+    // THREE LANES, AND THE THIRD DID NOT LEARN. The package declares no `test` script,
+    // so the Docker-free unit lane cannot see it. `pnpm test:integration` is
+    // `turbo run test:integration --filter=!@relay/outsider`, so that lane was told.
+    // The exclusion went into a SCRIPT and this config globs the filesystem — so the
+    // coverage lane found the suite anyway and reported **one failed file, ten skipped
+    // tests**, every run.
+    //
+    // Published shipped it that way and fixed it two chapters later. The measurement
+    // here is the same shape and two tests larger, because the typing leg above added
+    // two: a count in a filter is a count of what somebody remembered to filter.
+    //
+    // `pnpm test:outsider` is the way in.
+    exclude: ["**/node_modules/**", "packages/e2e/**", "packages/outsider/**"],
     // Suites in one process would share a database in ways their authors did
     // not design for — the outbox chapter's suite learned that the hard way.
     fileParallelism: false,
