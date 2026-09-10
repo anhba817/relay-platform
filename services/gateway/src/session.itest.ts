@@ -175,6 +175,16 @@ async function startApi(): Promise<ApiUnderTest> {
       RELAY_OUTBOX_RELAY: "off",
       // Nor the notification relay, for the same reason.
       RELAY_NOTIFICATION_RELAY: "off",
+      // And its own failed-authentication keyspace. The auth limiter counts
+      // failures per SOURCE ADDRESS in Redis, every suite in this lane is
+      // 127.0.0.1, and vitest runs the files in parallel — so ten failures a
+      // minute across ALL of them turns a neighbour's expected 401 into a 429.
+      //
+      // NOT what the port fix was about, and published held this as its first
+      // theory long enough to write it down before the evidence arrived. Kept
+      // because the coupling is real and the isolation costs one line, and said
+      // plainly rather than taking credit for a fault it did not fix.
+      RELAY_AUTH_KEY_PREFIX: `rlauth-session-${randomUUID().slice(0, 8)}`,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
