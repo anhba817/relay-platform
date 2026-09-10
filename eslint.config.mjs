@@ -41,6 +41,12 @@ export default tseslint.config(
       "packages/test-harness/src/global-setup.ts",
       "packages/test-harness/src/setup.ts",
       "packages/test-harness/src/guard.itest.ts",
+      // AND THE LANE RESET'S OWN TEST, which arrives with the table it clears. It
+      // asserts what the SCRIPT DID — a stale pending backlog gone, an organisation
+      // count unmoved — and both are facts about rows the script reached through its
+      // own connection. Going through the repository layer would mean asserting the
+      // script's effect against the code the script does not use.
+      "packages/test-harness/src/reset-lane.itest.ts",
       // AND TWO SUITES THAT WRITE A ROW THE TYPE SYSTEM FORBIDS.
       //
       //   backfill.itest.ts  asserts what `toFrame` does with a SENDERLESS message.

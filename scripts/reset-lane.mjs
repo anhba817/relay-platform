@@ -14,20 +14,24 @@
 // the lane" is not checkable; "you typed the flag" is. So the guard is a flag, and
 // `reset-lane.itest.ts` asserts the flag is load-bearing rather than decorative.
 //
-// AND IT TOUCHES NO ROWS. This clears the BROKER only — purged streams and orphaned
-// durables. Postgres accumulates too, and the tables that accumulate are not all in
-// this tree yet: `webhook_deliveries` arrives with the webhook chapter, which is where
-// its half of this script arrives with it. A script that deleted from a table this
-// tree does not have would be a script nobody could run.
+// AND NOW IT TOUCHES ONE TABLE, WHICH ARRIVED WITH THIS CHAPTER. The harness chapter
+// wrote the broker half and said the rest would come with the table: `webhook_deliveries`
+// is created here, it is the table that accumulates worst, and a script that deleted
+// from a table the tree did not have would have been a script nobody could run.
+//
+// ONE TABLE, NAMED. Not "every table that looks like debris" — that is the same
+// uncheckable guard the flag exists instead of. Organisations, environments, users,
+// channels and messages are untouched, and the refusal below says so.
 import { connect } from "../services/api/node_modules/nats/lib/src/mod.js";
+import pg from "../services/api/node_modules/pg/lib/index.js";
 
 const FLAG = "--yes-this-is-my-test-lane";
 if (!process.argv.includes(FLAG)) {
   console.error(
     `reset-lane: refusing to run without ${FLAG}.\n` +
-      `This purges every JetStream stream and deletes every durable consumer. It does\n` +
-      `not touch Postgres at all: no organisation, environment, user, channel or\n` +
-      `message, and nothing a seeded tenant owns.\n` +
+      `This purges every JetStream stream, deletes every durable consumer, and removes\n` +
+      `webhook_deliveries left pending by runs that have ended. It does not touch any\n` +
+      `organisation, environment, user, channel or message.\n` +
       `\n  node scripts/reset-lane.mjs ${FLAG}\n`,
   );
   process.exit(2);
@@ -61,4 +65,25 @@ for await (const s of jsm.streams.list()) {
   );
 }
 await nc.drain();
+
+/** Deliveries younger than this belong to a run that may still be going. A run's own
+ *  rows are seconds old, and a reset that raced a live suite would look like the
+ *  platform losing deliveries. */
+const STALE_AFTER = "30 minutes";
+
+const databaseUrl =
+  process.env.DATABASE_URL ?? "postgres://relay:relay@localhost:15432/relay";
+const client = new pg.Client({ connectionString: databaseUrl });
+await client.connect();
+// `relay.allow_global` is the guard's exemption, and this IS a deliberate global
+// operation on one table. Naming that table is how the mechanism is meant to be used:
+// an unnamed attempt is refused, which is the guard doing its job rather than an
+// obstacle to route around.
+await client.query(`SET relay.allow_global = 'webhook_deliveries'`);
+const { rowCount } = await client.query(
+  `DELETE FROM webhook_deliveries
+    WHERE state = 'pending' AND created_at < now() - interval '${STALE_AFTER}'`,
+);
+console.log(`  webhook_deliveries: ${rowCount ?? 0} stale pending rows deleted`);
+await client.end();
 process.exit(0);
