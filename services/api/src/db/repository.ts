@@ -3275,7 +3275,7 @@ export class Repository {
   /** The channels a user belongs to, each with its revision count (feature 044, FR-014).
    *
    * ONE QUERY, NOT TWO. The count could have come from a second call, and giving each
-   * caller its own is the two-lists-that-must-agree defect `gaps.md` the revisions chapter-4 records about
+   * caller its own is the two-lists-that-must-agree defect `gaps.md` 3.23-4 records about
    * `targets.ts` — two things that must match, maintained separately, with nothing
    * comparing them. The join costs nothing: `members` is already reached and `channels` is
    * one hop from it on a primary key.
@@ -4562,7 +4562,7 @@ export class Repository {
       // set — **a row one filter calls deleted and another calls alive**, and a
       // deletion that returned successfully undone by an edit already in flight.
       //
-      // `gaps.md` the revisions chapter-3 recorded the opposite — *"both interleavings end in a
+      // `gaps.md` 3.23-3 recorded the opposite — *"both interleavings end in a
       // tombstone… there is no order of the two that leaves a message saying something
       // nobody wrote"* — and the test that item asked for is what disproved it: three
       // of five runs, and four incoherent rows left behind in the lane.

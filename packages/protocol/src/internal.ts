@@ -195,7 +195,7 @@ export const internalSessionResponseSchema = z.strictObject({
    * The keys here are the ids above.
    *
    * `revisionCountSchema` IMPORTED, NOT RESPELLED. The same shape appears on the ack, and two
-   * records that must agree and are maintained separately is the defect `gaps.md` the revisions chapter-4
+   * records that must agree and are maintained separately is the defect `gaps.md` 3.23-4
    * records about `targets.ts` — one file apart in this case.
    *
    * `.default({})` FOR THE DEPLOY WINDOW, following `banned` below: an api built before this

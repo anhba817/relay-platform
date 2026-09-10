@@ -97,7 +97,7 @@ export interface MembershipChangedData {
  *
  * THE THREE FALSE ONES ARE NOT OVERSIGHTS. `channel.created`, `user.connected` and
  * `user.disconnected` are declared by FR-WHK-02 and unbuilt, and **741 stored
- * subscriptions name `channel.created`**. The review and `gaps.md` the revisions chapter-1 both recommend
+ * subscriptions name `channel.created`**. The review and `gaps.md` 3.23-1 both recommend
  * validating subscriptions against the EMITTED set; doing that would refuse those rows,
  * and those customers made no mistake. */
 export const WEBHOOK_EVENT_TYPES = {

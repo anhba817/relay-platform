@@ -357,7 +357,7 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
    * `services/api/src/main.ts` and `services/gateway/src/main.ts` were changed to
    * report correctly — both used to log the port they ASKED for, which is `0`.
    *
-   * IT READS THE BUFFER `capture` ALREADY FILLS. `gaps.md` the connection-cap chapter-6 counts eleven files
+   * IT READS THE BUFFER `capture` ALREADY FILLS. `gaps.md` 3.22-6 counts eleven files
    * that spawn a child and six that discard its output entirely; this one captured it
    * and used it for a failure message only. Now it is load-bearing.
    *

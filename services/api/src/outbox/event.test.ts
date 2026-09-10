@@ -192,7 +192,7 @@ describe("the outbox event type set", () => {
     ]);
     expect(Object.keys(WEBHOOK_EVENT_TYPES)).toHaveLength(8);
 
-    // AND WHICH ARE UNBUILT, by name. This is the half the review and `gaps.md` the revisions chapter-1
+    // AND WHICH ARE UNBUILT, by name. This is the half the review and `gaps.md` 3.23-1
     // both got wrong: they recommend validating subscriptions against the EMITTED set,
     // and 741 stored subscriptions name `channel.created` — declared here, not emitted,
     // and not a customer's mistake.
@@ -203,7 +203,7 @@ describe("the outbox event type set", () => {
   });
 
   it("agrees with the declared eight's emitted flags, member for member", () => {
-    // ONE LIST, NOT TWO. `gaps.md` the revisions chapter-4 records the two-lists-that-must-agree defect
+    // ONE LIST, NOT TWO. `gaps.md` 3.23-4 records the two-lists-that-must-agree defect
     // about `targets.ts`, and `eslint.config.mjs` says *MUST AGREE* with nothing
     // comparing them.
     //

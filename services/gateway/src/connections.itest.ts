@@ -1124,7 +1124,7 @@ describe("the cap fails open, and says so (US4)", () => {
 // `.test.ts` and runs in the lane chapter 2.1 built to need no containers; these twelve
 // talk to a real Redis, so with the stack down they reported failures that were correct
 // behaviour and made the lane's exit code answer "does this work HERE, today" instead of
-// "does this work without infrastructure". `gaps.md` the revisions chapter-9 carried that from the day it
+// "does this work without infrastructure". `gaps.md` 3.23-9 carried that from the day it
 // was found by accident.
 //
 // WHICH TWELVE WAS MEASURED. `RELAY_REDIS_URL=redis://127.0.0.1:6399 vitest run

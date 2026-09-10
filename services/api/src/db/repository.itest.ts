@@ -1434,7 +1434,7 @@ describe("the read shapes that do NOT carry attachments (FR-009)", () => {
 
 // A CONCURRENT EDIT AND DELETION OF ONE MESSAGE (feature 043, FR-007).
 //
-// `gaps.md` the revisions chapter-3 has carried this since the revisions chapter built both writes. Neither takes
+// `gaps.md` 3.23-3 has carried this since the revisions chapter built both writes. Neither takes
 // a row lock — no `FOR UPDATE`, following `assertWithinQuota`'s recorded decision to
 // state an overshoot rather than engineer around it — so the two orderings are not
 // symmetrical, and the claim that has never been tested is that **both of them end in a
