@@ -158,10 +158,23 @@ describe("the gauntlet's target list derives from the running application", () =
       "GET /v1/channels/:channelId/messages/:messageId/edits",
       "PATCH /v1/channels/:channelId/messages/:messageId",
       "DELETE /v1/channels/:channelId/messages/:messageId",
-      // THE METERING CHAPTER'S USAGE REPORT, and the only `/internal` key on this
-      // list — the four `/internal/dispatch` routes and `/internal/memberships` were
-      // added while nobody was adding to it, which is filed rather than swept here.
+      // ── THE `/internal` SURFACE, WHICH THIS LIST HAD NEVER NAMED ────────────
+      //
+      // The metering chapter added its usage report here and filed the rest. This is
+      // the rest: five routes on the router, classified in `targets.ts`, and absent
+      // from the one assertion that catches a route CLASSIFIED AND NEVER BUILT.
+      //
+      // The gap cost nothing — the accounting test above catches the other direction,
+      // and every one of these is on the router today. What it cost was the claim:
+      // "each chapter that adds a route adds its key here" was false of five routes,
+      // and a list that is quietly incomplete is weaker than the sentence describing
+      // it. This chapter is the gauntlet's, so it is the one that owes the sweep.
       "POST /internal/usage/connections",
+      "GET /internal/memberships",
+      "POST /internal/dispatch/expand",
+      "POST /internal/dispatch/material",
+      "POST /internal/dispatch/outcome",
+      "POST /internal/dispatch/replay",
     ];
     const keys = derived.map(targetKey);
     const missing = ADDED.filter((k) => !keys.includes(k));
