@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { comparePair, rowsOf } from "./attack";
+import { comparePair, credentialAttack, rowsOf } from "./attack";
 
 // The oracle's REPORTING arm, which a passing gauntlet cannot reach.
 //
@@ -69,5 +69,47 @@ describe("counting the rows in a list answer", () => {
     expect(rowsOf(null)).toEqual([]);
     expect(rowsOf("an html error page")).toEqual([]);
     expect(rowsOf({ data: "not an array" })).toEqual([]);
+  });
+});
+
+describe("a credential attack that could not even mint", () => {
+  // THE ARM THAT REPORTS A FAILED MINT, which is the third instrument in this file
+  // that a healthy lane never reaches. `credentialAttack` asks the api for a token
+  // with the ATTACKER's own credential — a legitimate request that succeeds every
+  // time the platform is up — and only then presents it against the victim.
+  //
+  // WHY IT MATTERS THAT THIS ARM IS RIGHT. If a broken mint returned the shape of a
+  // success, every credential attack in the gauntlet would read `minted: true` and
+  // compare a token that does not exist against a route that refused it for the wrong
+  // reason. The suite would be green and would be asserting nothing — which is the
+  // failure this whole chapter is about, arriving through the instrument rather than
+  // through the platform.
+  //
+  // Driven with a stubbed `fetch`, because the only way to fail a mint against a live
+  // api is to break the api.
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports the mint's own status and body, and does not claim a token", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Promise.resolve({
+          ok: false,
+          status: 401,
+          json: async () => Promise.resolve({ code: "unauthorized" }),
+        }),
+      ),
+    );
+
+    const verdict = await credentialAttack("http://unused.invalid", "rk_dev_bad", "mai", {
+      method: "GET",
+      path: "/v1/channels/whatever",
+    });
+
+    expect(verdict.minted, "a failed mint reported as a successful one").toBe(false);
+    expect(verdict.crossStatus).toBe(401);
+    expect(verdict.crossBody).toEqual({ code: "unauthorized" });
   });
 });
