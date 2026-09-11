@@ -19,9 +19,11 @@ import {
 
 // The TS twin of SAD §6.1 (ADR-16). The schema now exists twice — once as
 // the SAD's SQL truth, once here — and that drift risk is checked, not
-// assumed away: drizzle-kit GENERATES the migration SQL from these
-// definitions, and the generated SQL is reviewed against §6.1 before the
-// runner applies it. The four tenant-bearing tables reproduce §6.1
+// assumed away: the migration SQL under migrations/ is hand-written from these
+// definitions and reviewed against SAD §6.1 before the runner applies it.
+// Feature 043 retired the generator that used to produce it — the sentence here
+// described "the generated SQL" for one more feature than the generator lasted,
+// which is what a comment does when a change edits around it instead of through it. The four tenant-bearing tables reproduce §6.1
 // column-for-column, constraints and DR citations included. Deliberately
 // absent, with named arrivals: emoji/media tables (their parts), messages
 // partitioning (SAD growth note -> retention chapter). The outbox arrives with the
