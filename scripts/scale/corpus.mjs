@@ -364,6 +364,25 @@ async function seed(cfg, plan) {
   const sendChannel = subjectRows.channelIds[0];
   await repo.addMember(sendChannel, botId);
 
+  // THE DENORMALISED COUNTERS THE WRITE PATH MAINTAINS, WHICH A BULK INSERT BYPASSES.
+  // `channels.last_sequence` is where the next message's sequence comes from, so a
+  // corpus that wrote sequences 1..N and left the counter at 0 makes the api allocate 1
+  // and collide on `(channel_id, sequence)`. Every send returned 500 `internal_error`
+  // and the log line carried only the status — found by sending one message by hand.
+  //
+  // `last_activity_at` is the same shape: the channel listing orders by it, and a
+  // corpus of a million messages whose channels all claim no activity would measure a
+  // sort over a column that is uniformly null.
+  //
+  // This is the chapter's own subject one level down. A counter maintained on the write
+  // path is cheap for the write and invisible to anything that writes around it.
+  await pool.query(`
+    update channels c
+       set last_sequence = x.mx, last_activity_at = x.ts
+      from (select channel_id, max(sequence) mx, max(created_at) ts
+              from messages group by 1) x
+     where x.channel_id = c.id`);
+
   // THE CORPUS IS DATA, NOT HISTORY — AND IT TOOK A COUNT TO MAKE THAT TRUE.
   // Messages bypass `sendMessage`, so they write no outbox row. `addMember` does not:
   // it publishes `channel.member_added` (FR-WHK-02), and the first floor run left
@@ -408,6 +427,9 @@ async function seed(cfg, plan) {
       messages: await n1("select count(*)::int n from messages"),
       messages_null_sender: await n1("select count(*)::int n from messages where user_id is null"),
       outbox: await n1("select count(*)::int n from outbox"),
+      channels_with_last_sequence: await n1(
+        "select count(*)::int n from channels where last_sequence > 0",
+      ),
       usage_periods: await n1("select count(*)::int n from usage_periods"),
     },
     created_at_range: (
