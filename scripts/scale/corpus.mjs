@@ -78,6 +78,15 @@ export function readConfig(env = process.env) {
     );
   }
   if (cfg.nullSenderRatio > 1) throw new Error("CORPUS_NULL_SENDER_RATIO must be at most 1");
+  // THE NAME GOES INTO `create database "…"` AND NOTHING ELSE CAN ESCAPE IT. A probe
+  // with a quote in it produced `unterminated quoted identifier` — harmless here, and
+  // the wrong shape of harmless: the failure message then said a database was LEFT IN
+  // PLACE that had never been created. Refusing the name makes both cases impossible.
+  if (!/^[a-z][a-z0-9_]{0,62}$/.test(cfg.database)) {
+    throw new Error(
+      `CORPUS_DATABASE (${cfg.database}) must match /^[a-z][a-z0-9_]{0,62}$/`,
+    );
+  }
   return cfg;
 }
 
@@ -445,7 +454,21 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const cfg = readConfig();
   const plan = planFor(cfg);
   const t0 = Date.now();
-  const out = await seed(cfg, plan);
-  console.log(JSON.stringify({ ...out, elapsed_ms: Date.now() - t0 }, null, 2));
+  try {
+    const out = await seed(cfg, plan);
+    console.log(JSON.stringify({ ...out, elapsed_ms: Date.now() - t0 }, null, 2));
+  } catch (err) {
+    // PARTIAL STATE IS LEFT IN PLACE AND NAMED. A half-built corpus that looks empty
+    // is worse than one that says what it is: the next run's refusal reports how many
+    // messages it found, and a database silently dropped on failure would take the
+    // evidence with it.
+    process.stderr.write(
+      `\ncorpus FAILED after ${((Date.now() - t0) / 1000).toFixed(1)}s.\n` +
+        `  database ${cfg.database} is LEFT IN PLACE and may hold partial rows.\n` +
+        `  inspect it, or drop it with: node scripts/scale/measure.mjs --drop-all\n` +
+        `  cause: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    process.exit(1);
+  }
   process.exit(0);
 }
