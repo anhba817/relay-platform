@@ -55,6 +55,20 @@ export function readConfig(env = process.env) {
     environments: num("CORPUS_ENVIRONMENTS", 3),
     days: num("CORPUS_DAYS", 120),
     nullSenderRatio: num("CORPUS_NULL_SENDER_RATIO", 0.01),
+    // THE CORPUS HAS TO BE ABLE TO SHOW WHAT THE CHAPTER IS ABOUT. Without these four it
+    // holds creations only, with no attachments and ASCII text — and three of chapter
+    // 4.2's four column findings become invisible in it: every row is `created`, so the
+    // event filter excludes nothing; `attachments` is never written, so JSONLength and
+    // length cannot disagree; and `corpus <n>` is ASCII, where lengthUTF8 and length
+    // agree exactly. Only the null-sender ratio survived a stock corpus.
+    //
+    // The defaults mirror the lane's own proportions at the time of writing — 3,201
+    // edited, 4,056 deleted and 2,241 with attachments out of 303,885 messages — so a
+    // corpus built with no environment set looks like the data the platform accumulated.
+    editedRatio: num("CORPUS_EDITED_RATIO", 0.0105),
+    deletedRatio: num("CORPUS_DELETED_RATIO", 0.0133),
+    attachmentRatio: num("CORPUS_ATTACHMENT_RATIO", 0.0074),
+    nonAsciiRatio: num("CORPUS_NON_ASCII_RATIO", 0.1),
   };
   // BOTH OF THESE REFUSE A CORPUS THAT TESTS ONLY ONE OF THE QUERY'S TWO PREDICATES, and
   // both bounds are strict. One environment leaves `WHERE c.environment_id = $1` nothing to
@@ -77,7 +91,32 @@ export function readConfig(env = process.env) {
         `or the date predicate excludes nothing and its cost is measured as zero`,
     );
   }
-  if (cfg.nullSenderRatio > 1) throw new Error("CORPUS_NULL_SENDER_RATIO must be at most 1");
+  for (const [name, v] of [
+    ["CORPUS_NULL_SENDER_RATIO", cfg.nullSenderRatio],
+    ["CORPUS_EDITED_RATIO", cfg.editedRatio],
+    ["CORPUS_DELETED_RATIO", cfg.deletedRatio],
+    ["CORPUS_ATTACHMENT_RATIO", cfg.attachmentRatio],
+    ["CORPUS_NON_ASCII_RATIO", cfg.nonAsciiRatio],
+  ]) {
+    if (v > 1) throw new Error(`${name} must be at most 1`);
+  }
+  // THE SAME ARGUMENT AS THE TWO ABOVE, ONE COLUMN OVER. A corpus where nothing is
+  // edited or deleted makes `where event = 'created'` exclude nothing, so the rollup's
+  // filter is measured at zero and reported as a number anyway. A corpus where nothing
+  // carries an attachment makes `attachment_count` uniformly NULL, so the expression
+  // this chapter exists to correct cannot be wrong in it.
+  if (cfg.editedRatio + cfg.deletedRatio === 0) {
+    throw new Error(
+      "CORPUS_EDITED_RATIO and CORPUS_DELETED_RATIO cannot both be 0, or every row is " +
+        "`created` and the rollup's event filter excludes nothing",
+    );
+  }
+  if (cfg.attachmentRatio === 0) {
+    throw new Error(
+      "CORPUS_ATTACHMENT_RATIO must be above 0, or attachment_count is uniformly NULL " +
+        "and JSONLength cannot be shown to differ from length",
+    );
+  }
   // THE NAME GOES INTO `create database "…"` AND NOTHING ELSE CAN ESCAPE IT. A probe
   // with a quote in it produced `unterminated quoted identifier` — harmless here, and
   // the wrong shape of harmless: the failure message then said a database was LEFT IN
@@ -266,28 +305,42 @@ async function fillEnvironment(db, pool, environmentId, n, cfg, endsAt) {
     let seqOffset = 0;
     if (inN > 0) {
       await pool.query(
-        `insert into messages (id, channel_id, sequence, user_id, text, metadata, created_at)
+        `insert into messages (id, channel_id, sequence, user_id, text, attachments,
+                               metadata, created_at)
          select gen_random_uuid(), $1::uuid, s,
                 case when random() < $2 then null
                      else ($3::uuid[])[1 + floor(random() * $4)::int] end,
-                'corpus ' || s, '{}'::jsonb,
+       case when random() < $8 then 'corpus ' || s || ' — café 🌍'
+                     else 'corpus ' || s end,
+                case when random() < $9
+                     then '[{"url":"https://example.test/a.png"},{"url":"https://example.test/b.png"}]'::jsonb
+                     else null end,
+                '{}'::jsonb,
                 $5::timestamptz - random() * $6 * interval '1 day'
          from generate_series(1, $7) s`,
-        [ch.id, cfg.nullSenderRatio, ids, ids.length, endsAt, QUERY_WINDOW_DAYS, inN],
+        [ch.id, cfg.nullSenderRatio, ids, ids.length, endsAt, QUERY_WINDOW_DAYS, inN,
+         cfg.nonAsciiRatio, cfg.attachmentRatio],
       );
       seqOffset = inN;
     }
     if (outN > 0) {
       await pool.query(
-        `insert into messages (id, channel_id, sequence, user_id, text, metadata, created_at)
+        `insert into messages (id, channel_id, sequence, user_id, text, attachments,
+                               metadata, created_at)
          select gen_random_uuid(), $1::uuid, $8 + s,
                 case when random() < $2 then null
                      else ($3::uuid[])[1 + floor(random() * $4)::int] end,
-                'corpus ' || s, '{}'::jsonb,
+       case when random() < $10 then 'corpus ' || s || ' — café 🌍'
+                     else 'corpus ' || s end,
+                case when random() < $11
+                     then '[{"url":"https://example.test/a.png"},{"url":"https://example.test/b.png"}]'::jsonb
+                     else null end,
+                '{}'::jsonb,
                 $5::timestamptz - ($6 + random() * $7) * interval '1 day'
          from generate_series(1, $9) s`,
         [ch.id, cfg.nullSenderRatio, ids, ids.length, endsAt, QUERY_WINDOW_DAYS,
-         cfg.days - QUERY_WINDOW_DAYS, seqOffset, outN],
+         cfg.days - QUERY_WINDOW_DAYS, seqOffset, outN,
+         cfg.nonAsciiRatio, cfg.attachmentRatio],
       );
     }
     written += inN + outN;
@@ -374,6 +427,46 @@ async function seed(cfg, plan) {
   await repo.addMember(sendChannel, botId);
 
   // THE DENORMALISED COUNTERS THE WRITE PATH MAINTAINS, WHICH A BULK INSERT BYPASSES.
+  // EDITS AND DELETIONS, BECAUSE A STORE OF EVENTS NEEDS MORE THAN ONE KIND OF EVENT.
+  //
+  // The order is the one the platform would have produced: edits are written while the
+  // message still says something, deletions null the text afterwards. A message can be
+  // both, and the pair is the interesting one — its creation length survives in the
+  // edit's `prior_text` while its last edit's resulting length dies with the tombstone.
+  //
+  // `message_edits` PK is (message_id, edited_at), so the k rows are a minute apart, and
+  // k = 1 lands exactly on `messages.edited_at` — the latest edit, which is what that
+  // column means. Chapter 3.23 writes no edit row for a deletion: a tombstone has no
+  // text to preserve, and this seeder does not invent one.
+  await pool.query(
+    `update messages
+        set edited_at = created_at + (random() * 3600) * interval '1 second'
+      where random() < $1`,
+    [cfg.editedRatio],
+  );
+  //
+  // THE EDIT COUNT IS PRECOMPUTED PER MESSAGE, AND THE OBVIOUS FORM DOES NOT WORK.
+  // `cross join lateral generate_series(1, 1 + floor(random() * 3)::int)` evaluates the
+  // volatile argument ONCE for the whole query, not once per row: the first run of this
+  // seeder gave 864 edits over 288 messages — exactly three each, every one of them —
+  // and a 10-row probe of the same shape returned 10 rows, exactly one each. **It picks
+  // a constant at random per query, which reads as random if you run it once.**
+  // Precomputing `k` in a subquery makes it per-row: the same 10-row probe returns 19.
+  await pool.query(`
+    insert into message_edits (message_id, edited_at, prior_text)
+    select m.id,
+           m.edited_at - ((g.k - 1) * interval '1 minute'),
+           'corpus prior v' || g.k || ' ' || repeat('x', 10 + g.k * 7)
+      from (select id, edited_at, 1 + floor(random() * 3)::int AS edits
+              from messages where edited_at is not null) m
+      cross join lateral generate_series(1, m.edits) g(k)`);
+  await pool.query(
+    `update messages
+        set deleted_at = created_at + (random() * 7200) * interval '1 second', text = null
+      where random() < $1`,
+    [cfg.deletedRatio],
+  );
+
   // `channels.last_sequence` is where the next message's sequence comes from, so a
   // corpus that wrote sequences 1..N and left the counter at 0 makes the api allocate 1
   // and collide on `(channel_id, sequence)`. Every send returned 500 `internal_error`
@@ -435,6 +528,24 @@ async function seed(cfg, plan) {
       api_keys: await n1("select count(*)::int n from api_keys"),
       messages: await n1("select count(*)::int n from messages"),
       messages_null_sender: await n1("select count(*)::int n from messages where user_id is null"),
+      // REPORTED, NOT ASSERTED. Each of these is a column expression chapter 4.2 gets
+      // wrong in an obvious way, and a zero here means the corpus cannot show it.
+      messages_edited: await n1("select count(*)::int n from messages where edited_at is not null"),
+      message_edits: await n1("select count(*)::int n from message_edits"),
+      messages_edited_twice_or_more: await n1(
+        "select count(*)::int n from (select message_id from message_edits group by 1 having count(*) > 1) x",
+      ),
+      messages_deleted: await n1("select count(*)::int n from messages where deleted_at is not null"),
+      messages_edited_and_deleted: await n1(
+        "select count(*)::int n from messages where edited_at is not null and deleted_at is not null",
+      ),
+      messages_with_attachments: await n1("select count(*)::int n from messages where attachments is not null"),
+      // octet_length is BYTES and length is CHARACTERS — the same distinction as
+      // ClickHouse's length() against lengthUTF8(), asked of Postgres. A corpus where
+      // this is 0 cannot show FR-EMJ-02's defect at all.
+      messages_non_ascii: await n1(
+        "select count(*)::int n from messages where text is not null and octet_length(text) <> length(text)",
+      ),
       outbox: await n1("select count(*)::int n from outbox"),
       channels_with_last_sequence: await n1(
         "select count(*)::int n from channels where last_sequence > 0",

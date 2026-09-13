@@ -64,10 +64,29 @@ services:
     ports:
       - "${RELAY_CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "${RELAY_CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    environment:
+      # A NEW USER. This does not lift `default`'s restriction and is not meant to:
+      # the image ships `users.d/default-user.xml` limiting `default` to ::1 and
+      # 127.0.0.1, that file belongs to the image, and anyone "fixing" it is editing
+      # somebody else's file. `relay` answers from the host; `default` still does not.
+      CLICKHOUSE_USER: relay
+      CLICKHOUSE_PASSWORD: relay
+      # CREATES THE DATABASE. It does NOT make it the session's: `SELECT
+      # currentDatabase()` over HTTP as `relay` still answers `default`, so an
+      # unqualified CREATE TABLE builds the schema in `default` while this one sits
+      # empty. Every statement in `analytics/` names `relay_analytics` for that reason.
+      CLICKHOUSE_DB: relay_analytics
     volumes:
       - clickhouse-data:/var/lib/clickhouse
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8123/ping"]
+      # RUNS A QUERY, because the old check ran `/ping` — which neither authenticates
+      # nor is network-restricted. It was green from chapter 1.2 to this one while every
+      # query from outside the container was refused. A check that cannot fail for the
+      # reason you care about is not a check.
+      #
+      # `clickhouse-client` is in the image; `curl` is not.
+      test: ["CMD", "clickhouse-client", "--user", "relay", "--password", "relay",
+             "--query", "SELECT 1"]
       interval: 5s
       timeout: 3s
       retries: 5

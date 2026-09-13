@@ -276,7 +276,9 @@ export default tseslint.config(
   {
     // Dev scripts run on Node directly, outside any package's tsconfig —
     // so the globals have to be declared rather than inferred (chapter 2.5).
-    files: ["scripts/**/*.mjs"],
+    // `analytics/` is the same situation one directory over: chapter 4.2's schema runner
+    // talks to ClickHouse through Node's own `fetch` and runs outside every tsconfig.
+    files: ["scripts/**/*.mjs", "analytics/**/*.mjs"],
     languageOptions: { globals: globals.nodeBuiltin },
   },
   {
