@@ -257,6 +257,7 @@ async function main() {
   refuseStaleDist();
   const corpus = corpusOf();
   const phase = arg("phase", "baseline");
+  let storageSteps = null;
   const target =
     phase === "counterfactual" ? `${corpus.database}_cf` : corpus.database;
 
@@ -270,14 +271,58 @@ async function main() {
     await admin.end();
     process.env.DATABASE_URL = urlFor(target);
     const p = client.createPool();
+    const size = async () =>
+      (
+        await p.query(
+          `select pg_relation_size('messages') t, pg_indexes_size('messages') i`,
+        )
+      ).rows[0];
+
+    // THE COLUMN'S COST AND THE MIGRATION'S COST ARE DIFFERENT NUMBERS, AND THE FIRST
+    // VERSION PUBLISHED THEIR SUM. `UPDATE` rewrites every row, so the table carried
+    // 1.6M dead tuples on top of the column — 204 MB where the column itself is 16
+    // bytes a row, about 25 MB. A chapter quoting 204 MB as what a uuid column costs
+    // would be quoting a vacuum it had not run.
+    const before = await size();
     await p.query("alter table messages add column environment_id uuid");
     await p.query(
       `update messages m set environment_id = c.environment_id
        from channels c where c.id = m.channel_id`,
     );
-    await p.query("create index on messages (environment_id, created_at)");
+    const bloated = await size();
+    await p.query("vacuum full messages");
+    const vacuumed = await size();
+    await p.query(
+      "create index messages_cf_idx on messages (environment_id, created_at)",
+    );
     await p.query("analyze messages");
     await p.end();
+
+    // THE INDEX IS MEASURED BY NAME, NOT BY SUBTRACTING TWO TOTALS. A delta across the
+    // VACUUM FULL above reported **+4.3 MB** for an index that is 62 MB, because the
+    // vacuum had just compacted the existing ones — `messages_channel_id_sequence_unique`
+    // 104 MB -> 62, `messages_pkey` 64 -> 48 — and the subtraction hid the new index
+    // inside somebody else's saving.
+    //
+    // That is the third wrong storage number in this block. +204 MB was the column plus
+    // dead tuples; +107 MB was the index plus a vacuum not run; +4.3 MB was the index
+    // minus a vacuum that was. Each conflated two things, and each was found by asking
+    // a narrower question than the one before.
+    process.env.DATABASE_URL = urlFor(target);
+    const p2 = client.createPool();
+    const idx = Number(
+      (await p2.query("select pg_relation_size('messages_cf_idx') n")).rows[0].n,
+    );
+    await p2.end();
+
+    storageSteps = {
+      table_before_bytes: Number(before.t),
+      table_after_backfill_bytes: Number(bloated.t),
+      table_after_vacuum_bytes: Number(vacuumed.t),
+      column_costs_bytes: Number(vacuumed.t) - Number(before.t),
+      rewrite_bloat_bytes: Number(bloated.t) - Number(vacuumed.t),
+      index_costs_bytes: idx,
+    };
   }
 
   process.env.DATABASE_URL = urlFor(target);
@@ -345,6 +390,7 @@ async function main() {
           environment: env,
           corpus: corpus.subject,
           storage,
+          storage_steps: storageSteps,
           query,
           send_p95_quiet: quiet,
           send_p95_beside_query: busy,
@@ -353,6 +399,16 @@ async function main() {
           // ordering is carrying the result and the comparison says nothing.
           quiet_loops_agree_within_ms: +Math.abs(quiet.p95 - quietAgain.p95).toFixed(1),
           nfr_prf_02_ms: 150,
+          // T039 AND FR-010 IN ONE FIELD. The claim under test is that an analytical
+          // query beside the write path costs the write path something. The harness
+          // states the verdict rather than leaving a reader to subtract two numbers and
+          // decide which direction flatters the chapter.
+          hypothesis_send_path_pays: {
+            claim: "send p95 is higher beside the analytical query than alone",
+            quiet_mean_p95: +((quiet.p95 + quietAgain.p95) / 2).toFixed(1),
+            beside_p95: busy.p95,
+            supported: busy.p95 > (quiet.p95 + quietAgain.p95) / 2,
+          },
         },
         null,
         2,
