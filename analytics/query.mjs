@@ -37,6 +37,42 @@ const arg = (name) => {
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
 
+// THE ROLLUP'S READ CONTRACT IS `sum()` WITH `GROUP BY`, AND THAT IS NOT OPTIONAL.
+// `daily_usage` holds one physical row per (environment_id, day) PER INSERT that touched
+// it, until a background merge collapses them. The whole corpus arrives in one INSERT, so
+// it lands at one row per key and a bare `SELECT messages` looks correct -- and three
+// separate inserts of 1,000 rows measured 3 physical rows, a bare read of 1000, and a
+// sum of 3000. **The number of rows per key is the number of inserts, not the number of
+// events**, and a dashboard built against a quiet demo breaks on a busy day.
+const rollupQuery = (env) => `
+SELECT day,
+       sum(messages)                 AS messages,
+       uniqMerge(active_users_state) AS active_users
+  FROM ${DB}.daily_usage
+ WHERE environment_id = toUUID('${env}')
+   AND day >= toDate(now() - INTERVAL ${WINDOW_DAYS} DAY)
+ GROUP BY day
+ ORDER BY day`;
+
+// BOTH SIDES TAKE THE SAME WINDOW, ALWAYS. The rollup outlives the raw table: the view
+// counts rows the TTL is about to delete, and it has no TTL of its own, so it keeps days
+// `message_events` has already dropped. Unwindowed, this comparison would be between two
+// populations and its difference would be mostly TTL -- handed to FR-009 as `uniq`'s
+// approximation error, which is 0.51% at 70,000 distinct and small enough to vanish
+// underneath it.
+const compareExact = (env) => `
+SELECT (SELECT uniqMerge(active_users_state) FROM ${DB}.daily_usage
+         WHERE environment_id = toUUID('${env}')
+           AND day >= toDate(now() - INTERVAL ${WINDOW_DAYS} DAY)) AS rollup_uniq,
+       (SELECT uniqExact(user_id) FROM ${DB}.message_events
+         WHERE environment_id = toUUID('${env}')
+           AND ts >= toDateTime(toDate(now() - INTERVAL ${WINDOW_DAYS} DAY))
+           AND event = 'created') AS raw_exact`;
+// The raw side is DAY-ALIGNED here and not in `rawQuery`. A daily rollup's finest grain
+// is a day, so it cannot answer a question whose window opens mid-morning -- comparing a
+// timestamp window against it would charge the rollup for a boundary it cannot express.
+// `rawQuery` keeps 4.1's timestamp form, because that comparison is against Postgres.
+
 const rawQuery = (env) => `
 SELECT toDate(ts)        AS day,
        count()           AS messages,
@@ -59,23 +95,39 @@ async function main() {
     );
   }
 
+  const mode = process.argv.includes("--rollup") ? "rollup"
+    : process.argv.includes("--compare-exact") ? "compare-exact" : "raw";
+
+  if (mode === "compare-exact") {
+    const [rollup, exact] = (await post(`${compareExact(env)} FORMAT TSV`)).split("\t").map(Number);
+    console.log(JSON.stringify({
+      mode, environment_id: env, window_days: WINDOW_DAYS,
+      rollup_uniqMerge: rollup, raw_uniqExact: exact,
+      difference: rollup - exact,
+      relative: `${(((rollup - exact) / exact) * 100).toFixed(4)}%`,
+    }, null, 2));
+    return;
+  }
+
+  const q = mode === "rollup" ? rollupQuery : rawQuery;
+
   // WARM FIRST, THEN MEASURE. 046 published a wrong number twice by comparing a cold run
   // against a warm one; the fix there was a warm-up and a second quiet loop, and the same
   // applies to a single query whose first read pulls marks off disk.
-  await post(rawQuery(env));
+  await post(q(env));
 
   const t0 = Date.now();
-  const out = await post(rawQuery(env), true);
+  const out = await post(q(env), true);
   const wall = Date.now() - t0;
 
   // `EXPLAIN indexes = 1` IS THE ONLY HONEST INSTRUMENT FOR SKIPPING.
   // `ProfileEvents['SelectedParts']` returned 0 for this same query (R5) -- the obvious
   // instrument reports nothing, and reports it silently. At this size a full scan answers
   // fast enough to look like an ordered one, so the plan is the evidence, not the clock.
-  const plan = await post(`EXPLAIN indexes = 1 ${rawQuery(env)}`);
+  const plan = await post(`EXPLAIN indexes = 1 ${q(env)}`);
 
   console.log(JSON.stringify({
-    mode: "raw",
+    mode,
     environment_id: env,
     window_days: WINDOW_DAYS,
     days_returned: out.data.length,
