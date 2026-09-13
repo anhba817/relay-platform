@@ -149,6 +149,21 @@ async function main() {
     applied.push(f);
   }
 
+  // AND A LEDGER ROW WHOSE FILE IS GONE IS REPORTED, NOT REFUSED.
+  //
+  // The checksum catches a file that CHANGED. Nothing caught a file that VANISHED: this
+  // loop walks the directory, so a deleted statement file simply stops being mentioned,
+  // while its table stays in the store and its ledger row stays in the table. Removing a
+  // statement file is a legitimate act -- you might retire one -- so this is a report
+  // rather than a refusal. What it must not be is silent.
+  const orphans = [...seen.keys()].filter((f) => !bodies.has(f));
+  if (orphans.length) {
+    console.log(
+      `ledger names ${orphans.length} file(s) no longer on disk: ${orphans.join(", ")} — ` +
+        `their tables are still in ${DB} and nothing here will drop them`,
+    );
+  }
+
   // A RUN THAT APPLIES NOTHING SAYS SO. This is the line `CREATE ... IF NOT EXISTS`
   // cannot produce, and the reason this script exists beside it.
   console.log(`database ${DB} ready`);
