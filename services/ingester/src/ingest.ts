@@ -16,7 +16,7 @@ import { ANALYTICS_STREAM } from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
 
 import type { ClickHouse } from "./clickhouse.js";
-import { route, type AttemptRow } from "./shape.js";
+import { route, type AttemptRow, type RequestRow } from "./shape.js";
 
 // DR-11 publishes 2 s or 10,000 rows, and it takes BOTH because each bound fails alone: a
 // row count never flushes for a quiet tenant, and an interval has no ceiling under load.
@@ -27,6 +27,9 @@ export const DURABLE = "analytics-ingester";
 
 export interface IngestResult {
   written: number;
+  /** Split by table, because one number cannot say which one moved. */
+  writtenAttempts: number;
+  writtenRequests: number;
   malformed: number;
   /** Records this consumer recognised as somebody else's and left on the stream. A record
    *  nobody claims has to be visible as a number, or the difference between "nothing arrived"
@@ -56,7 +59,8 @@ export async function ingestOnce({
   const js = nc.jetstream();
   const consumer = await js.consumers.get(stream, durable);
 
-  const rows: AttemptRow[] = [];
+  const attempts: AttemptRow[] = [];
+  const requests: RequestRow[] = [];
   const pending: Array<{ ack: () => void }> = [];
   let malformed = 0;
   let unclaimed = 0;
@@ -85,7 +89,7 @@ export async function ingestOnce({
       continue;
     }
 
-    if (routed.kind !== "attempt") {
+    if (routed.kind === "unclaimed") {
       // NEITHER ACKED NOR TERMINATED. Acking would consume a record this consumer did not
       // write; terminating would destroy it. Left alone it is redelivered until something
       // claims it or the stream's seven days expire -- and the count below is the only way
@@ -94,14 +98,26 @@ export async function ingestOnce({
       continue;
     }
 
-    rows.push(routed.row);
+    if (routed.kind === "attempt") attempts.push(routed.row);
+    else requests.push(routed.row);
     pending.push({ ack: () => m.ack() });
   }
 
   // ACKNOWLEDGE ONLY AFTER THE INSERT RETURNS. A record that was not written is not
   // acknowledged, which is what makes the store being unreachable a delay rather than a loss.
-  await store.insert(rows);
+  // BOTH INSERTS BEFORE ANY ACK. If the second throws, nothing in this batch is
+  // acknowledged and the whole batch is redelivered -- which re-inserts the rows the first
+  // call already wrote. That is safe because both tables are ReplacingMergeTree keyed on the
+  // record's own key, and it is the reason that choice is not merely about redelivery.
+  await store.insert(attempts);
+  await store.insertRequests(requests);
   for (const p of pending) p.ack();
 
-  return { written: rows.length, malformed, unclaimed };
+  return {
+    written: attempts.length + requests.length,
+    writtenAttempts: attempts.length,
+    writtenRequests: requests.length,
+    malformed,
+    unclaimed,
+  };
 }

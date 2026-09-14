@@ -86,6 +86,82 @@ export function shape(raw: unknown): AttemptRow | null {
   };
 }
 
+/** The api's record, as it arrives on `analytics.api.request.{env|_none}`. */
+export interface RequestEvent {
+  type: string;
+  request_id: string;
+  ts: string;
+  method: string;
+  status: number;
+  latency_ms: number;
+  principal_kind: string;
+  refused_at: string;
+  /** Absent when the router did not run -- a 404 matched nothing, and a middleware refusal
+   *  ended the response before routing. Two different facts, separated by `refused_at`. */
+  endpoint?: string;
+  /** Absent when the request resolved to no tenant. Never null and never a sentinel. */
+  environment_id?: string;
+  /** Absent unless the rate limiter refused. */
+  limited_operation?: string;
+}
+
+/** One row of `relay_analytics.api_requests`, keyed by column name. */
+export interface RequestRow {
+  environment_id: string | null;
+  ts: string;
+  request_id: string;
+  endpoint: string | null;
+  method: string;
+  status: number;
+  latency_ms: number;
+  principal_kind: string;
+  refused_at: string;
+  limited_operation: string | null;
+}
+
+/** Shape one API request record, or return null if it will never be valid.
+ *
+ * `type` IS READ AND THEN DROPPED. The wire record has eleven fields and the table has ten:
+ * `type` is the router's discriminator and has no column. Forwarding it lands
+ * `Code: 117. Unknown field found while parsing JSONEachRow format: type` -- loud, because
+ * `input_format_skip_unknown_fields=0` is set, and the one place in this design where a
+ * spread fails loudly rather than open. The row is still built by naming every field:
+ * relying on a server setting to catch a shaping mistake is relying on it to be configured.
+ *
+ * ABSENT IS NULL, NOT "". The columns are `LowCardinality(Nullable(String))` because
+ * `LowCardinality(String)` cannot hold the difference -- measured, an absent field and an
+ * explicit empty string both land as ''. A 404 has no endpoint; a route named "" does not
+ * exist. */
+export function shapeRequest(raw: unknown): RequestRow | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const e = raw as Partial<RequestEvent>;
+
+  if (
+    !isString(e.request_id) ||
+    !isString(e.ts) ||
+    !isString(e.method) ||
+    !isNumber(e.status) ||
+    !isNumber(e.latency_ms) ||
+    !isString(e.principal_kind) ||
+    !isString(e.refused_at)
+  ) {
+    return null;
+  }
+
+  return {
+    environment_id: isString(e.environment_id) ? e.environment_id : null,
+    ts: e.ts,
+    request_id: e.request_id,
+    endpoint: isString(e.endpoint) ? e.endpoint : null,
+    method: e.method,
+    status: e.status,
+    latency_ms: e.latency_ms,
+    principal_kind: e.principal_kind,
+    refused_at: e.refused_at,
+    limited_operation: isString(e.limited_operation) ? e.limited_operation : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // ROUTING (chapter 4.4). The stream carries more than one record type now.
 //
@@ -114,7 +190,7 @@ export const API_REQUEST_TYPE = "api.request";
 
 export type Shaped =
   | { kind: "attempt"; row: AttemptRow }
-  | { kind: "request" }
+  | { kind: "request"; row: RequestRow }
   | { kind: "malformed" }
   | { kind: "unclaimed"; type: string };
 
@@ -137,7 +213,10 @@ export function route(raw: unknown): Shaped {
     const row = shape(raw);
     return row === null ? { kind: "malformed" } : { kind: "attempt", row };
   }
-  if (type === API_REQUEST_TYPE) return { kind: "request" };
+  if (type === API_REQUEST_TYPE) {
+    const row = shapeRequest(raw);
+    return row === null ? { kind: "malformed" } : { kind: "request", row };
+  }
 
   // Anything else is somebody's record and not this consumer's. Leaving it costs the stream's
   // retention window; terminating it costs the record. Those are not comparable, and a

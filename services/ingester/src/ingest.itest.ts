@@ -42,7 +42,11 @@ const refusing = {
   insert: async (): Promise<void> => {
     throw new Error("store down");
   },
+  insertRequests: async (): Promise<void> => {
+    throw new Error("store down");
+  },
   count: async (): Promise<number> => 0,
+  countRequests: async (): Promise<number> => 0,
 };
 
 const rowsForEnv = async (): Promise<number> =>
@@ -151,22 +155,113 @@ describe("a record of an unrecognised type is left on the stream", () => {
     };
     await put(record(101));                                   // an attempt: written
     await put({ type: "media.scanned", media_id: "m1" });     // not ours: left alone
-    await put({ type: "api.request", request_id: "r1" });     // ours, but nothing writes it yet
+    await put({                                               // ours now, and written
+      type: "api.request",
+      request_id: "77777777-7777-4777-8777-777777777777",
+      ts: "2026-09-14T10:00:00.500Z",
+      method: "GET",
+      status: 200,
+      latency_ms: 4,
+      principal_kind: "none",
+      refused_at: "handler",
+    });
     await put({ delivery_id: "only-this" });                  // no type, missing fields: poison
 
     const first = await ingestOnce({
       nc, store, logger, batchRows: 10, batchMs: 1000, stream: OTHER, durable: OTHER_DURABLE,
     });
-    expect(first).toEqual({ written: 1, malformed: 1, unclaimed: 2 });
+    expect(first).toEqual({
+      written: 2, writtenAttempts: 1, writtenRequests: 1, malformed: 1, unclaimed: 1,
+    });
 
-    // Past ack_wait: the two unclaimed records come back. The terminated one does not, and
-    // the acknowledged one does not.
+    // Past ack_wait: the unclaimed record comes back. The terminated one does not, and
+    // neither do the two that were written and acknowledged.
     await new Promise((r) => setTimeout(r, 1500));
     const second = await ingestOnce({
       nc, store, logger, batchRows: 10, batchMs: 1000, stream: OTHER, durable: OTHER_DURABLE,
     });
-    expect(second).toEqual({ written: 0, malformed: 0, unclaimed: 2 });
+    expect(second).toEqual({
+      written: 0, writtenAttempts: 0, writtenRequests: 0, malformed: 0, unclaimed: 1,
+    });
 
     await jsm.streams.delete(OTHER).catch(() => undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHAT THE COLUMN CAN AND CANNOT SAY (chapter 4.4).
+//
+// The contract spends a paragraph on "absent, not empty" and the first draft of the table
+// gave `endpoint` a type that could not hold the difference. Two of these three cases are
+// indistinguishable under `LowCardinality(String)`, so a test that checks only the third
+// passes either way -- which is why all three are here.
+// ---------------------------------------------------------------------------
+const CH_URL = `http://localhost:${process.env["RELAY_CLICKHOUSE_HTTP_PORT"] ?? "8123"}/`;
+const CH_AUTH = "Basic " + Buffer.from("relay:relay").toString("base64");
+const ch = async (sql: string, settings = ""): Promise<string> =>
+  fetch(CH_URL + (settings ? `?${settings}` : ""), {
+    method: "POST",
+    headers: { Authorization: CH_AUTH },
+    body: sql,
+  }).then((r) => r.text());
+
+describe("the request table keeps absent and empty apart", () => {
+  const REQ_ENV = "9f000000-0000-4000-8000-00000000c0de";
+
+  it("stores absent as NULL, an explicit empty string as '', and a template as itself", async () => {
+    const base = {
+      environment_id: REQ_ENV,
+      ts: "2026-09-14T11:00:00.000Z",
+      method: "GET",
+      status: 200,
+      latency_ms: 3,
+      principal_kind: "none",
+      refused_at: "handler",
+      limited_operation: null,
+    };
+    const rows = [
+      { ...base, request_id: "aaaaaaaa-0000-4000-8000-000000000001", endpoint: null },
+      { ...base, request_id: "aaaaaaaa-0000-4000-8000-000000000002", endpoint: "" },
+      { ...base, request_id: "aaaaaaaa-0000-4000-8000-000000000003", endpoint: "/v1/webhooks" },
+    ];
+    await store.insertRequests(rows);
+
+    const seen = (
+      await ch(`SELECT multiIf(endpoint IS NULL, 'NULL', endpoint = '', 'EMPTY', endpoint)
+                  FROM relay_analytics.api_requests FINAL
+                 WHERE environment_id = toUUID('${REQ_ENV}')
+                 ORDER BY request_id FORMAT TSV`)
+    )
+      .trim()
+      .split("\n");
+    expect(seen).toEqual(["NULL", "EMPTY", "/v1/webhooks"]);
+
+    await ch(`DELETE FROM relay_analytics.api_requests
+               WHERE environment_id = toUUID('${REQ_ENV}')`);
+  });
+
+  // `type` is the router's discriminator and has no column. This is the one place in the
+  // design where a spread fails LOUDLY rather than open, and the setting that makes it loud
+  // is 048's.
+  it("refuses a record forwarded with `type` still on it", async () => {
+    const body = JSON.stringify({
+      type: "api.request",
+      environment_id: REQ_ENV,
+      ts: "2026-09-14T11:00:00.000Z",
+      request_id: "aaaaaaaa-0000-4000-8000-000000000009",
+      endpoint: null,
+      method: "GET",
+      status: 200,
+      latency_ms: 3,
+      principal_kind: "none",
+      refused_at: "handler",
+      limited_operation: null,
+    });
+    const out = await ch(
+      `INSERT INTO relay_analytics.api_requests FORMAT JSONEachRow\n${body}`,
+      "input_format_skip_unknown_fields=0&date_time_input_format=best_effort",
+    );
+    expect(out).toContain("Code: 117");
+    expect(out).toContain("Unknown field found while parsing JSONEachRow format: type");
   });
 });

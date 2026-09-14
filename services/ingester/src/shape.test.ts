@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { route, shape } from "./shape.js";
+import { route, shape, shapeRequest } from "./shape.js";
 
 const valid = {
   delivery_id: "22222222-2222-4222-8222-222222222222",
@@ -12,6 +12,19 @@ const valid = {
   status: 200,
   latency_ms: 42,
   outcome: "delivered",
+};
+
+const validRequest = {
+  type: "api.request",
+  request_id: "55555555-5555-4555-8555-555555555555",
+  ts: "2026-09-14T10:00:00.500Z",
+  method: "POST",
+  status: 201,
+  latency_ms: 18,
+  principal_kind: "application",
+  refused_at: "handler",
+  endpoint: "/v1/channels/:channelId/messages",
+  environment_id: "11111111-1111-4111-8111-111111111111",
 };
 
 describe("shape renames attempted_at to ts", () => {
@@ -87,15 +100,13 @@ describe("null means terminate, not retry", () => {
 // ---------------------------------------------------------------------------
 describe("route tells the record types apart", () => {
   it("does not call an API request record malformed", () => {
-    const request = {
-      type: "api.request",
-      request_id: "55555555-5555-4555-8555-555555555555",
-      ts: "2026-09-14T10:00:00.500Z",
-      method: "POST",
-      status: 201,
-      latency_ms: 18,
-    };
-    expect(route(request).kind).toBe("request");
+    expect(route(validRequest).kind).toBe("request");
+  });
+
+  it("calls a request record with missing fields malformed, not unclaimed", () => {
+    const incomplete: Record<string, unknown> = { ...validRequest };
+    delete incomplete["refused_at"];
+    expect(route(incomplete).kind).toBe("malformed");
   });
 
   // THE LOAD-BEARING CASE. Every record already on the stream was written by a binary that
@@ -136,5 +147,59 @@ describe("route tells the record types apart", () => {
   it("calls a non-object malformed", () => {
     expect(route(null).kind).toBe("malformed");
     expect(route("{}").kind).toBe("malformed");
+  });
+});
+
+describe("shapeRequest drops `type` and says absent rather than empty", () => {
+  // THE WIRE HAS ELEVEN FIELDS AND THE TABLE HAS TEN. `type` is the router's discriminator
+  // and has no column; forwarded, it lands `Code: 117. Unknown field found while parsing
+  // JSONEachRow format: type`. Loud, because skip-unknown-fields is off -- and the row is
+  // still built by naming every field, because relying on a server setting to catch a
+  // shaping mistake is relying on it to be configured.
+  it("emits exactly the table's ten columns, and `type` is not one of them", () => {
+    const row = shapeRequest(validRequest);
+    expect(row).not.toBeNull();
+    expect(Object.keys(row!).sort()).toEqual([
+      "endpoint",
+      "environment_id",
+      "latency_ms",
+      "limited_operation",
+      "method",
+      "principal_kind",
+      "refused_at",
+      "request_id",
+      "status",
+      "ts",
+    ]);
+    expect(row).not.toHaveProperty("type");
+  });
+
+  // A 404 matched nothing and a middleware refusal ended the response before the router ran.
+  // Neither is a route named the empty string, and `LowCardinality(String)` cannot hold the
+  // difference -- an absent field and an explicit "" both land as ''.
+  it("maps an absent endpoint to null rather than an empty string", () => {
+    const noRoute: Record<string, unknown> = { ...validRequest };
+    delete noRoute["endpoint"];
+    expect(shapeRequest(noRoute)?.endpoint).toBeNull();
+  });
+
+  it("maps an absent environment to null, never a sentinel", () => {
+    const tenantless: Record<string, unknown> = { ...validRequest };
+    delete tenantless["environment_id"];
+    const row = shapeRequest(tenantless);
+    expect(row?.environment_id).toBeNull();
+    expect(row?.environment_id).not.toBe("00000000-0000-0000-0000-000000000000");
+  });
+
+  it("maps an absent limited_operation to null", () => {
+    expect(shapeRequest(validRequest)?.limited_operation).toBeNull();
+  });
+
+  it("keeps a status of 0 if one genuinely arrives", () => {
+    expect(shapeRequest({ ...validRequest, status: 0 })?.status).toBe(0);
+  });
+
+  it("refuses a non-object", () => {
+    expect(shapeRequest(null)).toBeNull();
   });
 });

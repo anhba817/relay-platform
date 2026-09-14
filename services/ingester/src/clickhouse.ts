@@ -1,9 +1,10 @@
 // The write side. Node's own `fetch` against the HTTP interface -- no client package, which
 // is what keeps `grep -c clickhouse pnpm-lock.yaml` at 0 by design rather than by luck.
-import type { AttemptRow } from "./shape.js";
+import type { AttemptRow, RequestRow } from "./shape.js";
 
 const DB = "relay_analytics";
-const TABLE = "webhook_attempts";
+const ATTEMPTS = "webhook_attempts";
+const REQUESTS = "api_requests";
 
 // TWO SETTINGS, TWO DIFFERENT FAILURES, AND NEITHER IS OPTIONAL.
 //
@@ -20,7 +21,11 @@ const SETTINGS = "input_format_skip_unknown_fields=0&date_time_input_format=best
 
 export interface ClickHouse {
   insert(rows: AttemptRow[]): Promise<void>;
+  /** The second table (chapter 4.4). A separate call rather than a `table` parameter: the two
+   *  row shapes are different types and the compiler should say so at the call site. */
+  insertRequests(rows: RequestRow[]): Promise<void>;
   count(): Promise<number>;
+  countRequests(): Promise<number>;
 }
 
 export function createClickHouse({
@@ -52,14 +57,28 @@ export function createClickHouse({
     async insert(rows: AttemptRow[]): Promise<void> {
       if (rows.length === 0) return;
       await post(
-        `INSERT INTO ${DB}.${TABLE} FORMAT JSONEachRow`,
+        `INSERT INTO ${DB}.${ATTEMPTS} FORMAT JSONEachRow`,
+        rows.map((r) => JSON.stringify(r)).join("\n"),
+      );
+    },
+    // THE EMPTY GUARD IS LOAD-BEARING NOW, WHERE IT WAS TIDINESS BEFORE. One fetch feeds two
+    // tables, and the two producers differ by about two orders of magnitude -- so most
+    // batches carry requests and no attempts. Without this, every one of them would post an
+    // empty INSERT: a round trip and a part that never had to exist.
+    async insertRequests(rows: RequestRow[]): Promise<void> {
+      if (rows.length === 0) return;
+      await post(
+        `INSERT INTO ${DB}.${REQUESTS} FORMAT JSONEachRow`,
         rows.map((r) => JSON.stringify(r)).join("\n"),
       );
     },
     // Reads take FINAL. The duplicate is physically present until a merge collapses it, so a
     // bare count over-counts every redelivery -- by a plausible number.
     async count(): Promise<number> {
-      return Number(await post(`SELECT count() FROM ${DB}.${TABLE} FINAL`, ""));
+      return Number(await post(`SELECT count() FROM ${DB}.${ATTEMPTS} FINAL`, ""));
+    },
+    async countRequests(): Promise<number> {
+      return Number(await post(`SELECT count() FROM ${DB}.${REQUESTS} FINAL`, ""));
     },
   };
 }
