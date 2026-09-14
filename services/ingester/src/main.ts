@@ -12,21 +12,15 @@
 // keeps the operational and analytical paths apart, so the template written to describe this
 // consumer is the one thing this consumer may not use. Deduplication happens in the table
 // instead, on the record's own key.
-import { AckPolicy, connect, type NatsConnection } from "nats";
+import { AckPolicy, connect } from "nats";
 
 import { ALL_ANALYTICS_SUBJECT, ANALYTICS_STREAM } from "@relay/protocol";
-import { createLogger, type Logger } from "@relay/service-kit";
+import { createLogger } from "@relay/service-kit";
 
-import { createClickHouse, type ClickHouse } from "./clickhouse.js";
-import { shape, type AttemptRow } from "./shape.js";
+import { createClickHouse } from "./clickhouse.js";
+import { BATCH_MS, DURABLE, ingestOnce } from "./ingest.js";
 
 const DEFAULT_NATS_URL = "nats://localhost:4222";
-export const DURABLE = "analytics-ingester";
-
-// DR-11 publishes 2 s or 10,000 rows, and it takes BOTH because each bound fails alone: a
-// row count never flushes for a quiet tenant, and an interval has no ceiling under load.
-export const BATCH_ROWS = 10_000;
-export const BATCH_MS = 2_000;
 
 const ACK_WAIT_NS = 30 * 1_000_000_000;
 
@@ -48,70 +42,6 @@ const ACK_WAIT_NS = 30 * 1_000_000_000;
  * or it comes back until the retention expires. Retry forever on transport, terminate at
  * parse. One rule, two arms. */
 const MAX_DELIVER = -1;
-
-export interface IngestResult {
-  written: number;
-  malformed: number;
-}
-
-export async function ingestOnce({
-  nc,
-  store,
-  logger,
-  batchRows = BATCH_ROWS,
-  batchMs = BATCH_MS,
-  stream = ANALYTICS_STREAM,
-  durable = DURABLE,
-}: {
-  nc: NatsConnection;
-  store: ClickHouse;
-  logger: Logger;
-  batchRows?: number;
-  batchMs?: number;
-  /** The stream and durable are parameters so a test can use its own rather than
-   *  publishing probe records into the platform's. The defaults are the real ones. */
-  stream?: string;
-  durable?: string;
-}): Promise<IngestResult> {
-  const js = nc.jetstream();
-  const consumer = await js.consumers.get(stream, durable);
-
-  const rows: AttemptRow[] = [];
-  const pending: Array<{ ack: () => void }> = [];
-  let malformed = 0;
-
-  const messages = await consumer.fetch({ max_messages: batchRows, expires: batchMs });
-  for await (const m of messages) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(new TextDecoder().decode(m.data));
-    } catch {
-      parsed = null;
-    }
-    const row = shape(parsed);
-    if (row === null) {
-      // NAMED BY ITS SEQUENCE, NEVER BY ITS CONTENTS. The record carries `error` -- up to
-      // 2000 characters of a third-party endpoint's response, capable of echoing back
-      // anything -- and constitution VI keeps secrets, tokens and message content out of
-      // logs. The record survives in the stream for the retention window, so the sequence
-      // is enough to go and fetch it deliberately, which is the difference between an
-      // investigation and a leak.
-      malformed += 1;
-      logger.log("error", "ingester.malformed_record", { stream_sequence: m.seq });
-      m.term();
-      continue;
-    }
-    rows.push(row);
-    pending.push({ ack: () => m.ack() });
-  }
-
-  // ACKNOWLEDGE ONLY AFTER THE INSERT RETURNS. A record that was not written is not
-  // acknowledged, which is what makes the store being unreachable a delay rather than a loss.
-  await store.insert(rows);
-  for (const p of pending) p.ack();
-
-  return { written: rows.length, malformed };
-}
 
 export async function main(): Promise<void> {
   const logger = createLogger("ingester");

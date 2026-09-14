@@ -85,3 +85,62 @@ export function shape(raw: unknown): AttemptRow | null {
     outcome: e.outcome,
   };
 }
+
+// ---------------------------------------------------------------------------
+// ROUTING (chapter 4.4). The stream carries more than one record type now.
+//
+// `shape` above is the ATTEMPT shaper, and it answers `null` for anything else — which the
+// consumer reads as "terminate". So until this chapter, publishing a second record type onto
+// `ANALYTICS` destroyed it: one error line carrying a stream sequence, `m.term()`, and it
+// never comes back. Measured at 049 phase 1, with an attempt record beside it as the control:
+//
+//     pass 1: written 1  malformed 1
+//     pass 2: written 0  malformed 0
+//     stream still holds 2 of 2 · consumer num_pending 0 · ack_pending 0
+//
+// BOTH INSTRUMENTS REPORT NOTHING WRONG. The stream says the record is there, because
+// `retention: Limits` keeps a terminated message; the consumer says there is nothing pending.
+// The only trace is the error line, and it carries a sequence and no type.
+//
+// So the decision "what is this record" is made BEFORE anything tries to turn it into a row,
+// and "not mine" stops being the same answer as "malformed". One is a record this consumer
+// does not write and must leave alone; the other will never parse and must not come back.
+// ---------------------------------------------------------------------------
+
+/** The wire's own discriminator. R11: the PAYLOAD says what the payload is, not the subject —
+ *  a router that parses subjects has to be right about tokens too, and a malformed token
+ *  publishes a subject one level deeper that no intended filter matches. */
+export const API_REQUEST_TYPE = "api.request";
+
+export type Shaped =
+  | { kind: "attempt"; row: AttemptRow }
+  | { kind: "request" }
+  | { kind: "malformed" }
+  | { kind: "unclaimed"; type: string };
+
+/** Decide what a record is.
+ *
+ * AN ABSENT `type` MEANS ATTEMPT, AND THAT IS A COMPATIBILITY RULE RATHER THAN A DEFAULT.
+ * Chapter 3.20's publisher has no `type` field and never will for the records already on the
+ * stream — 36 of them at this chapter's tag, 0 carrying one. A reader of anything durable
+ * cannot require a field its writer did not have; 043 paid for that lesson when a required
+ * `attachments` terminated every in-flight `message.created` written by the previous binary.
+ *
+ * A RECOGNISED TYPE WITH MISSING FIELDS IS STILL MALFORMED. Widening "not mine" must not
+ * swallow the parse arm: 048's rule is retry forever on transport, terminate at parse, and
+ * the poison case is what makes the unbounded redelivery safe. */
+export function route(raw: unknown): Shaped {
+  if (typeof raw !== "object" || raw === null) return { kind: "malformed" };
+
+  const type = (raw as { type?: unknown }).type;
+  if (type === undefined) {
+    const row = shape(raw);
+    return row === null ? { kind: "malformed" } : { kind: "attempt", row };
+  }
+  if (type === API_REQUEST_TYPE) return { kind: "request" };
+
+  // Anything else is somebody's record and not this consumer's. Leaving it costs the stream's
+  // retention window; terminating it costs the record. Those are not comparable, and a
+  // consumer that does not recognise a type is the party with the least information.
+  return { kind: "unclaimed", type: typeof type === "string" ? type : String(type) };
+}

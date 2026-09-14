@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { shape } from "./shape.js";
+import { route, shape } from "./shape.js";
 
 const valid = {
   delivery_id: "22222222-2222-4222-8222-222222222222",
@@ -70,5 +70,71 @@ describe("null means terminate, not retry", () => {
     ["a missing outcome", { ...valid, outcome: undefined }],
   ])("refuses %s", (_label, input) => {
     expect(shape(input)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ROUTING (chapter 4.4).
+//
+// The stream carries a second record type now, and `shape` is the ATTEMPT shaper. Asking it
+// about an API request record gets `null`, and `null` means terminate — so before this
+// chapter the consumer destroyed every record the next producer would publish. Measured:
+// one error line carrying a stream sequence, `m.term()`, and it never comes back, while the
+// stream still reports the message present and the consumer reports nothing pending.
+//
+// `route` is the thing that must be right: it decides WHAT a record is before anything tries
+// to turn it into a row. "Not mine" and "malformed" stop being the same answer.
+// ---------------------------------------------------------------------------
+describe("route tells the record types apart", () => {
+  it("does not call an API request record malformed", () => {
+    const request = {
+      type: "api.request",
+      request_id: "55555555-5555-4555-8555-555555555555",
+      ts: "2026-09-14T10:00:00.500Z",
+      method: "POST",
+      status: 201,
+      latency_ms: 18,
+    };
+    expect(route(request).kind).toBe("request");
+  });
+
+  // THE LOAD-BEARING CASE. Every record already on the stream was written by a binary that
+  // never heard of `type` — 36 of them at this chapter's tag, 0 carrying one. A reader of
+  // anything durable cannot require a field its writer did not have, and 043 paid for the
+  // opposite: a required `attachments` on the outbox schema terminated every in-flight
+  // `message.created` the previous binary had written.
+  it("treats an absent type as an attempt, because 3.20's records have none", () => {
+    const routed = route(valid);
+    expect(routed.kind).toBe("attempt");
+    // and it is the same row `shape` produces — the rename included
+    expect(routed).toEqual({ kind: "attempt", row: shape(valid) });
+  });
+
+  // WIDENING "NOT MINE" MUST NOT SWALLOW THE PARSE ARM. The consumer sets no redelivery
+  // limit, so a payload that will never parse has to be terminated or it comes back until
+  // the stream's retention expires. Retry forever on transport, terminate at parse.
+  it("still calls a malformed attempt malformed, not unclaimed", () => {
+    const missingDeliveryId: Record<string, unknown> = { ...valid };
+    delete missingDeliveryId["delivery_id"];
+    expect(route(missingDeliveryId).kind).toBe("malformed");
+    expect(shape(missingDeliveryId)).toBeNull();
+  });
+
+  it("calls a record of an unrecognised type unclaimed, and names the type", () => {
+    expect(route({ type: "media.scanned", id: "x" })).toEqual({
+      kind: "unclaimed",
+      type: "media.scanned",
+    });
+  });
+
+  // A `type` that is not a string is nobody's record either. Leaving it costs the retention
+  // window; terminating it costs the record, and those are not comparable.
+  it("does not terminate a record whose type is not a string", () => {
+    expect(route({ type: 7 }).kind).toBe("unclaimed");
+  });
+
+  it("calls a non-object malformed", () => {
+    expect(route(null).kind).toBe("malformed");
+    expect(route("{}").kind).toBe("malformed");
   });
 });

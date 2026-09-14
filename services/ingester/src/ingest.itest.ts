@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createLogger } from "@relay/service-kit";
 
 import { createClickHouse } from "./clickhouse.js";
-import { ingestOnce } from "./main.js";
+import { ingestOnce } from "./ingest.js";
 
 // THE REDELIVERY TEST, AND IT FORCES THE REGROUPING.
 //
@@ -116,5 +116,57 @@ describe("a redelivery does not become a second row", () => {
 
     // Ten distinct records, however they were grouped, is ten rows.
     expect(await rowsForEnv()).toBe(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE RECORD THIS CONSUMER DOES NOT WRITE (chapter 4.4).
+//
+// Its own stream, because the suite above asserts a whole-table count for its environment
+// and a second suite publishing into the same one would be the neighbour problem 045 spent
+// a feature on.
+//
+// What this proves is a NEGATIVE with a positive control beside it: the unknown record is
+// still there on the second pass, the malformed one is not, and the attempt was written.
+// Without the attempt in the batch, "nothing was written" would also pass with a broken
+// consumer.
+// ---------------------------------------------------------------------------
+const OTHER = "ITEST_INGEST_ROUTE";
+const OTHER_DURABLE = "itest-route";
+
+describe("a record of an unrecognised type is left on the stream", () => {
+  it("acks the attempt, terminates the malformed, and leaves the unknown", async () => {
+    const jsm = await nc.jetstreamManager();
+    await jsm.streams.delete(OTHER).catch(() => undefined);
+    await jsm.streams.add({ name: OTHER, subjects: ["itest.route.>"] });
+    await jsm.consumers.add(OTHER, {
+      durable_name: OTHER_DURABLE,
+      ack_policy: AckPolicy.Explicit,
+      ack_wait: 1_000_000_000,
+      max_deliver: -1,
+    });
+    const js = nc.jetstream();
+    const put = async (o: unknown): Promise<void> => {
+      await js.publish("itest.route.x", new TextEncoder().encode(JSON.stringify(o)));
+    };
+    await put(record(101));                                   // an attempt: written
+    await put({ type: "media.scanned", media_id: "m1" });     // not ours: left alone
+    await put({ type: "api.request", request_id: "r1" });     // ours, but nothing writes it yet
+    await put({ delivery_id: "only-this" });                  // no type, missing fields: poison
+
+    const first = await ingestOnce({
+      nc, store, logger, batchRows: 10, batchMs: 1000, stream: OTHER, durable: OTHER_DURABLE,
+    });
+    expect(first).toEqual({ written: 1, malformed: 1, unclaimed: 2 });
+
+    // Past ack_wait: the two unclaimed records come back. The terminated one does not, and
+    // the acknowledged one does not.
+    await new Promise((r) => setTimeout(r, 1500));
+    const second = await ingestOnce({
+      nc, store, logger, batchRows: 10, batchMs: 1000, stream: OTHER, durable: OTHER_DURABLE,
+    });
+    expect(second).toEqual({ written: 0, malformed: 0, unclaimed: 2 });
+
+    await jsm.streams.delete(OTHER).catch(() => undefined);
   });
 });

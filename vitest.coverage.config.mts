@@ -292,11 +292,21 @@ export default defineConfig({
           lines: 88,
           statements: 84,
         },
-        "services/ingester/src/main.ts": {
-          branches: 33,
-          functions: 25,
-          lines: 40,
-          statements: 41,
+        // CHAPTER 4.4 MOVED `ingestOnce` OUT OF `main.ts`, AND THE PIN BELOW IS THE FIRST
+        // ONE HERE THAT CAN FAIL. The key was `services/ingester/src/main.ts` -- a file
+        // `coverage.exclude`'s `**/main.ts` removes from collection, so the threshold matched
+        // nothing and produced no error, no warning, nothing. Swept at 049's opening: 45
+        // per-file pins in this file, exactly 1 unbindable, and it was that one. Both halves
+        // of the probe are run now, which is the step that was skipped.
+        //
+        // The old numbers -- branches 33, functions 25, lines 40, statements 41 -- were
+        // recorded against a file nothing measured, so they are not carried across. Measured
+        // on `ingest.ts`: 76.66 statements, 75 branches, 100 functions, 75 lines.
+        "services/ingester/src/ingest.ts": {
+          branches: 71,
+          functions: 100,
+          lines: 71,
+          statements: 72,
         },
 
         "services/dispatcher/src/expand.ts": {
