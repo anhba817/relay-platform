@@ -16,6 +16,7 @@
     "@relay/service-kit": "workspace:*",
     "ioredis": "^6.0.0",
     "jose": "^6.2.7",
+    "nats": "^2.29.3",
     "ws": "^8.21.1"
   },
   "devDependencies": {

@@ -21,6 +21,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 
 import { ApiError, type ApiClient } from "./api-client.js";
 import { authenticate, type Identity } from "./auth.js";
+import type { ConnectionLog } from "./connection-log/event.js";
 import {
   DEFAULT_HEARTBEAT_MS,
   MAX_CONNECTIONS_PER_USER,
@@ -270,6 +271,14 @@ export interface SessionServerOptions {
    * unmetered one. `main.ts` always supplies the interval; the meter itself is
    * built here so its timer has the same owner as the heartbeat's. */
   meterIntervalMs?: number;
+  /** FR-ANL-01's producer. Optional for the reason `limits`, `fanout` and `connections`
+   * are, and the reason matters more here than usual: for an analytical log "optional"
+   * means UNRECORDED, never unsafe. A gateway built without one serves sockets exactly
+   * as before, which is constitution III's independence expressed as a type.
+   *
+   * INJECTED ALREADY BUILT, like every other fabric, so its close has an owner in
+   * `main.ts` and the tests that call this function directly stay broker-free. */
+  connectionLog?: ConnectionLog;
 }
 
 // THE FOUR PRESENCE TIMINGS ARE NOT HERE, and an earlier draft of this chapter put
@@ -298,6 +307,7 @@ export function attachSessions({
   heartbeatMs = DEFAULT_HEARTBEAT_MS,
   limits,
   meterIntervalMs = METER_INTERVAL_MS,
+  connectionLog,
 }: SessionServerOptions): {
   registry: Registry;
   meter: Meter;
@@ -957,6 +967,17 @@ export function attachSessions({
     };
 
     registry.add(connection);
+    // THE OPEN RECORD, BESIDE `registry.add` AND NOT INSIDE THE METER -- because there
+    // is no `meter.opened` to sit beside. The `Meter` interface is `closed`,
+    // `reportOnce`, `retained`, `dropped` and `stop`: it learns about OPEN connections
+    // by walking this registry and only needs telling when one leaves. So the two
+    // records take two different anchors, and this is the first.
+    //
+    // NOT AWAITED, AND IT CANNOT THROW. `opened` enqueues and returns; the tick does
+    // the sending. A publish from here would put an analytical fabric on the handshake
+    // path, which constitution III forbids and which R3 priced at 2.3 seconds for a
+    // deploy that closes ten thousand sockets.
+    connectionLog?.opened(connection);
     // Subscriptions follow membership: the first local member of a channel
     // makes this instance a subscriber, and the last one to leave releases
     // it (reference-counted in the fabric).
@@ -1143,7 +1164,20 @@ export function attachSessions({
       // Handing over totals rather than reporting them. This handler is already
       // documented as the last place that should throw, and a mass disconnect would
       // turn one event into a burst of HTTP requests.
-      meter.closed(connection, new Date());
+      const closedAt = new Date();
+      meter.closed(connection, closedAt);
+      // THE CLOSE RECORD, BESIDE `meter.closed` AND BEFORE `registry.remove` -- the
+      // same ordering constraint, for the same reason: the line below removes this
+      // connection from the registry, and a hand-over that read it afterwards would
+      // read nothing.
+      //
+      // ONE INSTANT FOR BOTH, not two calls to `new Date()`. The meter's minutes and
+      // this record's duration would otherwise disagree by however long the line
+      // between them took, which is a third cause in a comparison built to have two.
+      //
+      // AND THIS HANDLER IS DOCUMENTED AS THE LAST PLACE THAT SHOULD THROW. `closed`
+      // enqueues and returns; nothing it calls awaits a broker.
+      connectionLog?.closed(connection, closedAt, code);
       registry.remove(connection.id);
       // THIS HANDLER NOW CARRIES TWO ORDERING CONSTRAINTS, not none. Presence is told
       // AFTER `registry.remove`, because it asks whether this was the user's last

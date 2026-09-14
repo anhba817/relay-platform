@@ -203,3 +203,32 @@ describe("shapeRequest drops `type` and says absent rather than empty", () => {
     expect(shapeRequest(null)).toBeNull();
   });
 });
+
+// T029a. THE BATCHED-PAYLOAD FORM, FALSIFIED AGAINST THE ROUTER RATHER THAN ARGUED.
+//
+// `research.md` R3's third measurement read "batched 500 per publish", which three
+// artifacts adopted as 500 RECORDS IN ONE MESSAGE. This is what that costs, and it
+// needs no broker to show: an array is an object, it has no `type`, so it takes the
+// attempt arm, `shape()` returns null, and `ingest.ts` calls `m.term()`. Five hundred
+// records destroyed and counted as ONE malformed.
+describe("an array of records is malformed, not a batch", () => {
+  const RECORDS = [
+    { type: "connection.opened", connection_id: "a", environment_id: "e" },
+    { type: "connection.closed", connection_id: "a", environment_id: "e" },
+  ];
+
+  it("routes to malformed, which TERMINATES -- it does not reach `unclaimed`", () => {
+    expect(route(RECORDS).kind).toBe("malformed");
+  });
+
+  it("and a single record of the same type routes to unclaimed, which RETAINS", () => {
+    // The positive control, and the contrast is the whole finding: the arm that keeps a
+    // record for a consumer that does not yet write it is reached by a record with an
+    // unrecognised `type`, never by a batch. Phase 2 publishes into that window on
+    // purpose; a batched message would have proved the opposite of what it was built
+    // to prove.
+    const routed = route(RECORDS[0]);
+    expect(routed.kind).toBe("unclaimed");
+    if (routed.kind === "unclaimed") expect(routed.type).toBe("connection.opened");
+  });
+});

@@ -7,6 +7,8 @@ import {
   analyticsSubjectFor,
   apiRequestSubject,
   apiRequestSubjectWithoutTenant,
+  connectionClosedSubject,
+  connectionOpenedSubject,
   internalUsageReportEntrySchema,
   internalUsageReportRequestSchema,
   internalUsageReportResponseSchema,
@@ -116,6 +118,42 @@ describe("analyticsSubjectFor builds `analytics.{domain}.{action}.{env}`", () =>
   it("throws on a missing domain or action rather than producing `analytics..`", () => {
     expect(() => analyticsSubjectFor("", "attempt", ENV)).toThrow(/domain is required/);
     expect(() => analyticsSubjectFor("webhook", "", ENV)).toThrow(/action is required/);
+  });
+});
+
+// Connection open and close (FR-ANL-01, chapter 4.5).
+describe("the connection grammar takes two actions on one domain", () => {
+  const ENV = "9f3c1e7a-0b2d-4c8e-9a1f-6d5b4c3a2e10";
+
+  it("builds both through `analyticsSubjectFor`, unchanged", () => {
+    expect(connectionOpenedSubject(ENV)).toBe(`analytics.connection.opened.${ENV}`);
+    expect(connectionClosedSubject(ENV)).toBe(`analytics.connection.closed.${ENV}`);
+  });
+
+  it("produces subjects the ingester's wildcard matches", () => {
+    expect(matchesWildcard(connectionOpenedSubject(ENV), ALL_ANALYTICS_SUBJECT)).toBe(true);
+    expect(matchesWildcard(connectionClosedSubject(ENV), ALL_ANALYTICS_SUBJECT)).toBe(true);
+  });
+
+  it("does not collide with the events stream's wildcard", () => {
+    expect(matchesWildcard(connectionOpenedSubject(ENV), ALL_EVENTS_SUBJECT)).toBe(false);
+  });
+
+  it("separates an open from a close ON THE SUBJECT, not in the payload", () => {
+    // Which is what a subject grammar is for: a consumer that wants only closes filters
+    // `analytics.connection.closed.>` rather than shaping every open to discover it did
+    // not want it.
+    expect(connectionOpenedSubject(ENV)).not.toBe(connectionClosedSubject(ENV));
+  });
+
+  it("REFUSES an environment id that is not a uuid, on both actions", () => {
+    // Asserted rather than assumed, and on both: a validator applied to one of a pair
+    // is the hole this whole grammar exists to close. There is no `_none` arm here to
+    // relax it with -- a connection event only exists after a handshake.
+    for (const bad of ["", "not-a-uuid", `${ENV}.extra`, "*", ">"]) {
+      expect(() => connectionOpenedSubject(bad)).toThrow(/environment id must be a uuid/);
+      expect(() => connectionClosedSubject(bad)).toThrow(/environment id must be a uuid/);
+    }
   });
 });
 

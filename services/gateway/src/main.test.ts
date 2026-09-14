@@ -202,6 +202,15 @@ describe("every fabric createServer builds is injected", () => {
       "typing",
       "connections",
       "limits",
+      // THE EIGHTH, AND THIS TEST PREDICTED IT: "the property that breaks when
+      // somebody adds an eighth". It broke, on all three assertions, which is the
+      // check working rather than the check being in the way.
+      //
+      // It is also the first name here that is not a Redis client. `connectionLog`
+      // owns a NATS connection through the publisher it is constructed with -- one
+      // fabric with one `close()`, rather than a second const this derivation would
+      // have found and neither half of the pair would have been satisfied by.
+      "connectionLog",
     ]);
     expect(injected(), "no attachSessions call found").toContain("server,");
   });

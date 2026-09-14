@@ -328,6 +328,39 @@ export function apiRequestSubjectWithoutTenant(): string {
   return [ANALYTICS_SUBJECT_PREFIX, API_REQUEST_ACTION.domain, API_REQUEST_ACTION.action, NO_TENANT_TOKEN].join(".");
 }
 
+/** Connection open and close (FR-ANL-01, chapter 4.5) -- the last arm of that clause
+ *  without a producer.
+ *
+ *  TWO ACTIONS ON ONE DOMAIN, NOT ONE ACTION WITH THE EVENT IN THE PAYLOAD. A consumer
+ *  that wants only closes can filter `analytics.connection.closed.>` on the subject
+ *  rather than shaping every open to find out it did not want it, which is what a
+ *  subject grammar is for.
+ *
+ *  AND THERE IS NO `_none` ARM HERE. 4.4 needed one because a request can be made by
+ *  nobody. A connection event is emitted from `registry.add` and from `meter.closed`,
+ *  and the only function reaching either takes a non-optional `Identity` -- its call
+ *  site passes `result.identity` after the 429, 4001, 1011, 4003 and 4008 refusals have
+ *  each returned. An unauthenticated socket exists; an unauthenticated connection does
+ *  not, so there is no record for a tenantless arm to carry. */
+export const CONNECTION_OPENED_ACTION = { domain: "connection", action: "opened" };
+export const CONNECTION_CLOSED_ACTION = { domain: "connection", action: "closed" };
+
+export function connectionOpenedSubject(environmentId: string): string {
+  return analyticsSubjectFor(
+    CONNECTION_OPENED_ACTION.domain,
+    CONNECTION_OPENED_ACTION.action,
+    environmentId,
+  );
+}
+
+export function connectionClosedSubject(environmentId: string): string {
+  return analyticsSubjectFor(
+    CONNECTION_CLOSED_ACTION.domain,
+    CONNECTION_CLOSED_ACTION.action,
+    environmentId,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The dispatch contract (constitution IV).
 //

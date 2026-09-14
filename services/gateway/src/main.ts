@@ -9,6 +9,8 @@ import { createConnections } from "./connections.js";
 import { createTyping } from "./typing.js";
 import { createGatewayLimits } from "./limits.js";
 import { attachSessions } from "./session.js";
+import { createConnectionLog } from "./connection-log/event.js";
+import { createConnectionPublisher } from "./connection-log/publisher.js";
 
 // The gateway — SAD §4.1: terminates WebSockets and never writes to the
 // database (ADR-05). Chapter 1.4 stood up the HTTP half (health, request
@@ -82,6 +84,19 @@ export function createServer(logger?: Logger) {
       reason: "RELAY_INTERNAL_CREDENTIAL_GATEWAY is not set",
     });
   }
+  // THE SIXTH DEPENDENCY, AND THE FIRST BROKER CLIENT THIS SERVICE HAS EVER HELD.
+  // ADR-07 refuses core NATS for fan-out on an argument about how many client libraries
+  // the gateway holds; this makes it six. The fan-out decision is untouched -- ADR-10
+  // keeps presence in Redis, so Redis is mandatory here regardless -- but the sentence
+  // that PRICED that refusal ("two broker clients where it had one, and remove none")
+  // stops being true, and `docs/06-adr-deep-dives.md` says so now.
+  //
+  // LAZY, so a broker that is down at boot costs no socket, and built here rather than
+  // inside `attachSessions` for the reason the other seven are: its close has an owner.
+  const connectionLog = createConnectionLog({
+    publisher: createConnectionPublisher({ logger: log }),
+    logger: log,
+  });
   const sessions = attachSessions({
     server,
     api: createApiClient(
@@ -101,6 +116,7 @@ export function createServer(logger?: Logger) {
     // without that one every gateway leaks a Redis client.
     connections,
     limits,
+    connectionLog,
     // Overridable so `meter.itest.ts` can drive a spawned gateway without
     // waiting a real minute per assertion. The two tests there are the ones an
     // in-process gateway cannot run — a signal has to arrive at a process — and
@@ -135,6 +151,17 @@ export function createServer(logger?: Logger) {
    * and publishes through have to still be open while it does that. */
   async function shutdown(): Promise<void> {
     await sessions.close();
+    // EIGHT NOW, AND THE ORDER IS THE ARGUMENT. `sessions` is first "because its close
+    // is the one with work to finish ... the fabrics it reports and publishes through
+    // have to still be open while it does that", and flushing this buffer is exactly
+    // that kind of work: the tick is stopped and the last records are sent here, not
+    // dropped.
+    //
+    // NOTHING WILL CATCH A MISSED CLOSE. `main.ts` is excluded from the coverage
+    // ratchet, so no figure could show a shutdown that closed seven of eight -- which
+    // is why the COUNT is recorded in `baseline.txt` before and after rather than
+    // trusted to a test.
+    await connectionLog.close();
     await fanout.close();
     await presence.close();
     await membership.close();
