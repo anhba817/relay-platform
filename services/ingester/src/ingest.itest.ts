@@ -177,8 +177,13 @@ describe("a record of an unrecognised type is left on the stream", () => {
     const first = await ingestOnce({
       nc, store, logger, batchRows: 10, batchMs: 1000, stream: OTHER, durable: OTHER_DURABLE,
     });
+    // A WHOLE-OBJECT EQUALITY, WHICH IS WHY 4.5 HAD TO COME THROUGH HERE. Adding
+    // `writtenConnections` to `IngestResult` broke both of these, and that is the check
+    // working: a result this service reports is a contract, and a field appearing in it
+    // is a decision somebody writes down rather than one a `toMatchObject` absorbs.
     expect(first).toEqual({
-      written: 2, writtenAttempts: 1, writtenRequests: 1, malformed: 1, unclaimed: 1,
+      written: 2, writtenAttempts: 1, writtenRequests: 1, writtenConnections: 0,
+      malformed: 1, unclaimed: 1,
     });
 
     // Past ack_wait: the unclaimed record comes back. The terminated one does not, and
@@ -188,7 +193,8 @@ describe("a record of an unrecognised type is left on the stream", () => {
       nc, store, logger, batchRows: 10, batchMs: 1000, stream: OTHER, durable: OTHER_DURABLE,
     });
     expect(second).toEqual({
-      written: 0, writtenAttempts: 0, writtenRequests: 0, malformed: 0, unclaimed: 1,
+      written: 0, writtenAttempts: 0, writtenRequests: 0, writtenConnections: 0,
+      malformed: 0, unclaimed: 1,
     });
 
     await jsm.streams.delete(OTHER).catch(() => undefined);
@@ -324,4 +330,160 @@ describe("a redelivered request record does not become a second row", () => {
                  WHERE environment_id = toUUID('${RED_ENV}')`);
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// Connection events (chapter 4.5). The gateway's suite proves the records reach the
+// stream; this proves they become rows -- and compose runs no ingester service, so the
+// drain is driven by calling `ingestOnce` directly, which is where it can be observed.
+// ---------------------------------------------------------------------------
+
+const CONN_STREAM = "ITEST_CONN";
+const CONN_DURABLE = "itest-conn-ingester";
+const CONN_ENV = "9f000000-0000-4000-8000-00000000c0de";
+/** Its own environment, used by the redelivery probe alone. Both counts below are scoped
+ *  to it, because a bare `count()` is a whole-table assertion and this store is shared by
+ *  every suite in every lane. */
+const RED_ENV = "9f000000-0000-4000-8000-00000000beef";
+
+const CONN_N = 4;
+
+const connRecord = (n: number, kind: "opened" | "closed"): Record<string, unknown> => ({
+  type: `connection.${kind}`,
+  connection_id: `9f000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+  environment_id: CONN_ENV,
+  user_external_id: `person-${n}`,
+  ts: new Date(Date.UTC(2026, 8, 14, 13, 0, n * 2 + (kind === "closed" ? 1 : 0))).toISOString(),
+  ...(kind === "closed" ? { close_code: 1000, duration_ms: 1000 } : {}),
+});
+
+// `ch` is the helper this file already carries, declared above with the same shape. A
+// second copy compiled to a redeclaration error, which is the compiler asking the
+// question worth asking: one helper per file, not one per describe block.
+
+describe("a connection's two records become two rows", () => {
+  beforeAll(async () => {
+    const jsm = await nc.jetstreamManager();
+    await jsm.streams.delete(CONN_STREAM).catch(() => undefined);
+    await jsm.streams.add({ name: CONN_STREAM, subjects: ["itest.conn.>"] });
+    await jsm.consumers.add(CONN_STREAM, {
+      durable_name: CONN_DURABLE,
+      ack_policy: AckPolicy.Explicit,
+      // SIXTY SECONDS, AND THE FIRST DRAFT USED ONE -- WHICH MADE THE BATCH COUNT ITSELF
+      // TWICE. `ingestOnce` acknowledges only after every insert returns, and this test
+      // opens a 2,000 ms fetch window. With `ack_wait` at 1,000,000,000 ns the first
+      // records went unacknowledged past one second WHILE THE SAME FETCH WAS STILL OPEN,
+      // came back as redeliveries, and were shaped again: the stream held 8 and
+      // `writtenConnections` reported 16.
+      //
+      // The assertion failing is what found it, and the diagnostic that settled it was
+      // reading the stream's own depth rather than reasoning about the consumer. **A
+      // fetch window longer than `ack_wait` is a batch that redelivers into itself.**
+      ack_wait: 60_000_000_000,
+      max_deliver: -1,
+    });
+    const js = nc.jetstream();
+    for (let n = 1; n <= CONN_N; n++) {
+      for (const kind of ["opened", "closed"] as const) {
+        await js.publish(
+          "itest.conn.x",
+          new TextEncoder().encode(JSON.stringify(connRecord(n, kind))),
+        );
+      }
+    }
+  });
+
+  afterAll(async () => {
+    const jsm = await nc.jetstreamManager();
+    await jsm.streams.delete(CONN_STREAM).catch(() => undefined);
+    await ch(`DELETE FROM relay_analytics.connection_events
+               WHERE environment_id IN (toUUID('${CONN_ENV}'), toUUID('${RED_ENV}'))`);
+  });
+
+  const rows = async (env: string): Promise<number> =>
+    Number(
+      await ch(`SELECT count() FROM relay_analytics.connection_events FINAL
+                 WHERE environment_id = toUUID('${env}')`),
+    );
+
+  it("drains 2N records into 2N rows, and counts them by table", async () => {
+    expect(await rows(CONN_ENV)).toBe(0);
+
+    const result = await ingestOnce({
+      nc,
+      store,
+      logger,
+      batchRows: 100,
+      batchMs: 2000,
+      stream: CONN_STREAM,
+      durable: CONN_DURABLE,
+    });
+
+    // SPLIT BY TABLE, because one number cannot say which one moved -- and this batch
+    // carries connection records and nothing else, so the other two must be zero.
+    expect(result.writtenConnections).toBe(CONN_N * 2);
+    expect(result.writtenAttempts).toBe(0);
+    expect(result.writtenRequests).toBe(0);
+    expect(result.malformed).toBe(0);
+    expect(result.unclaimed).toBe(0);
+    expect(await rows(CONN_ENV)).toBe(CONN_N * 2);
+  }, 60_000);
+
+  it("keeps one connection's pair as TWO rows, the open carrying neither close column", async () => {
+    // THE `event`-IN-THE-KEY DECISION, CHECKED RATHER THAN ASSUMED. Without it a
+    // ReplacingMergeTree collapses the open into the close and this returns one row.
+    const id = `9f000000-0000-4000-8000-${String(1).padStart(12, "0")}`;
+    const out = await ch(
+      `SELECT event, ifNull(toString(close_code),'~absent'), ifNull(toString(duration_ms),'~absent')
+         FROM relay_analytics.connection_events FINAL
+        WHERE environment_id = toUUID('${CONN_ENV}') AND connection_id = toUUID('${id}')
+        ORDER BY event FORMAT TSV`,
+    );
+    const lines = out.split("\n").filter(Boolean);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe("closed\t1000\t1000");
+    // ABSENT, NOT ZERO. A close code of 0 is a claim that a socket closed with code zero.
+    expect(lines[1]).toBe("opened\t~absent\t~absent");
+  }, 60_000);
+
+  it("inserts the same close record three times and FINAL still says one", async () => {
+    // FR-014. The whole of 049's shape, not the half that names the hazard: merges
+    // stopped so the physical count measures inserts rather than a merge, and a `finally`
+    // that restarts them AND removes the probe's rows. Both counts scoped to RED_ENV,
+    // because a bare count() is a whole-table assertion in a lane that runs files in
+    // parallel against one store.
+    await ch(`SYSTEM STOP MERGES relay_analytics.connection_events`);
+    try {
+      const row = {
+        environment_id: RED_ENV,
+        ts: "2026-09-14T14:00:00.000Z",
+        connection_id: "9f000000-0000-4000-8000-00000000cafe",
+        event: "closed",
+        close_code: 1000,
+        duration_ms: 2000,
+        user_external_id: "person-red",
+      };
+      // Three separate inserts, exactly as three redeliveries of one record would arrive
+      // -- deliberately NOT one insert of three rows, which proves nothing about
+      // redelivery.
+      for (let i = 0; i < 3; i++) await store.insertConnections([row]);
+
+      const physical = Number(
+        await ch(`SELECT count() FROM relay_analytics.connection_events
+                   WHERE environment_id = toUUID('${RED_ENV}')`),
+      );
+      const collapsed = Number(
+        await ch(`SELECT count() FROM relay_analytics.connection_events FINAL
+                   WHERE environment_id = toUUID('${RED_ENV}')`),
+      );
+      // Published as a pair. The physical count is the positive control: at 1 this test
+      // would be measuring an insert that never happened rather than a key that collapses.
+      expect(physical).toBe(3);
+      expect(collapsed).toBe(1);
+    } finally {
+      await ch(`SYSTEM START MERGES relay_analytics.connection_events`);
+      await ch(`DELETE FROM relay_analytics.connection_events
+                 WHERE environment_id = toUUID('${RED_ENV}')`);
+    }
+  }, 60_000);
 });
