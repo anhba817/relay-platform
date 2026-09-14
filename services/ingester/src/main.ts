@@ -60,15 +60,21 @@ export async function ingestOnce({
   logger,
   batchRows = BATCH_ROWS,
   batchMs = BATCH_MS,
+  stream = ANALYTICS_STREAM,
+  durable = DURABLE,
 }: {
   nc: NatsConnection;
   store: ClickHouse;
   logger: Logger;
   batchRows?: number;
   batchMs?: number;
+  /** The stream and durable are parameters so a test can use its own rather than
+   *  publishing probe records into the platform's. The defaults are the real ones. */
+  stream?: string;
+  durable?: string;
 }): Promise<IngestResult> {
   const js = nc.jetstream();
-  const consumer = await js.consumers.get(ANALYTICS_STREAM, DURABLE);
+  const consumer = await js.consumers.get(stream, durable);
 
   const rows: AttemptRow[] = [];
   const pending: Array<{ ack: () => void }> = [];

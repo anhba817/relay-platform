@@ -261,6 +261,44 @@ export default defineConfig({
         // process reaches is `drainOnce`, which the suite calls directly. Three files now
         // read low because of where their code RUNS rather than whether it is tested, and
         // the honest place for that fact is here rather than in three lowered pins.
+        // THE INGESTER (chapter 4.3), AND THE INTERESTING NUMBER IS THE ONE THAT IS 100.
+        //
+        // `shape.ts` is 100/100/100. It is the code that decides what a record BECOMES --
+        // the rename from `attempted_at` to `ts`, and the absent-means-NULL pair -- and it
+        // is the file where being wrong looks exactly like success: an unmatched key takes
+        // the epoch, the TTL deletes the row at insert, and every other check in the
+        // chapter passes over an empty table.
+        //
+        // `main.ts` reads 37.50 branches for the reason three files above it read low: its
+        // `main()` -- connect, consumer creation, the loop, signal handlers -- is started
+        // by a process, not by a suite. The part that decides anything, `ingestOnce`, is
+        // exercised by `ingest.itest.ts` directly.
+        //
+        // AND CONSTITUTION VI's 100%-BRANCH CLAUSE DOES NOT REACH THE THING IT IS ABOUT
+        // HERE. It names idempotency, and this service's idempotency is a
+        // `ReplacingMergeTree` sorting key -- a schema, with no branches to cover. Branch
+        // coverage is the wrong instrument for a guarantee that is not implemented in
+        // code, and `ingest.itest.ts` is the right one: it replays a batch under three
+        // different groupings and asserts ten records stay ten rows.
+        "services/ingester/src/shape.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/ingester/src/clickhouse.ts": {
+          branches: 80,
+          functions: 75,
+          lines: 88,
+          statements: 84,
+        },
+        "services/ingester/src/main.ts": {
+          branches: 33,
+          functions: 25,
+          lines: 40,
+          statements: 41,
+        },
+
         "services/dispatcher/src/expand.ts": {
           branches: 92,
           functions: 100,
