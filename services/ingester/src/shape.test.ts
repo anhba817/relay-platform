@@ -212,23 +212,100 @@ describe("shapeRequest drops `type` and says absent rather than empty", () => {
 // attempt arm, `shape()` returns null, and `ingest.ts` calls `m.term()`. Five hundred
 // records destroyed and counted as ONE malformed.
 describe("an array of records is malformed, not a batch", () => {
+  // COMPLETE RECORDS, and the first draft of this fixture was not. It carried `type`,
+  // `connection_id` and `environment_id` only, so the single-record control came back
+  // `malformed` -- correctly, because a record missing `ts` and `user_external_id` IS
+  // malformed. A thin fixture would have made the batch assertion below pass for the wrong
+  // reason: an array is not malformed because it is short of fields.
   const RECORDS = [
-    { type: "connection.opened", connection_id: "a", environment_id: "e" },
-    { type: "connection.closed", connection_id: "a", environment_id: "e" },
+    {
+      type: "connection.opened",
+      connection_id: "a",
+      environment_id: "e",
+      user_external_id: "u1",
+      ts: "2026-09-14T12:00:00.000Z",
+    },
+    {
+      type: "connection.closed",
+      connection_id: "a",
+      environment_id: "e",
+      user_external_id: "u1",
+      ts: "2026-09-14T12:00:05.000Z",
+      close_code: 1000,
+      duration_ms: 5000,
+    },
   ];
 
   it("routes to malformed, which TERMINATES -- it does not reach `unclaimed`", () => {
     expect(route(RECORDS).kind).toBe("malformed");
   });
 
-  it("and a single record of the same type routes to unclaimed, which RETAINS", () => {
-    // The positive control, and the contrast is the whole finding: the arm that keeps a
-    // record for a consumer that does not yet write it is reached by a record with an
-    // unrecognised `type`, never by a batch. Phase 2 publishes into that window on
-    // purpose; a batched message would have proved the opposite of what it was built
-    // to prove.
+  it("and a single record of that type is CLAIMED, now that phase 3 has landed", () => {
+    // THIS ASSERTION READ `unclaimed` FOR ONE PHASE, AND THE CHANGE IS THE POINT.
+    // Phase 2 published connection records into a stream whose consumer did not know the
+    // type, and `route()` answered `unclaimed` -- neither acked nor terminated, redelivered
+    // until something claimed it. This phase is that something. The window is closed and the
+    // count it produced is in `baseline.txt`, because it cannot be taken again.
     const routed = route(RECORDS[0]);
+    expect(routed.kind).toBe("connection");
+    if (routed.kind === "connection") expect(routed.row.event).toBe("opened");
+  });
+
+  it("still leaves a type nobody claims, which is the arm the batch never reaches", () => {
+    // The control the assertion above used to be. `unclaimed` must survive this chapter:
+    // it is what makes the NEXT producer's window safe, and a batch reaches `malformed`
+    // instead -- terminated, 500 records at a time, counted as one.
+    const routed = route({ type: "media.scanned", media_id: "m1" });
     expect(routed.kind).toBe("unclaimed");
-    if (routed.kind === "unclaimed") expect(routed.type).toBe("connection.opened");
+    if (routed.kind === "unclaimed") expect(routed.type).toBe("media.scanned");
+  });
+
+  it("renames `type` to `event` rather than carrying the dotted string into the column", () => {
+    // The failure that looks like success: `event` holding "connection.opened" is accepted
+    // by LowCardinality without complaint, and every query filtering `event = 'opened'`
+    // returns nothing for ever.
+    const routed = route({
+      type: "connection.closed",
+      connection_id: "c1",
+      environment_id: "e1",
+      user_external_id: "u1",
+      ts: "2026-09-14T12:00:00.000Z",
+      close_code: 1000,
+      duration_ms: 5000,
+    });
+    expect(routed.kind).toBe("connection");
+    if (routed.kind === "connection") {
+      expect(routed.row.event).toBe("closed");
+      expect(routed.row).not.toHaveProperty("type");
+      expect(routed.row.close_code).toBe(1000);
+    }
+  });
+
+  it("maps an absent close_code and duration_ms to NULL, not to zero", () => {
+    // A close_code of 0 is a claim that a socket closed with code zero.
+    const routed = route({
+      type: "connection.opened",
+      connection_id: "c1",
+      environment_id: "e1",
+      user_external_id: "u1",
+      ts: "2026-09-14T12:00:00.000Z",
+    });
+    expect(routed.kind).toBe("connection");
+    if (routed.kind === "connection") {
+      expect(routed.row.close_code).toBeNull();
+      expect(routed.row.duration_ms).toBeNull();
+    }
+  });
+
+  it("refuses a connection record with no environment, rather than inventing a tenantless arm", () => {
+    // There is no `_none` grammar here: a connection event only exists after a handshake,
+    // so a record without a tenant is malformed rather than tenantless.
+    const routed = route({
+      type: "connection.opened",
+      connection_id: "c1",
+      user_external_id: "u1",
+      ts: "2026-09-14T12:00:00.000Z",
+    });
+    expect(routed.kind).toBe("malformed");
   });
 });

@@ -187,10 +187,90 @@ export function shapeRequest(raw: unknown): RequestRow | null {
  *  a router that parses subjects has to be right about tokens too, and a malformed token
  *  publishes a subject one level deeper that no intended filter matches. */
 export const API_REQUEST_TYPE = "api.request";
+export const CONNECTION_OPENED_TYPE = "connection.opened";
+export const CONNECTION_CLOSED_TYPE = "connection.closed";
+
+/** The gateway's record, as it arrives on `analytics.connection.{opened|closed}.{env}`. */
+export interface ConnectionEvent {
+  type: string;
+  connection_id: string;
+  environment_id: string;
+  user_external_id: string;
+  ts: string;
+  /** Close only. */
+  close_code?: number;
+  /** Close only. */
+  duration_ms?: number;
+}
+
+/** One row of `relay_analytics.connection_events`, keyed by column name. */
+export interface ConnectionRow {
+  environment_id: string;
+  ts: string;
+  connection_id: string;
+  event: string;
+  close_code: number | null;
+  duration_ms: number | null;
+  user_external_id: string;
+}
+
+/** Shape one connection record, or return null if it will never be valid.
+ *
+ * `type` IS READ, RENAMED AND DROPPED -- all three, which is one more than the request
+ * shaper does. The wire carries `type: "connection.opened"` because that is what `route()`
+ * discriminates on; the column is `event` and holds `opened`. So this function both drops a
+ * field the table has no column for and derives the column from it, and getting the derivation
+ * backwards is the failure that looks like success: `event` would hold the whole dotted string,
+ * `LowCardinality` would accept it without complaint, and every query filtering
+ * `event = 'opened'` would return nothing for ever.
+ *
+ * `environment_id` IS REQUIRED HERE, unlike the request shaper's. A connection event only
+ * exists after a handshake, so a record arriving without one is malformed rather than
+ * tenantless -- there is no `_none` arm on this grammar to fall back to.
+ *
+ * ABSENT IS NULL, NOT ZERO. A `close_code` of 0 is a claim that a socket closed with code
+ * zero, and a `duration_ms` of 0 that it lasted no time. An open record carries neither. */
+export function shapeConnection(raw: unknown): ConnectionRow | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const e = raw as Partial<ConnectionEvent>;
+
+  if (
+    !isString(e.environment_id) ||
+    !isString(e.ts) ||
+    !isString(e.connection_id) ||
+    !isString(e.user_external_id) ||
+    !isString(e.type)
+  ) {
+    return null;
+  }
+
+  // THE RENAME, AND IT IS A CLOSED SET RATHER THAN A SUFFIX. `e.type.split(".")[1]` would
+  // turn any `connection.*` record into a row with whatever word followed the dot, which is
+  // a shaper that cannot be wrong about a record it has never seen -- the wrong kind of
+  // robust. Two types, two events, and anything else is somebody else's record.
+  const event =
+    e.type === CONNECTION_OPENED_TYPE
+      ? "opened"
+      : e.type === CONNECTION_CLOSED_TYPE
+        ? "closed"
+        : null;
+  if (event === null) return null;
+
+  return {
+    environment_id: e.environment_id,
+    ts: e.ts,
+    connection_id: e.connection_id,
+    event,
+    close_code: isNumber(e.close_code) ? e.close_code : null,
+    duration_ms: isNumber(e.duration_ms) ? e.duration_ms : null,
+    user_external_id: e.user_external_id,
+  };
+}
 
 export type Shaped =
   | { kind: "attempt"; row: AttemptRow }
   | { kind: "request"; row: RequestRow }
+  | { kind: "connection"; row: ConnectionRow }
   | { kind: "malformed" }
   | { kind: "unclaimed"; type: string };
 
@@ -216,6 +296,13 @@ export function route(raw: unknown): Shaped {
   if (type === API_REQUEST_TYPE) {
     const row = shapeRequest(raw);
     return row === null ? { kind: "malformed" } : { kind: "request", row };
+  }
+  // The third arm (chapter 4.5). TWO TYPES, ONE ARM, because they are one table: the
+  // subject separates an open from a close for a consumer that wants only one, and this
+  // consumer wants both.
+  if (type === CONNECTION_OPENED_TYPE || type === CONNECTION_CLOSED_TYPE) {
+    const row = shapeConnection(raw);
+    return row === null ? { kind: "malformed" } : { kind: "connection", row };
   }
 
   // Anything else is somebody's record and not this consumer's. Leaving it costs the stream's

@@ -16,10 +16,16 @@ import { ANALYTICS_STREAM } from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
 
 import type { ClickHouse } from "./clickhouse.js";
-import { route, type AttemptRow, type RequestRow } from "./shape.js";
+import { route, type AttemptRow, type ConnectionRow, type RequestRow } from "./shape.js";
 
-// DR-11 publishes 2 s or 10,000 rows, and it takes BOTH because each bound fails alone: a
-// row count never flushes for a quiet tenant, and an interval has no ceiling under load.
+// TWO BOUNDS, AND THEY ARE THE SAD's RATHER THAN DR-11's. `docs/05-sad.md` §4 describes this
+// service as batch-inserting "every 2 s or 10k rows (DR-11)" and chose those numbers; DR-11
+// itself reads, in full, "Inserts shall be batched or use asynchronous insert mode; single-row
+// synchronous inserts are prohibited" -- no interval and no row count. This comment credited
+// the clause with both until analysis pass 11 opened it.
+//
+// It takes BOTH because each fails alone: a row count never flushes for a quiet tenant, and an
+// interval has no ceiling under load. 049 measured where they cross, at 5,000 records/second.
 export const BATCH_ROWS = 10_000;
 export const BATCH_MS = 2_000;
 
@@ -30,6 +36,7 @@ export interface IngestResult {
   /** Split by table, because one number cannot say which one moved. */
   writtenAttempts: number;
   writtenRequests: number;
+  writtenConnections: number;
   malformed: number;
   /** Records this consumer recognised as somebody else's and left on the stream. A record
    *  nobody claims has to be visible as a number, or the difference between "nothing arrived"
@@ -61,6 +68,7 @@ export async function ingestOnce({
 
   const attempts: AttemptRow[] = [];
   const requests: RequestRow[] = [];
+  const connections: ConnectionRow[] = [];
   const pending: Array<{ ack: () => void }> = [];
   let malformed = 0;
   let unclaimed = 0;
@@ -99,7 +107,8 @@ export async function ingestOnce({
     }
 
     if (routed.kind === "attempt") attempts.push(routed.row);
-    else requests.push(routed.row);
+    else if (routed.kind === "request") requests.push(routed.row);
+    else connections.push(routed.row);
     pending.push({ ack: () => m.ack() });
   }
 
@@ -111,12 +120,14 @@ export async function ingestOnce({
   // record's own key, and it is the reason that choice is not merely about redelivery.
   await store.insert(attempts);
   await store.insertRequests(requests);
+  await store.insertConnections(connections);
   for (const p of pending) p.ack();
 
   return {
-    written: attempts.length + requests.length,
+    written: attempts.length + requests.length + connections.length,
     writtenAttempts: attempts.length,
     writtenRequests: requests.length,
+    writtenConnections: connections.length,
     malformed,
     unclaimed,
   };

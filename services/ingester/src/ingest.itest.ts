@@ -45,8 +45,15 @@ const refusing = {
   insertRequests: async (): Promise<void> => {
     throw new Error("store down");
   },
+  // The third, and the compiler is what asked for it. `ClickHouse` is a required interface,
+  // so adding a method names every construction site -- which is the property a partial stub
+  // would have given up, silently, on the one suite that proves an unacknowledged batch.
+  insertConnections: async (): Promise<void> => {
+    throw new Error("store down");
+  },
   count: async (): Promise<number> => 0,
   countRequests: async (): Promise<number> => 0,
+  countConnections: async (): Promise<number> => 0,
 };
 
 const rowsForEnv = async (): Promise<number> =>

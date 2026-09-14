@@ -1,10 +1,11 @@
 // The write side. Node's own `fetch` against the HTTP interface -- no client package, which
 // is what keeps `grep -c clickhouse pnpm-lock.yaml` at 0 by design rather than by luck.
-import type { AttemptRow, RequestRow } from "./shape.js";
+import type { AttemptRow, ConnectionRow, RequestRow } from "./shape.js";
 
 const DB = "relay_analytics";
 const ATTEMPTS = "webhook_attempts";
 const REQUESTS = "api_requests";
+const CONNECTIONS = "connection_events";
 
 // TWO SETTINGS, TWO DIFFERENT FAILURES, AND NEITHER IS OPTIONAL.
 //
@@ -24,8 +25,13 @@ export interface ClickHouse {
   /** The second table (chapter 4.4). A separate call rather than a `table` parameter: the two
    *  row shapes are different types and the compiler should say so at the call site. */
   insertRequests(rows: RequestRow[]): Promise<void>;
+  /** The third table (chapter 4.5). A third call for the reason there is a second: three row
+   *  shapes are three types, and a `table` parameter would let the compiler watch a
+   *  `ConnectionRow` go into `api_requests` without a word. */
+  insertConnections(rows: ConnectionRow[]): Promise<void>;
   count(): Promise<number>;
   countRequests(): Promise<number>;
+  countConnections(): Promise<number>;
 }
 
 export function createClickHouse({
@@ -72,6 +78,17 @@ export function createClickHouse({
         rows.map((r) => JSON.stringify(r)).join("\n"),
       );
     },
+    // THE EMPTY GUARD MATTERS MORE WITH EVERY PRODUCER. One fetch now feeds three tables and
+    // the three rates differ by orders of magnitude -- roughly one connection pair per
+    // session against one request record per request -- so most batches carry requests and
+    // neither of the others. Without this, each of them posts an empty INSERT per batch.
+    async insertConnections(rows: ConnectionRow[]): Promise<void> {
+      if (rows.length === 0) return;
+      await post(
+        `INSERT INTO ${DB}.${CONNECTIONS} FORMAT JSONEachRow`,
+        rows.map((r) => JSON.stringify(r)).join("\n"),
+      );
+    },
     // Reads take FINAL. The duplicate is physically present until a merge collapses it, so a
     // bare count over-counts every redelivery -- by a plausible number.
     async count(): Promise<number> {
@@ -79,6 +96,9 @@ export function createClickHouse({
     },
     async countRequests(): Promise<number> {
       return Number(await post(`SELECT count() FROM ${DB}.${REQUESTS} FINAL`, ""));
+    },
+    async countConnections(): Promise<number> {
+      return Number(await post(`SELECT count() FROM ${DB}.${CONNECTIONS} FINAL`, ""));
     },
   };
 }
