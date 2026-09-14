@@ -137,6 +137,50 @@ describe("the API request log", () => {
     expect(row?.endpoint).toBe("~absent");
   });
 
+  // FR-010, and the verification method is T rather than D. Constitution I is the one
+  // principle this project does not accept a demonstration for: a screenshot of the right
+  // rows is not a claim about every query, and the clause the chapter leans on -- that a
+  // record with no tenant is not tenant data -- is only true if no tenant-scoped read can
+  // reach one.
+  it("returns this tenant's rows and ZERO tenantless ones", async () => {
+    const served = await call("/v1/webhooks", key.credential);
+    expect(served.status).toBe(200);
+    expect(await settle(served.id)).not.toBeNull();
+
+    const anonymous = await call("/v1/webhooks");
+    expect(anonymous.status).toBe(401);
+    expect(await settle(anonymous.id)).not.toBeNull();
+
+    // The tenant-scoped read: exactly the shape a customer-facing query surface would use.
+    const scoped = (
+      await ch(`SELECT count(), countIf(environment_id IS NULL)
+                  FROM relay_analytics.api_requests FINAL
+                 WHERE environment_id = toUUID('${env.id}') FORMAT TSV`)
+    ).trim().split("\t").map(Number);
+
+    // A NON-ZERO FLOOR ON THE FIRST NUMBER. Without it, "no tenantless rows" is satisfied by
+    // a query that returned nothing at all -- 047's T023 compared three counts over an empty
+    // table and called them equal at 0, 0, 0.
+    expect(scoped[0]).toBeGreaterThan(0);
+    expect(scoped[1]).toBe(0);
+
+    // And the tenantless row that was just written is genuinely there, under no tenant --
+    // so the zero above is isolation rather than absence.
+    const orphans = Number(
+      await ch(`SELECT count() FROM relay_analytics.api_requests FINAL
+                 WHERE environment_id IS NULL AND request_id = toUUID('${anonymous.id}')`),
+    );
+    expect(orphans).toBe(1);
+
+    // A foreign tenant sees neither.
+    const foreign = Number(
+      await ch(`SELECT count() FROM relay_analytics.api_requests FINAL
+                 WHERE environment_id = toUUID('${limited.id}')
+                   AND request_id IN (toUUID('${served.id}'), toUUID('${anonymous.id}'))`),
+    );
+    expect(foreign).toBe(0);
+  });
+
   it("records the rate limiter's 429 at all, and names the operation it refused on", async () => {
     // Position 2 is what makes this possible: RateLimitMiddleware refuses with
     // `res.end(); return;` and never calls next(), so a producer registered after it would
