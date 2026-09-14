@@ -29,7 +29,13 @@ CREATE TABLE IF NOT EXISTS relay_analytics.api_requests (
     endpoint       LowCardinality(Nullable(String)),
     method         LowCardinality(String),
     status         UInt16,
-    latency_ms     UInt32,
+    -- FLOAT, NOT UInt32, AND A RUNNING INGESTER IS WHAT SAID SO. The producer measures with
+    -- `process.hrtime.bigint()` and reports fractional milliseconds; UInt32 refused them with
+    -- `Code: 27. Cannot parse input: expected ',' before: '.556,...'`. Rounding to whole
+    -- milliseconds instead would have been the cheaper fix and the wrong one: a /healthz is
+    -- ~0.5 ms on this api, so half the table would read 0 and the percentiles FR-ANL-10 wants
+    -- would be computed over a column that had thrown its resolution away.
+    latency_ms     Float32,
     -- `application` | `user` | `platform` | `none`. The column that makes the chapter's
     -- central number answerable from the table: how many records have no tenant, and why not.
     -- `platform` and `none` are different facts and collapsing them loses the argument.

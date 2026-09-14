@@ -86,6 +86,26 @@ export interface Environment {
   kind: "development" | "production";
 }
 
+/** Set a per-environment rate-limit override (FR-RTL-04).
+ *
+ * The columns are nullable and null means "no override" rather than zero -- refuse-everything
+ * has to stay expressible. Written here rather than at a call site because the query engine
+ * lives in this layer only (constitution I, ADR-16), and a test reaching for `sql` directly
+ * is the lint rule firing rather than a shortcut.
+ */
+export async function setEnvironmentLimits(
+  db: Db,
+  {
+    environmentId,
+    restPerMinute,
+  }: { environmentId: string; restPerMinute: number | null },
+): Promise<void> {
+  await db
+    .update(environments)
+    .set({ restLimitPerMinute: restPerMinute })
+    .where(eq(environments.id, environmentId));
+}
+
 export async function createEnvironment(
   db: Db,
   { name, kind = "development" }: { name: string; kind?: Environment["kind"] },

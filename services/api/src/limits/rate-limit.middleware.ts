@@ -12,6 +12,7 @@ import { clientAddress } from "./client-address";
 import { COUNTER_STORE, LIMITS_DB } from "./limits.module";
 import { authFailureThreshold, WINDOW_MS, type LimitedOperation } from "./policy";
 import { authKey, counterKey, type CounterStore } from "./store";
+import { LIMITED_OPERATION, REFUSED_AT } from "../request-log/event";
 
 /** Read once per call site so a test that freezes time sees one instant. */
 const now0 = (): number => Date.now();
@@ -119,6 +120,10 @@ export class RateLimitMiddleware implements NestMiddleware {
         now0(),
       );
       if (count !== null && count > authFailureThreshold()) {
+        // Its own family. `signup` is not a `DEFAULT_LIMITS` key -- that union is rest, send
+        // and connect, and `connect` is the gateway's, counted elsewhere entirely.
+        (req as unknown as Record<symbol, unknown>)[REFUSED_AT] = "middleware";
+        (req as unknown as Record<symbol, unknown>)[LIMITED_OPERATION] = "signup";
         res.statusCode = 429;
         res.setHeader("Retry-After", "60");
         res.setHeader("content-type", "application/json");
@@ -210,6 +215,16 @@ export class RateLimitMiddleware implements NestMiddleware {
     }
 
     if (refusal !== undefined) {
+      // STAMPED FOR THE REQUEST LOG, and it is `refusal.operation` -- the ONE operation that
+      // tripped -- not `operationsFor`'s array, which says what was COUNTED. The line below
+      // already narrows it to name the failure to the customer.
+      //
+      // AND IT IS NOT A ROUTE TEMPLATE. This limiter's whole route knowledge is three-valued:
+      // outside /v1/, the send path, everything else. So "which endpoint is being
+      // rate-limited" asks about a granularity that does not exist, and the operation class
+      // is the finest true answer about one of these refusals.
+      (req as unknown as Record<symbol, unknown>)[REFUSED_AT] = "middleware";
+      (req as unknown as Record<symbol, unknown>)[LIMITED_OPERATION] = refusal.operation;
       const retryAfter = Math.max(1, refusal.resetSeconds - Math.floor(now / 1000));
       res.setHeader("Retry-After", String(retryAfter));
       res.setHeader("X-RateLimit-Remaining", "0");

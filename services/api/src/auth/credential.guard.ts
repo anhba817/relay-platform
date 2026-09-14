@@ -9,6 +9,8 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 
+import { REFUSED_AT } from "../request-log/event";
+
 import type { PlatformService } from "./authenticate.middleware";
 import {
   describePrincipalKind,
@@ -92,6 +94,17 @@ export class CredentialGuard implements CanActivate {
     const req = context.switchToHttp().getRequest<RequestWithPrincipal>();
     const principal = req.principal;
 
+    // STAMP BEFORE ANY REFUSAL BELOW, because the request log cannot work this out for
+    // itself. A guard refusal and a handler response are identical at `res.on("finish")` --
+    // same status, same `req.route`, same request properties -- so `refused_at` reads
+    // `handler` unless the refusing layer says otherwise. This guard is the only class
+    // implementing `CanActivate` in this api and it throws both the 401 and the 429.
+    //
+    // ANY NEW GUARD MUST DO THIS. The `handler` arm is an inference from silence, so a guard
+    // that refuses without stamping is recorded as a plausible wrong value in a column
+    // nothing would flag.
+    (req as unknown as Record<symbol, unknown>)[REFUSED_AT] = "guard";
+
     // (FR-AUT-12, FR-RTL-02, research R18). The refusal for an
     // over-threshold address is thrown HERE and not in the middleware that
     // counted it, because `AuthenticateMiddleware` never throws by documented
@@ -159,6 +172,8 @@ export class CredentialGuard implements CanActivate {
       }
     }
 
+    // Allowed through: the handler decides from here, so the stamp comes back off.
+    delete (req as unknown as Record<symbol, unknown>)[REFUSED_AT];
     return true;
   }
 }

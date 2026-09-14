@@ -297,6 +297,37 @@ export function webhookAttemptSubject(environmentId: string): string {
   );
 }
 
+/** The API request log's action (FR-ANL-07, chapter 4.4). */
+export const API_REQUEST_ACTION = { domain: "api", action: "request" };
+
+export function apiRequestSubject(environmentId: string): string {
+  return analyticsSubjectFor(
+    API_REQUEST_ACTION.domain,
+    API_REQUEST_ACTION.action,
+    environmentId,
+  );
+}
+
+/** The token for a request that resolved to no tenant.
+ *
+ * A SEPARATE FUNCTION, NOT A RELAXED ARGUMENT TO `analyticsSubjectFor`. That validator
+ * refuses a non-UUID because an environment id becomes a dot-delimited subject token, and
+ * the refusal is what keeps one tenant's records out of another tenant's filter. A validator
+ * with an escape hatch is a validator with a hole, and the hole is measurable: publishing a
+ * token of `no.tenant` produces a FIVE-token subject that the four-token wildcard does not
+ * match, and `*` publishes a subject containing a literal asterisk. Neither fails at publish
+ * time. A malformed token does not reach the wrong tenant -- it goes where no intended filter
+ * reaches, which is the quiet direction.
+ *
+ * `_none` cannot be a UUID, so no exact per-tenant filter matches it. Measured over a stream
+ * holding six candidate tokens plus one real tenant's record: tenant A's exact filter saw 1,
+ * tenant B's saw 0. */
+export const NO_TENANT_TOKEN = "_none";
+
+export function apiRequestSubjectWithoutTenant(): string {
+  return [ANALYTICS_SUBJECT_PREFIX, API_REQUEST_ACTION.domain, API_REQUEST_ACTION.action, NO_TENANT_TOKEN].join(".");
+}
+
 // ---------------------------------------------------------------------------
 // The dispatch contract (constitution IV).
 //

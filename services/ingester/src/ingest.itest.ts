@@ -265,3 +265,56 @@ describe("the request table keeps absent and empty apart", () => {
     expect(out).toContain("Unknown field found while parsing JSONEachRow format: type");
   });
 });
+
+// ---------------------------------------------------------------------------
+// FR-017 — a redelivered request record does not become a second row.
+//
+// MERGES ARE STOPPED FOR THE PHYSICAL COUNT. A count taken while a background merge is
+// running measures the merge: this feature's own first probe of this behaviour read 2 after
+// six inserts and it read as four rows vanishing. 047 learned the same thing about the TTL --
+// a row count taken the moment a load finishes shrinks on its own.
+// ---------------------------------------------------------------------------
+describe("a redelivered request record does not become a second row", () => {
+  const RED_ENV = "9f000000-0000-4000-8000-00000000fee1";
+  const REQ_ID = "bbbbbbbb-0000-4000-8000-000000000001";
+
+  it("inserts the same record three times and FINAL still says one", async () => {
+    await ch(`SYSTEM STOP MERGES relay_analytics.api_requests`);
+    try {
+      const row = {
+        environment_id: RED_ENV,
+        ts: "2026-09-14T12:00:00.000Z",
+        request_id: REQ_ID,
+        endpoint: "/v1/webhooks",
+        method: "GET",
+        status: 200,
+        latency_ms: 1.25,
+        principal_kind: "application",
+        refused_at: "handler",
+        limited_operation: null,
+      };
+      // Three separate inserts, exactly as three redeliveries of one record would arrive --
+      // and deliberately NOT one insert of three rows, which would prove nothing about
+      // redelivery.
+      for (let i = 0; i < 3; i++) await store.insertRequests([row]);
+
+      const physical = Number(
+        await ch(`SELECT count() FROM relay_analytics.api_requests
+                   WHERE environment_id = toUUID('${RED_ENV}')`),
+      );
+      const collapsed = Number(
+        await ch(`SELECT count() FROM relay_analytics.api_requests FINAL
+                   WHERE environment_id = toUUID('${RED_ENV}')`),
+      );
+      // Published as a pair. The physical count is the positive control: if it were 1 the
+      // test would be measuring an insert that never happened rather than a key that
+      // collapses.
+      expect(physical).toBe(3);
+      expect(collapsed).toBe(1);
+    } finally {
+      await ch(`SYSTEM START MERGES relay_analytics.api_requests`);
+      await ch(`DELETE FROM relay_analytics.api_requests
+                 WHERE environment_id = toUUID('${RED_ENV}')`);
+    }
+  });
+});

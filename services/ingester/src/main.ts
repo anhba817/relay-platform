@@ -68,9 +68,19 @@ export async function main(): Promise<void> {
 
   do {
     try {
-      const { written, malformed } = await ingestOnce({ nc, store, logger });
-      if (written > 0 || malformed > 0) {
-        logger.log("info", "ingester.batch", { written, malformed });
+      const r = await ingestOnce({ nc, store, logger });
+      // `unclaimed` is in the line because a record nobody claims is redelivered until the
+      // stream's retention expires, and the count is the only way anyone finds out that is
+      // happening. The two `written` figures are separate because one number cannot say
+      // which table moved.
+      if (r.written > 0 || r.malformed > 0 || r.unclaimed > 0) {
+        logger.log("info", "ingester.batch", {
+          written: r.written,
+          attempts: r.writtenAttempts,
+          requests: r.writtenRequests,
+          malformed: r.malformed,
+          unclaimed: r.unclaimed,
+        });
       }
     } catch (error) {
       // The store is unreachable, or the insert was refused. Nothing was acknowledged, so

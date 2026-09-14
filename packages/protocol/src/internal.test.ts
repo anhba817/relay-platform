@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   ALL_ANALYTICS_SUBJECT,
   ALL_EVENTS_SUBJECT,
+  NO_TENANT_TOKEN,
   analyticsSubjectFor,
+  apiRequestSubject,
+  apiRequestSubjectWithoutTenant,
   internalUsageReportEntrySchema,
   internalUsageReportRequestSchema,
   internalUsageReportResponseSchema,
@@ -182,5 +185,31 @@ describe("the usage report", () => {
       internalUsageReportResponseSchema.safeParse({ credited: 4, refused: 0 })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("the API request log's subjects (chapter 4.4)", () => {
+  const ENV = "9f3c1e7a-0b2d-4c8e-9a1f-6d5b4c3a2e10";
+  it("builds a tenant-scoped subject the stream's own filter matches", () => {
+    expect(apiRequestSubject(ENV)).toBe(`analytics.api.request.${ENV}`);
+    expect(matchesWildcard(apiRequestSubject(ENV), ALL_ANALYTICS_SUBJECT)).toBe(true);
+  });
+
+  // ASSERT THE REFUSAL, NOT ONLY THE SUCCESS. A validator tested on valid input is a
+  // validator untested, and this one is the reason a tenant's records cannot reach another
+  // tenant's filter.
+  it("refuses an environment that is not a uuid", () => {
+    expect(() => apiRequestSubject("no.tenant")).toThrow(/must be a uuid/);
+    expect(() => apiRequestSubject("*")).toThrow(/must be a uuid/);
+    expect(() => apiRequestSubject("")).toThrow(/must be a uuid/);
+  });
+
+  it("has a tenantless arm that no exact tenant filter can match", () => {
+    const subject = apiRequestSubjectWithoutTenant();
+    expect(subject).toBe("analytics.api.request._none");
+    expect(matchesWildcard(subject, ALL_ANALYTICS_SUBJECT)).toBe(true);
+    // and it is not, and cannot be, any tenant's subject
+    expect(subject).not.toBe(apiRequestSubject(ENV));
+    expect(() => apiRequestSubject(NO_TENANT_TOKEN)).toThrow(/must be a uuid/);
   });
 });

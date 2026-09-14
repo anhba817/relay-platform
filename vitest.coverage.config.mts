@@ -302,6 +302,28 @@ export default defineConfig({
         // The old numbers -- branches 33, functions 25, lines 40, statements 41 -- were
         // recorded against a file nothing measured, so they are not carried across. Measured
         // on `ingest.ts`: 76.66 statements, 75 branches, 100 functions, 75 lines.
+        // CHAPTER 4.4's PRODUCER. `event.ts` is where the TENANCY branch lives -- the choice
+        // between a tenant's subject and the `_none` arm -- and constitution VI names tenant
+        // isolation for 100% branch coverage. It measures 100/100/100/100, so the clause is
+        // met rather than pinned-with-a-shortfall, which is the first time this feature could
+        // say that: 048 recorded the same clause as unreachable because its idempotency was a
+        // sorting key and a schema has no branches to cover.
+        "services/api/src/request-log/event.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // The middleware measures 88.46 branches. The uncovered arms are the defensive reads
+        // -- an absent `req.requestId`, an absent `req.method` -- which no route can produce
+        // through the running app, and which are there because the types say the fields are
+        // optional on a bare IncomingMessage.
+        "services/api/src/request-log/request-log.middleware.ts": {
+          branches: 84,
+          functions: 100,
+          lines: 95,
+          statements: 95,
+        },
         "services/ingester/src/ingest.ts": {
           branches: 71,
           functions: 100,
