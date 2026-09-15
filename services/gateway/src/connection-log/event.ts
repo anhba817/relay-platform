@@ -248,18 +248,31 @@ export function createConnectionLog({
     // as it had records. The meter never faces this: it sends one report and gets one
     // answer. A flush that treated a partial failure as total loss would discard
     // records the broker accepted; as total success, records it did not.
-    const failed = batch.filter((_, i) => outcomes[i]?.status === "rejected");
-    for (const record of failed) enqueue(record);
+    // THE REJECTIONS THEMSELVES, NOT A PARALLEL LIST OF INDICES. An earlier version kept
+    // `failed` (the records) and looked the first reason up separately with
+    // `outcomes.find(...)`, which needed a `?? "unknown"` fallback for a case that cannot
+    // occur: inside `failed.length > 0` there is always a rejection. Coverage reported the
+    // file at 93.75% branches with that one arm uncovered, and the arm was not missing a
+    // test -- it was unreachable. **A design in which a case cannot arise beats a branch
+    // that handles it, because the branch is the thing that rots.** Pairing each record
+    // with its own outcome deletes the branch instead of testing it.
+    const rejected: Array<{ record: PublishableRecord; reason: unknown }> = [];
+    outcomes.forEach((outcome, i) => {
+      const record = batch[i];
+      if (outcome.status === "rejected" && record !== undefined) {
+        rejected.push({ record, reason: outcome.reason });
+      }
+    });
+    for (const { record } of rejected) enqueue(record);
 
-    if (failed.length > 0) {
+    if (rejected[0] !== undefined) {
       // ONE LINE PER FLUSH, not per record, and it carries counts rather than payloads
       // -- the shape `meter.report_failed` uses. No subject, no id, no record.
-      const first = outcomes.find((o) => o.status === "rejected");
       logger.log("error", "connection_log.publish_failed", {
         attempted: batch.length,
-        failed: failed.length,
+        failed: rejected.length,
         buffered: pending.length,
-        error: String(first?.status === "rejected" ? first.reason : "unknown"),
+        error: String(rejected[0].reason),
       });
     }
   }

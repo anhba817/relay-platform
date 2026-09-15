@@ -325,6 +325,67 @@ describe("the buffer", () => {
     log.stop();
   });
 
+  it("the TICK publishes, not the hand-over -- driven rather than waited on", async () => {
+    // Every other test here sets the interval past any run so the flushes are explicit.
+    // This one is the arm those tests leave uncovered: the timer callback itself, which
+    // is the only thing that fires in production. A short interval and a poll to a
+    // deadline, because arrival is a condition -- not a flat sleep and a count.
+    const publisher = stubPublisher();
+    const log = createConnectionLog({ publisher, logger: silentLogger(), intervalMs: 5 });
+    log.opened(connectionFixture());
+
+    const deadline = Date.now() + 2_000;
+    while (publisher.sent.length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(publisher.sent).toHaveLength(1);
+    log.stop();
+
+    // AND `stop()` ACTUALLY STOPS IT. Cleared rather than unref'd, so a record enqueued
+    // after this never leaves -- which is what makes the shutdown flush in `close()` the
+    // thing that has to be awaited.
+    log.opened(connectionFixture());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(publisher.sent).toHaveLength(1);
+  });
+
+  it("close() stops the tick, sends what is left, and closes the client -- in that order", async () => {
+    // THE SHUTDOWN FLUSH, AND `main.ts` IS THE ONLY OTHER CALLER. `main.ts` is excluded
+    // from the coverage ratchet, so without this test the last flush before a deploy is
+    // the one arm of this module no figure could show.
+    const publisher = stubPublisher();
+    const closed = vi.spyOn(publisher, "close");
+    const log = createConnectionLog({ publisher, logger: silentLogger(), intervalMs: 1e9 });
+    log.opened(connectionFixture());
+    log.closed(connectionFixture(), new Date(), 1000);
+
+    await log.close();
+
+    // Sent BEFORE the client went: a record still buffered at close is one a killed
+    // process would have lost, which is the difference the chapter publishes as a number.
+    expect(publisher.sent).toHaveLength(2);
+    expect(log.buffered()).toBe(0);
+    expect(closed).toHaveBeenCalledOnce();
+  });
+
+  it("close() still closes the client when the last flush fails", async () => {
+    // The order survives a broker that is already gone. Without the await on `flushOnce`
+    // inside `close`, this would pass while the records went nowhere and nothing said so.
+    const publisher = stubPublisher();
+    publisher.failAll = true;
+    const closed = vi.spyOn(publisher, "close");
+    const log = createConnectionLog({ publisher, logger: silentLogger(), intervalMs: 1e9 });
+    log.opened(connectionFixture());
+
+    await log.close();
+
+    expect(publisher.sent).toHaveLength(0);
+    // RETAINED, not dropped: the records are still buffered when the process leaves, which
+    // is exactly what a killed gateway loses and a clean stop does not.
+    expect(log.buffered()).toBe(1);
+    expect(closed).toHaveBeenCalledOnce();
+  });
+
   it("neither hand-over throws when the publisher is broken", async () => {
     // T032's unit half: the close handler is documented as the last place that should
     // throw. `closed()` enqueues and returns; nothing it calls can reject.
