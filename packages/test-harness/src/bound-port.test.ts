@@ -52,6 +52,13 @@ const BINDS_NOTHING: ReadonlyArray<readonly [string, string]> = [
     "a stream consumer with no inbound surface: it fetches from JetStream and posts to " +
       "the api over the internal seam, so there is no port for a test to be handed",
   ],
+  [
+    "services/ingester/src/main.ts",
+    "the same shape as the dispatcher and for the same reason: it fetches from JetStream " +
+      "and inserts into ClickHouse over HTTP, so it has no listener, no PORT and no " +
+      "address to read back. It arrived in chapter 4.3 and this entry did not, which is " +
+      "the half the derivation cannot supply on its own",
+  ],
 ];
 
 const LISTENERS = serviceMains().filter(

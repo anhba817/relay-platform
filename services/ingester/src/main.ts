@@ -71,13 +71,22 @@ export async function main(): Promise<void> {
       const r = await ingestOnce({ nc, store, logger });
       // `unclaimed` is in the line because a record nobody claims is redelivered until the
       // stream's retention expires, and the count is the only way anyone finds out that is
-      // happening. The two `written` figures are separate because one number cannot say
-      // which table moved.
+      // happening. The per-table figures are separate because one number cannot say which
+      // table moved.
+      //
+      // THREE NOW, AND THE THIRD WAS MISSING FOR A WHOLE PHASE. `IngestResult` gained
+      // `writtenConnections` with chapter 4.5's third arm and this line still reported two,
+      // so a batch carrying connection records logged `written: 3, attempts: 0, requests: 1`
+      // -- a total that does not add up, with the missing half invisible. Found by draining
+      // the real stream and then querying the table: 41 rows in `connection_events` that no
+      // log line had ever mentioned. **A reporter that omits an arm turns "one number cannot
+      // say which table moved" into three numbers that disagree.**
       if (r.written > 0 || r.malformed > 0 || r.unclaimed > 0) {
         logger.log("info", "ingester.batch", {
           written: r.written,
           attempts: r.writtenAttempts,
           requests: r.writtenRequests,
+          connections: r.writtenConnections,
           malformed: r.malformed,
           unclaimed: r.unclaimed,
         });

@@ -169,6 +169,15 @@ services:
     environment:
       RELAY_API_URL: http://api:4000
       RELAY_REDIS_URL: redis://redis:6379
+      # CONTAINER NAME, NOT localhost -- and this line is what makes chapter 4.5's
+      # producer reach anything. `createConnectionPublisher` defaults to
+      # `nats://localhost:4222`, which inside this container is the gateway's own
+      # loopback rather than the broker; and a connection-log publish failure is
+      # SWALLOWED by design (constitution III), so without this the records go nowhere
+      # and nothing says so. The api's entry carries the same note about Redis for the
+      # same reason: a missing address is harder to see than a wrong one, because there
+      # is no sentence to disagree with.
+      RELAY_NATS_URL: nats://nats:4222
       PORT: "4001"
       # The gateway's first credential of its own. Every other
       # call it makes forwards the END USER's token; a usage report is nobody's
