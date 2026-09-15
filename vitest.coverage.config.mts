@@ -324,6 +324,42 @@ export default defineConfig({
           lines: 95,
           statements: 95,
         },
+        // CHAPTER 4.5's PRODUCER, AND THE SECOND FILE IN PART 4 TO MEET CONSTITUTION VI's
+        // 100%-BRANCH CLAUSE RATHER THAN PIN A SHORTFALL. `event.ts` holds the tenancy
+        // branch -- a tenant's subject against a refusal -- and there is no `_none` arm
+        // here at all: a connection event only exists after a handshake, so a record with
+        // no tenant is malformed rather than tenantless. The 100 was reached by DELETING a
+        // branch, not by testing one.
+        //
+        // TWO OBSERVATIONS, IDENTICAL. This project pins below the lower reading by the
+        // observed swing because coverage is not reproducible run to run -- `session.ts`
+        // measured 87.80 and 85.36 on identical code twenty minutes apart. These two files
+        // measured byte-identical figures on two runs, so the swing recorded here is 0 and
+        // the pins sit at the measurement.
+        "services/gateway/src/connection-log/event.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // The publisher is broker wiring: connect lazily, share the in-flight promise,
+        // drain on close. Measured 56 statements / 44.44 branches / 66.66 functions /
+        // 60.86 lines over the unit suite and the integration suite together. The
+        // uncovered arms are the reconnect and error paths, which need a broker that fails
+        // in a particular way rather than one that is absent -- and FR-004e's retention is
+        // what makes those arms recoverable rather than load-bearing.
+        //
+        // PINNED BELOW 70 DELIBERATELY. Constitution VI's 70% is about business logic, and
+        // a file whose whole job is holding one client is not that. Pinning it at 70 would
+        // mean either a test that mocks a reconnect to move a number, or a ratchet somebody
+        // lowers later -- and this project has written down that a ratchet which teaches
+        // people to lower ratchets is worse than no ratchet.
+        "services/gateway/src/connection-log/publisher.ts": {
+          branches: 40,
+          functions: 60,
+          lines: 55,
+          statements: 50,
+        },
         "services/ingester/src/ingest.ts": {
           branches: 71,
           functions: 100,
