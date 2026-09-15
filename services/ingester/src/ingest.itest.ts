@@ -54,6 +54,11 @@ const refusing = {
   count: async (): Promise<number> => 0,
   countRequests: async (): Promise<number> => 0,
   countConnections: async (): Promise<number> => 0,
+  // Chapter 4.6 gave the interface a read. COMPLETED RATHER THAN WIDENED: a `Partial<>` or
+  // an `as` cast here would silence the one property that makes a growing interface safe --
+  // the compiler naming every construction site. It did exactly that for this line, with
+  // TS2741, the same way it caught this stub one method earlier in 4.5.
+  query: async (): Promise<string[][]> => [],
 };
 
 const rowsForEnv = async (): Promise<number> =>

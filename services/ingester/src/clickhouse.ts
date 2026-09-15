@@ -32,6 +32,18 @@ export interface ClickHouse {
   count(): Promise<number>;
   countRequests(): Promise<number>;
   countConnections(): Promise<number>;
+  /** A READ, AND THE FIRST ONE THIS INTERFACE HAS HAD (chapter 4.6).
+   *
+   * Everything above writes or counts. Chapter 4.6 needs to ASK the store a question --
+   * FR-ANL-05's four quantities for a tenant and a period -- and a read placed beside this
+   * file without going through it would open a second client against the same four
+   * environment variables. One client per service is the argument 4.5 made for NATS, and it
+   * is a property of the code only if the read comes through here.
+   *
+   * Rows as TSV lines, split by tab. The caller shapes them: this interface has refused a
+   * `table` parameter three times on the grounds that the compiler should watch the types,
+   * and a generic row decoder would be the same mistake one level up. */
+  query(sql: string): Promise<string[][]>;
 }
 
 export function createClickHouse({
@@ -56,6 +68,10 @@ export function createClickHouse({
   };
 
   return {
+    query: async (sql: string): Promise<string[][]> => {
+      const text = await post(sql, "");
+      return text === "" ? [] : text.split("\n").map((line) => line.split("\t"));
+    },
     // One statement, one block. No deduplication token: the table is a ReplacingMergeTree
     // keyed on (environment_id, ts, delivery_id, attempt), so a re-inserted record collapses
     // regardless of how it was batched -- which a token cannot do, because JetStream batch
