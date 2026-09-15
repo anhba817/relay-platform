@@ -360,6 +360,25 @@ export default defineConfig({
           lines: 55,
           statements: 50,
         },
+        // CHAPTER 4.6's READ, AT 100 ON ALL FOUR -- AND IT GOT THERE BY DELETING TWO
+        // BRANCHES RATHER THAN BY TESTING THEM.
+        //
+        // It measured 50% branches twice. The uncovered halves were a `?? ""` / `?? 0`
+        // fallback per column and a `rows.length === 0` guard, both written as defensive
+        // reads and both unreachable: the SELECT names four columns, so a short row cannot
+        // arrive, and **a bare aggregate with no GROUP BY always returns exactly one row** --
+        // asked of the server, `sum()` over a tenant with nothing answers `0`, not an empty
+        // result. The guard carried a comment claiming a test drove both arms. It did not;
+        // the test passed through the else.
+        //
+        // A branch that cannot go both ways is a branch nothing checks, and 4.5 reached the
+        // same figure the same way. Two observations, identical.
+        "services/ingester/src/metering.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
         "services/ingester/src/ingest.ts": {
           branches: 71,
           functions: 100,

@@ -57,11 +57,16 @@ export async function dailyUsage(
       ORDER BY day
       FORMAT TSV`,
   );
+  // NO FALLBACKS, AND THAT IS A DESIGN RATHER THAN AN OVERSIGHT. `?? ""` and `?? 0` on each
+  // column looked defensive and measured 50% branches: the SELECT above names four columns,
+  // so the absent arm cannot arise through the running query and no test can reach it. A
+  // branch that cannot go both ways is a branch that is never checked -- 4.5 reached
+  // 100/100/100/100 by deleting one, and this is the same move.
   return rows.map((r) => ({
-    day: r[0] ?? "",
-    messages: Number(r[1] ?? 0),
-    activeUsers: Number(r[2] ?? 0),
-    connectionMinutes: Number(r[3] ?? 0),
+    day: String(r[0]),
+    messages: Number(r[1]),
+    activeUsers: Number(r[2]),
+    connectionMinutes: Number(r[3]),
   }));
 }
 
@@ -84,5 +89,14 @@ export async function storedMessages(
       WHERE environment_id = toUUID('${environmentId}') AND day <= '${asOf}'
       FORMAT TSV`,
   );
-  return Number(rows[0]?.[0] ?? 0);
+  // NO EMPTY CHECK, BECAUSE THE EMPTY CASE DOES NOT EXIST. A first version guarded
+  // `rows.length === 0` and carried a comment claiming a test drove both arms; it did not.
+  // **A bare aggregate with no GROUP BY always returns exactly one row** -- asked of the
+  // server directly, `sum()` over a tenant with nothing stored answers `0`, not an empty
+  // result. The guard was unreachable and measured as half this file's branches.
+  //
+  // `flat()[0]` rather than `rows[0]?.[0]`: the optional chain is a branch too, and the
+  // same one. A tenant with no rows would give NaN here if the server could produce one,
+  // and it cannot.
+  return Number(rows.flat()[0]);
 }

@@ -291,6 +291,14 @@ describe("the read answers from rollup rows", () => {
     expect(Number(change)).toBe(-1);
   });
 
+  it("gives a tenant with no rows a stored balance of 0, not an empty answer", async () => {
+    // NOT a branch test -- there is no branch. `sum()` with no GROUP BY returns one row
+    // whatever the filter matches, and for a tenant with nothing stored that row is `0`.
+    // This asserts the server's behaviour, which is what the read depends on.
+    const none = "6a000000-0000-4000-8000-00000000fffe";
+    expect(await storedMessages(store, none, "2026-09-30")).toBe(0);
+  });
+
   it("counts the two authors once each, and ignores the NULL one", async () => {
     // 046's Nullable(UUID) fix, surviving into a rollup fed by two views.
     const rows = await dailyUsage(store, ENV, "2026-09-22", "2026-09-22");
