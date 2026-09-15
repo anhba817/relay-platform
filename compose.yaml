@@ -147,6 +147,15 @@ services:
       RELAY_INTERNAL_CREDENTIAL: ${RELAY_INTERNAL_CREDENTIAL:-rk_svc_local_development_credential_0000}
       # The api verifies both service credentials, so it holds both.
       RELAY_INTERNAL_CREDENTIAL_GATEWAY: ${RELAY_INTERNAL_CREDENTIAL_GATEWAY:-rk_svc_local_development_gateway_00000}
+      # Chapter 4.7. THE FIRST OPERATIONAL SERVICE TO READ THE ANALYTICAL STORE, and that
+      # is the subject rather than the plumbing: constitution III says billing, metering and
+      # dashboard analytics read only from ClickHouse, and FR-ANL-06 requires comparing them
+      # against Postgres. The reconciler is none of those three roles — it audits the
+      # boundary, and an auditor confined to one side of a fence cannot check the fence.
+      RELAY_CLICKHOUSE_HOST: clickhouse
+      RELAY_CLICKHOUSE_HTTP_PORT: "8123"
+      RELAY_CLICKHOUSE_USER: relay
+      RELAY_CLICKHOUSE_PASSWORD: relay
       PORT: "4000"
     ports:
       - "${RELAY_API_PORT:-4000}:4000"

@@ -72,3 +72,138 @@ export function differencePct(c: Comparison): number | null {
   if (denominator === 0) return 0;
   return Math.abs(c.analytical - c.operational) / denominator;
 }
+
+// ---------------------------------------------------------------------------
+// THE GATHERING (chapter 4.7, phase 3).
+//
+// Everything above is arithmetic and runs with no store. Everything below reads both of
+// them, which is the thing FR-ANL-06 asks for and constitution III's first sentence appears
+// to forbid — see the chapter, and `gaps.md`.
+// ---------------------------------------------------------------------------
+
+import type { Db } from "../db/client";
+import { operationalUsageFor } from "../db/usage-reads";
+import { nextPeriod } from "../quotas/period";
+import type { AnalyticalStore } from "./clickhouse";
+
+/** The four quantities FR-ANL-05 names. */
+export type Quantity =
+  | "messages"
+  | "activeUsers"
+  | "connectionMinutes"
+  | "storedMessages";
+
+export interface ReconcileRow {
+  environmentId: string;
+  period: string;
+  quantity: Quantity;
+  analytical: number | null;
+  operational: number | null;
+  /** WHICH TABLE, NAMED IN THE REPORT. Two operational candidates exist for messages and the
+   *  clause chooses neither, so a report that does not say which one it read is asserting the
+   *  other does not exist. */
+  operationalSource: string | null;
+  differencePct: number | null;
+  verdict: Verdict;
+}
+
+const DB_ANALYTICS = "relay_analytics";
+
+/** FR-ANL-06's comparison, for ONE tenant and ONE period.
+ *
+ * ONE TENANT PER CALL, AND THAT IS A CONSTRAINT RATHER THAN A CONVENIENCE. Measured at this
+ * chapter's opening: aggregated across tenants the two operational counters differ by
+ * 0.2694% — a number nobody would question — while 19 tenants breach and one is wrong by
+ * everything it has. A sweep is a loop in the caller, and the caller is where a summary
+ * belongs.
+ *
+ * IT WRITES NOTHING. Two invocations with the same arguments return the same report. */
+export async function reconcile(
+  db: Db,
+  store: AnalyticalStore,
+  { environmentId, period }: { environmentId: string; period: string },
+): Promise<ReconcileRow[]> {
+  // THE DAY RANGE IS HALF-OPEN, and the other spelling is wrong by one day. The caller passes
+  // a month — `periodOf`'s `YYYY-MM-01` — and the rollup is keyed by day, so
+  // `day >= period AND day < nextPeriod(period)`. `BETWEEN period AND nextPeriod(period)`
+  // puts 1 September into August, and **a reconciler's off-by-one does not crash: it reports
+  // drift.**
+  const until = nextPeriod(period);
+
+  // `count()` FIRST, AND IT IS NOT DECORATION. **A bare aggregate with no GROUP BY always
+  // returns exactly one row** — chapter 4.6 established that against the server and used it
+  // to delete a guard, and here the same fact means an empty result set is not reachable: a
+  // tenant with no rollup rows comes back as `0`, not as nothing. Without the count, "holds
+  // nothing" and "holds zero" are the same answer, and this report's whole point is that they
+  // are not.
+  const rollup = await store.query(
+    `SELECT count(), sum(messages), uniqMerge(active_users_state), sum(connection_minutes)
+       FROM ${DB_ANALYTICS}.daily_usage_billing
+      WHERE environment_id = toUUID('${environmentId}')
+        AND day >= toDate('${period}') AND day < toDate('${until}')
+      FORMAT TSV`,
+  );
+  // THE STORED COUNT IS A BALANCE, so it sums every delta up to the period's end rather than
+  // within it. A `BETWEEN` here reports the period's CHANGE in stored messages, which is a
+  // different question that reads as a plausible wrong answer.
+  const stored = await store.query(
+    `SELECT count(), sum(stored_delta) FROM ${DB_ANALYTICS}.daily_usage_billing
+      WHERE environment_id = toUUID('${environmentId}') AND day < toDate('${until}')
+      FORMAT TSV`,
+  );
+
+  // THE OPERATIONAL READ GOES THROUGH `db/usage-reads`, NOT THROUGH SQL HERE.
+  // `eslint.config.mjs` restricts `drizzle-orm` to `services/api/src/db/**` — "the query
+  // engine lives inside the repository layer only (constitution I, ADR-16)" — and the first
+  // version of this file failed lint on exactly that import.
+  const op = await operationalUsageFor(db, environmentId, period);
+
+  const rollupRow = rollup[0];
+
+  /** An analytical cell, absent when the tenant-period has no rollup rows at all.
+   *
+   *  THE COUNT DECIDES, NOT THE SUM. A first version read `rollup[0] === undefined` and never
+   *  fired: the server answers a bare aggregate with one row whatever the filter matches, so
+   *  every empty tenant reported `0` and every `no-data` verdict came back `breach`. */
+  const rows0 = rollupRow === undefined ? 0 : Number(rollupRow[0]);
+  const analytical = (i: number): number | null =>
+    rows0 === 0 || rollupRow === undefined ? null : Number(rollupRow[i + 1]);
+
+  const rows: Array<[Quantity, number | null, number | null, string | null, boolean]> = [
+    ["messages", analytical(0), op.messagesSent, "usage_periods", true],
+    // `activeUsers` is null when the tenant has no period row at all, and 0 when it has one
+    // with no users — the same distinction the rest of the report keeps.
+    [
+      "activeUsers",
+      analytical(1),
+      op.messagesSent === null ? null : op.activeUsers,
+      "usage_active_users",
+      true,
+    ],
+    ["connectionMinutes", analytical(2), op.connectionMinutes, "usage_periods", true],
+    // NO OPERATIONAL SOURCE ANYWHERE, and that is a fact about the platform rather than about
+    // this tenant. `usage_periods` carries messages and connection-minutes,
+    // `usage_active_users` carries the third, and nothing carries a stored total.
+    [
+      "storedMessages",
+      stored[0] === undefined || Number(stored[0][0]) === 0 ? null : Number(stored[0][1]),
+      null,
+      null,
+      false,
+    ],
+  ];
+
+  return rows.map(([quantity, a, o, source, hasSource]) => {
+    const c: Comparison = { analytical: a, operational: o, hasOperationalSource: hasSource };
+    return {
+      environmentId,
+      period,
+      quantity,
+      analytical: a,
+      operational: o,
+      operationalSource: source,
+      differencePct: differencePct(c),
+      verdict: verdictFor(c),
+    };
+  });
+}
