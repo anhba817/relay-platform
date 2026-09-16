@@ -15,7 +15,7 @@
 // not an alert, and an exit code is not one either — the chapter says what a real one costs.
 import { createDb, createPool } from "../services/api/dist/db/client.js";
 import { createAnalyticalStore } from "../services/api/dist/metering/clickhouse.js";
-import { reconcile } from "../services/api/dist/metering/reconcile.js";
+import { exitCodeFor, reconcile } from "../services/api/dist/metering/reconcile.js";
 
 function arg(name) {
   const i = process.argv.indexOf(`--${name}`);
@@ -52,4 +52,6 @@ if (breached.length > 0) {
   );
 }
 await db.$client.end?.();
-process.exit(breached.length > 0 ? 1 : 0);
+// THE VERDICT-TO-EXIT-CODE RULE IS NOT DECIDED HERE. It was, in one expression this lane never
+// ran; `exitCodeFor` is the same rule where a test can reach it.
+process.exit(exitCodeFor(rows));

@@ -82,6 +82,21 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary"],
+      // REPORT EVEN WHEN A TEST FAILS, AND CHAPTER 4.7 FOUND OUT WHY BY RUNNING IT.
+      //
+      // This defaults to false, which means a single red test suppresses the WHOLE
+      // report: no table, no per-file threshold errors, no `coverage/` directory —
+      // only the line `Coverage enabled with v8`. Measured both ways over the same
+      // three files: all green printed the table and every threshold error; one
+      // failing test printed neither.
+      //
+      // The api's `request-log.itest.ts` has been red on any machine with no ingester
+      // process since chapter 4.4 shipped it (050-8), so the gate that measures
+      // constitution VI has been answering with silence rather than with a number —
+      // and silence is indistinguishable from a pass at a glance. **A ratchet that
+      // only reports on a green lane cannot guard a lane that is red for an unrelated
+      // reason.**
+      reportOnFailure: true,
       include: ["packages/*/src/**/*.ts", "services/*/src/**/*.ts"],
       exclude: [
         "**/*.test.ts",
@@ -1016,6 +1031,58 @@ export default defineConfig({
         },
         "services/gateway/src/meter.ts": {
           branches: 93,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+
+        // ── CHAPTER 4.7's RECONCILER, AND EVERY UNCOVERED ARM IS THE SAME ONE ─────
+        //
+        // Measured twice, identical both times: 100 / 97.14 / 100 / 100. Pinned one
+        // point below on branches for the run-to-run swing this provider has.
+        //
+        // THE ONE UNCOVERED BRANCH IS 4.6's FACT, AND HERE IT IS KEPT RATHER THAN
+        // DELETED. `rollup[0] === undefined` never fires: the rollup read is a bare
+        // aggregate, and **a bare aggregate with no GROUP BY always returns exactly
+        // one row**. Chapter 4.6 met the same arm and deleted it. This one stays, for
+        // a reason that chapter did not have: `noUncheckedIndexedAccess` is on, so
+        // `rollup[0]` is `string[] | undefined` and removing the check means asserting
+        // a type the store's signature does not promise. An uncovered arm is cheaper
+        // than a lie about a type.
+        //
+        // AND THE ARM IS NOT DEAD AT THE STORE — only at this call site.
+        // `reconcile.itest.ts` proves `query` really does answer `[]`, for a filtered
+        // NON-aggregate. That difference is exactly why this function counts rows
+        // instead of testing the result for emptiness.
+        "services/api/src/metering/reconcile.ts": {
+          branches: 96,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // The api's own analytical caller. 100 / 94.73 / 100 / 100, twice.
+        //
+        // IT WAS 88.88 / 78.94 UNTIL THE TWO STORE-LEVEL TESTS WERE WRITTEN — the
+        // refusal path and the empty result set, both real behaviour and neither
+        // exercised by a reconciliation test that only ever asks well-formed
+        // questions. The remaining branch is line 52's `?? "clickhouse refused"`,
+        // which `String.prototype.split` makes unreachable and the type checker makes
+        // mandatory: the same trade as the file above.
+        "services/api/src/metering/clickhouse.ts": {
+          branches: 93,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // The operational half of the comparison. 100 / 83.33 / 100 / 100, twice.
+        //
+        // 83.33 IS FIVE ARMS OF SIX, and the sixth is the same shape a third time,
+        // asked of the other engine: `select count(*)` with no GROUP BY returns one
+        // row for a filter matching nothing — checked against this lane's Postgres,
+        // which answered `(1 row)` with `n = 0` — so the `?? 0` beside it cannot fire.
+        // Three files, three engines' worth of the same guard, one pin each.
+        "services/api/src/db/usage-reads.ts": {
+          branches: 82,
           functions: 100,
           lines: 100,
           statements: 100,

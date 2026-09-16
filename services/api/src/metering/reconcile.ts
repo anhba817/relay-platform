@@ -207,3 +207,18 @@ export async function reconcile(
     };
   });
 }
+
+/** FR-ANL-06's *"raises an alert"*, as the only thing this platform can currently mean by it.
+ *
+ * THE LINE THAT DECIDES WHETHER THE ALERT FIRES LIVED IN A FILE NOTHING TESTS.
+ * `scripts/reconcile-usage.mjs` closed with `process.exit(breached.length > 0 ? 1 : 0)` — one
+ * expression, no test, and the whole of FR-008's observable behaviour. Moved here so a test can
+ * ask it directly instead of a human reading output.
+ *
+ * `not-comparable` and `no-data` DO NOT RAISE. A quantity with no operational counterpart is a
+ * gap in the platform and a tenant with nothing on either side is a tenant with nothing; a job
+ * that exits 1 for either would exit 1 every day, and a check that always fires stops being
+ * read. The gap is the chapter's subject and not this exit code's. */
+export function exitCodeFor(rows: readonly ReconcileRow[]): 0 | 1 {
+  return rows.some((r) => r.verdict === "breach") ? 1 : 0;
+}

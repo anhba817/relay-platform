@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   RECONCILE_THRESHOLD,
   differencePct,
+  exitCodeFor,
   verdictFor,
   type Comparison,
+  type ReconcileRow,
+  type Verdict,
 } from "./reconcile";
 
 // THE VERDICT, WITH NO STORE IN SIGHT.
@@ -124,5 +127,32 @@ describe("the threshold is a named constant", () => {
   it("is overridable, so a test can drive the boundary without editing the clause", () => {
     expect(verdictFor(both(100, 110), 0.2)).toBe("pass");
     expect(verdictFor(both(100, 110), 0.05)).toBe("breach");
+  });
+});
+
+describe("the exit code is FR-ANL-06's alert, and it is a value rather than a printed line", () => {
+  // THIS RULE USED TO LIVE IN `scripts/reconcile-usage.mjs`, in one expression no lane runs.
+  // The script still owns the printing; the decision is here, where these four cases reach it.
+  const row = (quantity: string, verdict: Verdict): ReconcileRow =>
+    ({ quantity, verdict }) as unknown as ReconcileRow;
+
+  it("is 1 when any quantity breaches, whatever the others say", () => {
+    expect(exitCodeFor([row("messages", "pass"), row("connectionMinutes", "breach")])).toBe(1);
+  });
+
+  it("is 0 for a report with no breach in it", () => {
+    expect(exitCodeFor([row("messages", "pass"), row("activeUsers", "pass")])).toBe(0);
+  });
+
+  it("does NOT raise on not-comparable or no-data", () => {
+    // Every real tenant in this platform is in one of those two states today, and a job that
+    // exits 1 every day is one nobody reads. The gap belongs to the chapter, not to this code.
+    expect(exitCodeFor([row("storedMessages", "not-comparable"), row("messages", "no-data")])).toBe(
+      0,
+    );
+  });
+
+  it("is 0 for an empty report, because nothing was compared", () => {
+    expect(exitCodeFor([])).toBe(0);
   });
 });
