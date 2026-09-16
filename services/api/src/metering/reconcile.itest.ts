@@ -118,8 +118,20 @@ describe("the job compares both stores for one tenant and one period", () => {
   });
 
   it("calls the stored count not-comparable, however much analytical data exists", async () => {
-    const rows = await reconcile(db, store, { environmentId, period: PERIOD });
-    expect(rows.find((r) => r.quantity === "storedMessages")?.verdict).toBe("not-comparable");
+    // THE TITLE SAYS "HOWEVER MUCH", SO THE TEST PLANTS SOME. Audited at this chapter's
+    // close: the first version asserted only the empty case and its title claimed the
+    // general one, which is the overclaiming-title defect this project files against itself.
+    const empty = await reconcile(db, store, { environmentId, period: PERIOD });
+    expect(empty.find((r) => r.quantity === "storedMessages")?.verdict).toBe("not-comparable");
+
+    await plantAnalytical("2026-04-08", 250, 5);
+    const loaded = await reconcile(db, store, { environmentId, period: PERIOD });
+    const stored = loaded.find((r) => r.quantity === "storedMessages");
+    expect(stored?.verdict).toBe("not-comparable");
+    expect(stored?.operational).toBeNull();
+    // And the verdict does NOT come from the analytical side being empty: it is present.
+    expect(loaded.find((r) => r.quantity === "messages")?.analytical).toBe(250);
+    await clearAnalytical();
   });
 
   it("calls a tenant with nothing on either side no-data, not agreement", async () => {
