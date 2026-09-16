@@ -186,9 +186,13 @@ describe("the job compares both stores for one tenant and one period", () => {
     expect(mine.find((r) => r.quantity === "messages")?.analytical).toBeNull();
     const theirs = await reconcile(db, store, { environmentId: other.id, period: PERIOD });
     expect(theirs.find((r) => r.quantity === "messages")?.analytical).toBe(7_000);
-    await ch(
-      `ALTER TABLE relay_analytics.daily_usage_billing DELETE WHERE environment_id = '${other.id}'`,
-    );
+    // THROUGH THE POLLING CLEANUP, NOT A BARE `ALTER … DELETE`. This line was the bare form
+    // until a row planted by an earlier run of this very test was found still in the table:
+    // 7,000 messages on 2026-04-15 for an environment no live suite names. Issued by hand the
+    // same statement removed it in under four seconds, so the delete works — what is missing
+    // in the fire-and-forget form is any evidence that it ran.
+    await clearAnalytical(other.id);
+    expect(await analyticalRows(other.id)).toBe(0);
   });
 });
 
