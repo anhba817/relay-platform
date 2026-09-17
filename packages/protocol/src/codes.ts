@@ -335,6 +335,33 @@ export const ERROR_CODES = {
   // (NFR-SEC-06).
   wrong_credential_service:
     "the credential's service is not permitted on this route; the message names the service presented and the services allowed",
+
+  // THE FIRST 503 IN THIS REGISTRY, AND THE FIRST CODE THAT NAMES A SUBSYSTEM RATHER THAN
+  // A MISTAKE (chapter 4.8, FR-ANL-07, FR-025).
+  //
+  // The request log reads the analytical store, and constitution III's second clause is a
+  // MUST about exactly this: *"failure or backlog of the analytical pipeline MUST NOT
+  // affect message delivery, real-time fan-out, or API availability."* The api being up
+  // while this one surface is not is the distinction that clause turns on — so the refusal
+  // has to be explicit. An empty page would be a claim about the TENANT: that they made no
+  // requests. This is a claim about the PLATFORM.
+  //
+  // NAMED FOR WHAT A CLIENT DOES ABOUT IT, which is the test this registry sets on itself
+  // — its own note above argues three refusals apart because "a client acts on them
+  // differently". `analytics_unavailable` says which subsystem is out and that the request
+  // is worth retrying. `internal_error` would say neither, and `unauthorized` would say
+  // something false.
+  //
+  // AND THE MESSAGE NEVER CARRIES THE STORE'S ANSWER. `Code: 159. DB::Exception: Timeout
+  // exceeded: elapsed 1000.343075 ms, maximum: 1000 ms` is infrastructure detail, and a
+  // refusal that carries it puts a ClickHouse error string in a customer's support ticket
+  // — the argument this file already makes about credentials (NFR-SEC-06).
+  //
+  // ONLY FOR A STORE THAT DID NOT ANSWER. A 404 or a syntax error from ClickHouse means
+  // the PLATFORM's statement is wrong, and telling a customer to retry a query that will
+  // never work is worse than telling them nothing. Those stay `internal_error`.
+  analytics_unavailable:
+    "the analytics service did not answer in time; the rest of the API is unaffected and this request is worth retrying",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

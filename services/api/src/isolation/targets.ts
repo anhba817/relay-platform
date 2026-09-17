@@ -381,6 +381,33 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // the sixth time in this repository, and the list has never once been ahead of it.
   { method: "POST", path: "/internal/usage/connections", accepts: "platform", shape: "write" },
 
+  // ── THE REQUEST LOG (chapter 4.8, FR-ANL-07), AND THE DERIVATION FOUND IT FIRST ──
+  //
+  // Run before this entry existed: `43 derived, 36 attacked, 6 exempt` with
+  // `unclassified: ["GET /v1/request-log"]` and `CLASSIFICATIONS.length` 42 against 43.
+  // That is the seventh time in this repository, and the list has still never been ahead
+  // of the derivation. The classification is what changed in answer to it, never the
+  // derivation.
+  //
+  // `list` AND NOT `read`, AND `GET /v1/webhooks` IS THE PRECEDENT WORD FOR WORD: *"There
+  // is no identifier in the path at all — the tenant comes from the key — so what the
+  // attack shows is that a key for one environment sees none of another's endpoints in a
+  // 200."* Substitute "requests" for "endpoints" and the sentence is this route's. The
+  // refusal that matters here is an EMPTY PAGE rather than an error, because there is
+  // nothing in the path to forge a 404 out of.
+  //
+  // AND THE ISOLATION CLAIM IS STRONGER HERE THAN ON ANY OTHER `list`. 60.5% of this
+  // table has no tenant at all, so the attack has two things to show rather than one: no
+  // row from another environment appears in a 200, and no TENANTLESS row does either.
+  // They are unreachable from every tenant's query because they carry no tenant to match,
+  // which is chapter 4.4's reading of constitution I as a test rather than as an argument.
+  //
+  // `accepts: "application"` MATCHES THE DECORATOR AND THE TWO ARE NOT COMPARED BY
+  // ANYTHING. The controller declares `@Accepts("application")`; this field tells the
+  // gauntlet which credential to attack with, so a `"user"` here would send it at the
+  // route with a token the guard refuses at the door and the handler would never run.
+  { method: "GET", path: "/v1/request-log", accepts: "application", shape: "list" },
+
   // ── credential, internal, end-user token ─────────────────────────────────────
   //
   // `credential` AND NOT `read`, WHICH IS THE SIBLING ROUTE'S ARGUMENT VERBATIM. The

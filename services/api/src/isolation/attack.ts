@@ -132,10 +132,30 @@ export interface ListVerdict {
  * zero from a correctly-scoped list — which is the one answer this suite must never
  * confuse with success. `listAttack` therefore asserts the shape was recognised
  * rather than trusting the count. */
+/** The rows out of a list response.
+ *
+ * A NAMED SET OF SHAPES, AND IT STAYS ONE. Chapter 4.8 tried to replace this with "the
+ * first array-valued property", on the reflex that a hand-maintained table cannot be
+ * checked — and the test below refused the change, correctly. **This table IS checked**,
+ * twice over: it pins that an unrecognised shape returns `[]`, and every `list` attack
+ * carries a `count > 0` control that then fails. So an unknown shape cannot pass quietly,
+ * which is the precondition the reflex assumes is missing.
+ *
+ * And the derived version was worse in the direction that matters: it would count ANY
+ * array in the body — a cursor list, an embedded collection, an echo of what was asked
+ * for — as rows, which is a false pass where this is a loud failure. `{ requests }` is
+ * added by name.
+ *
+ * WHAT THE FAILURE READS LIKE IS THE ONE REAL COST. An unrecognised shape fails as *"the
+ * attacker's own listing came back empty"*, which names a symptom and not the cause. The
+ * test below is what turns that into a sentence about the recogniser. */
 export function rowsOf(body: unknown): unknown[] {
   if (Array.isArray(body)) return body;
-  const data = (body as { data?: unknown } | null)?.data;
-  if (Array.isArray(data)) return data;
+  const shaped = body as { data?: unknown; requests?: unknown } | null;
+  if (Array.isArray(shaped?.data)) return shaped.data;
+  // Chapter 4.8's envelope: the array is named for the resource, as
+  // `messages.service.ts` names its own. R23 refused `rows` for being a storage word.
+  if (Array.isArray(shaped?.requests)) return shaped.requests;
   return [];
 }
 

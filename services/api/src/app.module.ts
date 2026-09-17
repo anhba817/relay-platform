@@ -28,6 +28,7 @@ import { LimitsModule } from "./limits/limits.module";
 import { RateLimitMiddleware } from "./limits/rate-limit.middleware";
 import { RequestContextMiddleware } from "./request-context.middleware";
 import { RequestLogMiddleware } from "./request-log/request-log.middleware";
+import { RequestLogModule } from "./request-log/request-log.module";
 import { ANALYTICS_PUBLISHER } from "./webhooks/analytics";
 import { createJetStreamPublisher, ensureAnalyticsStream } from "./outbox/jetstream.publisher";
 import type { Publisher } from "./outbox/publisher";
@@ -50,6 +51,11 @@ import type { Publisher } from "./outbox/publisher";
     ConsumerModule,
     WebhooksModule,
     LimitsModule,
+    // Chapter 4.8's read surface. Registered here for the reason `ChannelsModule` and
+    // `UsersModule` are: without this line the module compiles, is imported by nothing,
+    // and the route does not exist — which `pnpm build` would not notice and the
+    // cross-tenant gauntlet would, because it derives its targets from the router.
+    RequestLogModule,
   ],
   controllers: [HealthController],
   providers: [
