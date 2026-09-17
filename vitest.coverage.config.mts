@@ -1060,16 +1060,27 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
-        // The api's own analytical caller. 100 / 94.73 / 100 / 100, twice.
+        // The api's own analytical caller. 100 / 91.3 / 100 / 100 — LOWERED FROM 93 BY
+        // CHAPTER 4.8, WHICH IS THE THING A RATCHET IS SUPPOSED TO MAKE HARD.
         //
-        // IT WAS 88.88 / 78.94 UNTIL THE TWO STORE-LEVEL TESTS WERE WRITTEN — the
-        // refusal path and the empty result set, both real behaviour and neither
-        // exercised by a reconciliation test that only ever asks well-formed
-        // questions. The remaining branch is line 52's `?? "clickhouse refused"`,
-        // which `String.prototype.split` makes unreachable and the type checker makes
-        // mandatory: the same trade as the file above.
+        // IT WAS 88.88 / 78.94 UNTIL 4.7's TWO STORE-LEVEL TESTS — the refusal path and
+        // the empty result set, both real behaviour and neither exercised by a
+        // reconciliation test that only ever asks well-formed questions. The branch left
+        // over was line 115's `?? "clickhouse refused"`, which `String.prototype.split`
+        // makes unreachable and the type checker makes mandatory.
+        //
+        // 4.8 ADDED A SECOND ARM OF EXACTLY THE SAME KIND and the pin caught it, which is
+        // the pin working rather than the pin being in the way. The store client now
+        // catches `fetch` rejecting — an abort, a refused connection, a DNS failure — and
+        // `cause` is typed `unknown`, so `cause instanceof Error ? cause.message : …` has
+        // an else the runtime never takes: `fetch` rejects with an `Error`. Driving it
+        // would mean mocking `fetch`, which buys a green number by testing a stub.
+        //
+        // **TWO UNREACHABLE ARMS, BOTH NAMED, BOTH TYPE-MANDATED**, and the file is at
+        // 100 on every other measure. An uncovered arm is cheaper than a lie about a
+        // type — 4.7's sentence, now applying twice in the same file.
         "services/api/src/metering/clickhouse.ts": {
-          branches: 93,
+          branches: 91,
           functions: 100,
           lines: 100,
           statements: 100,
@@ -1109,6 +1120,40 @@ export default defineConfig({
           statements: 100,
         },
         "services/api/src/request-log/request-log.schema.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // The reader. 100 / 86.79 / 100 / 100, twice.
+        //
+        // 86.79 IS ELEVEN `??` DEFAULTS THAT `noUncheckedIndexedAccess` FORCES AND THE
+        // TRANSPORT CANNOT REACH. `AnalyticalStore.query` returns `string[][]` and the
+        // statement names ten columns, so `cells[7] ?? ""` has a right operand that never
+        // evaluates — the same trade `reconcile.ts` records at 96 and `metering/clickhouse.ts`
+        // at 93, a third time: an uncovered arm is cheaper than a lie about a type.
+        //
+        // IT WAS 79.24 AND THEN 83.01 BEFORE IT WAS THIS, and both steps were real gaps
+        // rather than rounding. The first: `refuse()`'s re-throw arm and the malformed
+        // cursor, two decisions this chapter argued for in a comment and never drove —
+        // `reader.test.ts` drives them now. The second: **`direction: newer` had never
+        // run**, in the contract and in the schema since phase 2, with every test using
+        // the default. Two expressions flip with it and a page that got one and not the
+        // other returns the right rows in the wrong order.
+        "services/api/src/request-log/reader.ts": {
+          branches: 86,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // The route. 100 / 100 / 100 / 100, twice — and the 403 arm is at 100 because a
+        // unit test drives it, not because the route can reach it. `@Accepts("application")`
+        // refuses every other credential class at the door and an application credential
+        // always carries an environment, so FR-011's refusal is unreachable over HTTP
+        // today. Kept rather than deleted, which is where this differs from chapter 4.6's
+        // dead branches: a requirement asks for this one, and "the guard would have caught
+        // it" is an argument about today's decorator.
+        "services/api/src/request-log/request-log.controller.ts": {
           branches: 100,
           functions: 100,
           lines: 100,

@@ -179,6 +179,36 @@ afterAll(async () => {
   await clear(neighbourId);
 });
 
+/** A tenant of this test's own, cleaned up whatever happens.
+ *
+ * ONE ENVIRONMENT PER ASSERTION, AND THE SUITE PAID FOR THE ALTERNATIVE. Its first filter
+ * test shared a tenant with the dedup test above and went red on `["/healthz",
+ * "/healthz"]` — an assertion scoped wider than the thing it tested, failing for another
+ * test's reason eight lines up. A fresh id costs one insert and removes the class. */
+async function withProbe(
+  rows: readonly Planted[],
+  body: (env: string) => Promise<void>,
+): Promise<void> {
+  const env = randomUUID();
+  try {
+    await plant(env, rows);
+    await body(env);
+  } finally {
+    await clear(env);
+  }
+}
+
+const row = (o: Partial<Planted> & { msAgo: number }): Planted => ({
+  requestId: randomUUID(),
+  endpoint: "/healthz",
+  method: "GET",
+  status: 200,
+  latencyMs: 1,
+  principalKind: "application",
+  limitedOperation: null,
+  ...o,
+});
+
 describe("the request log, read from the store", () => {
   it("returns the tenant's own rows and no neighbour's (constitution I, FR-006)", async () => {
     const page = await reader.page(environmentId, query(WIDE()), NOW);
@@ -249,31 +279,55 @@ describe("the request log, read from the store", () => {
     });
   });
 
-  it("dedups with `FINAL`: a redelivered row is one row", async () => {
+  /** THE SURFACE RETURNS IT ONCE, WHICH IS NOT WHAT `ingest.itest.ts:299` PROVES.
+   *
+   * That test proves the ENGINE collapses a duplicate key — `count() FINAL` is 1 where
+   * the table holds 2. This proves the SURFACE does. A reader that dropped `FINAL` would
+   * leave 049's test green and this chapter's page wrong, and the failure would be
+   * intermittent: the duplicate this lane actually held was gone by the time this suite
+   * was written, removed by a merge nobody asked for.
+   *
+   * SO THE TEST MAKES ITS OWN, AND STOPS MERGES TO KEEP IT. That is a LANE-WIDE side
+   * effect — `ingest.itest.ts:300` stops merges on this exact table and the api lane runs
+   * two workers — so the `finally` restores merges AND deletes this probe's own rows.
+   * Feature 050's T056 says why in as many words: *"an earlier version of this task named
+   * only the stop, which is the one step with a lane-wide side effect."*
+   *
+   * THE PHYSICAL COUNT IS THE POSITIVE CONTROL. Without it the test passes when the
+   * second insert never happened. */
+  it("returns a redelivered request once, over a table that physically holds it twice", async () => {
+    const probe = randomUUID();
     const duplicate = randomUUID();
-    const twice: Planted = {
-      requestId: duplicate,
-      msAgo: 25_000,
-      endpoint: "/healthz",
-      method: "GET",
-      status: 200,
-      latencyMs: 0.4,
-      principalKind: "none",
-      limitedOperation: null,
-    };
-    await plant(environmentId, [twice]);
-    await plant(environmentId, [twice]);
-    const page = await reader.page(environmentId, query(WIDE()), NOW);
-    expect(page.requests.filter((r) => r.request_id === duplicate)).toHaveLength(1);
-    // AND THE STORE REALLY DID HOLD IT TWICE, which is the half that makes the line above
-    // a claim about `FINAL` rather than about the insert. Chapter 4.6 learned this the
-    // hard way: a dedup test that does not prove the duplicate existed passes against a
-    // table a merge has already tidied.
-    const both = await ch(
-      `SELECT count() FROM relay_analytics.api_requests
-        WHERE environment_id = toUUID('${environmentId}') AND request_id = toUUID('${duplicate}') FORMAT TSV`,
-    );
-    expect(Number(both)).toBe(2);
+    await ch("SYSTEM STOP MERGES relay_analytics.api_requests");
+    try {
+      const twice: Planted = {
+        requestId: duplicate,
+        msAgo: 25_000,
+        endpoint: "/healthz",
+        method: "GET",
+        status: 200,
+        latencyMs: 0.4,
+        principalKind: "none",
+        limitedOperation: null,
+      };
+      await plant(probe, [twice]);
+      await plant(probe, [twice]);
+
+      const physical = Number(
+        await ch(
+          `SELECT count() FROM relay_analytics.api_requests
+            WHERE environment_id = toUUID('${probe}') AND request_id = toUUID('${duplicate}') FORMAT TSV`,
+        ),
+      );
+      expect(physical, "the second insert did not land; the test below proves nothing").toBe(2);
+
+      const page = await reader.page(probe, query(WIDE()), NOW);
+      expect(page.requests).toHaveLength(1);
+      expect(page.requests[0]?.request_id).toBe(duplicate);
+    } finally {
+      await ch("SYSTEM START MERGES relay_analytics.api_requests");
+      await clear(probe);
+    }
   });
 
   it("pages with a composite cursor and never repeats a row (FR-007)", async () => {
@@ -340,5 +394,287 @@ describe("the request log, read from the store", () => {
     expect(new Date(page.window.to).getTime()).toBeLessThan(
       new Date(page.retention_edge).getTime(),
     );
+  });
+});
+
+describe("what the log can and cannot show", () => {
+  /** FR-002, SC-003. THE ASSERTION IS ON THE SECOND TENANT'S ROWS, NOT ON A TOTAL.
+   * A count is satisfied by a query that returns the right NUMBER of the wrong rows;
+   * chapter 4.4's form names each of the victim's request ids and asserts none of them
+   * came back, which is the claim constitution I actually makes. */
+  it("returns none of another tenant's rows, by id", async () => {
+    const mine = randomUUID();
+    const theirs = randomUUID();
+    const theirIds = [randomUUID(), randomUUID(), randomUUID()];
+    try {
+      await plant(mine, [row({ msAgo: 5_000 })]);
+      await plant(
+        theirs,
+        theirIds.map((requestId) => row({ msAgo: 5_000, requestId })),
+      );
+      const page = await reader.page(mine, query(WIDE()), NOW);
+      const returned = new Set(page.requests.map((r) => r.request_id));
+      for (const id of theirIds) expect(returned.has(id)).toBe(false);
+      // AND THE CONTROL: the other tenant's rows really do exist, so the absence above
+      // is about the filter rather than about an empty table.
+      const other = await reader.page(theirs, query(WIDE()), NOW);
+      expect(other.requests.map((r) => r.request_id).sort()).toEqual([...theirIds].sort());
+    } finally {
+      await clear(mine);
+      await clear(theirs);
+    }
+  });
+
+  /** FR-003, SC-003. 60.5% OF THE LANE'S LOG IS IN THIS STATE — every 404, every 401,
+   * `/healthz`, signup, and every call the dispatcher and gateway make on the internal
+   * seam, whose `platform` principal carries no `environmentId` by design.
+   *
+   * Constitution I says every analytical record carries a non-null tenant; chapter 4.4's
+   * reading is that the clause governs tenant DATA, and a record with no tenant is not
+   * tenant data. That reading is only worth anything because it is testable, and this is
+   * the test: the row exists, and it is reachable from no tenant's query. */
+  it("never returns a row with no tenant, from any tenant's query", async () => {
+    const mine = randomUUID();
+    const orphan = randomUUID();
+    try {
+      await plant(mine, [row({ msAgo: 5_000 })]);
+      await plant(null, [row({ msAgo: 5_000, requestId: orphan })]);
+      // THE CONTROL, AND IT IS THE HALF THAT MAKES THIS A TEST. The tenantless row is in
+      // the table; what follows is that no tenant can reach it, not that it is absent.
+      const physical = Number(
+        await ch(
+          `SELECT count() FROM relay_analytics.api_requests
+            WHERE request_id = toUUID('${orphan}') AND environment_id IS NULL FORMAT TSV`,
+        ),
+      );
+      expect(physical).toBe(1);
+
+      for (const tenant of [mine, environmentId, neighbourId]) {
+        const page = await reader.page(tenant, query(WIDE()), NOW);
+        expect(page.requests.map((r) => r.request_id)).not.toContain(orphan);
+      }
+    } finally {
+      await clear(mine);
+      await ch(
+        `ALTER TABLE relay_analytics.api_requests DELETE WHERE request_id = toUUID('${orphan}')`,
+      );
+    }
+  });
+
+  /** FR-007, SC-004, SC-020. `has_more` IS WHAT THE `limit + 1` FETCH IS FOR, and the
+   * third case is the one it exists for: a page that exactly exhausts the window must
+   * not advertise a next page that turns out empty. */
+  it("pages without repeating, and says when there is no more", async () => {
+    const rows = [0, 1, 2, 3].map((n) => row({ msAgo: 5_000 + n * 1_000 }));
+    await withProbe(rows, async (env) => {
+      const first = await reader.page(env, query({ ...WIDE(), limit: "2" }), NOW);
+      expect(first.requests).toHaveLength(2);
+      expect(first.has_more).toBe(true);
+
+      const second = await reader.page(
+        env,
+        query({ ...WIDE(), limit: "2", cursor: first.next_cursor ?? "" }),
+        NOW,
+      );
+      expect(second.requests).toHaveLength(2);
+      expect(second.has_more).toBe(false);
+      expect(second.next_cursor).toBeNull();
+
+      const seen = new Set(first.requests.map((r) => r.request_id));
+      for (const r of second.requests) expect(seen.has(r.request_id)).toBe(false);
+      expect(seen.size + second.requests.length).toBe(4);
+
+      // THE EXACT EXHAUST. Four rows, a limit of four: the window holds nothing more and
+      // the page must say so. Without the extra row this reads `has_more: true` and the
+      // caller's next request comes back empty.
+      const whole = await reader.page(env, query({ ...WIDE(), limit: "4" }), NOW);
+      expect(whole.requests).toHaveLength(4);
+      expect(whole.has_more).toBe(false);
+    });
+  });
+
+  /** `direction: newer` — THE HALF THE BRANCH REPORT SAID HAD NEVER RUN.
+   *
+   * It is in the contract and in the schema, and every test written before this one used
+   * the default. Two things change with it and both are in one expression each: the
+   * cursor comparison flips from `<` to `>`, and the sort flips from descending to
+   * ascending. A page that got one and not the other would return the right rows in the
+   * wrong order, or the wrong rows in the right order, and no assertion on the default
+   * direction can see either.
+   *
+   * AND IT IS WHAT `prev_cursor` IS FOR. The envelope carries two cursors because
+   * `direction` is two-way — a first draft of this contract shipped one, which leaves a
+   * caller reading `newer` with no way back. */
+  it("pages backwards, in ascending order, and lands on the rows it came from", async () => {
+    const rows = [0, 1, 2, 3].map((n) => row({ msAgo: 5_000 + n * 1_000 }));
+    await withProbe(rows, async (env) => {
+      const newest = await reader.page(env, query({ ...WIDE(), limit: "2" }), NOW);
+      const older = await reader.page(
+        env,
+        query({ ...WIDE(), limit: "2", cursor: newest.next_cursor ?? "" }),
+        NOW,
+      );
+      // BACK THE WAY IT CAME: `prev_cursor` with the opposite direction.
+      const back = await reader.page(
+        env,
+        query({
+          ...WIDE(),
+          limit: "2",
+          direction: "newer",
+          cursor: older.prev_cursor ?? "",
+        }),
+        NOW,
+      );
+      expect(back.requests).toHaveLength(2);
+      // ASCENDING, which is what `newer` means — the opposite of every other assertion
+      // in this file.
+      const times = back.requests.map((r) => new Date(r.ts).getTime());
+      expect(times[0]).toBeLessThan(times[1] ?? 0);
+      // AND THEY ARE THE TWO IT STARTED FROM.
+      expect(new Set(back.requests.map((r) => r.request_id))).toEqual(
+        new Set(newest.requests.map((r) => r.request_id)),
+      );
+    });
+  });
+
+  /** FR-008, SC-005. BOTH SIDES, BECAUSE THE HALF-OPEN RANGE IS WHERE AN OFF-BY-ONE
+   * DUPLICATES A ROW ACROSS TWO PAGES. `from` is inclusive and `to` is exclusive, so a
+   * row exactly at `from` is in and a row exactly at `to` is out. */
+  it("includes a row exactly at `from` and excludes one exactly at `to`", async () => {
+    const atFrom = randomUUID();
+    const atTo = randomUUID();
+    const inside = randomUUID();
+    const FROM = at(60_000);
+    const TO = at(30_000);
+    await withProbe(
+      [
+        row({ msAgo: 60_000, requestId: atFrom }),
+        row({ msAgo: 45_000, requestId: inside }),
+        row({ msAgo: 30_000, requestId: atTo }),
+      ],
+      async (env) => {
+        const page = await reader.page(
+          env,
+          query({ from: FROM.toISOString(), to: TO.toISOString() }),
+          NOW,
+        );
+        const ids = page.requests.map((r) => r.request_id);
+        expect(ids).toContain(atFrom);
+        expect(ids).toContain(inside);
+        expect(ids).not.toContain(atTo);
+        expect(ids).toHaveLength(2);
+      },
+    );
+  });
+
+  /** FR-009, SC-006. THE DECISION, NAMED AS BEHAVIOUR RATHER THAN AS A FILTER.
+   *
+   * `/internal/*` rows are RETURNED. 1,656 of a tenant's 4,621 attributed rows in this
+   * lane are the platform calling itself on that tenant's behalf — `/internal/session`
+   * alone is 1,423 — so a customer's own log opens on calls their software did not make.
+   * Hiding them would make the log incomplete against FR-ANL-01's *"every request"*, it
+   * would need a prefix rule that fails open, and the caller can already exclude them
+   * with the `endpoint` filter while the platform cannot un-hide them. */
+  it("returns the platform's internal calls made on the tenant's behalf", async () => {
+    await withProbe(
+      [
+        row({ msAgo: 5_000, endpoint: "/internal/session", method: "POST" }),
+        row({ msAgo: 4_000, endpoint: "/v1/channels/:channelId/messages", method: "POST" }),
+      ],
+      async (env) => {
+        const page = await reader.page(env, query(WIDE()), NOW);
+        expect(page.requests.map((r) => r.endpoint)).toContain("/internal/session");
+        // AND THE CALLER CAN GET RID OF THEM, which is the argument the decision rests
+        // on: a platform that hides rows offers no way back, and this filter is the way.
+        const own = await reader.page(
+          env,
+          query({ ...WIDE(), endpoint: "/v1/channels/:channelId/messages" }),
+          NOW,
+        );
+        expect(own.requests.map((r) => r.endpoint)).toEqual([
+          "/v1/channels/:channelId/messages",
+        ]);
+      },
+    );
+  });
+
+  /** FR-035, SC-022. `unmatched` COMES BACK UNDER THAT VALUE AND UNDER NO OTHER. */
+  it("filters the request that matched no route, and only that one", async () => {
+    const orphanRoute = randomUUID();
+    await withProbe(
+      [
+        row({ msAgo: 5_000, requestId: orphanRoute, endpoint: null, status: 404 }),
+        row({ msAgo: 4_000, endpoint: "/healthz" }),
+      ],
+      async (env) => {
+        const unmatched = await reader.page(
+          env,
+          query({ ...WIDE(), endpoint: "unmatched" }),
+          NOW,
+        );
+        expect(unmatched.requests.map((r) => r.request_id)).toEqual([orphanRoute]);
+
+        const named = await reader.page(
+          env,
+          query({ ...WIDE(), endpoint: "/healthz" }),
+          NOW,
+        );
+        expect(named.requests.map((r) => r.request_id)).not.toContain(orphanRoute);
+      },
+    );
+  });
+
+  it("filters by endpoint and status together", async () => {
+    const both = randomUUID();
+    await withProbe(
+      [
+        row({ msAgo: 5_000, requestId: both, endpoint: "/healthz", status: 429 }),
+        row({ msAgo: 4_000, endpoint: "/healthz", status: 200 }),
+        row({ msAgo: 3_000, endpoint: "/v1/request-log", status: 429 }),
+      ],
+      async (env) => {
+        const page = await reader.page(
+          env,
+          query({ ...WIDE(), endpoint: "/healthz", status: "429" }),
+          NOW,
+        );
+        expect(page.requests.map((r) => r.request_id)).toEqual([both]);
+      },
+    );
+  });
+
+  /** FR-010. "NO REQUESTS IN THIS WINDOW" AND "THIS WINDOW IS GONE" ARE THE SAME EMPTY
+   * PAGE unless the envelope tells them apart. R8 measured a 120–60 day window returning
+   * 0 — which is exactly what a quiet Tuesday returns. */
+  it("tells a quiet window from one outside retention", async () => {
+    await withProbe([row({ msAgo: 5_000 })], async (env) => {
+      const quiet = await reader.page(
+        env,
+        query({ from: at(90 * 60_000).toISOString(), to: at(80 * 60_000).toISOString() }),
+        NOW,
+      );
+      const gone = await reader.page(
+        env,
+        query({
+          from: new Date(NOW.getTime() - 120 * 86_400_000).toISOString(),
+          to: new Date(NOW.getTime() - 60 * 86_400_000).toISOString(),
+        }),
+        NOW,
+      );
+      expect(quiet.requests).toEqual([]);
+      expect(gone.requests).toEqual([]);
+
+      // THE DIFFERENCE IS READABLE OFF THE ENVELOPE AND NOWHERE ELSE. The quiet window
+      // sits inside retention and comes back as asked; the gone one was clamped past its
+      // own end, which is what "the data is not here any more" looks like as a value.
+      expect(new Date(quiet.window.to).getTime()).toBeGreaterThan(
+        new Date(quiet.retention_edge).getTime(),
+      );
+      expect(new Date(gone.window.to).getTime()).toBeLessThan(
+        new Date(gone.retention_edge).getTime(),
+      );
+      expect(quiet.window.from).not.toBe(quiet.window.to);
+      expect(gone.window.from).toBe(gone.window.to);
+    });
   });
 });

@@ -651,6 +651,57 @@ describe("integrating with Relay from the outside", () => {
     socket.close();
   });
 
+  /** THE REQUEST LOG (FR-ANL-07), AND WHAT AN OUTSIDER ACTUALLY FINDS THERE.
+   *
+   * By the time this runs the suite has made a dozen calls with this credential —
+   * channels, members, tokens, sends, a history read. So the log should not be empty, and
+   * **it is.** The platform ships no ingester: `compose.yaml` starts the stores, the api
+   * and the gateway, and nothing drains the analytics stream into ClickHouse. The records
+   * are published and they wait.
+   *
+   * THAT IS THE ASSERTION RATHER THAN A REASON TO OMIT THE ROUTE. A customer's-eye test
+   * showing an empty log because the platform ships no ingester is the freshness gap
+   * arriving where a customer would actually meet it — and it asserts something true,
+   * where skipping the endpoint asserts nothing at all. When an ingester ships, this test
+   * goes red and the line below is where the number goes.
+   *
+   * WHAT IS ASSERTED REGARDLESS: the envelope is the documented one, and the refusals
+   * work. Those do not depend on a row existing. */
+  it("serves a request log with the documented envelope, and it is empty", async () => {
+    const res = await fetch(`${api}/v1/request-log`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(Array.isArray(body["requests"])).toBe(true);
+    expect(typeof body["has_more"]).toBe("boolean");
+    expect(body["window"]).toBeTruthy();
+    expect(typeof body["retention_edge"]).toBe("string");
+    // `next_cursor` and `prev_cursor` are DECLARED and null at the ends, which is a
+    // different fact from being absent — a client that reads `next_cursor` off this
+    // response gets null rather than undefined.
+    expect(body).toHaveProperty("next_cursor");
+    expect(body).toHaveProperty("prev_cursor");
+
+    // EMPTY, AND THIS SUITE IS THE EVIDENCE THAT IT SHOULD NOT BE. Every request above
+    // was made with this credential and every one of them was recorded — to a stream
+    // nothing reads.
+    expect(body["requests"]).toEqual([]);
+    expect(body["has_more"]).toBe(false);
+  });
+
+  it("refuses a page size outside the published bound, and says which field", async () => {
+    const res = await fetch(`${api}/v1/request-log?limit=201`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["field"]).toBe("limit");
+    expect(typeof body["code"]).toBe("string");
+    expect(typeof body["docs_url"]).toBe("string");
+    expect(typeof body["request_id"]).toBe("string");
+  });
+
   it("cannot see another tenant's channel, and cannot tell it apart from an absent one", async () => {
     // The documented isolation property, exercised the only way an outsider can:
     // with an id that is well formed and is not theirs. The reference says both
@@ -667,11 +718,19 @@ describe("integrating with Relay from the outside", () => {
     for (const res of [a, b]) {
       const body = (await res.json()) as Record<string, unknown>;
       expect(body["code"]).toBe("not_found");
-      // A PATH PER CODE, not a fragment on one page. `docsUrl` here is
-      // `${ERROR_DOCS_BASE}/${code}`; published later moved to an anchor on a single
-      // error-reference page, which is part of the debt the error-registry chapter
-      // opens and puts in Part 4. Asserted as this platform actually answers.
-      expect(String(body["docs_url"])).toContain("/not_found");
+      // AN ANCHOR ON ONE PAGE, AND THIS LINE SAID THE OPPOSITE FOR A PART AND A HALF.
+      //
+      // It read `toContain("/not_found")` — a path per code — under a comment ending
+      // *"Asserted as this platform actually answers."* It was not: `docsUrl` returns
+      // `${base}#${code}`, and the commit that made it an anchor landed BEFORE this
+      // suite was written. So the suite has never passed, and nothing said so, because
+      // it needs a running platform that no lane starts. Chapter 4.8 found it by
+      // standing the stack up to run its own new test in this file.
+      //
+      // The platform is right and the test was wrong: `docs/08-error-reference.md` is
+      // ONE page with a section per code, so a path per code would 404 for every
+      // refusal this platform sends.
+      expect(String(body["docs_url"])).toContain("#not_found");
       // Every error carries one, and it is what a support request quotes.
       expect(typeof body["request_id"]).toBe("string");
     }
