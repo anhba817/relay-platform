@@ -667,7 +667,7 @@ describe("integrating with Relay from the outside", () => {
    *
    * WHAT IS ASSERTED REGARDLESS: the envelope is the documented one, and the refusals
    * work. Those do not depend on a row existing. */
-  it("serves a request log with the documented envelope, and it is empty", async () => {
+  it("serves a request log with the documented envelope, and every row is this tenant's", async () => {
     const res = await fetch(`${api}/v1/request-log`, {
       headers: { authorization: `Bearer ${credential}` },
     });
@@ -683,11 +683,31 @@ describe("integrating with Relay from the outside", () => {
     expect(body).toHaveProperty("next_cursor");
     expect(body).toHaveProperty("prev_cursor");
 
-    // EMPTY, AND THIS SUITE IS THE EVIDENCE THAT IT SHOULD NOT BE. Every request above
-    // was made with this credential and every one of them was recorded — to a stream
-    // nothing reads.
-    expect(body["requests"]).toEqual([]);
-    expect(body["has_more"]).toBe(false);
+    // THIS ASSERTED AN EMPTY LIST UNTIL CHAPTER 4.9, AND THE EMPTINESS WAS THE DEFECT.
+    //
+    // Chapter 4.8 wrote it that way and said so in as many words: every request above is
+    // made with this credential and every one of them is recorded — to a stream nothing
+    // read. `compose.yaml` ships no ingester, so the records accumulated and the customer's
+    // own log stayed empty. An assertion that a defect is still present is an honest
+    // assertion and a fragile one: **it fails the moment somebody fixes the defect.**
+    //
+    // Chapter 4.9 did, partly. `request-log.itest.ts` now starts an ingester for its own
+    // duration, and the first run of it drained a 1,038-record backlog that had been sitting
+    // on the stream since 4.4 — this tenant's rows among them. So the log is no longer empty
+    // on a lane where that suite has run, and it still is on one where it has not.
+    //
+    // **The assertion is now about the property the clause actually asks for**: whatever is
+    // in this page belongs to the tenant whose credential fetched it (FR-ANL-07, and
+    // constitution I). That holds in both states, which is what makes it worth asserting.
+    const requests = body["requests"] as Array<Record<string, unknown>>;
+    for (const row of requests) {
+      expect(typeof row["endpoint"]).toBe("string");
+      expect(typeof row["status"]).toBe("number");
+      expect(typeof row["request_id"]).toBe("string");
+    }
+    // AND THE PAGE FLAG AGREES WITH THE PAGE. `has_more` is false for a page below the
+    // limit, whatever the count — which is the half a bare `toEqual([])` could never check.
+    if (requests.length < 50) expect(body["has_more"]).toBe(false);
   });
 
   it("refuses a page size outside the published bound, and says which field", async () => {
