@@ -1,5 +1,9 @@
 import "reflect-metadata";
 
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -20,7 +24,34 @@ const CH_AUTH = "Basic " + Buffer.from("relay:relay").toString("base64");
 const ch = async (body: string): Promise<string> =>
   fetch(CH, { method: "POST", headers: { Authorization: CH_AUTH }, body }).then((r) => r.text());
 
+// AND THE SUITE STARTS THE INGESTER ITSELF (chapter 4.9, FR-003).
+//
+// These five tests have been red on any machine with no ingester since chapter 4.4 — five of
+// the six failures that made `pnpm test:integration` red on every run, so **a planted drift
+// in the reconciler could not change the gate's colour: it was already that colour.**
+//
+// THE OBVIOUS FIX WAS A SERVICE IN `compose.yaml` AND IT IS THE WRONG ONE, for two reasons
+// that only appear once you open the file. `services/ingester` has **no Dockerfile**, so it is
+// not a service definition but a new image; and `api`, `gateway` and `dispatcher` all carry
+// `profiles: ["services"]`, so `docker compose up -d` starts the stores and nothing else —
+// an ingester added beside them would not be running when the lane runs, and one added to the
+// default profile would drain the analytics stream on every developer's machine forever,
+// changing the opening state of every analytical suite in the repository.
+//
+// A CHILD PROCESS FOR THE LIFETIME OF THE SUITE THAT NEEDS IT. `consumer.itest.ts` and
+// `outbox.itest.ts` already spawn a Node child for the same reason, and the ingester is a
+// plain Node process. It drains while these five tests run and is killed afterwards, so the
+// lane-wide side effect is bounded by the suite rather than by the machine's uptime.
+//
+// WHAT IT DRAINS IS REPORTED RATHER THAN ASSERTED. A durable consumer drains the whole
+// stream, not this suite's share of it, so the figure includes whatever the file running
+// beside it produced. That is what a real deployment does; the number is printed so nobody
+// has to guess at it.
+const INGESTER = join(__dirname, "..", "..", "..", "..", "services", "ingester", "dist", "main.js");
+
 describe("the API request log", () => {
+  let ingester: ChildProcess | undefined;
+  const drained = { batches: 0, written: 0, requests: 0 };
   let app: INestApplication;
   let url: string;
   let db: Db;
@@ -71,6 +102,32 @@ describe("the API request log", () => {
   };
 
   beforeAll(async () => {
+    // REFUSING IS THE RIGHT ERROR. A suite that skipped itself here would be green on a
+    // machine that cannot run it, which is the shape this chapter spent a phase finding in
+    // the isolation gauntlet — three attacks that returned at their first line and reported
+    // a tick. `test:integration` dependsOn `["^build", "build"]`, and the ingester is not a
+    // dependency of the api, so its `dist` is the one this lane cannot assume.
+    if (!existsSync(INGESTER)) {
+      throw new Error(`${INGESTER} does not exist; run \`pnpm build\` before this lane`);
+    }
+    ingester = spawn("node", [INGESTER], {
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    ingester.stdout?.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString().split("\n")) {
+        if (!line.includes("ingester.batch")) continue;
+        try {
+          const batch = JSON.parse(line) as { written?: number; requests?: number };
+          drained.batches += 1;
+          drained.written += batch.written ?? 0;
+          drained.requests += batch.requests ?? 0;
+        } catch {
+          // a partial line across two chunks; the next one carries the whole record
+        }
+      }
+    });
+
     db = createDb(createPool());
     env = await createEnvironment(db, { name: "request-log-itest" });
     key = await createApiKey(db, { environmentId: env.id });
@@ -88,6 +145,11 @@ describe("the API request log", () => {
   });
 
   afterAll(async () => {
+    ingester?.kill("SIGTERM");
+    process.stdout.write(
+      `request-log.itest: the ingester drained ${drained.batches} batches, ` +
+        `${drained.written} records, ${drained.requests} of them requests\n`,
+    );
     await app?.close();
     for (const e of [env, limited]) {
       if (e !== undefined) {

@@ -44,6 +44,17 @@ export default defineConfig({
       RELAY_EVENT_CONSUMER: "off",
       // The quota relay, the fourth. Same reason as the other three.
       RELAY_QUOTA_RELAY: "off",
+      // THE TWO PLATFORM CREDENTIALS, IN BOTH LANES THAT RUN `.itest.ts` FILES (chapter 4.9).
+      //
+      // `services/api/vitest.integration.config.mts` carries the argument in full: without
+      // these, `limits.itest.ts` fails loudly and three attacks in `isolation/gauntlet.itest.ts`
+      // return at their first line and report green. **This file runs the same suites**, and the
+      // first version of that fix went into the integration config alone — so `pnpm coverage`
+      // stayed red on `limits.itest.ts` and the gauntlet stayed quietly skipped in the run that
+      // measures constitution VI's own coverage bar. An amendment that fixes one config and
+      // leaves its twin standing is the defect rather than the config.
+      RELAY_INTERNAL_CREDENTIAL: "rk_svc_local_development_credential_0000",
+      RELAY_INTERNAL_CREDENTIAL_GATEWAY: "rk_svc_local_development_gateway_00000",
     },
     setupFiles: ["./packages/test-harness/src/setup.ts"],
     include: [

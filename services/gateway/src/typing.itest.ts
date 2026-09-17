@@ -293,6 +293,40 @@ const arrived = async (
   while (of().length < count && Date.now() < deadline) await settle(25);
 };
 
+/** Wait until Redis itself says every one of these subjects has a subscriber.
+ *
+ * A PUBLISH WITH NO SUBSCRIBER IS NOT DELAYED, IT IS LOST. Redis pub/sub has no retention, so
+ * a frame published one millisecond before the gateway's SUBSCRIBE lands is gone — and no
+ * amount of polling afterwards brings it back. That is the one shape `arrived()` cannot fix,
+ * because it waits for an arrival that will never happen.
+ *
+ * `PUBSUB NUMSUB` is the condition the waiting was betting on, asked directly. Measured: the
+ * four-kind test below is **0 of 3 green when run alone** with the 400 ms sleep it used to
+ * carry, and green in a full-file run only because the tests before it had warmed the machine.
+ * A flat sleep before an assertion is a bet that the lane is idle, and this one had been
+ * getting slower for four chapters — recorded as a gateway flake since feature 045 and never
+ * chased, because it fails as a missing frame rather than as a missing subscription. */
+const subscribed = async (
+  redis: Redis,
+  subjects: string[],
+  timeoutMs = 10_000,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const flat = (await redis.pubsub("NUMSUB", ...subjects)) as Array<string | number>;
+    const counts = new Map<string, number>();
+    for (let i = 0; i < flat.length; i += 2) {
+      counts.set(String(flat[i]), Number(flat[i + 1]));
+    }
+    const missing = subjects.filter((s) => (counts.get(s) ?? 0) === 0);
+    if (missing.length === 0) return;
+    if (Date.now() > deadline) {
+      throw new Error(`no subscriber after ${timeoutMs}ms for: ${missing.join(", ")}`);
+    }
+    await settle(25);
+  }
+};
+
 describe("a typing signal on its way out", () => {
   const open: Array<() => Promise<void>> = [];
   const sockets: WebSocket[] = [];
@@ -1259,14 +1293,21 @@ describe("a typing signal on its way out", () => {
     const socket = connect(instance);
     const frames = collect(socket);
     await acked(socket);
-    // The subscribes are in flight at ack time, so give all four a moment before
-    // publishing into them.
-    await settle(400);
-
     const publisher = new Redis(url);
     open.push(async () => {
       publisher.disconnect();
     });
+
+    // THE SUBSCRIBES ARE IN FLIGHT AT ACK TIME, AND THIS ASKS REDIS RATHER THAN GUESSING.
+    // A sleep here was a bet that four SUBSCRIBEs finish in 400 ms; presence is the slowest
+    // of the four to build, so it was the one that lost, and the failure read as a dropped
+    // presence frame rather than as a publish into an empty subject.
+    await subscribed(publisher, [
+      subjectForChannel(channel),
+      subjectForPresence(channel),
+      subjectForChannelMembership(channel),
+      subjectForTyping(channel),
+    ]);
 
     await publisher.publish(
       subjectForChannel(channel),
@@ -1283,11 +1324,22 @@ describe("a typing signal on its way out", () => {
         created_at: new Date(0).toISOString(),
       }),
     );
+    // THREE FIELDS, BECAUSE `presenceFabricSchema` IS A STRICT OBJECT OF THREE.
+    //
+    // This publish carried `environment` and `channel` as well, and **every one of them has
+    // been discarded on receipt** — `safeParse` fails, `presence.ts:284` logs
+    // `presence.invalid_payload`, and nothing reaches the socket. Asked of the schema
+    // directly: the five-field payload parses `false`, the three-field one `true`.
+    //
+    // The assertion below still passed sometimes, and that is the part worth keeping in mind:
+    // the gateway publishes a presence transition of its OWN when a connection opens, elected
+    // across instances by `SET … NX`. When this user was absent from Redis the election was
+    // won and a `presence.changed` arrived — for `mai`, the connection's own user, not for the
+    // `tuan` this test publishes. **A test that passes on a frame it did not send**, at
+    // whatever rate the previous run's key had expired: 1 of 3 here.
     await publisher.publish(
       subjectForPresence(channel),
       JSON.stringify({
-        environment: "env-1",
-        channel,
         user: "tuan",
         state: "online",
         transition: randomUUID(),
@@ -1319,15 +1371,28 @@ describe("a typing signal on its way out", () => {
 
     const byType = (type: string): unknown[] =>
       frames.filter((f) => f.type === type);
+    /** A presence frame for one user. The connection's OWN transition may or may not be
+     *  here — it depends on whether Redis still held this user's key from an earlier run —
+     *  so a bare count of `presence.changed` is a count of this test's publish plus a
+     *  neighbour's election. Naming the user is what separates them. */
+    const presenceFor = (user: string): unknown[] =>
+      frames.filter(
+        (f) =>
+          f.type === "presence.changed" &&
+          (f.payload as { user?: string } | undefined)?.user === user,
+      );
     expect(byType("message.created"), "message").toHaveLength(1);
-    expect(byType("presence.changed"), "presence").toHaveLength(1);
+    expect(presenceFor("tuan"), "presence").toHaveLength(1);
     expect(byType("membership.changed"), "membership").toHaveLength(1);
     expect(typingFor(frames, channel), "typing").toEqual([
       { channel, user: "tuan" },
     ]);
-    // And nothing arrived twice or under a borrowed name: four publishes, four
-    // frames, plus the `connection.ack` the handshake sent.
-    expect(frames.filter((f) => f.type !== "connection.ack")).toHaveLength(4);
+    // And nothing arrived twice or under a borrowed name: four publishes, four frames, plus
+    // the `connection.ack` the handshake sent — and minus the connection's own presence
+    // transition, which is this gateway's doing rather than this test's.
+    expect(
+      frames.filter((f) => f.type !== "connection.ack" && !presenceFor("mai").includes(f)),
+    ).toHaveLength(4);
   }, 15_000);
 });
 

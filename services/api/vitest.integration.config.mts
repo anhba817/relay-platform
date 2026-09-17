@@ -34,6 +34,31 @@ export default defineConfig({
       RELAY_EVENT_CONSUMER: "off",
       // The quota relay, the fourth. Same reason as the other three.
       RELAY_QUOTA_RELAY: "off",
+      // THE TWO PLATFORM CREDENTIALS, AND ONE MISSING VARIABLE WAS COSTING MORE THAN THE
+      // TEST THAT SAID SO (chapter 4.9).
+      //
+      // `limits.itest.ts` fails loudly without them — *"the lane must configure a platform
+      // credential: expected undefined to be truthy"* — and has since before Part 4. That is
+      // the visible half. The expensive half is `isolation/gauntlet.itest.ts`, where three
+      // attacks on the platform routes read `if (dispatcher === undefined) return;` and
+      // **report green without running**. The suite's own accounting test cannot catch it,
+      // because `attacked.add(...)` happens before the early return — so the check that
+      // exists to find routes nobody attacked is satisfied by the route that was skipped.
+      //
+      // Constitution VI: *"the cross-tenant suite … gates releases"*. Three of its attacks
+      // have not run in this lane, and both halves of that were one unset variable.
+      //
+      // THE VALUES ARE COMPOSE'S OWN DEFAULTS, so the lane authenticates the way the stack
+      // does rather than against a secret invented here. They are ≥32 characters and carry
+      // the `rk_svc_` prefix because `resolvePlatformCredential` refuses anything shorter,
+      // which is a refusal worth meeting rather than working around.
+      //
+      // SET HERE RATHER THAN IN EACH SUITE, for feature 030's reason one paragraph up: a
+      // convention nobody applied is not a property of the lane. `credentials.itest.ts` still
+      // sets and restores its own values inside its own file, which is the case that proves
+      // `resolvePlatformCredential` reads at call time.
+      RELAY_INTERNAL_CREDENTIAL: "rk_svc_local_development_credential_0000",
+      RELAY_INTERNAL_CREDENTIAL_GATEWAY: "rk_svc_local_development_gateway_00000",
     },
     include: ["src/**/*.itest.ts"],
     // FILES IN PARALLEL AGAIN, AND EIGHT PLACES ARE WHY IT COULD NOT BE.
