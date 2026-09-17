@@ -1087,6 +1087,33 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
+        // ── chapter 4.8's arithmetic, both files at 100 / 100 / 100 / 100, twice ──────
+        //
+        // PINNED AT 100 RATHER THAN AT WHAT WAS FIRST MEASURED, and the difference is two
+        // findings the branch report produced. `cursor.ts` read 89.47 / 83.33 on its first
+        // run with two lines uncovered, and they were uncovered for opposite reasons: one
+        // guard could NEVER fire — `Number.isSafeInteger` behind a `\d{1,15}` pattern that
+        // cannot produce an unsafe integer — and the other could and had never been asked.
+        // The dead one is deleted and the live one has a test. Chapter 4.6 reached
+        // 100/100/100/100 by deleting two arms and wrote down that the number was worth
+        // less for it; here one arm went each way, which is the outcome that makes the
+        // measurement worth taking.
+        //
+        // NOTHING IN EITHER FILE TOUCHES A STORE, A DATABASE OR A BROKER, so these two
+        // numbers are the same under the unit lane and under this one. That is the
+        // property the phase was separated for.
+        "services/api/src/request-log/cursor.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/request-log/request-log.schema.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
       },
     },
   },
