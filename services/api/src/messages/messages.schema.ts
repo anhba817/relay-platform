@@ -90,10 +90,10 @@ export const editMessageBodySchema = z.strictObject({
 export type EditMessageBody = z.infer<typeof editMessageBodySchema>;
 
 // The history query (chapter 2.4, FR-MSG-09): an opaque cursor, a
-// direction, and a page size capped at 200. `limit` CLAMPS rather than
-// rejects — a client asking for 500 gets 200 and a next_cursor, because
-// caps exist to protect the server and a clamp does that just as well
-// while leaving the client's loop logic alone.
+// direction, and a page size capped at 200. `limit` is REFUSED above the
+// cap rather than clamped — `.max(200)` on a zod number is a validation,
+// so 500 is a 400 naming the field. A clamp was described here for two
+// parts and never implemented; chapter 4.8 measured it and fixed the words.
 export const historyQuerySchema = z.strictObject({
   cursor: z.string().min(1).optional(),
   direction: z.enum(["older", "newer"]).default("older"),
