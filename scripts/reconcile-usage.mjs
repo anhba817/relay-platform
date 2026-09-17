@@ -13,23 +13,63 @@
 // `quotas/quota-email.ts`, whose failure mode is already visible in the lane as
 // `quotas.unaddressable: no member has an email address`. A notification with no recipient is
 // not an alert, and an exit code is not one either — the chapter says what a real one costs.
-import { createDb, createPool } from "../services/api/dist/db/client.js";
+import { createDb, createPool, DEFAULT_DATABASE_URL } from "../services/api/dist/db/client.js";
 import { createAnalyticalStore } from "../services/api/dist/metering/clickhouse.js";
-import { exitCodeFor, reconcile } from "../services/api/dist/metering/reconcile.js";
+import {
+  assertEnvironmentId,
+  assertPeriod,
+  exitCodeFor,
+  reconcile,
+} from "../services/api/dist/metering/reconcile.js";
 
-function arg(name) {
+function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
-  if (i === -1 || !process.argv[i + 1]) {
+  const value = i === -1 ? undefined : process.argv[i + 1];
+  if (value === undefined || value === "") {
+    if (fallback !== undefined) return fallback;
     throw new Error(`--${name} is required`);
   }
-  return process.argv[i + 1];
+  return value;
 }
 
-const environmentId = arg("environment");
-const period = arg("period");
+// BOTH VALUES ARE REFUSED HERE AND AGAIN INSIDE `reconcile`, AND THAT IS ONE RULE RATHER THAN
+// TWO. `assertEnvironmentId` and `assertPeriod` are exported from the module that builds the
+// statements; calling them at parse time is what lets the refusal name the flag and happen
+// before a connection is opened. The guard that matters is the one inside the function, which
+// no caller can skip.
+const environmentId = assertEnvironmentId(arg("environment"));
+const period = assertPeriod(arg("period"));
+
+// `--database`, SO THE JOB CAN BE POINTED AT A CORPUS (chapter 4.9, FR-006).
+//
+// Without it the reconciler reads whatever `DATABASE_URL` says, which is the lane — where no
+// tenant has both sides of the comparison and the largest tenant-period holds 1,017 messages,
+// a volume at which the smallest expressible drift is twice the 0.1% bound. The measurement
+// needs a database built for it, and this is the address.
+//
+// IT SETS THE ENVIRONMENT VARIABLE RATHER THAN TAKING A PARAMETER, and that is the shape
+// `createPool()` leaves available: it takes no arguments and reads `process.env.DATABASE_URL`
+// when it is called, and `pg` itself does not resolve from `scripts/` — it is a dependency of
+// `services/api`, not of the root, which is the trap `corpus.mjs` already records at its
+// refusal path. One mutation, before the pool exists, in a process that does nothing else.
+//
+// **THERE IS NO `--analytics-database`, AND THE FIRST DESIGN HAD ONE.** `DB_ANALYTICS` is a
+// constant inside `reconcile.ts` rather than a parameter, and `analytics/apply.mjs` hardcodes
+// the same name — so nothing in this repository can build a second analytical database for a
+// flag to point at. The corpus's rows live in `relay_analytics` beside the lane's and are
+// separated by environment id, exactly as every tenant's are.
+const database = arg("database", process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL);
+process.env.DATABASE_URL = database;
 
 const db = createDb(createPool());
 const store = createAnalyticalStore();
+
+// WHICH DATABASE THIS REPORT IS ABOUT. A figure copied out of this output into a published
+// document is unattributable without it, and the whole point of the flag above is that the
+// answer is no longer "the lane, obviously". The password is not printed.
+console.log(
+  `reconcile: ${environmentId} ${period} against ${database.replace(/\/\/[^@/]*@/, "//")}`,
+);
 
 const rows = await reconcile(db, store, { environmentId, period });
 

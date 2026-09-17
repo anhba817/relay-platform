@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   RECONCILE_THRESHOLD,
+  assertEnvironmentId,
+  assertPeriod,
   differencePct,
   exitCodeFor,
+  smallestExpressibleDrift,
   verdictFor,
   type Comparison,
   type ReconcileRow,
@@ -154,5 +157,108 @@ describe("the exit code is FR-ANL-06's alert, and it is a value rather than a pr
 
   it("is 0 for an empty report, because nothing was compared", () => {
     expect(exitCodeFor([])).toBe(0);
+  });
+});
+
+describe("the smallest drift a volume can express (chapter 4.9, FR-007)", () => {
+  // WHAT THE PERCENTAGE MEANS AT A SIZE. Every assertion here also drives `verdictFor`, so
+  // the number is checked against the comparison it is about rather than against a formula
+  // restated in the test — which is how a test and its subject can agree and both be wrong.
+  const drives = (volume: number, d: number, direction: -1 | 1): void => {
+    const c = {
+      analytical: volume + direction * d,
+      operational: volume,
+      hasOperationalSource: true as const,
+    };
+    expect(verdictFor(c)).toBe("breach");
+    if (d > 1) {
+      expect(
+        verdictFor({ ...c, analytical: volume + direction * (d - 1) }),
+      ).toBe("pass");
+    }
+  };
+
+  it("is one whole message below a thousand, which is what 0.1% cannot say there", () => {
+    // At nine connection-minutes the smallest drift there IS is 11.11% — a hundred times the
+    // bound. A green 0.1% assertion at that volume claims nothing drifted at all.
+    expect(smallestExpressibleDrift(9)).toEqual({ under: 1, over: 1 });
+    expect(smallestExpressibleDrift(100)).toEqual({ under: 1, over: 1 });
+    drives(9, 1, -1);
+    drives(100, 1, 1);
+  });
+
+  it("first resolves at ten thousand and is comfortable at a hundred thousand", () => {
+    expect(smallestExpressibleDrift(1_000)).toEqual({ under: 2, over: 2 });
+    expect(smallestExpressibleDrift(10_000)).toEqual({ under: 11, over: 11 });
+    expect(smallestExpressibleDrift(100_000)).toEqual({ under: 101, over: 101 });
+    // Chapter 4.7's published pair, driven through the comparison in both directions.
+    drives(100_000, 101, -1);
+    drives(100_000, 101, 1);
+  });
+
+  it("says two at the lane's largest tenant-period, which is twice the bound", () => {
+    // 1,017 messages: one message is 0.098% and two is 0.197%. This is the number that makes
+    // the measurement need a corpus rather than the lane.
+    expect(smallestExpressibleDrift(1_017)).toEqual({ under: 2, over: 2 });
+  });
+
+  it("gives the two directions DIFFERENT answers, which five measured volumes did not", () => {
+    // `max(analytical, operational)` is the denominator, so a surplus of `d` divides by
+    // `volume + d` and a shortfall by `volume`. At 999 a surplus of one message PASSES and a
+    // shortfall of one BREACHES — and 999 is eighteen below the lane's largest tenant-period,
+    // one below a row of the table this feature re-derived, and the first volume where the
+    // two differ at all.
+    expect(smallestExpressibleDrift(999)).toEqual({ under: 1, over: 2 });
+    expect(verdictFor({ analytical: 1_000, operational: 999, hasOperationalSource: true })).toBe(
+      "pass",
+    );
+    expect(verdictFor({ analytical: 998, operational: 999, hasOperationalSource: true })).toBe(
+      "breach",
+    );
+    // And above a million every volume differs.
+    expect(smallestExpressibleDrift(1_000_000)).toEqual({ under: 1_001, over: 1_002 });
+  });
+
+  it("has no under-direction at zero, because nothing can be short of nothing", () => {
+    // Reachable: `usage_periods` holds 288 rows for 2026-08 with `messages_sent = 0`.
+    expect(smallestExpressibleDrift(0)).toEqual({ under: null, over: 1 });
+  });
+
+  it("takes the threshold, so a chapter can show what a different bound would cost", () => {
+    expect(smallestExpressibleDrift(1_000, 0.01)).toEqual({ under: 11, over: 11 });
+  });
+
+  it("refuses a volume that is not a count", () => {
+    // A fractional volume reaching here means the caller is holding something other than a
+    // row count, and the figure it is about to print would be about that instead.
+    expect(() => smallestExpressibleDrift(1_017.5)).toThrow(/non-negative integer/);
+    expect(() => smallestExpressibleDrift(-1)).toThrow(/non-negative integer/);
+  });
+});
+
+describe("the two values that reach a ClickHouse statement (chapter 4.9, FR-006c)", () => {
+  // MEASURED, NOT ASSUMED: scoped to one tenant and one month the reconciler's rollup read
+  // returns 208 rows honestly and 11,895 — the whole table, every tenant — under
+  // `2026-09-01') OR 1=1 --`. `toUUID()` and `toDate()` never see it: the quote closes first.
+  it("accepts the values the platform itself produces", () => {
+    expect(assertEnvironmentId("6f1b2c3d-4e5a-4b7c-8d9e-0f1a2b3c4d5e")).toBe(
+      "6f1b2c3d-4e5a-4b7c-8d9e-0f1a2b3c4d5e",
+    );
+    expect(assertPeriod("2026-09-01")).toBe("2026-09-01");
+  });
+
+  it("refuses an environment id carrying a quote", () => {
+    expect(() => assertEnvironmentId("6f1b2c3d-4e5a-4b7c-8d9e-0f1a2b3c4d5e') OR 1=1 --")).toThrow(
+      /must be a UUID/,
+    );
+    expect(() => assertEnvironmentId("")).toThrow(/must be a UUID/);
+  });
+
+  it("refuses a period carrying a quote, which nine analysis passes did not check", () => {
+    expect(() => assertPeriod("2026-09-01') OR 1=1 --")).toThrow(/must be YYYY-MM-01/);
+    // A period that is not the first of a month is refused too: the rollup is keyed by day
+    // and the half-open range is built from `nextPeriod`, so a mid-month value would ask a
+    // question the report's own heading does not describe.
+    expect(() => assertPeriod("2026-09-15")).toThrow(/must be YYYY-MM-01/);
   });
 });

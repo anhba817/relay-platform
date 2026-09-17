@@ -73,6 +73,71 @@ export function differencePct(c: Comparison): number | null {
   return Math.abs(c.analytical - c.operational) / denominator;
 }
 
+/** The smallest drift a volume can express, in whole units, in each direction.
+ *
+ * WHAT A PERCENTAGE MEANS AT A GIVEN SIZE. `usage_periods.messages_sent` is a count, so a
+ * drift is a whole number of messages; below some volume the smallest drift there IS already
+ * breaches, and a green 0.1% assertion at that size claims nothing drifted at all. The lane's
+ * largest tenant-period holds 1,017 messages, where one message is 0.098% and two is 0.197% —
+ * twice the bound. **A figure published without its volume is the assertion that cannot fail**,
+ * and this function is what the harness prints beside every figure so it cannot be.
+ *
+ * DERIVED FROM `differencePct` RATHER THAN RESTATED. The closed form is
+ * `floor(volume × threshold) + 1` in one direction and `floor(volume × threshold / (1 −
+ * threshold)) + 1` in the other, and writing either here would be a second copy of the rule
+ * `verdictFor` applies — the shape chapter 4.6 found when two files each carried the same
+ * month arithmetic. The search asks the real comparison and stops at the first breach, which
+ * costs `threshold × volume + 2` iterations.
+ *
+ * AND THE TWO DIRECTIONS ARE NOT THE SAME NUMBER, WHICH FIVE MEASURED VOLUMES SAID THEY WERE.
+ * `max(analytical, operational)` is the denominator, so an excess of `d` divides by
+ * `volume + d` and a shortfall by `volume` — the excess is always the harder one to breach.
+ * Chapter 4.7 published *"the smallest breaching drift is 101 in both directions"* and this
+ * feature's own phase 1 re-derived the table and found over and under equal at 9, 100, 1,000,
+ * 10,000, 100,000 and the lane's 1,017. All six land on the agreeing side by luck:
+ *
+ *     volume        under   over
+ *        999            1      2     the first volume where they differ
+ *      1,000            2      2
+ *      1,017            2      2     the lane's largest tenant-period
+ *  1,000,000        1,001  1,002     and every volume above a million differs
+ *
+ * **500,500 of the volumes below a million differ** — half of them. At 999 a surplus of one
+ * message passes and a shortfall of one breaches, which is the sentence the six-row table
+ * could not have produced.
+ *
+ * `under` IS NULL AT ZERO because nothing can be short of nothing, and that state is
+ * reachable: `usage_periods` holds 288 rows for 2026-08 with `messages_sent = 0`. */
+export interface SmallestDrift {
+  /** The analytical side SHORT by this many — `analytical = volume - under`. Null at
+   *  volume 0. */
+  under: number | null;
+  /** The analytical side OVER by this many — `analytical = volume + over`. */
+  over: number;
+}
+
+export function smallestExpressibleDrift(
+  volume: number,
+  threshold = RECONCILE_THRESHOLD,
+): SmallestDrift {
+  // A COUNT, AND THE REFUSAL IS THE POINT. A fractional or negative volume reaching here
+  // means the caller is holding something other than a row count, and the figure it is about
+  // to print would be about that instead.
+  if (!Number.isInteger(volume) || volume < 0) {
+    throw new RangeError(`volume must be a non-negative integer, got ${volume}`);
+  }
+  const breaches = (analytical: number): boolean => {
+    const pct = differencePct({ analytical, operational: volume, hasOperationalSource: true });
+    return pct !== null && pct > threshold;
+  };
+  const seek = (direction: 1 | -1): number => {
+    let d = 1;
+    while (!breaches(volume + direction * d)) d += 1;
+    return d;
+  };
+  return { under: volume === 0 ? null : seek(-1), over: seek(1) };
+}
+
 // ---------------------------------------------------------------------------
 // THE GATHERING (chapter 4.7, phase 3).
 //
@@ -109,6 +174,57 @@ export interface ReconcileRow {
 
 const DB_ANALYTICS = "relay_analytics";
 
+// THE TWO VALUES THAT REACH A CLICKHOUSE STATEMENT, AND BOTH ARE CHECKED BEFORE ONE IS BUILT.
+//
+// The statements below interpolate `toUUID('${environmentId}')` and `toDate('${period}')`, and
+// `scripts/reconcile-usage.mjs` produces both from `process.argv` with no checks at all.
+// **`toUUID()` and `toDate()` are not guards**: an injection closes the quote before either
+// function is reached. Asked of the real store, scoped to one tenant and one month:
+//
+//     the honest period                    208 rows
+//     2026-09-01') OR 1=1 --            11,895 rows      every tenant, every month
+//
+// CHECKED HERE RATHER THAN IN THE SCRIPT, which is where the first design put it. A guard on
+// the caller protects that caller; a guard on the function protects every caller there will
+// ever be, and this one is exported so the script can refuse the value at parse time and name
+// the flag. One rule, two call sites, one implementation.
+//
+// **AND THE COUNT CAME FROM READING THE STATEMENTS, NOT FROM LISTING THE VALUES ALREADY KNOWN.**
+// Nine analysis passes checked the environment id and none checked the period, because the
+// question asked was *"which value reaches SQL?"* rather than *"which values do?"*
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PERIOD_PATTERN = /^\d{4}-\d{2}-01$/;
+
+export function assertEnvironmentId(value: string): string {
+  if (!UUID_PATTERN.test(value)) {
+    throw new Error(
+      `environment id must be a UUID, got ${JSON.stringify(value)} — it is interpolated ` +
+        `into an analytical statement, where toUUID() is not a guard`,
+    );
+  }
+  return value;
+}
+
+/** A period is the first day of a calendar month, as `quotas/period.ts` produces it.
+ *
+ * WHAT THIS PATTERN DOES NOT CATCH: a month of 13. `toDate('2026-13-01')` is refused by the
+ * server, so the value is safe and the message is worse than it needs to be — recorded rather
+ * than fixed, because the check's job here is that nothing unvalidated reaches a statement.
+ *
+ * `until` NEEDS NO CHECK AND IS SAFE BY ACCIDENT, WHICH IS WORTH SAYING OUT LOUD. It is
+ * `nextPeriod(period)`, which splits on `-`, maps through `Number` and rebuilds — so anything
+ * that got past this check as a period still comes back as digits or as `NaN-NaN-01`, which the
+ * server rejects. Safe because of how the arithmetic is written, not because anyone chose it. */
+export function assertPeriod(value: string): string {
+  if (!PERIOD_PATTERN.test(value)) {
+    throw new Error(
+      `period must be YYYY-MM-01, got ${JSON.stringify(value)} — it is interpolated into ` +
+        `an analytical statement, where toDate() is not a guard`,
+    );
+  }
+  return value;
+}
+
 /** FR-ANL-06's comparison, for ONE tenant and ONE period.
  *
  * ONE TENANT PER CALL, AND THAT IS A CONSTRAINT RATHER THAN A CONVENIENCE. Measured at this
@@ -123,6 +239,8 @@ export async function reconcile(
   store: AnalyticalStore,
   { environmentId, period }: { environmentId: string; period: string },
 ): Promise<ReconcileRow[]> {
+  assertEnvironmentId(environmentId);
+  assertPeriod(period);
   // THE DAY RANGE IS HALF-OPEN, and the other spelling is wrong by one day. The caller passes
   // a month — `periodOf`'s `YYYY-MM-01` — and the rollup is keyed by day, so
   // `day >= period AND day < nextPeriod(period)`. `BETWEEN period AND nextPeriod(period)`
