@@ -169,6 +169,9 @@ export function planFor(cfg) {
 
 const client = require_(join(DIST, "db", "client.js"));
 const repo_ = require_(join(DIST, "db", "repository.js"));
+// The drift arithmetic, from the module the reconciler itself uses. A harness that computed
+// its own would be publishing a figure against a rule nothing enforces.
+const reconcile_ = require_(join(DIST, "metering", "reconcile.js"));
 
 /** The connection string for a named database on the same server as the default.
  *
@@ -485,6 +488,82 @@ async function seed(cfg, plan) {
               from messages group by 1) x
      where x.channel_id = c.id`);
 
+  // THE OPERATIONAL COUNTERS FR-ANL-06 COMPARES AGAINST, AND NOTHING WAS WRITING THEM.
+  //
+  // `usage_periods` appeared in this file exactly once before chapter 4.9 — as a row count in
+  // the report below — and `usage_active_users` not at all. So a corpus could be loaded into
+  // the analytical store and reconciled, and every quantity came back `no-data`: the verdict
+  // for a tenant with nothing on either side, which is what all 2,330 tenants in the lane are.
+  //
+  // THE SAME `messages` ROWS BOTH SIDES ARE BUILT FROM, WHICH IS THE FIGURE'S LIMIT AND IS
+  // SAID OUT LOUD IN THE REPORT. `load-analytics.mjs` reads these rows into `message_events`;
+  // this reads them into the counters. The two agree by construction, so what the measurement
+  // establishes is the reconciler's arithmetic at volume and the bound's resolution — not the
+  // platform agreeing with itself. That is a mechanism's job (`sendMessage` writes the message
+  // and increments the counter in one transaction) and chapter 4.7 measured it: 0 of 1,385
+  // tenant-periods disagreeing for a non-fixture reason.
+  //
+  // `at time zone 'UTC'` IS NOT DECORATION. `quotas/period.ts` is the one definition of which
+  // month an instant belongs to and it is UTC, *"because `date_trunc('month', now())` without
+  // a zone answers September on a server running ahead of UTC on the last evening of August,
+  // and the row lands in a period nobody reads"*. A counter written in the server's local month
+  // is invisible here — the reconciler asks for a period and gets `no-data`, which reads as an
+  // absence of data rather than as a harness that put the row somewhere else.
+  const PERIOD = `date_trunc('month', m.created_at at time zone 'UTC')::date`;
+  const FROM_MESSAGES = `from messages m join channels c on c.id = m.channel_id`;
+  await pool.query(`
+    insert into usage_periods (environment_id, period, messages_sent, connection_minutes)
+    select c.environment_id, ${PERIOD}, count(*), 0
+      ${FROM_MESSAGES}
+     group by 1, 2`);
+  // NULL SENDERS ARE EXCLUDED, AND THE SCHEMA IS WHAT SAYS SO. `usage_active_users.user_id` is
+  // NOT NULL and a foreign key to `users.id`, so a null sender has no row to reference — the
+  // exclusion is the schema's rule rather than the harness's, which is also what makes a
+  // harness that got it wrong fail loudly instead of drifting. The analytical side's
+  // `uniqState(user_id)` ignores NULL for its own reason (chapter 4.2), and the two agree only
+  // because both exclude them.
+  await pool.query(`
+    insert into usage_active_users (environment_id, period, user_id)
+    select distinct c.environment_id, ${PERIOD}, m.user_id
+      ${FROM_MESSAGES}
+     where m.user_id is not null`);
+
+  // AND THEY ARE RECOUNTED A DIFFERENT WAY BEFORE ANYTHING IS REPORTED.
+  //
+  // This is what chapter 4.9's T015 was supposed to buy and could not: the derivation is a
+  // `GROUP BY` inside the server, so there is no pure function to unit-test — the rows it
+  // would take never exist in Node, because `created_at` and `user_id` are chosen by
+  // `random()` in the insert. The check available is a second question asked another way, and
+  // a run that fails it writes nothing further.
+  const written = await n1("select coalesce(sum(messages_sent), 0)::int n from usage_periods");
+  const messagesHeld = await n1("select count(*)::int n from messages");
+  if (written !== messagesHeld) {
+    throw new Error(
+      `usage_periods sums to ${written} where messages holds ${messagesHeld}; ` +
+        `the counter derivation and the corpus disagree`,
+    );
+  }
+  const activeWritten = await n1("select count(*)::int n from usage_active_users");
+  const activeExpected = await n1(
+    `select count(*)::int n from (
+       select c.environment_id, ${PERIOD} p, m.user_id ${FROM_MESSAGES}
+        where m.user_id is not null group by 1, 2, 3) x`,
+  );
+  if (activeWritten !== activeExpected) {
+    throw new Error(
+      `usage_active_users holds ${activeWritten} rows where ${activeExpected} were derivable`,
+    );
+  }
+  // THE CONTROL FOR THE ZONE, BECAUSE A CHECK THAT CANNOT FAIL HERE SHOULD SAY SO. The same
+  // aggregate without `at time zone 'UTC'` uses the server's own zone: on a UTC server the two
+  // are identical and this lane cannot show the failure the expression exists to avoid. The
+  // number is reported rather than asserted.
+  const periodsLocal = await n1(
+    `select count(*)::int n from (
+       select c.environment_id, date_trunc('month', m.created_at)::date p
+         ${FROM_MESSAGES} group by 1, 2) x`,
+  );
+
   // THE CORPUS IS DATA, NOT HISTORY — AND IT TOOK A COUNT TO MAKE THAT TRUE.
   // Messages bypass `sendMessage`, so they write no outbox row. `addMember` does not:
   // it publishes `channel.member_added` (FR-WHK-02), and the first floor run left
@@ -552,6 +631,66 @@ async function seed(cfg, plan) {
       ),
       usage_periods: await n1("select count(*)::int n from usage_periods"),
     },
+    // THE COUNTER SIDE, AND WHAT IT IS WORTH (chapter 4.9, FR-006, FR-006b, FR-007).
+    counters: {
+      usage_periods: await n1("select count(*)::int n from usage_periods"),
+      usage_active_users: await n1("select count(*)::int n from usage_active_users"),
+      messages_sent_total: await n1(
+        "select coalesce(sum(messages_sent), 0)::int n from usage_periods",
+      ),
+      // WRITTEN AS ZERO, AND THE REPORT SAYS SO RATHER THAN LEAVING IT TO BE INFERRED. This
+      // corpus creates no connections, and a counter that invented some would make the
+      // connection-minutes comparison a measurement of the harness. FR-ANL-06 as amended at
+      // SRS 1.14 already excludes that quantity from the bound; the reconciler will report
+      // `0 against 0` and call it a pass, because both-zero is agreement — a pass that is
+      // not evidence, which is the distinction `docs/13`'s table carries.
+      connection_minutes: 0,
+      // A CONTROL RATHER THAN AN ASSERTION. `period` is `date_trunc('month', created_at at
+      // time zone 'UTC')`; this is the same count with the zone left off, which is what the
+      // server's own zone would have produced. Equal means this lane cannot show the failure
+      // the zone exists to prevent, not that the zone is unnecessary.
+      periods_without_utc: periodsLocal,
+      server_timezone: (await pool.query("show timezone")).rows[0].TimeZone,
+      // BOTH SIDES COME FROM THE SAME `messages` ROWS. `load-analytics.mjs` reads them into
+      // `message_events`; the counters above are computed from them. They agree by
+      // construction, so a figure taken here is about the reconciler's arithmetic at volume
+      // and about what 0.1% can express at that size — not about the platform agreeing with
+      // itself. Printed by the harness so a reader does not have to find it in a chapter.
+      derived_from: "one source: usage_periods, usage_active_users and message_events are all computed from these messages rows",
+    },
+    // THE LARGEST TENANT-PERIOD, WITH THE SMALLEST DRIFT IT CAN EXPRESS BESIDE IT. A figure
+    // published without its volume is the assertion that cannot fail: at the lane's own
+    // largest tenant-period — 1,017 messages — the smallest expressible drift is 0.197%,
+    // twice the bound this measurement is about.
+    largest_period: await (async () => {
+      const { rows } = await pool.query(
+        `select environment_id, period::text, messages_sent::int
+           from usage_periods order by messages_sent desc, period limit 1`,
+      );
+      const row = rows[0];
+      if (row === undefined) return null;
+      const d = reconcile_.smallestExpressibleDrift(row.messages_sent);
+      return {
+        environment_id: row.environment_id,
+        period: row.period,
+        messages: row.messages_sent,
+        smallest_expressible_drift: d,
+        smallest_expressible_drift_pct: {
+          under: d.under === null ? null : (d.under / row.messages_sent) * 100,
+          over: (d.over / (row.messages_sent + d.over)) * 100,
+        },
+      };
+    })(),
+    periods: (
+      await pool.query(
+        "select min(period)::text lo, max(period)::text hi, count(distinct period)::int n from usage_periods",
+      )
+    ).rows[0],
+    // EVERY ENVIRONMENT THIS RUN CREATED, BECAUSE THE ANALYTICAL HALF HAS NO LANE GUARD.
+    // `load-analytics.mjs` writes into `relay_analytics` — the lane's own store, beside four
+    // chapters' data — and the only cleanup this repository ships is `DROP DATABASE`. Without
+    // these ids there is nothing to scope a delete to.
+    environment_ids: environments,
     created_at_range: (
       await pool.query("select min(created_at) lo, max(created_at) hi from messages")
     ).rows[0],
