@@ -128,14 +128,29 @@ describe("the storage cap", () => {
     expect(await committed(t.id)).toBe(600_000);
   });
 
-  it("admits the request that exactly fills the cap, and refuses the next byte", async () => {
-    // THE BOUNDARY IS `>` AND NOT `>=`, and the only way to know which was written is
-    // to ask for the request that lands exactly on it.
-    const t = await tenant({ storage_bytes: { hard: 1_000 } });
-    expect((await ask(t.credential, 1_000)).status).toBe(201);
-    expect((await ask(t.credential, 1)).code).toBe("media_storage_exhausted");
-    expect(await committed(t.id)).toBe(1_000);
-  });
+  // T041. THREE REQUESTS ON THE THREE SIDES OF THE BOUND, AND THE MIDDLE ONE IS THE
+  // TEST. A request for half the cap proves the comparison exists; only the one that
+  // lands exactly on it says whether `>` or `>=` was written. Chapter 4.7 found both
+  // obvious ways to plant a 0.1% drift passing for precisely this reason — the naive
+  // shortfall and the naive excess both sit inside the bound, and the smallest breaching
+  // drift is one more than either.
+  it("issues one byte under the cap, issues the byte that fills it, refuses the next", async () => {
+    const under = await tenant({ storage_bytes: { hard: 1_000 } });
+    expect((await ask(under.credential, 999)).status).toBe(201);
+    expect(await committed(under.id)).toBe(999);
+
+    const exact = await tenant({ storage_bytes: { hard: 1_000 } });
+    expect((await ask(exact.credential, 1_000)).status).toBe(201);
+    // ONE BYTE OVER A FULL CAP, which is the smallest refusable request there is.
+    expect((await ask(exact.credential, 1)).code).toBe("media_storage_exhausted");
+    expect(await committed(exact.id)).toBe(1_000);
+
+    // AND ONE BYTE OVER AN EMPTY CAP, so the refusal is about the arithmetic and not
+    // about the tenant already holding something.
+    const over = await tenant({ storage_bytes: { hard: 1_000 } });
+    expect((await ask(over.credential, 1_001)).code).toBe("media_storage_exhausted");
+    expect(await committed(over.id)).toBe(0);
+  }, 60_000);
 
   it("treats a cap of zero as a refusal of everything, which absent does not", async () => {
     // ZERO AND ABSENT ARE DIFFERENT STATES and the parser keeps them apart. A cap that
