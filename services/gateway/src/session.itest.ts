@@ -413,11 +413,87 @@ describe("the socket's credentials", () => {
     expect(refusal.payload.field).toBe("payload.attachments");
   }, 20_000);
 
-  it("refuses a media_id and SAYS hosted media is unavailable (FR-003a)", async () => {
-    // THE MESSAGE, BECAUSE THE CODE IS THE SAME ONE EVERY MALFORMED FRAME GETS. A one-arm
-    // union would also refuse this — with "Invalid discriminator value. Expected 'url'",
-    // which is the sentence FR-003a forbids by name. This assertion is the only thing
-    // that can tell the two-arm schema from a one-arm one on this door.
+  // CONVERTED, NOT DELETED (FR-001b). This asserted *"refuses a media_id and SAYS hosted
+  // media is unavailable"* from 3.24 until this chapter, and its subject — what the
+  // SOCKET door does with a media attachment — is the same subject now that the arm
+  // accepts. A deleted test takes its question with it; this one keeps the question and
+  // changes the answer.
+  //
+  // THE FRAME IS STILL REFUSED AND THE REASON HAS MOVED ONE LAYER. `m_1` used to fail the
+  // arm's unconditional refinement; it now fails `z.uuid()`. Both are the gateway's own
+  // schema rather than the api's, so the code is still `invalid_frame` — `sendError`
+  // fixes it at the call site — and what changed is the sentence. Asserting the sentence
+  // is the only thing that can tell a schema that refuses for the right reason from one
+  // that refuses for any reason at all.
+  // ── THE SOCKET DOOR ACCEPTS, AND IT IS A DIFFERENT DOOR (FR-001a, SC-002a) ──────────
+  //
+  // ONE UNION, THREE DOORS, AND NO ARTIFACT MENTIONED THIS ONE UNTIL ANALYSIS PASS 2.
+  // `messageSendSchema` embeds `attachmentSchema` in the gateway and
+  // `internalSendRequestSchema` embeds it again in the api, so a socket send crosses the
+  // union twice and neither crossing is the REST route the rest of this chapter tests.
+  // The arm accepting at the REST door says nothing about this one.
+  it("commits a media attachment sent over the socket (FR-001a, SC-002a)", async () => {
+    // THE SLOT COMES FROM THE API, over its own route and with the same credential the
+    // harness holds. The gateway has no media surface at all — it forwards.
+    const slot = await fetch(`${api.url}/v1/media`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${api.credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ filename: "s.png", mime_type: "image/png", bytes: 512 }),
+    });
+    expect(slot.status, "the api did not issue a slot to attach").toBe(201);
+    const { media_id } = (await slot.json()) as { media_id: string };
+
+    const socket = connect(await mintToken("tuan", 3600));
+    await firstFrame(socket, "connection.ack");
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelId,
+          text: "a photo, over the socket",
+          attachments: [{ type: "media", media_id }],
+        },
+      }),
+    );
+
+    // THE ACK IS THE CLAIM. A frame that the gateway's schema refused would answer
+    // `error` instead, and a frame the api refused would too — so an ack means the union
+    // accepted at both crossings and the row committed.
+    const ack = (await firstFrame(socket, "message.ack")) as { payload: { seq: number } };
+    expect(ack.payload.seq).toBeGreaterThan(0);
+  }, 20_000);
+
+  // AND A FOREIGN ID GETS THE API'S OWN CODE, NOT `invalid_frame`. The split matters: the
+  // gateway's schema refuses SHAPES and the api refuses FACTS, and a socket client that
+  // saw `invalid_frame` for a well-formed id it simply does not own would be told to fix
+  // its JSON. `session.ts`'s send catch forwards any 4xx whose `code` passes
+  // `isErrorCode`, which is what makes the api's vocabulary reach this door at all.
+  it("forwards the api's own refusal for a foreign media_id (T032c)", async () => {
+    const socket = connect(await mintToken("tuan", 3600));
+    await firstFrame(socket, "connection.ack");
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: api.channelId,
+          text: "somebody else's object",
+          attachments: [{ type: "media", media_id: randomUUID() }],
+        },
+      }),
+    );
+    const refusal = (await firstFrame(socket, "error")) as {
+      payload: { code: string };
+    };
+    expect(refusal.payload.code).toBe("media_not_attachable");
+    expect(refusal.payload.code).not.toBe("invalid_frame");
+  }, 20_000);
+
+  it("refuses a malformed media_id at the frame, and says which field (FR-008a)", async () => {
     const socket = connect(await mintToken("tuan", 3600));
     await firstFrame(socket, "connection.ack");
     socket.send(
@@ -434,11 +510,12 @@ describe("the socket's credentials", () => {
     const refusal = (await firstFrame(socket, "error")) as {
       payload: { code: string; message: string };
     };
-    // `invalid_frame` AND NOT `media_not_available`: `sendError` fixes its code at the
-    // call site, so the REST door answers with the code and the socket answers with the
-    // sentence. T039 records that split.
     expect(refusal.payload.code).toBe("invalid_frame");
-    expect(refusal.payload.message).toMatch(/hosted media is not available/i);
+    // AND NOT THE OLD SENTENCE. A gateway still carrying 3.24's schema would answer
+    // "hosted media is not available yet" here and pass every other assertion in this
+    // file, which is exactly the regression this line exists to catch.
+    expect(refusal.payload.message).not.toMatch(/hosted media is not available/i);
+    expect(refusal.payload.message).toMatch(/uuid/i);
   }, 20_000);
 
   it("commits TWO attachments sent over the socket, in order (FR-001, FR-006)", async () => {

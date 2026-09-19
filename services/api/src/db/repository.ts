@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, gt, inArray, isNull, lt, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 
 import type { Attachment } from "@relay/protocol";
 
@@ -2334,6 +2334,27 @@ export class ChannelArchivedError extends Error {
  * the service maps them to different codes. Carries the sender's INTERNAL id and never
  * the customer's identifier: the message on the wire names neither the person asked for
  * nor the bots that would have been accepted (SC-005). */
+/** A media attachment this sender cannot attach (FR-001 through FR-005, FR-MED-06).
+ *
+ * ONE CLASS FOR THREE CONDITIONS, and that is the requirement rather than a shortcut.
+ * The object may belong to another environment, to another user of this one, or to
+ * nothing at all — and the service maps all three to one code and one message, because
+ * distinguishing them would tell a caller whether somebody else's object exists. A
+ * repository that threw three classes would be handing the service the material for an
+ * existence oracle and trusting it not to use it.
+ *
+ * IT CARRIES THE INDEX AND NOT THE ID. The refusal's `field` is
+ * `attachments.<n>.media_id`, so a caller with ten attachments is told which one — the
+ * same courtesy the schema's own path gives. The ID is deliberately absent: echoing it
+ * back reads as *"that one is wrong, try another"*, and a caller who can enumerate is
+ * exactly who this refusal is for. */
+export class MediaNotAttachableError extends Error {
+  constructor(readonly index: number) {
+    super("a media attachment names an object this sender cannot attach");
+    this.name = "MediaNotAttachableError";
+  }
+}
+
 export class SenderNotPermittedError extends Error {
   constructor(readonly userId: string) {
     super("an application credential may send only as a bot user");
@@ -4306,6 +4327,20 @@ export class Repository {
       // separate hypotheses chasing what turned out to be warm-up (T033).
       const quota = await this.assertWithinQuota(tx, period, userId, senderIsPerson);
 
+      // FR-MED-06, LAST AMONG THE REFUSALS AND STILL INSIDE THE TRANSACTION (FR-011).
+      //
+      // AFTER THE BAN, THE CHANNEL AND THE QUOTA, for the reason the ban's own comment
+      // gives about order: a refusal naming a fact about a resource must not be reachable
+      // for a caller who could not otherwise get this far. Everything above has already
+      // established that this sender may write to this channel, so a media refusal here
+      // tells them only about objects in their own environment — which is what the
+      // predicate is scoped to anyway.
+      //
+      // BEFORE THE INSERT, which is the half SC-003 asserts: nothing is written, no
+      // outbox row is queued, and `channels.last_sequence` does not move. The sequence is
+      // computed on the next line and a refusal never reaches it.
+      await this.assertAttachableMedia(tx, attachments, userId, senderMustBeBot);
+
       const seq = channel.lastSequence + 1;
       const id = randomUUID();
 
@@ -5049,6 +5084,97 @@ export class Repository {
    * counted this period passes, and only the one who would be the next new face
    * is refused. Getting this backwards would suspend a whole tenant the moment
    * their last allowed user sent their second message. */
+  /** FR-MED-06's predicate, asked of the rows rather than reasoned about (FR-002 to
+   * FR-005, FR-010, FR-011).
+   *
+   * INSIDE THE CALLER'S TRANSACTION, WHICH IS FR-011 AND NOT A PREFERENCE. `tx` is passed
+   * in rather than `this.db` used, so the read and the insert that follows it are one
+   * unit: a refusal writes no message row, no outbox row and does not advance the
+   * channel's sequence, and an object deleted a millisecond after the check cannot leave
+   * a message pointing at nothing.
+   *
+   * ONE QUERY AND NOT N, WITH THE DIFFERENCE TAKEN IN ORDER. A lookup per attachment
+   * would be up to ten round trips inside a write transaction for a question one `IN`
+   * answers. What the single query costs is that "which one failed" becomes a set
+   * difference — and the difference has to preserve POSITION, because the refusal's
+   * `field` is `attachments.<n>.media_id`. `wanted` carries the index alongside the id
+   * for exactly that reason, and the first gap in order is the one reported.
+   *
+   * THE THREE CLAUSES, IN THE CLAUSE'S OWN ORDER (`data-model.md` §2):
+   *
+   *     environment_id = this tenant                       FR-002
+   *     AND (the caller is an application credential
+   *          OR user_id IS NULL                            the tenant uploaded it
+   *          OR user_id = the sending user)                FR-003
+   *     AND state IN ('pending', 'ready')                  FR-010
+   *
+   * A NULL `user_id` PASSES FOR A USER TOKEN, and the specification assumed the
+   * opposite. It means an API key took the slot — the tenant's own backend — and 4.10's
+   * controller wrote the column nullable for this question: *"a photo sent by a person
+   * and an attachment uploaded by a customer's backend are the same operation."* Under
+   * the strict reading they are not the same at all: one produces an object any user of
+   * the tenant can attach and the other produces one nobody can, which makes the
+   * nullability pointless because any sentinel would do.
+   *
+   * `state IN ('pending', 'ready')` IS WRITTEN IN FULL AND ONLY ONE ARM CAN OCCUR. The
+   * column's CHECK constraint is `state = 'pending'` — 4.10 wrote it that way on purpose,
+   * because verification is movement VI's and a schema admitting a state nothing produces
+   * is a schema making a claim it cannot keep. So `'ready'` is unreachable today and the
+   * predicate says it anyway: the clause names both, and a predicate that named one would
+   * have to be found and widened by whoever builds the scanner.
+   *
+   * A ROW THAT DOES NOT MATCH AND A ROW THAT DOES NOT EXIST ARE THE SAME OUTCOME
+   * (FR-005). The query returns what passes; anything asked for and not returned is
+   * refused, with no way for the caller — or for this method — to tell which clause it
+   * failed or whether the row is there at all. */
+  private async assertAttachableMedia(
+    tx: Db,
+    attachments: Attachment[] | undefined,
+    senderUserId: string,
+    /** `senderMustBeBot`, THREADED UNCHANGED, AND THE ALTERNATIVE IS THE VIOLATION.
+     *
+     * The predicate needs one fact — whether the caller is an application credential —
+     * and `sendMessage` already takes it under a name about the SENDER. Passing a second
+     * boolean called `callerIsApplication` would read better here and would be the thing
+     * research R5 forbids: *"the repository must not learn what a credential is."* Two
+     * booleans that are always equal is also two things to keep in step. So the existing
+     * constraint is reused and the mismatch between its name and this use is written
+     * down rather than hidden — a send whose sender must be software is, in this
+     * platform, exactly a send an application credential made. */
+    senderMustBeBot: boolean,
+  ): Promise<void> {
+    const wanted = (attachments ?? []).flatMap((attachment, index) =>
+      attachment.type === "media" ? [{ index, id: attachment.media_id }] : [],
+    );
+    if (wanted.length === 0) return;
+
+    const attachable = await tx
+      .select({ id: mediaObjects.id })
+      .from(mediaObjects)
+      .where(
+        and(
+          inArray(
+            mediaObjects.id,
+            wanted.map((w) => w.id),
+          ),
+          eq(mediaObjects.environmentId, this.environmentId),
+          senderMustBeBot
+            ? undefined
+            : or(
+                isNull(mediaObjects.userId),
+                eq(mediaObjects.userId, senderUserId),
+              ),
+          inArray(mediaObjects.state, ["pending", "ready"]),
+        ),
+      );
+
+    const passed = new Set(attachable.map((row) => row.id));
+    // IN ORDER, so ten attachments with the third one foreign name the third. `find`
+    // walks `wanted`, which was built by walking the array the caller sent.
+    const refused = wanted.find((w) => !passed.has(w.id));
+    if (refused !== undefined) throw new MediaNotAttachableError(refused.index);
+  }
+
   private async assertWithinQuota(
     tx: Db,
     period: string,
