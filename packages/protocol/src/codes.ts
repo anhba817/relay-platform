@@ -262,6 +262,29 @@ export const ERROR_CODES = {
   // a duplicate key is a `codes.test.ts` failure rather than a second meaning.
   quota_exceeded:
     "a monthly quota is exhausted; the message names the dimension, the figures and the date it resumes",
+  // ── HOSTED MEDIA'S FOUR REFUSALS, AND THREE OF THEM ARE PERMANENT ──────────────
+  //
+  // FR-MED-02 names three conditions and the brief counted four. The fourth is the
+  // SAD's degradation row — *"Object storage lost … Upload slots return a specific
+  // error"* — which FR-MED-02 does not carry, and it is the only one of the four a
+  // client should retry. That asymmetry is the whole reason they are four codes and
+  // not one: transcode, compress and free space are all wasted advice for the store
+  // being briefly unreachable, and retrying is wasted advice for the other three.
+  //
+  // NONE OF THEM IS `quota_exceeded`, for the argument this file already makes twice.
+  // `channel_member_limit_exceeded` below says *"NOT `quota_exceeded`. That is a
+  // monthly, billable, resets-on-a-date refusal whose message promises a resume
+  // date"* — and a storage cap does not reset on a date. It is a LEVEL: the figure
+  // falls when objects are deleted and not when the month turns, which is why
+  // FR-RTL-05 had to be amended rather than stretched to cover it.
+  media_type_not_allowed:
+    "that media type is not accepted; the message names the type, and the accepted set is in the reference",
+  media_too_large:
+    "the declared size exceeds the limit for its kind; the message names both figures",
+  media_storage_exhausted:
+    "this environment's stored bytes would exceed its limit; delete media or raise the cap — waiting does not help",
+  media_storage_unavailable:
+    "the media store cannot be reached; nothing was reserved and the same request will succeed once it recovers",
   webhook_endpoint_limit_reached:
     "this environment already holds the maximum number of webhook endpoints; delete one, or use another environment",
   webhook_url_invalid: "the url is not a valid absolute URL — send scheme, host and path",

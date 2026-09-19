@@ -17,6 +17,7 @@ import {
   environments,
   humans,
   members,
+  mediaObjects,
   messageEdits,
   readPositions,
   memberships,
@@ -2492,6 +2493,74 @@ export class Repository {
    * deferral justified by one caller's opinion of why the code exists. */
   get environment(): string {
     return this.environmentId;
+  }
+
+  // ---------------------------------------------------------------------
+  // Hosted media. The slot's whole database half, in one method, because the
+  // check reads what the insert writes.
+  // ---------------------------------------------------------------------
+
+  /** Reserve a slot, or report why not.
+   *
+   * ONE TRANSACTION. The storage cap is a sum over `media_objects` and the insert
+   * adds to that sum, so unserialised two slots race the same remaining allowance
+   * and both are issued — the read-then-write quota check a reader would copy out of
+   * a chapter. `serializable` rather than a lock because the read is an aggregate
+   * over a whole tenant's rows and there is no single row to lock.
+   *
+   * IT RETURNS FACTS AND NEVER A REFUSAL. The caller turns `refused` into
+   * `media_storage_exhausted`; a repository that threw an HTTP error would be the
+   * query layer deciding a protocol question. The numbers come back with it because
+   * the message names them.
+   *
+   * AND IT IS HERE RATHER THAN IN `media/` BECAUSE THE LINT RULE IS A CONSTITUTION
+   * CLAUSE. The first version of this chapter's service imported `drizzle-orm` and
+   * was refused: *"the query engine lives inside the repository layer only
+   * (constitution I, ADR-16)"*. Chapter 4.7 hit the identical wall and its record
+   * says why the plan walks into it — the api owns the repository, so putting a
+   * query "in the api" feels like putting it here. */
+  async reserveMediaSlot(input: {
+    id: string;
+    userId: string | null;
+    filename: string;
+    mimeType: string;
+    declaredBytes: number;
+    objectKey: string;
+  }): Promise<
+    { reserved: true } | { reserved: false; committed: number; cap: number }
+  > {
+    return this.db.transaction(async (tx) => {
+      const [sum] = await tx
+        .select({
+          committed: sql<string>`coalesce(sum(${mediaObjects.declaredBytes}), 0)`,
+        })
+        .from(mediaObjects)
+        .where(eq(mediaObjects.environmentId, this.environmentId));
+      const committed = Number(sum?.committed ?? 0);
+
+      const [env] = await tx
+        .select({ quotaConfig: environments.quotaConfig })
+        .from(environments)
+        .where(eq(environments.id, this.environmentId));
+      // `storage_bytes` resolves like the other three dimensions, and an absent cap
+      // stays absent rather than becoming `Infinity` or `-1` somewhere up the stack.
+      const cap = capsFor(env?.quotaConfig, "storage_bytes").caps.hard;
+
+      if (cap !== null && committed + input.declaredBytes > cap) {
+        return { reserved: false as const, committed, cap };
+      }
+
+      await tx.insert(mediaObjects).values({
+        id: input.id,
+        environmentId: this.environmentId,
+        userId: input.userId,
+        filename: input.filename,
+        mimeType: input.mimeType,
+        declaredBytes: input.declaredBytes,
+        objectKey: input.objectKey,
+      });
+      return { reserved: true as const };
+    });
   }
 
   // ---------------------------------------------------------------------

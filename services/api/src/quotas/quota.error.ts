@@ -22,12 +22,25 @@ const NOUN: Record<Dimension, string> = {
   messages: "message",
   active_users: "active user",
   connection_minutes: "connection-minute",
+  storage_bytes: "stored byte",
 };
 
 const RESUMES: Record<Dimension, string> = {
   messages: "sends",
   active_users: "sends",
   connection_minutes: "connections",
+  // AND THIS ONE RESUMES ON NOTHING, WHICH THIS MAP CANNOT SAY. The other three are
+  // monthly flows and the sentence they build promises a date. Stored bytes are a
+  // LEVEL: the figure falls when media is deleted and the first of the month changes
+  // nothing, so "uploads resume on the 1st" would be false.
+  //
+  // `media_storage_exhausted` exists because of exactly this. Hosted media refuses
+  // with its own code and never reaches `QuotaError`, and this entry is here because
+  // `Record<Dimension, string>` demands one rather than because a caller reads it —
+  // the comment above says the compiler catching a missing dimension is the point,
+  // and it caught this one. If a caller ever does reach it, "uploads" is the operation
+  // and the date in the sentence is the part that would be wrong.
+  storage_bytes: "uploads",
 };
 
 /** Raised by the repository when a send would exceed a hard cap.
