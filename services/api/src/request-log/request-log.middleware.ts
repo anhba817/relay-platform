@@ -15,6 +15,30 @@ import {
   type RequestFacts,
 } from "./event";
 
+/** Whether the producer is in the middleware chain at all.
+ *
+ * `RELAY_REQUEST_LOG=off` EXISTS BECAUSE THE UNIT LANE IS SUPPOSED TO BE DOCKER-FREE AND
+ * WAS NOT. `pnpm test` is labelled in `ci.yml` as *"the Docker-free gate, exactly as
+ * chapter 1.1 defined it"*, and from the chapter that added this producer it has needed a
+ * running broker with the `ANALYTICS` stream. Measured: point the api at a broker that is
+ * not there and `main.test.ts > logs exactly one structured line per request` goes red,
+ * because this producer's failure path logs a second line through the same logger the test
+ * captured — the assertion is about the api's whole output, not about the access log.
+ *
+ * NOT A RELAY, SO NOT IN THE HARNESS'S `RELAY_FLAGS`. That list is *"one per relay that
+ * exists"*, and its purpose is a quiet database: a background loop mutating rows a suite is
+ * asserting on. This is a per-request publish that mutates nothing and races nothing, so
+ * putting it there would force every non-exempt integration suite to switch off the very
+ * thing three of them assert on.
+ *
+ * SWITCHED IN `configure()`, NOT BRANCHED IN `use()`. Off means the middleware is not in
+ * the chain — a design in which the case cannot arise beats a branch that handles it, which
+ * is the rule the revision-watermark chapter paid for. It also keeps the hot path free of a
+ * per-request environment read. */
+export function requestLogEnabled(): boolean {
+  return (process.env["RELAY_REQUEST_LOG"] ?? "on").toLowerCase() !== "off";
+}
+
 // THIS IS REGISTERED SECOND, AND THE POSITION IS THE DESIGN.
 //
 // The chain is `RequestContext -> RequestLog -> Authenticate -> RateLimit`. Registering this

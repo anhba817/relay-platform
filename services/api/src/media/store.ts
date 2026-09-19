@@ -44,8 +44,10 @@ export async function ensureBucket(config: StoreConfig): Promise<"created" | "ex
   const body = await res.text();
   if (body.includes("BucketAlreadyOwnedByYou")) return "exists";
 
-  // ANYTHING ELSE IS FATAL AND SAYS SO. A store the api cannot write to is a store
-  // every slot request will fail against, and failing at boot is the loud version.
+  // ANYTHING ELSE IS FATAL AND SAYS SO, AND ITS ONE CALLER TURNS IT INTO A REFUSAL.
+  // `storeReady` below catches this and answers `false`, which becomes a 503 the client
+  // can read — a store the api cannot write to is a store every slot request will fail
+  // against, and the message carries the status and the body so the operator sees which.
   throw new Error(
     `media: cannot create bucket ${config.bucket} — HTTP ${res.status}: ${body.slice(0, 200)}`,
   );

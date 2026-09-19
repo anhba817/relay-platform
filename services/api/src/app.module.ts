@@ -28,7 +28,7 @@ import { ProtocolErrorFilter } from "./protocol-error.filter";
 import { LimitsModule } from "./limits/limits.module";
 import { RateLimitMiddleware } from "./limits/rate-limit.middleware";
 import { RequestContextMiddleware } from "./request-context.middleware";
-import { RequestLogMiddleware } from "./request-log/request-log.middleware";
+import { RequestLogMiddleware, requestLogEnabled } from "./request-log/request-log.middleware";
 import { RequestLogModule } from "./request-log/request-log.module";
 import { ANALYTICS_PUBLISHER } from "./webhooks/analytics";
 import { createJetStreamPublisher, ensureAnalyticsStream } from "./outbox/jetstream.publisher";
@@ -103,12 +103,25 @@ export class AppModule implements NestModule {
     // is exactly the one an operator opens a request log to find. Second, it attaches its
     // `finish` listener before anything can short-circuit, and reads `req.principal` when
     // the listener fires rather than when it is attached. Attach early, read late.
+    //
+    // AND `RELAY_REQUEST_LOG=off` TAKES IT OUT OF THE CHAIN RATHER THAN SHORT-CIRCUITING
+    // INSIDE IT. The unit lane sets it: `pnpm test` is the Docker-free gate and this
+    // producer is the only thing in the chain that reaches a broker, so with it registered
+    // the gate has needed a running NATS since the chapter that added it.
     consumer
       .apply(
-        RequestContextMiddleware,
-        RequestLogMiddleware,
-        AuthenticateMiddleware,
-        RateLimitMiddleware,
+        ...(requestLogEnabled()
+          ? ([
+              RequestContextMiddleware,
+              RequestLogMiddleware,
+              AuthenticateMiddleware,
+              RateLimitMiddleware,
+            ] as const)
+          : ([
+              RequestContextMiddleware,
+              AuthenticateMiddleware,
+              RateLimitMiddleware,
+            ] as const)),
       )
       .forRoutes("{*path}");
   }

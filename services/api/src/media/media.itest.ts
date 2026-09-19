@@ -1,6 +1,7 @@
 import "reflect-metadata";
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -17,6 +18,7 @@ import {
   Repository,
 } from "../db/repository";
 import { mintUserToken } from "../auth/user-token";
+import { presign } from "./presign";
 import { ensureBucket, storeConfig } from "./store";
 
 // THE SLOT, END TO END (FR-MED-01), AND THE INSTRUMENT IT NEEDS.
@@ -225,6 +227,57 @@ describe("the upload slot", () => {
       "user_id",
     ]);
   });
+
+  // C5 / 056-10. THE BUCKET NOTHING CREATED.
+  //
+  // `store.ts` said *"on boot, every boot"* and every caller of `ensureBucket` was a test
+  // `beforeAll` — including this file's. So the api never created the bucket, and on a
+  // store that had never held one every slot request answered 503 forever. No local run
+  // could see it: the volume persists, so from the first suite onward the bucket was
+  // simply there. CI's empty volume is what said so, through two files that never touch
+  // this module.
+  //
+  // A FRESH BUCKET NAME RATHER THAN A DELETED VOLUME. The honest condition is "a store
+  // with no bucket", and there are two ways to produce it: remove the shared one, or ask
+  // for one that has never existed. The first is an action scoped wider than its own test
+  // — `gaps.md` 056-5, this chapter's own finding — and would break any suite running
+  // beside this one. The second disturbs nobody.
+  it("issues a slot against a bucket that has never existed, and creates it", async () => {
+    const fresh = `probe-${randomUUID()}`;
+    const real = process.env.RELAY_MINIO_BUCKET;
+    const config = { ...store, bucket: fresh };
+
+    // The control: nothing is there yet. A signed HEAD on a bucket the store does not
+    // have answers 404, which is the arm this test exists for.
+    expect((await fetch(presign({ method: "HEAD", ...config, expiresIn: 60 }),
+      { method: "HEAD" })).status).toBe(404);
+
+    try {
+      // `MediaService` depends on a REQUEST-scoped `Repository`, so Nest makes it
+      // request-scoped too and `storeConfig()` runs on every request. The variable has to
+      // be wrong at the moment of the request, not at the moment of the wiring — a second
+      // application compiled while it was moved answered 201 from the real bucket.
+      process.env.RELAY_MINIO_BUCKET = fresh;
+      const res = await slot({ filename: "first.png", mime_type: "image/png", bytes: 32 }, token);
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(res.body.upload_url).toContain(`/${fresh}/`);
+    } finally {
+      if (real === undefined) delete process.env.RELAY_MINIO_BUCKET;
+      else process.env.RELAY_MINIO_BUCKET = real;
+    }
+
+    // AND THE BUCKET IS THERE NOW, which is the half that distinguishes "the slot was
+    // issued" from "the slot was issued against something a client could use".
+    expect((await fetch(presign({ method: "HEAD", ...config, expiresIn: 60 }),
+      { method: "HEAD" })).status).toBe(200);
+
+    // A PROBE CLEANS UP AFTER ITSELF. 043 left two rows behind and the next measurement
+    // read them as pre-existing data; a bucket per run would accumulate in a volume every
+    // other suite shares.
+    const removed = await fetch(presign({ method: "DELETE", ...config, expiresIn: 60 }),
+      { method: "DELETE" });
+    expect(removed.status, "the probe bucket was left behind").toBe(204);
+  }, 60_000);
 
   it("hands back a URL a client can upload to, and no byte reaches the api", async () => {
     const res = await slot({ filename: "c.jpg", mime_type: "image/jpeg", bytes: 44 }, token);

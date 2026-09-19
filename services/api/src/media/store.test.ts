@@ -46,16 +46,19 @@ describe("the store client, against a server that answers to order", () => {
   });
 
   it("reads the store's own name for the second attempt as exists", async () => {
-    // 409 `BucketAlreadyOwnedByYou` is what makes running this on every boot safe: the
-    // store distinguishes "already there" from "went wrong", so no flag has to.
+    // 409 `BucketAlreadyOwnedByYou` is what makes calling this unconditionally safe: the
+    // store distinguishes "already there" from "went wrong", so no flag has to. `storeReady`
+    // reaches it only on a 404, so in practice it fires once per store — but "once" is a
+    // property of the caller and this function is safe without it.
     reply = { status: 409, body: "<Error><Code>BucketAlreadyOwnedByYou</Code></Error>" };
     expect(await ensureBucket(config)).toBe("exists");
   });
 
   it("throws on anything else, and carries the status and the body into the message", async () => {
     // THE ARM A RUNNING STORE CANNOT BE ASKED FOR. A 403 here means the credentials are
-    // wrong, which is a store the api will fail against on every slot request — failing
-    // at boot is the loud version, and it has to say enough to diagnose.
+    // wrong, which is a store the api will fail against on every slot request. It throws
+    // rather than returning, because its caller — `storeReady` — is the thing that decides
+    // a failure is a 503, and it has to say enough for an operator to tell 403 from 500.
     reply = { status: 403, body: "<Error><Code>SignatureDoesNotMatch</Code></Error>" };
     await expect(ensureBucket(config)).rejects.toThrow(/HTTP 403/);
     await expect(ensureBucket(config)).rejects.toThrow(/SignatureDoesNotMatch/);
