@@ -199,6 +199,25 @@ services:
       RELAY_CLICKHOUSE_HTTP_PORT: "8123"
       RELAY_CLICKHOUSE_USER: relay
       RELAY_CLICKHOUSE_PASSWORD: relay
+      # TWO ADDRESSES FOR ONE STORE, AND THE OMISSION OF BOTH COST A PERMANENT 503.
+      #
+      # The block above says "container names, not localhost" and MinIO was the one
+      # service it did not name, while `depends_on` below waits on it — a dependency
+      # declared and an address forgotten. `store.ts` then fell back to
+      # `http://localhost:9100`, which inside this container is this container, so
+      # `storeReady` was refused and FR-017 answered `media_storage_unavailable` to
+      # every slot request. Measured from a shell in here: `localhost:9100 ->
+      # ECONNREFUSED`, `minio:9000 -> 200`, with the same store answering 200 on the
+      # host. Nothing caught it because every media suite runs the api as a host
+      # process, where the default is correct.
+      #
+      # THEY DIFFER BECAUSE THE HOST IS INSIDE THE SIGNATURE. `X-Amz-SignedHeaders:
+      # host`, so a URL signed for one origin is refused at the other. The client is
+      # outside this network and gets the published port; the api is inside it and
+      # reaches the same store by service name. Splitting them is the only way both
+      # requests are signed for where they are actually sent.
+      RELAY_MINIO_ENDPOINT: http://localhost:9100
+      RELAY_MINIO_INTERNAL_ENDPOINT: http://minio:9000
       PORT: "4000"
     ports:
       - "${RELAY_API_PORT:-4000}:4000"
