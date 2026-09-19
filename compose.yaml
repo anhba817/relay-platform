@@ -106,7 +106,15 @@ services:
     image: quay.io/minio/minio:latest
     command: server /data
     ports:
-      - "${RELAY_MINIO_PORT:-9000}:9000"
+      # 9100, NOT MINIO'S CONVENTIONAL 9000, AND THE COLLISION WAS REAL. ClickHouse has
+      # published `${RELAY_CLICKHOUSE_NATIVE_PORT:-9000}:9000` since chapter 1.2, so the
+      # two services cannot both start: the loser dies with `Bind for 127.0.0.1:9000
+      # failed: port is already allocated` and `docker compose up -d` exits 1.
+      #
+      # The container port stays 9000 — that is MinIO's, and the health check below is
+      # inside the container. Only the host side moves, because the host side is the
+      # hand-maintained table and chapter 1.2's is the one that was there first.
+      - "${RELAY_MINIO_PORT:-9100}:9000"
     environment:
       MINIO_ROOT_USER: relay
       MINIO_ROOT_PASSWORD: relay-secret

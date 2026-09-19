@@ -25,7 +25,7 @@ function signingKey(secret: string, date: string, region: string): Buffer {
 export interface PresignOptions {
   /** `PUT` for an upload or a bucket create, `GET` for a read, `HEAD` to probe. */
   method: "GET" | "PUT" | "HEAD";
-  /** Origin only — `http://localhost:9000`. */
+  /** Origin only — `http://localhost:9100`. */
   endpoint: string;
   bucket: string;
   /** Empty for a BUCKET operation, which is a different canonical URI: `/{bucket}`

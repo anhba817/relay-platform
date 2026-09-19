@@ -363,6 +363,54 @@ describe("the isolation gauntlet", () => {
     expect(serialised).not.toContain(t.victim.environmentId);
   });
 
+  // ── the upload slot (chapter 4.10, FR-MED-01) ──────────────────────────────────
+  //
+  // `credential` SHAPE, SO THE ATTACK IS THE OBJECT KEY. `{ filename, mime_type, bytes }`
+  // carries no tenant-owned identifier — there is nothing to forge — and the tenant
+  // reaches the key through the principal the guard resolved. What a leak would look
+  // like is one tenant's signed URL pointing inside another's prefix, because the URL is
+  // handed to a client that Relay does not control and the store enforces only the
+  // signature, never the tenancy.
+  //
+  // BOTH CREDENTIAL CLASSES, because `targets.ts` files this route as `accepts: "either"`
+  // and the controller declares `@Accepts("application", "user")`. Attacking with one
+  // would cover half the door.
+  it("POST /v1/media — two tenants get keys under their own prefixes, both credential classes", async () => {
+    attacked.add("POST /v1/media");
+    const ask = async (credential: string) => {
+      const res = await fetch(`${url}/v1/media`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+        body: JSON.stringify({ filename: "x.png", mime_type: "image/png", bytes: 32 }),
+      });
+      expect(res.status).toBe(201);
+      return (await res.json()) as { media_id: string; upload_url: string };
+    };
+
+    const byKey = await ask(t.attacker.credential);
+    const byToken = await ask(attackerToken);
+    const victim = await ask(t.victim.credential);
+
+    // THE ATTACKER'S TWO URLS NAME THE ATTACKER'S ENVIRONMENT AND NOTHING ELSE.
+    for (const slot of [byKey, byToken]) {
+      const key = decodeURIComponent(new URL(slot.upload_url).pathname);
+      expect(key).toContain(`/${t.attacker.environmentId}/`);
+      expect(key).not.toContain(t.victim.environmentId);
+      // and the whole URL, because a query parameter is part of what the store reads
+      expect(slot.upload_url).not.toContain(t.victim.environmentId);
+    }
+
+    // A NON-VACUOUS CONTROL: the victim's own slot really does sit under a different
+    // prefix, so "not the victim's" above is isolation rather than an empty string.
+    const victimKey = decodeURIComponent(new URL(victim.upload_url).pathname);
+    expect(victimKey).toContain(`/${t.victim.environmentId}/`);
+    expect(victimKey).not.toContain(t.attacker.environmentId);
+
+    // AND THE ROWS ARE THE ATTACKER'S. Three slots, three distinct ids, and the two
+    // credential classes wrote into the same environment as each other.
+    expect(new Set([byKey.media_id, byToken.media_id, victim.media_id]).size).toBe(3);
+  });
+
   // ── the two routes this chapter added ──────────────────────────────────────────
   //
   // A chapter that adds an endpoint attacks it in the same chapter. The derivation

@@ -15,7 +15,7 @@ export interface StoreConfig {
 
 export function storeConfig(env: NodeJS.ProcessEnv = process.env): StoreConfig {
   return {
-    endpoint: env.RELAY_MINIO_ENDPOINT ?? "http://localhost:9000",
+    endpoint: env.RELAY_MINIO_ENDPOINT ?? "http://localhost:9100",
     accessKey: env.RELAY_MINIO_ACCESS_KEY ?? "relay",
     secretKey: env.RELAY_MINIO_SECRET_KEY ?? "relay-secret",
     bucket: env.RELAY_MINIO_BUCKET ?? "relay-media",

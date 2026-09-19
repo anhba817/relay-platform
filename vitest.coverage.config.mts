@@ -45,7 +45,7 @@ export default defineConfig({
       // so. The media suites reach a real store; without these they reach nothing and
       // the refusal they get is `media_storage_unavailable`, which is a correct answer
       // to the wrong question.
-      RELAY_MINIO_ENDPOINT: "http://localhost:9000",
+      RELAY_MINIO_ENDPOINT: "http://localhost:9100",
       RELAY_MINIO_ACCESS_KEY: "relay",
       RELAY_MINIO_SECRET_KEY: "relay-secret",
       RELAY_MINIO_BUCKET: "relay-media",
@@ -1180,6 +1180,71 @@ export default defineConfig({
           functions: 100,
           lines: 100,
           statements: 100,
+        },
+
+        // ── hosted media (chapter 4.10) ──────────────────────────────────────────
+        //
+        // AND THREE OF THESE FIVE FILES DO NOT APPEAR IN THE TEXT TABLE AT ALL. v8's
+        // text reporter omits a file at 100/100/100/100, so a sweep for "which new files
+        // is the report showing" finds `media.service.ts` and `store.ts` and concludes
+        // the other three were never measured. They were: `coverage-summary.json` lists
+        // all five. **Read the json summary when the question is which files were seen**
+        // — the table answers a different question, which is which files have a gap.
+        //
+        // The signer. 100/100/100/100, and it is a pure function over strings with no
+        // clock and no I/O — `presign.test.ts` drives every branch and `presign.itest.ts`
+        // asks the store whether the bytes are right, which is a different question that
+        // no coverage number can answer.
+        "services/api/src/media/presign.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // The MIME table. 100/100/100/100, including the arm that only exists because
+        // `ALLOWED_TYPES[mimeType]` on a plain object literal answers for `constructor`:
+        // `kindOf("constructor")` returned a FUNCTION, which is truthy, so one declared
+        // type defeated the type refusal — and then `KIND_CAPS[thatFunction]` is
+        // `undefined`, `bytes > undefined` is false, and it defeated the size refusal
+        // too. `Object.hasOwn` is the fix and `kinds.test.ts` pins the case.
+        "services/api/src/media/kinds.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // The route. 100/100/100/100, and its one branch is the tenancy one —
+        // `principal.kind === "user"` decides whether the row records an uploader.
+        // Constitution VI's 100%-branch clause names tenant isolation, and this is the
+        // second Part 4 chapter to MEET it rather than pin around it (049 was the first).
+        // Both arms are driven over HTTP by `media.itest.ts`: an API key's slot has no
+        // user and a user token's does, asserted as a pair so that neither passes against
+        // a column that is always the same.
+        "services/api/src/media/media.controller.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // The slot service. 83.33 / 66.66 / 100 / 83.33 AT THE END OF PHASE 3, and the
+        // three uncovered lines are the three `throw`s — type, size, quota. Phase 4 is
+        // the chapter that writes those tests, so this pin is a floor under a file that
+        // is deliberately half-built, not a judgement about it. Raised at phase 5's close.
+        "services/api/src/media/media.service.ts": {
+          branches: 66,
+          functions: 100,
+          lines: 83,
+          statements: 83,
+        },
+        // The store client. 77.77 / 53.84 / 100 / 85.71. The uncovered line is
+        // `ensureBucket`'s throw, which needs a store that answers something other than
+        // 200 or 409 — phase 4's `media_storage_unavailable` stops it by stopping the
+        // container, which is the only way to reach it honestly.
+        "services/api/src/media/store.ts": {
+          branches: 53,
+          functions: 100,
+          lines: 85,
+          statements: 77,
         },
       },
     },
