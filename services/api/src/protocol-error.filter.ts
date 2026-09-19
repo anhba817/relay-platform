@@ -48,16 +48,39 @@ export class ProtocolErrorFilter implements ExceptionFilter {
     // put any string in `code` — `protocolError` makes that hard, not impossible,
     // because `HttpException` is still public — and this filter is the last place that
     // can notice before the string becomes a URL.
+    //
+    // FOUR MORE RUNGS, FROM HOSTED MEDIA (FR-018). 415, 413, 402 and 503 are the
+    // statuses that chapter introduced, and without entries here each one answers
+    // `internal_error` for any thrower that forgets to name its code — the third and
+    // fourth instances of the lie this comment already records twice.
+    //
+    // THE FIRST THREE HAVE EXACTLY ONE MEANING IN THIS PLATFORM and the ladder says it:
+    // a 415 is a media type nothing accepts, a 413 is a declared size over its cap, and
+    // a 402 is a quota. The 503 is the one that does not generalise — the two throwers
+    // that raise it name a specific store, `analytics_unavailable` and
+    // `media_storage_unavailable`, and neither is true of a 503 from somewhere else —
+    // so `service_unavailable` carries only what the status itself supports.
+    //
+    // A NAMED CODE STILL WINS. These are what a thrower gets for saying nothing, not a
+    // replacement for saying something.
     const ladder: ErrorCode =
       status === 400
         ? "invalid_request"
         : status === 401
           ? "unauthorized"
-          : status === 403
-            ? "forbidden"
-            : status === 404
-              ? "not_found"
-              : "internal_error";
+          : status === 402
+            ? "quota_exceeded"
+            : status === 403
+              ? "forbidden"
+              : status === 404
+                ? "not_found"
+                : status === 413
+                  ? "media_too_large"
+                  : status === 415
+                    ? "media_type_not_allowed"
+                    : status === 503
+                      ? "service_unavailable"
+                      : "internal_error";
     // `field` travels the way `code` does — the thrower names it, because only the
     // thrower knows it. Omitted rather than null when there is nothing to name: a key
     // that is always present and usually empty teaches a client to ignore it.

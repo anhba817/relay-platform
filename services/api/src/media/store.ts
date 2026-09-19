@@ -43,3 +43,39 @@ export async function ensureBucket(config: StoreConfig): Promise<"created" | "ex
     `media: cannot create bucket ${config.bucket} — HTTP ${res.status}: ${body.slice(0, 200)}`,
   );
 }
+
+/** Whether the store will answer a signed, credentialed request right now (FR-017).
+ *
+ * A PRESIGNED URL NEEDS NO CONTACT WITH THE STORE, WHICH IS THE WHOLE PROBLEM. Signing
+ * is five HMAC rounds over strings; the api never opens a socket, so it never learns
+ * that the store is down and a slot issued into an outage looks identical to a good
+ * one. The client finds out, at upload time, holding a URL nobody can use.
+ *
+ * `docs/05-sad.md:1062` asks for the opposite — *"Object storage lost … Upload slots
+ * return a specific error"* — so this round trip exists only to produce a refusal. That
+ * is a real cost on the happy path and it is written down rather than hidden: one signed
+ * HEAD on the bucket per slot request.
+ *
+ * A HEAD ON THE BUCKET AND NOT A GET ON AN OBJECT. The bucket always exists (boot
+ * created it) and a HEAD returns no body, so the question is exactly "is the store
+ * answering credentialed requests" and nothing else. An object GET would conflate a
+ * missing key with a missing store.
+ *
+ * AND A TIMEOUT, BECAUSE "CANNOT BE REACHED" INCLUDES "DOES NOT ANSWER". A store that
+ * accepts the connection and then hangs would otherwise hold the request open until the
+ * client gave up, turning a refusal this function exists to produce into a timeout the
+ * client has to interpret. Two seconds: long enough for a loaded store on a shared
+ * machine, short enough that a slot request never becomes the slowest thing in the api.
+ */
+export async function storeReachable(config: StoreConfig): Promise<boolean> {
+  const url = presign({ method: "HEAD", ...config, expiresIn: 60 });
+  try {
+    const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(2_000) });
+    return res.ok;
+  } catch {
+    // CONNECTION REFUSED, DNS FAILURE, TIMEOUT — all the same answer to the caller.
+    // Distinguishing them here would be a second vocabulary for one refusal, and the
+    // client's action is identical in every case.
+    return false;
+  }
+}

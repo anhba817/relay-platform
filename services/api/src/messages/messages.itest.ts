@@ -208,6 +208,41 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(((await res.json()) as { field: string }).field, bad).toBe("attachments.0.url");
     });
 
+    // FR-016, AND CHAPTER 4.10 IS WHY THIS TEST NOW EXISTS SEPARATELY. Hosted media
+    // makes a `media_id` a real thing: `POST /v1/media` issues one, a row carries it,
+    // and a client can upload against the URL it comes with. So the obvious next move
+    // is to make this arm accept — and it would ship FR-MED-06's surface with none of
+    // FR-MED-06's checks. Nothing here verifies that the id belongs to this environment,
+    // that the uploader is the sender, or that the object is `ready` rather than
+    // `pending`, and an attachment that names a `pending` slot would render as a broken
+    // image in every client that received it.
+    //
+    // `codes.ts:207` already decided this: *"§4.14 replaces the ARM rather than this
+    // code"*. The replacement is the next chapter's, and until then the honest answer to
+    // a real id is the same as the answer to a made-up one.
+    it("refuses a media_id that really exists, which is FR-016's whole point", async () => {
+      const slot = await fetch(`${url}/v1/media`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${credential}` },
+        body: JSON.stringify({ filename: "real.png", mime_type: "image/png", bytes: 64 }),
+      });
+      expect(slot.status, "the slot route did not issue an id to test with").toBe(201);
+      const { media_id } = (await slot.json()) as { media_id: string };
+
+      const res = await send({
+        text: "hosted media, with an id this platform really minted",
+        user: "courier",
+        attachments: [{ type: "media", media_id }],
+      });
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.code).toBe("media_not_available");
+      // AND THE ID IS NOT ECHOED BACK AS IF IT WERE THE PROBLEM. The refusal is about
+      // the arm, not about this id — a message naming the id would read as "that one is
+      // wrong, try another", which is the opposite of what FR-016 says.
+      expect(String(body.message)).not.toContain(media_id);
+    });
+
     it("answers a media_id with its own code and a 422 (FR-003a)", async () => {
       const res = await send({
         text: "hosted media",
