@@ -61,7 +61,11 @@
         "RELAY_DOCS_BASE_URL",
         "RELAY_API_URL",
         "RELAY_WS_URL",
-        "RELAY_DEMO_CREDENTIAL"
+        "RELAY_DEMO_CREDENTIAL",
+        "RELAY_MINIO_ENDPOINT",
+        "RELAY_MINIO_ACCESS_KEY",
+        "RELAY_MINIO_SECRET_KEY",
+        "RELAY_MINIO_BUCKET"
       ]
     },
     "//#lint:root": {

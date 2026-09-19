@@ -92,6 +92,69 @@ services:
       retries: 5
       start_period: 15s
 
+  minio:
+    # OBJECT STORAGE, WHICH ADR-13 DECIDED AND NOTHING PROVISIONED. Media bytes never
+    # transit Relay compute: the api signs a URL and the client uploads straight here.
+    # `docs/05-sad.md:1002` has named MinIO since the first draft and the container was
+    # never added, so this is the decision arriving nine chapters after the diagram.
+    #
+    # THE REGISTRY IS PART OF THE NAME, AND THE NAME THAT WORKED STOPPED WORKING.
+    # `docker run minio/minio` fails on Docker Hub with `pull access denied … repository
+    # does not exist or may require 'docker login'`, and the SAD's sentence predates
+    # that. Four images were tried here and `quay.io/minio/minio` was the one that
+    # pulled — **and on 2026-09-26 it answered `401 unauthorized` too**, six days after
+    # pulling cleanly in CI. Re-measured then:
+    #
+    #     docker pull quay.io/minio/minio:latest               401 Unauthorized
+    #     docker pull quay.io/minio/minio:RELEASE.2025-04-22…   401 UNAUTHORIZED
+    #     docker pull minio/minio:latest                        pull access denied
+    #     docker manifest inspect chainguard/minio:latest       OK
+    #
+    # **NO LOCAL RUN COULD SEE IT.** The image had been in every developer's cache since
+    # the chapter that added it, so the first machine without one was CI — where both
+    # platform jobs died at this line, before `pnpm build`. That is the persisting-volume
+    # shape one layer out: a local cache hides the state a fresh machine meets.
+    #
+    # `chainguard/minio` IS THE SAME BINARY, and that is checked rather than assumed:
+    # `RELEASE.2026-09-22T19-25-18Z`, `ENTRYPOINT ["/usr/bin/minio"]` so `server /data`
+    # below is unchanged, the same `MINIO_ROOT_*` variables, and `mc` in the image — the
+    # health check at the foot of this block runs verbatim.
+    #
+    # WHAT IT COSTS IS A UID. This image runs as **65532** where the old one ran as root,
+    # so an existing volume — root-owned, mode 755 — stops it dead with `FATAL Unable to
+    # initialize backend: file access denied`. **A fresh machine and CI never meet it.**
+    # Anyone holding a volume from before this change runs one command, which preserves
+    # every object rather than discarding them:
+    #
+    #     docker run --rm -v relay_minio-data:/d alpine chown -R 65532:65532 /d
+    #
+    # The non-root default is kept rather than undone with `user: "0:0"`, because giving
+    # back a security property to save a one-time `chown` on developer machines is a
+    # permanent cost for a single inconvenience.
+    image: chainguard/minio:latest
+    command: server /data
+    ports:
+      - "${RELAY_MINIO_PORT:-9000}:9000"
+    environment:
+      MINIO_ROOT_USER: relay
+      MINIO_ROOT_PASSWORD: relay-secret
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      # AUTHENTICATES, for the reason the ClickHouse check above gives. `/minio/health/live`
+      # answers 200 to anyone who can reach the port and says nothing about whether a
+      # credentialed call works — the same shape as the `/ping` that was green for sixteen
+      # chapters while every real query was refused.
+      #
+      # `mc` is in the image and `wget` and `nc` are not, so this is the available way to
+      # ask a question only a working store can answer.
+      test: ["CMD", "sh", "-c",
+             "mc alias set probe http://127.0.0.1:9000 relay relay-secret && mc ls probe"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   mailpit:
     image: axllent/mailpit:v1.28
     # An SMTP server that accepts everything and delivers nothing,
@@ -163,6 +226,12 @@ services:
       postgres: { condition: service_healthy }
       nats: { condition: service_healthy }
       redis: { condition: service_healthy }
+      # AND THE OBJECT STORE, because the api reaches it on every slot request — unlike
+      # `clickhouse`, which is absent from this list because the api never touches it at
+      # boot. Without the condition the api can accept traffic before the store answers,
+      # and the first slot request is refused with `media_storage_unavailable`: correct,
+      # and indistinguishable from a real outage.
+      minio: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4000/healthz"]
       interval: 5s
@@ -223,3 +292,4 @@ volumes:
   postgres-data:
   nats-data:
   clickhouse-data:
+  minio-data:
