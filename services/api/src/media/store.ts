@@ -24,11 +24,18 @@ export function storeConfig(env: NodeJS.ProcessEnv = process.env): StoreConfig {
 
 /** Create the bucket, or confirm it is already ours.
  *
- * ON BOOT, EVERY BOOT, WITH THE SIGNER THIS MODULE ALREADY HAS. The alternatives were
- * an entrypoint script and a migration-like runner; both add a moving part for one
- * idempotent call. What makes running it unconditionally safe is that the store has a
- * NAME for the second attempt — `BucketAlreadyOwnedByYou`, 409 — rather than a generic
- * failure, so "already there" and "went wrong" are distinguishable without a flag. */
+ * WITH THE SIGNER THIS MODULE ALREADY HAS. The alternatives were an entrypoint script
+ * and a migration-like runner; both add a moving part for one idempotent call. What
+ * makes running it unconditionally safe is that the store has a NAME for the second
+ * attempt — `BucketAlreadyOwnedByYou`, 409 — rather than a generic failure, so "already
+ * there" and "went wrong" are distinguishable without a flag.
+ *
+ * AND ITS CALLER IS `storeReady` BELOW, NOT A BOOT HOOK. An earlier version of this
+ * comment said *"on boot, every boot"* and **nothing called it on boot** — only test
+ * `beforeAll` hooks did. Every local run passed because the bucket already existed from
+ * the first one; CI's fresh volume is what said so, with two suites that never touch
+ * this file answering 503 to a slot request. A comment describing behaviour no code
+ * performs is the defect this chapter keeps finding in other people's files. */
 export async function ensureBucket(config: StoreConfig): Promise<"created" | "exists"> {
   const url = presign({ method: "PUT", ...config, expiresIn: 60 });
   const res = await fetch(url, { method: "PUT" });
@@ -44,7 +51,7 @@ export async function ensureBucket(config: StoreConfig): Promise<"created" | "ex
   );
 }
 
-/** Whether the store will answer a signed, credentialed request right now (FR-017).
+/** Whether the store can accept an upload right now (FR-017).
  *
  * A PRESIGNED URL NEEDS NO CONTACT WITH THE STORE, WHICH IS THE WHOLE PROBLEM. Signing
  * is five HMAC rounds over strings; the api never opens a socket, so it never learns
@@ -56,10 +63,18 @@ export async function ensureBucket(config: StoreConfig): Promise<"created" | "ex
  * is a real cost on the happy path and it is written down rather than hidden: one signed
  * HEAD on the bucket per slot request.
  *
- * A HEAD ON THE BUCKET AND NOT A GET ON AN OBJECT. The bucket always exists (boot
- * created it) and a HEAD returns no body, so the question is exactly "is the store
- * answering credentialed requests" and nothing else. An object GET would conflate a
+ * A HEAD ON THE BUCKET AND NOT A GET ON AN OBJECT. The bucket is the thing an upload
+ * needs to exist, and a HEAD returns no body — so the question is exactly "will this
+ * store take a PUT under this prefix" and nothing else. An object GET would conflate a
  * missing key with a missing store.
+ *
+ * AND A 404 IS NOT A REFUSAL, IT IS THE FIRST REQUEST. A reachable store with no bucket
+ * answers 404, which is what a fresh volume looks like — so that arm creates the bucket
+ * and carries on. This is the only place that creates it: putting it in a boot hook
+ * leaves a store that was down at boot permanently bucketless, and putting it on every
+ * request would need `CreateBucket` on a credential that may only be granted
+ * `PutObject`. Here it is asked for exactly once per store, on the first slot request
+ * that finds it missing.
  *
  * AND A TIMEOUT, BECAUSE "CANNOT BE REACHED" INCLUDES "DOES NOT ANSWER". A store that
  * accepts the connection and then hangs would otherwise hold the request open until the
@@ -67,15 +82,18 @@ export async function ensureBucket(config: StoreConfig): Promise<"created" | "ex
  * client has to interpret. Two seconds: long enough for a loaded store on a shared
  * machine, short enough that a slot request never becomes the slowest thing in the api.
  */
-export async function storeReachable(config: StoreConfig): Promise<boolean> {
+export async function storeReady(config: StoreConfig): Promise<boolean> {
   const url = presign({ method: "HEAD", ...config, expiresIn: 60 });
   try {
     const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(2_000) });
-    return res.ok;
+    if (res.ok) return true;
+    if (res.status !== 404) return false;
+    await ensureBucket(config);
+    return true;
   } catch {
-    // CONNECTION REFUSED, DNS FAILURE, TIMEOUT — all the same answer to the caller.
-    // Distinguishing them here would be a second vocabulary for one refusal, and the
-    // client's action is identical in every case.
+    // CONNECTION REFUSED, DNS FAILURE, TIMEOUT, AND A BUCKET THAT WOULD NOT CREATE —
+    // all the same answer to the caller. Distinguishing them here would be a second
+    // vocabulary for one refusal, and the client's action is identical in every case.
     return false;
   }
 }

@@ -6,7 +6,7 @@ import { Repository } from "../db/repository";
 import { protocolError } from "../protocol-error";
 import { KIND_CAPS, kindOf } from "./kinds";
 import { presign } from "./presign";
-import { storeConfig, storeReachable, type StoreConfig } from "./store";
+import { storeConfig, storeReady, type StoreConfig } from "./store";
 
 /** What a caller declares. Nothing here is verified — FR-MED-03 is a later chapter,
  * and the quota arithmetic below is over these numbers rather than over bytes. */
@@ -72,7 +72,7 @@ export class MediaService {
     // requests instead of one. The opposite order tells a client to delete media when
     // nothing could have been stored anyway — permanent advice about a transient
     // state, which is the failure this code exists to prevent.
-    if (!(await storeReachable(this.store))) {
+    if (!(await storeReady(this.store))) {
       throw protocolError(
         "media_storage_unavailable",
         "the object store is not reachable; this is temporary and the request can be retried",
