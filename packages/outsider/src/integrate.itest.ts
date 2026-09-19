@@ -376,6 +376,102 @@ describe("integrating with Relay from the outside", () => {
     socket.close();
   });
 
+  /** T032e. **HOSTED MEDIA, FROM OUTSIDE, WITH NOTHING BUT A PUBLISHED CREDENTIAL.**
+   *
+   * The test above delivers two attachments and types its frames
+   * `attachments?: { url?: string }[]` — the old assumption written into a type, on the
+   * one instrument in this repository that boots what customers run. A chapter whose
+   * headline claim is that a second arm now works end to end, and which left this suite
+   * url-only, would have proven the claim everywhere except where it is worth proving.
+   *
+   * THE WHOLE SEQUENCE IS PUBLISHED SURFACE: `POST /v1/media` for a slot, a `PUT` to the
+   * URL that comes back, `POST …/messages` naming the id, and a socket that was open
+   * before any of it. No workspace import, no internal route, no fixture reaching into
+   * Postgres — the same constraint every other test in this file holds itself to.
+   *
+   * AND THE PUT GOES WHERE THE API SIGNED. The upload URL names an origin this process
+   * must be able to reach, which is a property of the deployment and not of the client:
+   * the host is inside the SigV4 signature, so a URL signed for the compose network
+   * would be unusable from here. That is what `RELAY_MINIO_INTERNAL_ENDPOINT` exists to
+   * keep apart, and this test is the only thing outside the api that would notice. */
+  it("uploads a file and attaches it, from outside, in order beside a url (FR-021, SC-002d)", async () => {
+    const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
+    const frames: { type: string; payload?: { text?: string; attachments?: unknown[] } }[] = [];
+    socket.addEventListener("message", (event) => {
+      frames.push(JSON.parse(String(event.data)) as { type: string });
+    });
+    socket.addEventListener("error", () => undefined);
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve());
+      socket.addEventListener("close", (event) =>
+        reject(new Error(`closed ${(event as CloseEvent).code}`)),
+      );
+      setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
+    });
+
+    const waitFor = async (
+      predicate: (f: { type: string }) => boolean,
+      what: string,
+    ): Promise<{ type: string; payload?: { attachments?: unknown[] } }> => {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const found = frames.find(predicate);
+        if (found) return found;
+        if (Date.now() > deadline) {
+          throw new Error(`no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`);
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    };
+
+    const slot = await post(
+      "/v1/media",
+      { filename: "outside.png", mime_type: "image/png", bytes: 11 },
+      credential,
+    );
+    expect(slot.status, "the platform refused a slot to a published credential").toBe(201);
+    const mediaId = slot.body["media_id"] as string;
+
+    // THE BYTES GO STRAIGHT TO THE STORE AND NOT THROUGH RELAY, which is ADR-13's whole
+    // claim and is invisible from in-workspace tests that never leave the process.
+    const uploaded = await fetch(slot.body["upload_url"] as string, {
+      method: "PUT",
+      body: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0]),
+    });
+    expect(uploaded.status, "the presigned URL was not usable from outside").toBe(200);
+
+    const text = `outside media ${randomUUID()}`;
+    const posted = await post(
+      `/v1/channels/${channelId}/messages`,
+      {
+        text,
+        user: "outside-bot",
+        idempotency_key: randomUUID(),
+        attachments: [
+          { type: "url", kind: "image", url: "https://example.test/outside-url.png" },
+          { type: "media", media_id: mediaId },
+        ],
+      },
+      credential,
+    );
+    expect(posted.status).toBe(201);
+
+    const delivered = (await waitFor(
+      (f) =>
+        f.type === "message.created" &&
+        (f as { payload?: { text?: string } }).payload?.text === text,
+      "message.created carrying a hosted attachment",
+    )) as { payload: { attachments: unknown[] } };
+
+    // BOTH ARMS, IN ORDER, ON THE SOCKET. The url arm proves nothing new; what it does is
+    // hold the order claim, which one attachment cannot show.
+    expect(delivered.payload.attachments).toEqual([
+      { type: "url", kind: "image", url: "https://example.test/outside-url.png" },
+      { type: "media", media_id: mediaId },
+    ]);
+    socket.close();
+  });
+
   /** T100a — **the first `socket.send` in this file's history.**
    *
    * `grep -c "\.send(" packages/outsider/src/integrate.itest.ts` read **0** across

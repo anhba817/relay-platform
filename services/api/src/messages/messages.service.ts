@@ -16,6 +16,7 @@ import {
   Repository,
   type MessageRow,
   type MessageWithSender,
+  MediaNotAttachableError,
   SenderNotPermittedError,
 } from "../db/repository";
 import { protocolError } from "../protocol-error";
@@ -115,6 +116,32 @@ export class MessagesService {
           "sender_not_permitted",
           "an application credential may send only as a bot user; name one in `user`",
           HttpStatus.FORBIDDEN,
+        );
+      }
+      // FR-MED-06's REFUSAL, AND THE FIELD IS THE WHOLE COURTESY (FR-004, FR-005).
+      //
+      // ONE CODE AND ONE MESSAGE FOR THREE CONDITIONS — another tenant's object, another
+      // user's, and one that does not exist. The repository already threw one class for
+      // all three; this is the half a caller sees, and the two halves have to agree or
+      // the indistinguishability is a property of neither. The message says what to do
+      // and names nothing: no id, no tenant, no hint about which clause failed.
+      //
+      // 422, WHICH IS WHY THE LADDER GAINED A RUNG THIS CHAPTER. The id is well-formed —
+      // a malformed one is refused at the schema with a 400 — and the request is
+      // understood. `protocolError` names the code explicitly here, so the rung is not
+      // what produces this answer; it is what produces an answer for the next thrower
+      // that forgets.
+      //
+      // AND THE INDEX TRAVELS. `field` is `attachments.<n>.media_id`, taken from the
+      // error rather than recomputed, so a caller sending ten attachments is told which
+      // one to stop using. The schema's own refusals use the same path shape, so a client
+      // reading `field` does not need to know which layer refused it.
+      if (error instanceof MediaNotAttachableError) {
+        throw protocolError(
+          "media_not_attachable",
+          "this media object cannot be attached by this sender; upload your own and attach that id",
+          HttpStatus.UNPROCESSABLE_ENTITY,
+          `attachments.${error.index}.media_id`,
         );
       }
       if (error instanceof UserBannedError) {
