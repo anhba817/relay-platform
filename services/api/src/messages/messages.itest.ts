@@ -208,19 +208,17 @@ describe("POST /v1/channels/:channelId/messages", () => {
       expect(((await res.json()) as { field: string }).field, bad).toBe("attachments.0.url");
     });
 
-    // FR-016, AND CHAPTER 4.10 IS WHY THIS TEST NOW EXISTS SEPARATELY. Hosted media
-    // makes a `media_id` a real thing: `POST /v1/media` issues one, a row carries it,
-    // and a client can upload against the URL it comes with. So the obvious next move
-    // is to make this arm accept — and it would ship FR-MED-06's surface with none of
-    // FR-MED-06's checks. Nothing here verifies that the id belongs to this environment,
-    // that the uploader is the sender, or that the object is `ready` rather than
-    // `pending`, and an attachment that names a `pending` slot would render as a broken
-    // image in every client that received it.
+    // FR-001 AND FR-008a, AND BOTH OF THESE WERE REFUSAL TESTS UNTIL THIS CHAPTER.
+    // They are CONVERTED rather than deleted, which is the rule 4.10's FR-016 test
+    // earned: *"we did not add it" is not a property anything checks*, and the mirror
+    // of that is that "we did add it" needs the test that used to prove the opposite.
+    // Each one keeps its subject and changes its expectation.
     //
-    // `codes.ts:207` already decided this: *"§4.14 replaces the ARM rather than this
-    // code"*. The replacement is the next chapter's, and until then the honest answer to
-    // a real id is the same as the answer to a made-up one.
-    it("refuses a media_id that really exists, which is FR-016's whole point", async () => {
+    // THE FIRST ASSERTED THAT A REAL ID IS REFUSED, and a real id is now the accept
+    // path. Its old comment argued the refusal from what 4.10 had not built —
+    // *"nothing here verifies that the id belongs to this environment, that the
+    // uploader is the sender"* — and this chapter is what built those.
+    it("accepts a media_id that really exists, which is FR-001's whole point", async () => {
       const slot = await fetch(`${url}/v1/media`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${credential}` },
@@ -234,45 +232,47 @@ describe("POST /v1/channels/:channelId/messages", () => {
         user: "courier",
         attachments: [{ type: "media", media_id }],
       });
-      expect(res.status).toBe(422);
-      const body = (await res.json()) as Record<string, unknown>;
-      expect(body.code).toBe("media_not_available");
-      // AND THE ID IS NOT ECHOED BACK AS IF IT WERE THE PROBLEM. The refusal is about
-      // the arm, not about this id — a message naming the id would read as "that one is
-      // wrong, try another", which is the opposite of what FR-016 says.
-      expect(String(body.message)).not.toContain(media_id);
+      expect(res.status).toBe(201);
+      // AND IT COMES BACK AS SENT. `state` is not on the wire — FR-013 — so what a
+      // reader gets is the two keys the client wrote and nothing the platform knows
+      // about the object. The slot is `pending` and will stay `pending` until movement
+      // VI, and a client cannot tell from this payload.
+      const body = (await res.json()) as { attachments: unknown[] };
+      expect(body.attachments).toEqual([{ type: "media", media_id }]);
     });
 
-    it("answers a media_id with its own code and a 422 (FR-003a)", async () => {
+    // THE SECOND SENT `"m_1"`, WHICH IS NOW A 400 AT THE SCHEMA AND WAS A 422 AT THE
+    // ARM. Same input, different layer: the arm used to refuse every `media_id` with
+    // its own code, and now the only thing wrong with `"m_1"` is that it is not a UUID.
+    //
+    // THIS IS THE TEST THAT WOULD HAVE BEEN A 500 (research R3, FR-008a). With the old
+    // `z.string().min(1)` and an accepting arm, `"m_1"` reaches the lookup, Postgres
+    // answers `invalid input syntax for type uuid`, and the filter calls it
+    // `internal_error` — a 500 any caller could produce with one request. The UUID at
+    // the door is what makes it a 400, and this test is why the tightening is not
+    // merely tidy.
+    it("answers a malformed media_id with a 400 naming the field (FR-008a)", async () => {
       const res = await send({
         text: "hosted media",
         user: "courier",
         attachments: [{ type: "media", media_id: "m_1" }],
       });
-      // 422 AND NOT 400: the request is understood and well-formed, and what cannot be
-      // done is the thing it asks for.
-      expect(res.status).toBe(422);
+      // 400 AND NOT 422: the id is malformed, so the caller really did send something
+      // the contract does not allow — which is the one thing `invalid_request` is for.
+      // The 422 next door is for an id that is well-formed and not attachable.
+      expect(res.status).toBe(400);
       const body = (await res.json()) as Record<string, unknown>;
-      // THE BODY, NOT ONLY THE STATUS. A 422 is the easy half: `ProtocolErrorFilter`
-      // derives a code from the status for 400, 401, 403 and 404 only, so every OTHER
-      // status ships a body calling itself `internal_error` while the status line reads
-      // correctly. A test that asserts the status and the message text passes through
-      // exactly that — which is a finding the webhook chapter owns, on a suite this tree
-      // does not have yet. What is asserted here instead is the code itself.
-      expect(body.code).toBe("media_not_available");
-      // DERIVED, NOT SPELLED. `codes.test.ts` owns the URL RULE — one assertion, in the
-      // package that builds the URL — and restating its shape here would be a second
-      // copy of it in a route test, which is how the two drift. What this test is about
-      // is that the envelope names THIS code: a 422 whose `docs_url` points at
-      // `invalid_request` is the failure, not the separator.
-      expect(body.docs_url).toBe(docsUrl("media_not_available"));
-      expect(String(body.message)).toMatch(/hosted media is not available/i);
-      // `attachments.0` AND NOT `attachments.0.type`. The refinement refuses the ARM, so
-      // zod's path stops at the object — and that is the honest field: nothing is wrong
-      // with the `type` key, the whole attachment names a transport the platform cannot
-      // serve yet. A caller with ten links is told which one, which is what the path is
-      // for.
-      expect(body.field).toBe("attachments.0");
+      expect(body.code).toBe("invalid_request");
+      expect(body.docs_url).toBe(docsUrl("invalid_request"));
+      // `attachments.0.media_id` AND NOT `attachments.0`. The old refusal was the ARM's
+      // — a `.refine` over the whole object, so zod's path stopped at the attachment.
+      // This one is the FIELD's, and the path says which key of which attachment. A
+      // caller with ten of them is told exactly where to look.
+      expect(body.field).toBe("attachments.0.media_id");
+      // AND NOT A 500. The assertion is worth stating separately because the failure
+      // this replaces was not "the wrong status" — it was a body calling itself an
+      // internal error for a request the caller got wrong.
+      expect(body.code).not.toBe("internal_error");
     });
   });
 

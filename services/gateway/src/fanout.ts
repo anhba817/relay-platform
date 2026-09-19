@@ -1,10 +1,11 @@
 import {
-  messageCreatedSchema,
+  forwardedMessageSchema,
   subjectForChannel,
   subjectForChannelRevision,
   isChannelRevisionSubject,
   revisionFabricSchema,
   type RevisionFabric,
+  type ForwardedMessage,
   type Message,
 } from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
@@ -48,7 +49,11 @@ export interface Fanout {
   onDelivery(handler: (channelId: string, message: Message) => void): void;
   /** Publish a committed message to its channel's subject. A failure here
    * costs delivery latency, never durability. */
-  publish(message: Message): Promise<void>;
+  /** `ForwardedMessage`, BECAUSE A PUBLISHER SERIALISES AND DOES NOT INTERPRET. The
+   * gateway builds this payload from the api's send response, which may carry an
+   * attachment arm this binary does not know during a rolling deploy. Nothing here
+   * reads one — `publish` stringifies and hands it to Redis. */
+  publish(message: ForwardedMessage): Promise<void>;
   /** ADR-24. Register the revision callback — an edit or a deletion of a
    * message that already exists.
    *
@@ -106,12 +111,25 @@ export function createFanout({
     // The fabric is inside the trust boundary, and frames are STILL
     // validated: "inside" is one compromised dependency away from
     // "outside", and a malformed payload must not reach a client.
-    const message = messageCreatedSchema.shape.payload.safeParse(parsed);
+    // `forwardedMessageSchema` AND NOT `messageCreatedSchema.shape.payload` (FR-018d).
+    //
+    // THIS IS THE LINE THAT DROPS A COMMITTED MESSAGE. The failure arm below is a log
+    // line and a `return`: no retry, no dead letter, and the sender already holds its
+    // 201. An old gateway meeting a new api's media arm would deliver nothing to any
+    // socket on this instance and say so only in a log that names the subject, not the
+    // reason.
+    //
+    // THE VALIDATION IS KEPT, and the comment above says why: "inside" is one
+    // compromised dependency away from "outside". What loosens is the attachment
+    // ELEMENT, which this function never reads — it passes `message.data` whole to
+    // `deliver`. Every other field stays strict, so a malformed payload is still
+    // refused here rather than at a client.
+    const message = forwardedMessageSchema.safeParse(parsed);
     if (!message.success) {
       logger.log("error", "fanout.invalid_payload", { subject });
       return;
     }
-    deliver(message.data.channel, message.data);
+    deliver(message.data.channel, message.data as Message);
   });
 
   return {

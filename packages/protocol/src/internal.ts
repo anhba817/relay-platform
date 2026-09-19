@@ -2,11 +2,12 @@ import { z } from "zod";
 
 import {
   attachmentSchema,
+  forwardedAttachmentSchema,
   MAX_ATTACHMENTS,
   refineTextAndAttachments,
 } from "./attachments.js";
 
-import { messageSchema } from "./frames.js";
+import { forwardedMessageSchema } from "./frames.js";
 
 // The INTERNAL service contract (chapter 2.5) — distinct from the wire
 // contract above it. `frames.ts` is what a customer's client speaks;
@@ -67,7 +68,15 @@ export const internalSendResponseSchema = z.strictObject({
    *
    * Only the required field and `sendMessage`'s return landing together is honest,
    * which is why they are one phase. */
-  attachments: z.array(attachmentSchema),
+  // AND PERMISSIVE ELEMENTS ON THE RESPONSE, WHERE THE REQUEST ABOVE STAYS STRICT
+  // (FR-018b). The asymmetry is the point. `:34` is the api judging a gateway's request
+  // and refuses an arm it does not know — an old api answering a new gateway's media arm
+  // with a 422 loses nothing. This is the GATEWAY parsing the api's answer
+  // (`api-client.ts:247`), and its own comment says what a refusal costs: *"every socket
+  // send would close 1011."* The message is already committed by then, so the client
+  // loses its acknowledgement and its connection, and an idempotent retry fails the same
+  // way.
+  attachments: z.array(forwardedAttachmentSchema),
   created_at: z.iso.datetime(),
   /** True when 2.3's idempotency index recognised a retry. The PUBLIC api
    * still hides this (a client cannot tell a retry from a first send);
@@ -112,7 +121,11 @@ export const internalBackfillResponseSchema = z.strictObject({
   channels: z.record(
     z.string().min(1),
     z.strictObject({
-      messages: z.array(messageSchema),
+      // FORWARDED, NOT JUDGED (FR-018d). The gateway parses this page at
+      // `api-client.ts:218` and hands every message straight to a socket; a refusal
+      // reaches `session.ts:1361` as `degrade("backfill_failed")`, which loses the
+      // resume for every client whose cursor precedes the media message.
+      messages: z.array(forwardedMessageSchema),
       truncated: z.boolean(),
     }),
   ),

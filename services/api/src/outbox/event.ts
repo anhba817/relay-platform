@@ -1,4 +1,4 @@
-import { attachmentSchema, type Attachment } from "@relay/protocol";
+import { forwardedAttachmentSchema, type ForwardedAttachment } from "@relay/protocol";
 
 import { subjectFor } from "@relay/protocol";
 import { z } from "zod";
@@ -32,8 +32,20 @@ export interface MessageCreatedData {
    *
    * NOT OPTIONAL. `consumer/runtime.ts` answers a failed parse with `message.term()`,
    * which stops redelivery for good — so a branch that has not been widened is a row
-   * destroyed rather than retried, and an optional field hides the day that happens. */
-  attachments: Attachment[];
+   * destroyed rather than retried, and an optional field hides the day that happens.
+   *
+   * AND THE ELEMENT IS WIDER THAN `Attachment`, WHICH THE COMPILER ASKED FOR RATHER THAN
+   * BEING TOLD (FR-018). Making the schema permissive left this hand-written interface
+   * narrow, and `runtime.ts:166` stopped compiling: *"Type '{ [x: string]: unknown; type:
+   * string; }' is missing the following properties … kind, url."* The honest fix is the
+   * type, not a cast. A consumer reading a durable queue really can be handed an arm its
+   * binary does not know — that is the whole reason the schema accepts one — and a type
+   * that denies it would put the lie one layer further in.
+   *
+   * IT COSTS NOTHING HERE BECAUSE NOTHING READS AN ATTACHMENT. `grep -c attachments
+   * services/api/src/consumer/` is 0. The day something does, this type is what makes the
+   * compiler ask which arm it is holding. */
+  attachments: ForwardedAttachment[];
   created_at: string;
 }
 
@@ -370,7 +382,13 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
       // from `message.term()`, and that argument is correct about the producer and
       // inverts about the reader: the same sentence that makes a missing branch loud at
       // compile time makes a missing key fatal at runtime.
-      attachments: z.array(attachmentSchema).default([]),
+      // AND PERMISSIVE ELEMENTS, BECAUSE THIS READER FORWARDS THEM (FR-018). The
+      // consumer never looks at an attachment — `grep -c attachments
+      // services/api/src/consumer/` is 0 — and `runtime.ts:204` answers a failed parse
+      // with `message.term()`, which stops redelivery for good. So a new arm the current
+      // binary does not know would destroy a message that a NEWER instance committed and
+      // acknowledged, during a rolling deploy, by validating a field it ignores.
+      attachments: z.array(forwardedAttachmentSchema).default([]),
       created_at: z.iso.datetime(),
     }),
   }),
@@ -409,7 +427,13 @@ export const outboxEventSchema = z.discriminatedUnion("type", [
       // from `message.term()`, and that argument is correct about the producer and
       // inverts about the reader: the same sentence that makes a missing branch loud at
       // compile time makes a missing key fatal at runtime.
-      attachments: z.array(attachmentSchema).default([]),
+      // AND PERMISSIVE ELEMENTS, BECAUSE THIS READER FORWARDS THEM (FR-018). The
+      // consumer never looks at an attachment — `grep -c attachments
+      // services/api/src/consumer/` is 0 — and `runtime.ts:204` answers a failed parse
+      // with `message.term()`, which stops redelivery for good. So a new arm the current
+      // binary does not know would destroy a message that a NEWER instance committed and
+      // acknowledged, during a rolling deploy, by validating a field it ignores.
+      attachments: z.array(forwardedAttachmentSchema).default([]),
       created_at: z.iso.datetime(),
     }),
   }),

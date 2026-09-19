@@ -41,7 +41,9 @@ function capture(exception: unknown): Captured {
 }
 
 describe("the error filter's status ladder", () => {
-  // The four statuses hosted media introduced, and the four the ladder already had.
+  // The four statuses hosted media's first half introduced, the four the ladder already
+  // had, and 422 from its second half — the status this platform raises most
+  // deliberately and the one the ladder did not carry.
   const RUNGS: [number, string][] = [
     [400, "invalid_request"],
     [401, "unauthorized"],
@@ -50,6 +52,7 @@ describe("the error filter's status ladder", () => {
     [404, "not_found"],
     [413, "media_too_large"],
     [415, "media_type_not_allowed"],
+    [422, "unprocessable_request"],
     [503, "service_unavailable"],
   ];
 

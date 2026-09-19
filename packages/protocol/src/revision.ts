@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { messageDeletedPayloadSchema, messageSchema } from "./frames.js";
+import { forwardedMessageSchema, messageDeletedPayloadSchema } from "./frames.js";
 
 /** THE FIFTH SUBJECT GRAMMAR, and the argument for it is ADR-24.
  *
@@ -59,7 +59,12 @@ export function isChannelRevisionSubject(subject: string): boolean {
  * `message.deleted` carries an identity with no text; this schema is what gets them from
  * the api to a gateway that holds the socket. */
 export const revisionFabricSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("updated"), message: messageSchema }),
+  // `forwardedMessageSchema` AND NOT `messageSchema` (FR-018d). The arm above says a
+  // field added on one side of a rolling deploy must fail loudly on the other, and that
+  // is right about this schema's OWN fields — `kind` and `message` are the contract.
+  // It is wrong about an attachment, which `fanout.ts:98` never reads and hands to a
+  // socket untouched: a refusal there is `fanout.invalid_payload` and a dropped edit.
+  z.strictObject({ kind: z.literal("updated"), message: forwardedMessageSchema }),
   z.strictObject({ kind: z.literal("deleted"), message: messageDeletedPayloadSchema }),
 ]);
 

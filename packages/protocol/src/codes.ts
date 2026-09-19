@@ -181,31 +181,48 @@ export const ERROR_CODES = {
   // see exists.
   message_deleted:
     "this message has been deleted; its text cannot be changed, and its history is unaffected",
-  /** MEDIA THAT DOES NOT EXIST YET, AND ITS OWN CODE (FR-003, FR-003a).
+  /** A MEDIA OBJECT THIS SENDER CANNOT ATTACH, AND ONE ANSWER FOR THREE REASONS.
    *
-   * FR-MSG-11 publishes two ways to attach: an external URL and a `media_id` naming
-   * something the platform hosts. This chapter builds the first. **A customer reading
-   * that clause will send the second**, and the refusal they get decides whether they
-   * conclude they made a mistake or that the feature is not here yet.
+   * `media_not_available` STOOD HERE AND IS GONE, on its own entry's instruction —
+   * *"§4.14 replaces the arm rather than this code … at which point it is deleted, not
+   * repurposed."* The arm accepts now, so the state that code described does not exist,
+   * and a code kept past its condition is a vocabulary the platform has to keep meaning.
    *
-   * `invalid_request` WOULD SAY THE WRONG THING. It means the caller sent something the
-   * contract does not allow, and `media_id` is in the published contract — so the honest
-   * answer is that the platform cannot serve it, not that the field is wrong. That is
-   * the same distinction chapter 2.8 drew between a 404 and a 403.
+   * THE NAME IS THE OPERATION, NOT THE CAUSE. Three conditions land here — the object
+   * belongs to another environment, it belongs to another user of this one, or no object
+   * has that id — and **a client does the same thing about all three**: stop using that
+   * id and upload one of its own. A code that named the cause would be an existence
+   * oracle, telling a caller which of the three it hit and therefore whether somebody
+   * else's object exists (FR-005).
    *
-   * 422 AND NOT 400. The body is well-formed and the request is understood; what cannot
-   * be done is the thing it asks for. `ProtocolErrorFilter` derives a code from the
-   * status for 400/401/403/404 and answers `internal_error` for everything else, so a
-   * 422 MUST supply this code explicitly through `protocolError` — an unnamed 422 ships
-   * a body calling itself an internal error. The webhook chapter has five of those still
-   * open, on a service this tree has not built yet; this is the first 422 in the platform
-   * that names its own code, and it names it because the schema raises it.
+   * ITS NEAR-NEIGHBOURS, AND WHY IT IS NONE OF THEM. Not `not_found` — that is a route
+   * this api does not serve, and the route here is fine. Not `forbidden` — that is a
+   * permission a caller could be granted, and no grant makes another tenant's object
+   * attachable. Not `invalid_request` — the id is well-formed, which is exactly what
+   * makes this a 422 and not a 400.
    *
-   * §4.14 REPLACES THE ARM RATHER THAN THIS CODE. When hosted media ships, the
-   * `{ type: "media" }` arm starts accepting and this entry describes a state the
-   * platform no longer has — at which point it is deleted, not repurposed. */
-  media_not_available:
-    "hosted media is not available yet; attach an http or https url instead",
+   * 422, AND THE THROWER NAMES IT. The body is understood and what it asks for cannot be
+   * done. `ProtocolErrorFilter` now has a 422 rung (`unprocessable_request`), so an
+   * unnamed one is no longer `internal_error` — but a fallback says only what the status
+   * supports, and this code says which id the caller should stop using. */
+  media_not_attachable:
+    "this media object cannot be attached by this sender; upload your own and attach that id",
+  /** THE 422 RUNG'S FALLBACK, WITH NO THROWER — AND THAT IS THE POINT.
+   *
+   * `ProtocolErrorFilter`'s ladder carried 400, 401, 402, 403, 404, 413, 415 and 503, so
+   * **any 422 that forgot to name itself answered `internal_error`** — the filter's own
+   * *"lie the client cannot act on"*, the third time that comment has been earned.
+   * Nothing throws an unnamed 422 today: `channel_member_limit_exceeded` names itself and
+   * `media_not_attachable` above names itself. This is for the next thrower that does
+   * not, which is the shape `service_unavailable` took at 4.10 with nothing throwing it
+   * either.
+   *
+   * IT CARRIES ONLY WHAT THE STATUS SUPPORTS, because a fallback cannot know why. Two
+   * facts: the request was understood, and the thing it asked for cannot be done. A
+   * client's action is to stop repeating it unchanged — which is the honest instruction
+   * when the server has not said more. */
+  unprocessable_request:
+    "the request was understood but cannot be carried out; repeating it unchanged will not help",
   // ── THE WEBHOOK REFUSALS (THIS CHAPTER) ─────────────────────────────────────
   //
   // FIVE CODES THE ERROR REFERENCE ALREADY PUBLISHED AND THIS REGISTRY DID NOT HAVE.

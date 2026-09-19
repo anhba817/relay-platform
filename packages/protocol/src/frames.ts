@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   attachmentSchema,
+  forwardedAttachmentSchema,
   MAX_ATTACHMENTS,
   refineTextAndAttachments,
 } from "./attachments.js";
@@ -116,6 +117,33 @@ export const messageAckSchema = z.strictObject({
 // The six real-time event kinds (FR-RTM-05). The kinds are the SRS's; the
 // `noun.verb` spellings are this chapter's recorded decision, following the
 // documents' own connection.ack / message.send naming.
+
+/** `messageSchema` FOR A READER THAT FORWARDS THE MESSAGE ON (FR-018d).
+ *
+ * `messageSchema` above stays strict, and that is deliberate: it is what the api BUILDS,
+ * `Message` is inferred from it, and its `attachments` field is required precisely so the
+ * compiler names every construction site. Widening it would undo the thing it was made
+ * required for.
+ *
+ * THREE READERS REACH THE ATTACHMENT UNION THROUGH IT, AND NONE OF THEM LOOKS AT AN
+ * ATTACHMENT. `fanout.ts:109` parses a delivered `message.created`, `fanout.ts:98` parses
+ * a revision, and `api-client.ts:218` parses a backfill page — all three in the GATEWAY,
+ * all three reading a payload the **api** produced, across a boundary the two services
+ * deploy independently. An old gateway meeting a new api's media arm answers:
+ *
+ *     fanout        logger.log("error", "fanout.invalid_payload"); return
+ *                   -> the frame is DROPPED. The message is committed and the sender
+ *                      already holds its 201; no socket on that instance ever sees it.
+ *     backfill      parse throws -> degrade("backfill_failed"); the resume is lost and
+ *                   the client re-pages history over REST
+ *
+ * THE TABLE SAID THIS FIELD WAS PARSED BY NOTHING. `data-model.md` §4b enumerated the
+ * seven sites that name `attachmentSchema`, asked *"who parses this?"* of each, and got
+ * "nothing at runtime" for `messageSchema` — because nothing parses it under that name.
+ * The question that finds these is one level up: what is this schema embedded in? */
+export const forwardedMessageSchema = messageSchema.extend({
+  attachments: z.array(forwardedAttachmentSchema),
+});
 
 export const messageCreatedSchema = z.strictObject({
   type: z.literal("message.created"),
@@ -273,3 +301,32 @@ export type Frame = z.infer<typeof frameSchema>;
 export function parseFrame(raw: unknown) {
   return frameSchema.safeParse(raw);
 }
+
+/** A MESSAGE AS A RELAY HANDS IT ON, rather than as the api built it. */
+export type ForwardedMessage = z.infer<typeof forwardedMessageSchema>;
+
+/** WHAT THE GATEWAY CAN PUT ON A SOCKET, which is not the same set as what the api can
+ * build (FR-018d).
+ *
+ * `Frame` above is the CONTRACT — every frame this platform intends to send, with the
+ * attachment union closed, and it is what a client validates against and what
+ * `frameSchema` parses. This type is narrower in purpose and wider in one field: the two
+ * frames that carry a message, as a process that RELAYS one must type them.
+ *
+ * THE GATEWAY DOES NOT BUILD THESE MESSAGES, IT FORWARDS THEM. They arrive from the api
+ * — over Redis for a live delivery, over HTTP for a backfill page — and the gateway
+ * writes them to a socket without reading an attachment. During a rolling deploy the
+ * thing it forwards may carry an arm its own binary does not know, which is the whole
+ * reason `forwardedMessageSchema` exists; a relay typed as if it had built the value
+ * would have to either refuse it or lie about it, and refusing it drops a committed
+ * message.
+ *
+ * THE PUBLISHED CONTRACT IS UNCHANGED, deliberately. Widening `messageCreatedSchema`
+ * would tell every client that this platform intends to send arms it has not published,
+ * which is not what is happening — what is happening is that two versions of the server
+ * are briefly disagreeing, and the honest place to say so is the type of the process
+ * standing between them. */
+export type RelayedFrame =
+  | Exclude<Frame, { type: "message.created" } | { type: "message.updated" }>
+  | { type: "message.created"; payload: ForwardedMessage }
+  | { type: "message.updated"; payload: ForwardedMessage };

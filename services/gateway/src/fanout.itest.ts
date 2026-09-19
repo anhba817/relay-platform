@@ -156,6 +156,53 @@ describe("fan-out across instances", () => {
     await expect(nextDelivery(g2, 300)).rejects.toThrow("deadline");
   });
 
+  // ── THE DELIVERY PATH IS A FORWARDING READER, AND A REFUSAL HERE IS A LOST MESSAGE ──
+  //
+  // These two are the complement of the test directly below, and the pair is the whole
+  // design: an attachment ARM this binary does not know is forwarded, and a payload that
+  // is not a message is still dropped. One test alone would be satisfied by a reader that
+  // accepts everything.
+  //
+  // WHAT A REFUSAL COSTS, WHICH IS WHY THESE ARE NOT THEORETICAL. `fanout.ts`'s failure
+  // arm is `logger.log("error", "fanout.invalid_payload"); return` — no retry, no dead
+  // letter. The api has already committed the message and answered the sender 201, so an
+  // old gateway meeting a new api's arm during a rolling deploy delivers nothing to any
+  // socket it holds and says so only in a log line that names the subject, not the reason.
+  //
+  // AN UNKNOWN ARM AND NOT THE MEDIA ARM. The media arm accepts as of this chapter, so it
+  // no longer tells a strict reader from a permissive one.
+  it("forwards a message carrying an attachment arm it does not know (FR-018d, SC-002e)", async () => {
+    await g2.fanout.subscribe(CHANNEL);
+    const future = { type: "audio_clip", clip_id: "c", duration_ms: 1200 };
+    await g1.fanout.publish({
+      ...messageOn(CHANNEL, 11),
+      attachments: [{ type: "media", media_id: "3f7c1a2e-0b5d-4c8a-9e61-7a0d2b4f6c81" }, future],
+    });
+
+    const [channelId, message] = await nextDelivery(g2);
+    expect(channelId).toBe(CHANNEL);
+    expect(message.seq).toBe(11);
+    // FORWARDED WHOLE, not stripped. The reader does not read an attachment, so it must
+    // not edit one either — a gateway that dropped the unknown arm would hand the client
+    // a message that is missing something, which is worse than the message not arriving
+    // because nothing reports it.
+    expect(message.attachments).toHaveLength(2);
+    expect(message.attachments[1]).toEqual(future);
+  });
+
+  it("forwards an EDIT carrying an arm it does not know (FR-018d)", async () => {
+    await g2.fanout.subscribe(CHANNEL);
+    const future = { type: "audio_clip", clip_id: "c", duration_ms: 1200 };
+    await g1.fanout.publishRevision({
+      kind: "updated",
+      message: { ...messageOn(CHANNEL, 12), attachments: [future] },
+    });
+
+    const [channelId, revision] = await nextRevision(g2);
+    expect(channelId).toBe(CHANNEL);
+    expect(revision.kind).toBe("updated");
+  });
+
   it("drops a payload the contract does not allow instead of forwarding it", async () => {
     await g2.fanout.subscribe(CHANNEL);
     // Something else — an older instance, a stray script, a compromised

@@ -9,11 +9,33 @@ import { protocolError } from "../protocol-error";
 // THROUGH `protocolError` AND NOT `BadRequestException`, and that switch is owed to the
 // errors chapter rather than to this one. That chapter built the typed thrower and
 // rewired `session.ts` and the filter to it; this pipe kept the untyped exception, and
-// nothing noticed because both produce the same 400 envelope. What forced it here is a
-// code that is NOT 400: `media_not_available` cannot travel as a `BadRequestException`
-// at all, so the one call site that never needed typing is the one that now proves it.
-// 1.4's ProtocolErrorFilter still turns the throw into the EIR-API-04 envelope on the
-// way out — one error shape, one home, unchanged since the skeleton.
+// nothing noticed because both produce the same 400 envelope. What forced it here was a
+// schema that needed a status other than 400 — the media arm, which refused with its own
+// 422 from 3.24 until §4.14 made it accept. 1.4's ProtocolErrorFilter still turns the
+// throw into the EIR-API-04 envelope on the way out — one error shape, one home,
+// unchanged since the skeleton.
+//
+// WHAT THE MECHANISM IS FOR, WHICH IS NOT THE SAME AS WHO USED IT. The `protocolCode`
+// branch below lets a SCHEMA name a refusal the pipe would otherwise call
+// `invalid_request` with a 400. That is the right answer whenever a field is published
+// in the contract and the caller made no mistake, and it is the only way to say so from
+// a schema: `@Body(new ZodValidationPipe(...))` runs before the handler, so a controller
+// check cannot reach the decision.
+//
+// NOTHING USES IT TODAY, SAID PLAINLY RATHER THAN LEFT TO BE DISCOVERED. Its one
+// producer was `attachments.ts`'s `params: { protocolCode: "media_not_available" }`,
+// removed by the chapter that made the arm accept. `grep -rn protocolCode` across
+// `packages/` and `services/` finds this file and nothing else.
+//
+// KEPT, AND THE PRECEDENT CUTS BOTH WAYS. 4.10 added a `service_unavailable` rung to the
+// error filter with nothing throwing it, on the grounds that a general extension point
+// with a stated role outlives its last caller. 4.6 went the other way and reached
+// 100/100/100/100 on `metering.ts` by DELETING two arms — and 044's rule is that a design
+// in which a case cannot arise beats a branch that handles it, *because the branch is the
+// thing that rots*. What decides it here is that this arm is one `params:` key from
+// reachable, where `metering.ts`'s were unreachable by construction. The cost of keeping
+// it is stated too: this file carries no coverage pin, so nothing reports the arm as
+// uncovered either way.
 export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {
   constructor(private readonly schema: ZodType<T>) {}
 
@@ -35,16 +57,18 @@ export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {
       // with dots, which is what a developer reading their own request body sees.
       // An empty path means the whole body failed (a non-object, say), and then
       // there is no field to name and the key is omitted rather than sent empty.
-      /** A SCHEMA MAY NAME ITS OWN REFUSAL (FR-003a).
+      /** A SCHEMA MAY NAME ITS OWN REFUSAL — the mechanism, with no current user.
        *
-       * Everything here is `invalid_request` and 400, which is right for a body the
-       * contract does not allow. It is wrong for a field the contract DOES publish and
-       * the platform cannot serve yet — `media_id` in FR-MSG-11 — where the caller made
-       * no mistake and the honest answer is a code of its own.
+       * Everything else here is `invalid_request` and 400, which is right for a body the
+       * contract does not allow. It is wrong for a field the contract DOES publish, where
+       * the caller made no mistake and the honest answer is a code of its own.
        *
-       * The alternative was a check in the controller, and it cannot work: this pipe runs
-       * before the handler, so a media arm is already refused with a 400 by the time any
-       * handler code could look. Whichever layer refuses first has to carry the code. */
+       * The alternative is a check in the controller and it cannot work: this pipe runs
+       * before the handler, so a schema refusal has already become a 400 by the time any
+       * handler code could look. Whichever layer refuses first has to carry the code.
+       *
+       * The header of this file records who used it, why nothing does now, and the two
+       * precedents that disagree about whether it should still be here. */
       // `params` IS ON THE ISSUE AT RUNTIME AND NOT ON ITS TYPE. Measured against the
       // pinned zod 4.4.3: a `refine` with `params` produces an issue whose keys are
       // `code, path, params, message`, and `$ZodIssue` declares only the first, third

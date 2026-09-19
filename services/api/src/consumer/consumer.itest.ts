@@ -295,6 +295,58 @@ describe("the consumer", () => {
     expect(await timesHandled(db, durable, eventId)).toBe(1);
   }, 120_000);
 
+  it("invariant 3a: an envelope carrying an attachment arm this binary does not know is HANDLED, not terminated (FR-018, SC-002b)", async () => {
+    // WHAT A REFUSAL COSTS HERE, WHICH IS WHY THIS TEST EXISTS. `runtime.ts:163` parses
+    // with `safeParse` and `:204` answers a failure with `message.term()` — redelivery
+    // stops for good. So an envelope a NEWER instance committed and acknowledged is
+    // DESTROYED by an older one during a rolling deploy, over a field the consumer never
+    // reads: `grep -c attachments services/api/src/consumer/` is 0.
+    //
+    // THE ARM IS AN UNKNOWN ONE AND NOT THE MEDIA ARM, AND THAT IS A CORRECTION TO THIS
+    // TASK'S OWN PREMISE. It was written as *"an envelope carrying { type: 'media' }
+    // parses rather than being terminated"*, and that was the right probe while the media
+    // arm refused. This chapter made the media arm ACCEPT — so a media attachment now
+    // parses under the strict union too, and a test using one would pass with or without
+    // the permissive reader. It would assert nothing. What discriminates the two is an
+    // arm from a writer newer than this binary, which is the case the reader exists for.
+    const environmentId = ENV();
+    const durable = `${RUN}-future-arm-${Date.now()}`;
+    const seen: string[] = [];
+    const eventId = await publish(environmentId, {
+      data: {
+        id: randomUUID(),
+        channel_id: randomUUID(),
+        seq: 1,
+        user: "tuan",
+        text: "a photo and something this binary has never heard of",
+        created_at: new Date().toISOString(),
+        attachments: [
+          { type: "media", media_id: randomUUID() },
+          { type: "audio_clip", clip_id: randomUUID(), duration_ms: 1200 },
+        ],
+      },
+    });
+
+    const runtime = runtimeFor(
+      db,
+      durable,
+      async (event) => {
+        seen.push(event.id);
+      },
+      silent,
+      environmentId,
+    );
+    for (let i = 0; i < 20 && !seen.includes(eventId); i++) {
+      await runtime.pollOnce();
+    }
+    await runtime.stop();
+
+    // HANDLED, which is the whole claim. A terminated message is never handled and never
+    // comes back, so `seen` staying empty is exactly what the defect looks like.
+    expect(seen).toContain(eventId);
+    expect(await timesHandled(db, durable, eventId)).toBe(1);
+  }, 120_000);
+
   it("invariant 4: a kill between handling and acknowledgement is redelivered — and handled once (SC-003)", async () => {
     // The chapter's centrepiece. The walk claims the event (which commits the
     // effect), prints its marker, and is SIGKILLed before it acknowledges.
