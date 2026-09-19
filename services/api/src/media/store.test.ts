@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { ensureBucket, storeConfig, storeReachable, type StoreConfig } from "./store";
+import { ensureBucket, storeConfig, storeReady, type StoreConfig } from "./store";
 
 // THE TWO CALLS THE API MAKES TO THE STORE, AGAINST A SERVER THAT ANSWERS WHAT IT IS
 // TOLD TO.
@@ -67,26 +67,51 @@ describe("the store client, against a server that answers to order", () => {
     await expect(ensureBucket(config)).rejects.toThrow(/HTTP 409/);
   });
 
-  it("calls a 2xx reachable and everything else not", async () => {
+  it("calls a 2xx ready and everything else not", async () => {
     reply = { status: 200, body: "" };
-    expect(await storeReachable(config)).toBe(true);
+    seen = [];
+    expect(await storeReady(config)).toBe(true);
+    // ONE ROUND TRIP ON THE HAPPY PATH. A second call here would double the cost this
+    // chapter measured at +24.1%, and the measurement would stop describing the code.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.method).toBe("HEAD");
 
-    // A STORE THAT ANSWERS AND REFUSES IS NOT REACHABLE FOR THIS PURPOSE. A 403 on a
-    // signed HEAD means the api's credentials no longer work, and issuing slots against
-    // it would hand clients URLs the store will reject.
+    // A STORE THAT ANSWERS AND REFUSES IS NOT READY. A 403 on a signed HEAD means the
+    // api's credentials no longer work, and issuing slots against it would hand clients
+    // URLs the store will reject.
     reply = { status: 403, body: "" };
-    expect(await storeReachable(config)).toBe(false);
+    expect(await storeReady(config)).toBe(false);
 
     reply = { status: 500, body: "" };
-    expect(await storeReachable(config)).toBe(false);
+    expect(await storeReady(config)).toBe(false);
   });
 
-  it("calls a refused connection not reachable, rather than throwing", async () => {
-    // PORT 1 IS PRIVILEGED AND UNBINDABLE, so the kernel refuses. `storeReachable`'s
-    // whole contract is that it answers rather than raises: a slot request must end in
-    // a 503 the client can read, not in an unhandled `TypeError: fetch failed` that the
-    // error filter turns into `internal_error`.
-    expect(await storeReachable({ ...config, endpoint: "http://127.0.0.1:1" })).toBe(false);
+  it("treats a 404 as the first request rather than a refusal, and creates the bucket", async () => {
+    // A REACHABLE STORE WITH NO BUCKET IS WHAT A FRESH VOLUME LOOKS LIKE, and it is the
+    // case that shipped broken: nothing in the running application created the bucket,
+    // every local run passed because it already existed, and CI's empty volume answered
+    // 503 to two suites that never touch this file.
+    let calls = 0;
+    server.removeAllListeners("request");
+    server.on("request", (req, res) => {
+      calls += 1;
+      seen.push({ method: req.method ?? "", url: req.url ?? "" });
+      // HEAD says the bucket is not there; the PUT that follows creates it.
+      res.statusCode = req.method === "HEAD" ? 404 : 200;
+      res.end();
+    });
+    seen = [];
+    expect(await storeReady(config)).toBe(true);
+    expect(calls).toBe(2);
+    expect(seen.map((s) => s.method)).toEqual(["HEAD", "PUT"]);
+  });
+
+  it("calls a refused connection not ready, rather than throwing", async () => {
+    // PORT 1 IS PRIVILEGED AND UNBINDABLE, so the kernel refuses. `storeReady`'s whole
+    // contract is that it answers rather than raises: a slot request must end in a 503
+    // the client can read, not in an unhandled `TypeError: fetch failed` that the error
+    // filter turns into `internal_error`. A bucket that will not create lands here too.
+    expect(await storeReady({ ...config, endpoint: "http://127.0.0.1:1" })).toBe(false);
   });
 
   it("gives every field of the config a default, and lets the environment override it", () => {
