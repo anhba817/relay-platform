@@ -27,7 +27,11 @@ describe("the store client, against a server that answers to order", () => {
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     const { port } = server.address() as { port: number };
-    config = { ...storeConfig(), endpoint: `http://127.0.0.1:${port}` };
+    // BOTH FIELDS, because this suite exercises the calls the API makes and those sign
+    // with `internalEndpoint`. Overriding `endpoint` alone would point the fake server
+    // at the client's address and leave the probe talking to the real store.
+    const origin = `http://127.0.0.1:${port}`;
+    config = { ...storeConfig(), endpoint: origin, internalEndpoint: origin };
   });
 
   afterAll(async () => {
@@ -114,7 +118,9 @@ describe("the store client, against a server that answers to order", () => {
     // contract is that it answers rather than raises: a slot request must end in a 503
     // the client can read, not in an unhandled `TypeError: fetch failed` that the error
     // filter turns into `internal_error`. A bucket that will not create lands here too.
-    expect(await storeReady({ ...config, endpoint: "http://127.0.0.1:1" })).toBe(false);
+    expect(
+      await storeReady({ ...config, internalEndpoint: "http://127.0.0.1:1" }),
+    ).toBe(false);
   });
 
   it("gives every field of the config a default, and lets the environment override it", () => {
@@ -127,5 +133,23 @@ describe("the store client, against a server that answers to order", () => {
     expect(from.secretKey).toBe("relay-secret");
     expect(from.bucket).toBe("relay-media");
     expect(storeConfig({}).endpoint).toBe("http://localhost:9100");
+  });
+
+  it("defaults the internal endpoint to the client's, and lets them differ", () => {
+    // UNSET IS THE CASE EVERY LANE RUNS. The api is a host process there and both
+    // consumers want `localhost:9100`, so the field has to be invisible until it isn't.
+    expect(storeConfig({}).internalEndpoint).toBe("http://localhost:9100");
+    expect(
+      storeConfig({ RELAY_MINIO_ENDPOINT: "http://elsewhere:9100" }).internalEndpoint,
+    ).toBe("http://elsewhere:9100");
+
+    // SET IS THE COMPOSE CASE, and it is the one that was answering 503: the client is
+    // given a published host port and the api reaches the same store by service name.
+    const split = storeConfig({
+      RELAY_MINIO_ENDPOINT: "http://localhost:9100",
+      RELAY_MINIO_INTERNAL_ENDPOINT: "http://minio:9000",
+    });
+    expect(split.endpoint).toBe("http://localhost:9100");
+    expect(split.internalEndpoint).toBe("http://minio:9000");
   });
 });

@@ -7,15 +7,34 @@ import { presign } from "./presign";
 // be issued and which nothing else in the stack does.
 
 export interface StoreConfig {
+  /** WHERE THE CLIENT REACHES THE STORE. This is the origin signed into an upload URL,
+   * and the client is outside this process by construction (ADR-13). */
   endpoint: string;
+  /** WHERE THIS SERVICE REACHES THE STORE, and it is a second field because the host is
+   * inside the signature.
+   *
+   * `X-Amz-SignedHeaders: host` — a URL signed for one origin is refused at another, so
+   * the two consumers of this config cannot share one address once they disagree. They
+   * agreed until the api ran anywhere but the host: `compose.yaml` publishes MinIO on
+   * `localhost:9100` for the client and reaches it as `minio:9000` from inside the
+   * network, and the composed api answered **503 to every slot request** because the
+   * default put its own probe at `localhost:9100`, which inside that container is that
+   * container. Measured: `localhost:9100 -> ECONNREFUSED`, `minio:9000 -> 200`, from a
+   * shell in the api while the same store answered 200 to the host.
+   *
+   * DEFAULTS TO `endpoint`, so every lane that runs the api as a host process is
+   * unchanged and nothing has to know this field exists until the two addresses differ. */
+  internalEndpoint: string;
   accessKey: string;
   secretKey: string;
   bucket: string;
 }
 
 export function storeConfig(env: NodeJS.ProcessEnv = process.env): StoreConfig {
+  const endpoint = env.RELAY_MINIO_ENDPOINT ?? "http://localhost:9100";
   return {
-    endpoint: env.RELAY_MINIO_ENDPOINT ?? "http://localhost:9100",
+    endpoint,
+    internalEndpoint: env.RELAY_MINIO_INTERNAL_ENDPOINT ?? endpoint,
     accessKey: env.RELAY_MINIO_ACCESS_KEY ?? "relay",
     secretKey: env.RELAY_MINIO_SECRET_KEY ?? "relay-secret",
     bucket: env.RELAY_MINIO_BUCKET ?? "relay-media",
@@ -37,7 +56,14 @@ export function storeConfig(env: NodeJS.ProcessEnv = process.env): StoreConfig {
  * this file answering 503 to a slot request. A comment describing behaviour no code
  * performs is the defect this chapter keeps finding in other people's files. */
 export async function ensureBucket(config: StoreConfig): Promise<"created" | "exists"> {
-  const url = presign({ method: "PUT", ...config, expiresIn: 60 });
+  // `internalEndpoint`, NOT `endpoint`. This is the one call the api makes itself, so it
+  // signs for the address the api can reach rather than the one the client is given.
+  const url = presign({
+    method: "PUT",
+    ...config,
+    endpoint: config.internalEndpoint,
+    expiresIn: 60,
+  });
   const res = await fetch(url, { method: "PUT" });
   if (res.ok) return "created";
 
@@ -85,7 +111,14 @@ export async function ensureBucket(config: StoreConfig): Promise<"created" | "ex
  * machine, short enough that a slot request never becomes the slowest thing in the api.
  */
 export async function storeReady(config: StoreConfig): Promise<boolean> {
-  const url = presign({ method: "HEAD", ...config, expiresIn: 60 });
+  // `internalEndpoint` for the same reason `ensureBucket` uses it: this probe is the api
+  // asking the store a question, not a URL anybody else will hold.
+  const url = presign({
+    method: "HEAD",
+    ...config,
+    endpoint: config.internalEndpoint,
+    expiresIn: 60,
+  });
   try {
     const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(2_000) });
     if (res.ok) return true;
