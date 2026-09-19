@@ -180,6 +180,23 @@ describe("attaching hosted media", () => {
     expect(res.status).toBe(201);
   });
 
+  // WHAT THE CREDENTIAL ARM ACTUALLY DISCRIMINATES, WHICH IS NOT WHAT IT LOOKS LIKE.
+  //
+  // An API key's OWN slot records `user_id IS NULL`, and the user-token predicate admits
+  // NULL — so forcing the user predicate on an application credential changes nothing for
+  // its own objects, and a suite holding only that case would pass with the arm deleted.
+  // The one case that moves is an API key attaching a USER's object: permitted, because
+  // FR-MED-06 qualifies the uploader clause with *"(for user tokens)"* and an application
+  // credential acts for the whole tenant.
+  it("lets an API key attach a USER's object, which is the arm's only discriminating case", async () => {
+    const usersObject = await slotFor(tokenA);
+    const res = await send(
+      { text: "the tenant's backend attaches a person's upload", user: "attach-bot", attachments: [media(usersObject)] },
+      key.credential,
+    );
+    expect(res.status).toBe(201);
+  });
+
   it("stores one media and one url attachment, in order (T027)", async () => {
     const id = await slotFor(tokenA);
     const res = await send({ text: "both", attachments: [png("a"), media(id)] }, tokenA);
@@ -259,6 +276,50 @@ describe("attaching hosted media", () => {
     // references — so a customer deleting their own message is the one orphan they can
     // produce at will (`gaps.md` 056-1, and T055 records it).
     expect(rows[0]!.objects).toBe(1);
+  });
+
+  // ── THE HALF OF THE CLAUSE NO FIXTURE CAN REACH (FR-010, SC-006) ────────────────────
+  //
+  // FR-MED-06 NAMES TWO STATES AND THE SCHEMA PERMITS ONE. The predicate admits
+  // `pending` and `ready` because the clause says both; `ready` cannot occur, and the
+  // database is what says so rather than a comment. 4.10 wrote
+  // `CHECK (state = 'pending')` deliberately — verification is movement VI's, and a
+  // schema admitting a state nothing produces is a schema making a claim it cannot keep.
+  it("cannot be given a `ready` object to attach, because the database refuses one (SC-006)", async () => {
+    let refusal = "";
+    try {
+      await db.execute(
+        `INSERT INTO media_objects
+           (id, environment_id, filename, mime_type, declared_bytes, object_key, state)
+         VALUES (gen_random_uuid(), '${env.id}', 'r.png', 'image/png', 1, 'r/k', 'ready')`,
+      );
+    } catch (error) {
+      refusal = String((error as { cause?: unknown }).cause ?? error);
+    }
+
+    // THE TEXT IS THE ASSERTION AND NOT THE THROW. "The insert failed" would pass
+    // against a typo in the column list, a missing environment, or a closed pool — three
+    // things that are not this chapter's evidence. What is being published is that the
+    // constraint by NAME is what stops it, so the chapter can say the arm is unreachable
+    // rather than untested.
+    expect(refusal).toContain('violates check constraint "media_objects_state_check"');
+  });
+
+  it("refuses a state that is neither, which is the same refusal from the other side", async () => {
+    let refusal = "";
+    try {
+      await db.execute(
+        `INSERT INTO media_objects
+           (id, environment_id, filename, mime_type, declared_bytes, object_key, state)
+         VALUES (gen_random_uuid(), '${env.id}', 'x.png', 'image/png', 1, 'x/k', 'rejected')`,
+      );
+    } catch (error) {
+      refusal = String((error as { cause?: unknown }).cause ?? error);
+    }
+    // `rejected` IS THE OTHER TRANSITION FR-MED-07 NAMES, and it is unreachable for the
+    // same reason. Asserting both is what makes the first one a fact about the CHECK
+    // rather than a fact about the string `ready`.
+    expect(refusal).toContain('violates check constraint "media_objects_state_check"');
   });
 
   // ── THE THREE REFUSALS, WHICH MUST LOOK THE SAME (SC-002) ───────────────────────────

@@ -5123,6 +5123,31 @@ export class Repository {
    * predicate says it anyway: the clause names both, and a predicate that named one would
    * have to be found and widened by whoever builds the scanner.
    *
+   * CONSTITUTION VI ASKS FOR 100% BRANCH COVERAGE OF TENANT ISOLATION, AND THIS IS THAT
+   * CLAUSE MET RATHER THAN PINNED — with the per-arm evidence, because the percentage
+   * cannot carry it. `repository.ts` is pinned at 92 branches and measures 92.91 across
+   * hundreds of them, so an uncovered arm HERE would pass the ratchet with room to spare.
+   * The pin is not the instrument; each arm was deleted and the suite re-run:
+   *
+   *     the three SQL clauses      no JavaScript branch at all. 048 recorded the same
+   *                                clause as unmeasurable for a sorting key; a WHERE is
+   *                                the same shape from a different direction.
+   *     `senderMustBeBot ? …`      forced to the user predicate -> exactly ONE test red,
+   *                                "lets an API key attach a USER's object". Nothing else
+   *                                moved, and that is the finding: an API key's own slot
+   *                                records `user_id IS NULL`, which the user predicate
+   *                                admits — so a suite without that one case would have
+   *                                passed with this arm deleted.
+   *     `refused !== undefined`    never fires -> five red, every refusal test.
+   *     `wanted.length === 0`      deleted -> **17 of 17 still pass.** It is an
+   *                                optimisation and not a behavioural branch: with no
+   *                                media the `IN` is empty, nothing comes back, and
+   *                                nothing is refused. Kept because most sends carry no
+   *                                media and none of them should pay a round trip.
+   *
+   * A COVERAGE NUMBER WOULD HAVE CALLED ALL FOUR "COVERED" and told nobody that one of
+   * them does nothing observable.
+   *
    * A ROW THAT DOES NOT MATCH AND A ROW THAT DOES NOT EXIST ARE THE SAME OUTCOME
    * (FR-005). The query returns what passes; anything asked for and not returned is
    * refused, with no way for the caller — or for this method — to tell which clause it
