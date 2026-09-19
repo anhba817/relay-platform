@@ -68,30 +68,27 @@ const urlWithAllowedScheme = z
     { message: "url must use the http or https scheme" },
   );
 
-/** The arm §4.14 will replace. It parses the shape so the DISCRIMINATOR matches — that
- * is what makes zod run this arm's refinement instead of answering with its own generic
- * message — and then refuses unconditionally. */
-const mediaArm = z
-  .strictObject({
-    type: z.literal("media"),
-    media_id: z.string().min(1),
-  })
-  .refine(() => false, {
-    message:
-      "hosted media is not available yet — attach an http or https url instead (FR-MSG-11 §4.14)",
-    /** THE SCHEMA NAMES ITS OWN REFUSAL, and that is what puts FR-003a on both doors
-     * with one mechanism.
-     *
-     * `ZodValidationPipe` answers every validation failure with `invalid_request` and a
-     * 400, which is right for a malformed body and wrong here: `media_id` is published
-     * in FR-MSG-11, so the honest answer is that the platform cannot serve it yet — its
-     * own code, and a 422 because the request is understood.
-     *
-     * Checking for a media arm in the CONTROLLER cannot work: `@Body(new
-     * ZodValidationPipe(...))` runs before the handler, so the schema has already
-     * refused with a 400 and control never arrives. The pipe reads this instead. */
-    params: { protocolCode: "media_not_available", status: 422 },
-  });
+/** The arm §4.14 fills. It refused unconditionally from 3.24 until this chapter, with a
+ * `.refine(() => false)` and a `protocolCode` that named its own 422 — both gone, because
+ * the state they described does not exist any more.
+ *
+ * `media_id` IS A UUID HERE AND WAS `z.string().min(1)`, AND THE TIGHTENING IS WHAT STOPS
+ * A CALLER-TRIGGERED 500. The looser shape let `not-a-uuid` past the schema and into the
+ * lookup, where Postgres answers `invalid input syntax for type uuid`, the driver raises,
+ * and `ProtocolErrorFilter` calls it `internal_error` — a 500 any caller could produce
+ * with one request. Measured before it was changed (research R3). A UUID at the door
+ * makes it a 400 naming the field, which is what it always was.
+ *
+ * NARROWING A SHAPE NOTHING WAS ACCEPTING IS SAFE BY ORDERING, NOT BY DESIGN. No durable
+ * row and no queued envelope carries a media attachment, because the arm refused every
+ * one for twenty-six chapters — so there is no stored `media_id` that this stricter
+ * schema could now reject. **A reader of anything durable cannot require a field its
+ * writer did not have**, and the reason that rule does not bite here is that the writer
+ * never wrote one. It would bite a chapter that tightened this a year from now. */
+const mediaArm = z.strictObject({
+  type: z.literal("media"),
+  media_id: z.uuid(),
+});
 
 const urlArm = z.strictObject({
   type: z.literal("url"),
@@ -105,6 +102,43 @@ const urlArm = z.strictObject({
  * field added on one side of a rolling deploy fails loudly on the other instead of
  * vanishing. */
 export const attachmentSchema = z.discriminatedUnion("type", [urlArm, mediaArm]);
+
+/** THE SAME UNION FOR A READER THAT FORWARDS RATHER THAN JUDGES, and it is one export
+ * because there were nearly four copies of it.
+ *
+ * **Strict where the value is judged, permissive where it is forwarded.** A door that
+ * decides whether to accept a request uses `attachmentSchema` and refuses an arm it does
+ * not know — that is what a request schema is for. A reader that hands the value onward
+ * without interpreting it must not refuse a shape its own writer may produce, because
+ * the two sides deploy separately and the reader is the older binary exactly when it
+ * matters.
+ *
+ * WHAT IT COSTS TO GET THIS WRONG, measured per door rather than argued:
+ *
+ *     outbox envelope     `message.term()` — the message is destroyed AFTER the send
+ *                         was acknowledged, and redelivery never brings it back
+ *     send response       the gateway closes the socket 1011; the message is committed,
+ *                         so the client loses its acknowledgement and an idempotent
+ *                         retry fails identically
+ *     fanout delivery     `logger.log("error", "fanout.invalid_payload"); return` — the
+ *                         frame is dropped, the sender already has its 201, and no
+ *                         socket on that instance ever sees it
+ *
+ * FIVE READERS USE THIS AND THEY WERE FOUND ONE PER ANALYSIS PASS — the outbox at pass 3,
+ * the send response at pass 4, and the three that reach the union through `messageSchema`
+ * at pass 6, after a table written to prevent exactly that recorded `messageSchema` as
+ * *"parsed by nothing at runtime."* It is parsed by the delivery path.
+ *
+ * THE OBJECT STAYS STRICT AND ONLY THE ELEMENT LOOSENS. A new key on the ENVELOPE is a
+ * contract change between two versions of one service and should be loud; a new
+ * attachment ARM is payload this reader never looks at. `z.looseObject` with the
+ * discriminator required is the narrowest thing that accepts a future arm: a payload
+ * with no `type` is still a refusal, so the reader can still tell an attachment from
+ * garbage. */
+export const forwardedAttachmentSchema = z.union([
+  attachmentSchema,
+  z.looseObject({ type: z.string() }),
+]);
 
 /** The type the read paths cast the column to. `messages.attachments` is a bare
  * `jsonb()` with no `.$type<>()`, so drizzle infers `unknown` on select and every read
@@ -151,3 +185,11 @@ export function refineTextAndAttachments(
     message: "text must not be empty unless the message carries at least one attachment",
   });
 }
+
+/** What a forwarding reader is handed: a known arm, or one it does not know yet.
+ *
+ * NAMED SO A READER THAT STARTS LOOKING AT ATTACHMENTS HAS TO NARROW. Nothing reads one
+ * today — the outbox consumer, the fanout deliverer and the backfill page all pass the
+ * array through untouched — and this type is what will make the compiler ask "which arm
+ * is this?" on the day something does. */
+export type ForwardedAttachment = z.infer<typeof forwardedAttachmentSchema>;

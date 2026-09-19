@@ -85,9 +85,13 @@ export function scopeCursors(
  * client is about to have. Channels absent from the backfill keep their
  * presented cursor as the mark — nothing new arrived, so anything buffered
  * is genuinely new. */
+// TYPED BY WHAT IT READS, WHICH IS ONE FIELD. This took `Message[]` and touches only
+// `seq`; when the backfill page became `ForwardedMessage[]` — a relay may be handed an
+// attachment arm it does not know — the narrower type was the honest fix rather than
+// widening this to a second concrete message type it also does not read.
 export function highWaterMarks(
   cursors: Record<string, number>,
-  backfilled: Record<string, { messages: Message[] }>,
+  backfilled: Record<string, { messages: { seq: number }[] }>,
 ): Record<string, number> {
   const marks: Record<string, number> = { ...cursors };
   for (const [channelId, page] of Object.entries(backfilled)) {

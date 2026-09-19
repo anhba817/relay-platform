@@ -9,6 +9,7 @@ import {
   frameSchema,
   type ErrorCode,
   type Frame,
+  type RelayedFrame,
   type Message,
   type RevisionFabric,
   type TypingFabric,
@@ -115,7 +116,7 @@ function isInboundFrame(frame: Frame): frame is Extract<Frame, { type: InboundFr
   return INBOUND_FRAME_TYPES.has(frame.type as InboundFrameType);
 }
 
-function send(socket: WebSocket, frame: Frame): void {
+function send(socket: WebSocket, frame: RelayedFrame): void {
   socket.send(JSON.stringify(frame));
 }
 

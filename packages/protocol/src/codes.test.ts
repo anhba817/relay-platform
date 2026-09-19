@@ -240,10 +240,28 @@ describe("the refusal this chapter's attachments add", () => {
   // argument. Every other refusal in this pipe is about a body the contract does not
   // allow; `media_id` is in FR-MSG-11 and the caller made no mistake. A 400 saying
   // "invalid" tells them to fix a request that is already correct.
-  it("names the unhosted-media refusal apart from a malformed request", () => {
-    expect(ERROR_CODES).toHaveProperty("media_not_available");
-    expect(ERROR_CODES.media_not_available).not.toBe(ERROR_CODES.invalid_request);
-    expect(ERROR_CODES.media_not_available).toMatch(/media/);
+  it("names the unattachable-media refusal apart from a malformed request", () => {
+    expect(ERROR_CODES).toHaveProperty("media_not_attachable");
+    expect(ERROR_CODES.media_not_attachable).not.toBe(ERROR_CODES.invalid_request);
+    expect(ERROR_CODES.media_not_attachable).toMatch(/media/);
+  });
+
+  // THE CODE THIS ONE REPLACED IS GONE, ASSERTED RATHER THAN ASSUMED. `codes.ts`
+  // instructed its own deletion — *"at which point it is deleted, not repurposed"* — and
+  // "we removed it" is not a property anything checks. `check:errors` compares the
+  // registry against the reference in both directions and would catch a leftover
+  // section; nothing but this catches a leftover ENTRY that no section documents.
+  it("has deleted `media_not_available` rather than repurposing it", () => {
+    expect(ERROR_CODES).not.toHaveProperty("media_not_available");
+  });
+
+  // A FALLBACK STILL NEEDS A SENTENCE A CLIENT CAN ACT ON. Nothing throws an unnamed
+  // 422 today; this exists for the next thrower that forgets, and a code whose message
+  // said only "unprocessable" would restate the status and tell them nothing.
+  it("gives the 422 rung a message that says what to do", () => {
+    expect(ERROR_CODES).toHaveProperty("unprocessable_request");
+    expect(ERROR_CODES.unprocessable_request).not.toBe(ERROR_CODES.internal_error);
+    expect(ERROR_CODES.unprocessable_request).toMatch(/understood/);
   });
 });
 

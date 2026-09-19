@@ -61,6 +61,15 @@ export class ProtocolErrorFilter implements ExceptionFilter {
     // `media_storage_unavailable`, and neither is true of a 503 from somewhere else —
     // so `service_unavailable` carries only what the status itself supports.
     //
+    // AND A NINTH RUNG AT 422, FROM HOSTED MEDIA'S SECOND HALF (FR-009a). The ladder
+    // carried eight statuses and 422 was not one of them, so any 422 that forgot to name
+    // itself answered `internal_error` — the same lie this comment records three times
+    // above, on the one status this platform raises most deliberately. Nothing throws an
+    // unnamed 422 today and that is the argument FOR the rung: `media_not_attachable`
+    // names itself and `channel_member_limit_exceeded` names itself twice, so the rung is
+    // for the next thrower that does not. `unprocessable_request` carries only what the
+    // status supports, because a fallback cannot know which 422 it is standing in for.
+    //
     // A NAMED CODE STILL WINS. These are what a thrower gets for saying nothing, not a
     // replacement for saying something.
     const ladder: ErrorCode =
@@ -78,9 +87,11 @@ export class ProtocolErrorFilter implements ExceptionFilter {
                   ? "media_too_large"
                   : status === 415
                     ? "media_type_not_allowed"
-                    : status === 503
-                      ? "service_unavailable"
-                      : "internal_error";
+                    : status === 422
+                      ? "unprocessable_request"
+                      : status === 503
+                        ? "service_unavailable"
+                        : "internal_error";
     // `field` travels the way `code` does — the thrower names it, because only the
     // thrower knows it. Omitted rather than null when there is nothing to name: a key
     // that is always present and usually empty teaches a client to ignore it.
