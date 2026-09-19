@@ -1101,3 +1101,51 @@ export const quotaNotifications = pgTable(
     ),
   ],
 );
+
+// ── HOSTED MEDIA: THE RECORD OF AN UPLOAD THAT HAS NOT HAPPENED YET ──────────
+//
+// A row exists the moment a slot is ISSUED, before any byte is uploaded. That is
+// the point of ADR-13: bytes never transit Relay compute, so the platform's record
+// of an upload is older than the upload and is the only thing it will ever hold
+// about one.
+//
+// A REFUSED REQUEST WRITES NOTHING (FR-MED-02). This is not a log of attempts —
+// it is the set of slots the platform agreed to, which is also what the storage
+// quota is a sum over.
+export const mediaObjects = pgTable(
+  "media_objects",
+  {
+    // OPAQUE, AND NOT A PATH INTO THE STORE. `object_key` is where the bytes live
+    // and this is what a client holds; keeping them separate is what lets the
+    // storage layout change without breaking a published contract.
+    id: uuid("id").primaryKey(),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    // NULLABLE, BECAUSE AN API KEY HAS NO USER. FR-MED-06's chapter distinguishes
+    // the two cases — a user token's media belongs to that user — and it cannot
+    // make that distinction if the absence is written as something else.
+    userId: uuid("user_id").references(() => users.id),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type").notNull(),
+    // WHAT THE CALLER SAID, NOT WHAT ARRIVED. FR-MED-03 verifies the object and is
+    // a later chapter, so every quota sum in this one is over declarations.
+    declaredBytes: bigint("declared_bytes", { mode: "number" }).notNull(),
+    state: text("state").notNull().default("pending"),
+    objectKey: text("object_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // `pending` ALONE, AND THAT IS THE CHAPTER'S SCOPE. `ready` and `rejected`
+    // arrive with the verification and scanning clauses; a CHECK that accepted
+    // them now would be a schema claiming a state nothing can reach.
+    check("media_objects_state_check", sql`${t.state} = 'pending'`),
+    check("media_objects_declared_bytes_check", sql`${t.declaredBytes} > 0`),
+    // THE QUOTA'S OWN READ. Committed bytes are a sum over this index rather than
+    // a counter on `environments`, which would be a second source of truth for
+    // something these rows already say (constitution IV).
+    index("media_objects_environment_idx").on(t.environmentId),
+  ],
+);
