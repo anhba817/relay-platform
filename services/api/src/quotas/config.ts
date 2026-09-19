@@ -34,6 +34,19 @@ export const quotaConfigSchema = z
     // costs what the comment said plus three clauses in the migration's CHECK
     // rather than one line — 0010 counts the difference.
     connection_minutes: capsSchema.optional(),
+    // HOSTED MEDIA'S, AND IT IS A DIFFERENT KIND OF QUANTITY FROM THE THREE ABOVE.
+    //
+    // Those are FLOWS: `usage_periods` is keyed on a calendar month and `creditFor`
+    // accumulates within one, never subtracting. Stored bytes are a LEVEL — the
+    // figure falls when objects are deleted, and it does not reset on the 1st. Put it
+    // in that monthly row and two things break: a delete would have to subtract, which
+    // `creditFor`'s own comment forbids, and a tenant holding 100 GB would start every
+    // month at zero and be allowed another 100.
+    //
+    // So the CAP is configuration and sits here with the other caps, and the
+    // ACCOUNTING is `sum(declared_bytes)` over `media_objects` rather than a row in
+    // `usage_periods`. SRS FR-RTL-05 is amended to say which of the four it means.
+    storage_bytes: capsSchema.optional(),
   })
   // `.strict()` so a dimension nobody implemented is a parse failure rather than
   // a silently ignored cap — which is also why a new key has to land HERE and in

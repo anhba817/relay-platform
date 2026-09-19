@@ -9,6 +9,7 @@ import { AuthModule } from "./auth/auth.module";
 import { AuthenticateMiddleware } from "./auth/authenticate.middleware";
 import { HealthController } from "./health.controller";
 import { InternalModule } from "./internal/internal.module";
+import { MediaModule } from "./media/media.module";
 import { MessagesModule } from "./messages/messages.module";
 import { ChannelsModule } from "./channels/channels.module";
 // Registered here for the reason `ChannelsModule` is: without this
@@ -56,6 +57,11 @@ import type { Publisher } from "./outbox/publisher";
     // and the route does not exist — which `pnpm build` would not notice and the
     // cross-tenant gauntlet would, because it derives its targets from the router.
     RequestLogModule,
+    // HOSTED MEDIA, AND THIS LINE IS THE WHOLE OF WHETHER THE ROUTE EXISTS. A module
+    // written, tested and never registered gives a 404 that reads as a routing bug
+    // rather than as a missing import — chapter 4.6's `Unknown chapter id`, one
+    // repository over.
+    MediaModule,
   ],
   controllers: [HealthController],
   providers: [
