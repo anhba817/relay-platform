@@ -38,6 +38,17 @@ export default defineConfig({
     // a log line and a green lane. Setting the flags here makes the quiet database
     // a property of the lane rather than a convention nobody applied.
     env: {
+      // THE OBJECT STORE, IN BOTH LANES THAT RUN `.itest.ts` FILES. Chapter 4.9 put a
+      // credential in one of these two configs and not the other, and `pnpm coverage`
+      // stayed red — keeping three cross-tenant attacks skipped in the run that measures
+      // constitution VI's own coverage bar — until eight minutes of a coverage run said
+      // so. The media suites reach a real store; without these they reach nothing and
+      // the refusal they get is `media_storage_unavailable`, which is a correct answer
+      // to the wrong question.
+      RELAY_MINIO_ENDPOINT: "http://localhost:9000",
+      RELAY_MINIO_ACCESS_KEY: "relay",
+      RELAY_MINIO_SECRET_KEY: "relay-secret",
+      RELAY_MINIO_BUCKET: "relay-media",
       RELAY_OUTBOX_RELAY: "off",
       RELAY_DELIVERY_RELAY: "off",
       RELAY_NOTIFICATION_RELAY: "off",

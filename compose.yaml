@@ -92,6 +92,41 @@ services:
       retries: 5
       start_period: 15s
 
+  minio:
+    # OBJECT STORAGE, WHICH ADR-13 DECIDED AND NOTHING PROVISIONED. Media bytes never
+    # transit Relay compute: the api signs a URL and the client uploads straight here.
+    # `docs/05-sad.md:1002` has named MinIO since the first draft and the container was
+    # never added, so this is the decision arriving nine chapters after the diagram.
+    #
+    # THE REGISTRY IS PART OF THE NAME. `docker run minio/minio` fails on Docker Hub
+    # with `pull access denied … repository does not exist or may require 'docker
+    # login'`, and the SAD's sentence predates that. Four images were tried;
+    # `quay.io/minio/minio` and `chrislusf/seaweedfs` and `adobe/s3mock` pull, and
+    # `bitnami/minio` does not.
+    image: quay.io/minio/minio:latest
+    command: server /data
+    ports:
+      - "${RELAY_MINIO_PORT:-9000}:9000"
+    environment:
+      MINIO_ROOT_USER: relay
+      MINIO_ROOT_PASSWORD: relay-secret
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      # AUTHENTICATES, for the reason the ClickHouse check above gives. `/minio/health/live`
+      # answers 200 to anyone who can reach the port and says nothing about whether a
+      # credentialed call works — the same shape as the `/ping` that was green for sixteen
+      # chapters while every real query was refused.
+      #
+      # `mc` is in the image and `wget` and `nc` are not, so this is the available way to
+      # ask a question only a working store can answer.
+      test: ["CMD", "sh", "-c",
+             "mc alias set probe http://127.0.0.1:9000 relay relay-secret && mc ls probe"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   mailpit:
     image: axllent/mailpit:v1.28
     # An SMTP server that accepts everything and delivers nothing,
@@ -163,6 +198,12 @@ services:
       postgres: { condition: service_healthy }
       nats: { condition: service_healthy }
       redis: { condition: service_healthy }
+      # AND THE OBJECT STORE, because the api reaches it on every slot request — unlike
+      # `clickhouse`, which is absent from this list because the api never touches it at
+      # boot. Without the condition the api can accept traffic before the store answers,
+      # and the first slot request is refused with `media_storage_unavailable`: correct,
+      # and indistinguishable from a real outage.
+      minio: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:4000/healthz"]
       interval: 5s
@@ -223,3 +264,4 @@ volumes:
   postgres-data:
   nats-data:
   clickhouse-data:
+  minio-data:

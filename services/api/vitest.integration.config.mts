@@ -29,6 +29,17 @@ export default defineConfig({
     // the list is exactly the relays that exist, because `setup.ts` refuses a name
     // no module reads.
     env: {
+      // THE OBJECT STORE, IN BOTH LANES THAT RUN `.itest.ts` FILES. Chapter 4.9 put a
+      // credential in one of these two configs and not the other, and `pnpm coverage`
+      // stayed red — keeping three cross-tenant attacks skipped in the run that measures
+      // constitution VI's own coverage bar — until eight minutes of a coverage run said
+      // so. The media suites reach a real store; without these they reach nothing and
+      // the refusal they get is `media_storage_unavailable`, which is a correct answer
+      // to the wrong question.
+      RELAY_MINIO_ENDPOINT: "http://localhost:9000",
+      RELAY_MINIO_ACCESS_KEY: "relay",
+      RELAY_MINIO_SECRET_KEY: "relay-secret",
+      RELAY_MINIO_BUCKET: "relay-media",
       RELAY_HARNESS_BAIT: "on",
       RELAY_OUTBOX_RELAY: "off",
       RELAY_EVENT_CONSUMER: "off",
