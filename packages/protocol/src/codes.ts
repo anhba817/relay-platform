@@ -385,6 +385,27 @@ export const ERROR_CODES = {
   // never work is worse than telling them nothing. Those stay `internal_error`.
   analytics_unavailable:
     "the analytics service did not answer in time; the rest of the API is unaffected and this request is worth retrying",
+
+  /** THE 503 LADDER'S FALLBACK, AND THE ONLY CODE HERE NOTHING THROWS (FR-018).
+   *
+   * `ProtocolErrorFilter` derives a code from the status when a thrower does not name
+   * one, and its own comment calls the `internal_error` fallback *"a lie the client
+   * cannot act on"* — twice, about the 400 chapter 2.2 fixed and the 403 the
+   * credentials chapter fixed. Hosted media adds 415, 413, 402 and 503 to the
+   * platform, and three of those four have a code the ladder can honestly use.
+   *
+   * 503 DOES NOT, AND THAT IS WHY THIS EXISTS. Both of the platform's 503s today name
+   * a specific store — `analytics_unavailable` and `media_storage_unavailable` — and
+   * neither generalises to a 503 from somewhere else. Mapping the ladder to either
+   * would tell a client that the store it names is down when it may be fine.
+   *
+   * SO IT SAYS LESS, ON PURPOSE. The two specific codes stay the right answer for the
+   * two throwers that know which dependency failed; this one carries the only two
+   * facts the status alone supports — something the request needed did not answer,
+   * and retrying is reasonable. A named code always wins over the ladder, so adding
+   * this takes nothing away from either. */
+  service_unavailable:
+    "a dependency this request needed did not answer; the rest of the API is unaffected and the request can be retried",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

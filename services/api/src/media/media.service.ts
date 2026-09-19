@@ -6,7 +6,7 @@ import { Repository } from "../db/repository";
 import { protocolError } from "../protocol-error";
 import { KIND_CAPS, kindOf } from "./kinds";
 import { presign } from "./presign";
-import { storeConfig, type StoreConfig } from "./store";
+import { storeConfig, storeReachable, type StoreConfig } from "./store";
 
 /** What a caller declares. Nothing here is verified — FR-MED-03 is a later chapter,
  * and the quota arithmetic below is over these numbers rather than over bytes. */
@@ -56,6 +56,27 @@ export class MediaService {
         `${input.bytes} bytes exceeds the ${cap}-byte limit for ${kind}`,
         HttpStatus.PAYLOAD_TOO_LARGE,
         "bytes",
+      );
+    }
+
+    // THE STORE, ASKED BEFORE ANYTHING IS WRITTEN (FR-017).
+    //
+    // AFTER THE TWO FREE REFUSALS AND BEFORE THE ONE THAT WRITES, which is the only
+    // position that satisfies FR-009 without a compensating delete. A probe placed
+    // after the reservation would have to un-reserve the bytes it just committed; a
+    // probe placed first would spend a round trip on `application/x-evil`.
+    //
+    // AND IT MEANS A TENANT OVER QUOTA WITH A DOWN STORE IS TOLD THE STORE IS DOWN,
+    // which is the one ordering consequence worth naming. Retrying will then produce
+    // `media_storage_exhausted` and the client will have learned both facts in two
+    // requests instead of one. The opposite order tells a client to delete media when
+    // nothing could have been stored anyway — permanent advice about a transient
+    // state, which is the failure this code exists to prevent.
+    if (!(await storeReachable(this.store))) {
+      throw protocolError(
+        "media_storage_unavailable",
+        "the object store is not reachable; this is temporary and the request can be retried",
+        HttpStatus.SERVICE_UNAVAILABLE,
       );
     }
 
