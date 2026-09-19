@@ -408,6 +408,33 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // route with a token the guard refuses at the door and the handler would never run.
   { method: "GET", path: "/v1/request-log", accepts: "application", shape: "list" },
 
+  // ── THE UPLOAD SLOT (chapter 4.10, FR-MED-01), AND THE DERIVATION FOUND IT EIGHTH ──
+  //
+  // Run before this entry existed: `44 derived, 37 attacked, 6 exempt` with
+  // `unclassified: ["POST /v1/media"]`. Eight chapters, eight times, and the list has
+  // never once been ahead of the derivation.
+  //
+  // `credential` AND NOT `write`, WHICH IS THE ONE DECISION HERE THAT COULD GO EITHER
+  // WAY. It writes a row, so `write` is the tempting shape — but a `write` attack forges
+  // a tenant-owned identifier from another environment, and this request body is
+  // `{ filename, mime_type, bytes }`. **There is no identifier in it to forge.** That is
+  // `POST /auth/dev-token`'s sentence word for word, and the shape's own definition eight
+  // hundred lines up: *"the shape a foreign-identifier attack cannot express"*.
+  //
+  // AND WHAT THE ATTACK SHOWS INSTEAD IS THE OBJECT KEY. `media.service.ts:71` builds it
+  // as `${environment}/${id}`, from the repository's environment — which came off the
+  // principal the guard resolved, not off anything the caller sent. So the claim is that
+  // two tenants asking the identical question get keys under different prefixes, and
+  // neither can name the other's: the tenant is in the URL the client uploads to, chosen
+  // by the server, one layer below the request.
+  //
+  // `either`, BECAUSE THE CONTROLLER SAYS `@Accepts("application", "user")` and FR-MED-01
+  // says *"on request (user token or API key)"*. The read-position route is the precedent
+  // and it is attacked in both blocks; so is this one. A `"user"` here would understate
+  // which attacks apply, and this project has a record of a route that was named and not
+  // covered.
+  { method: "POST", path: "/v1/media", accepts: "either", shape: "credential" },
+
   // ── credential, internal, end-user token ─────────────────────────────────────
   //
   // `credential` AND NOT `read`, WHICH IS THE SIBLING ROUTE'S ARGUMENT VERBATIM. The

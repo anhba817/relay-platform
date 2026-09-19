@@ -88,9 +88,16 @@ describe("the API request log", () => {
     return { status: res.status, id: res.headers.get("x-request-id") ?? "" };
   };
 
-  /** The producer is fire-and-forget, so the row arrives after the response. Poll to a
-   *  deadline for what must arrive -- a flat sleep before an assertion is a bet that the
-   *  lane is idle, and this project has one red in twenty runs to show for that bet. */
+  /** The producer is fire-and-forget, so the row arrives after the response.
+   * Poll to a deadline for what must arrive. A flat sleep before an assertion is a bet
+   *  that the lane is idle, and this project has one red in twenty runs to show for that
+   *  bet.
+   *
+   *  AND THE BUDGET HAS TO BE BIGGER THAN THE DEADLINE, which it was not until chapter
+   *  4.10. Vitest's default per-test timeout is 5,000 ms and this lane's config sets none,
+   *  so a 20-second deadline was killed four times before it could fire: the `return null`
+   *  below was unreachable and `expect(...).not.toBeNull()` was an assertion that could
+   *  never fail. Each test carries `}, 60_000)` now (056-4). */
   const settle = async (requestId: string, timeoutMs = 20_000): Promise<Record<string, string> | null> => {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -142,7 +149,7 @@ describe("the API request log", () => {
       .createNestApplication({ logger: false });
     await app.listen(0);
     url = await app.getUrl();
-  });
+  }, 60_000);
 
   afterAll(async () => {
     ingester?.kill("SIGTERM");
@@ -157,7 +164,7 @@ describe("the API request log", () => {
                    WHERE environment_id = toUUID('${e.id}')`);
       }
     }
-  });
+  }, 60_000);
 
   it("records a served request, against a non-zero floor", async () => {
     const before = await rowsFor(env.id);
@@ -175,7 +182,7 @@ describe("the API request log", () => {
     // floor is satisfied by nothing at all.
     expect(ids).toHaveLength(5);
     expect(after - before).toBe(5);
-  });
+  }, 60_000);
 
   it("tells a guard refusal from a handler response at the same status", async () => {
     const guarded = await call("/v1/webhooks", "not-a-real-credential");
@@ -188,7 +195,7 @@ describe("the API request log", () => {
     const served = await call("/v1/webhooks", key.credential);
     expect(served.status).toBe(200);
     expect((await settle(served.id))?.refused_at).toBe("handler");
-  });
+  }, 60_000);
 
   it("records an unmatched route with no endpoint, and says why", async () => {
     const missing = await call("/v1/does-not-exist");
@@ -197,7 +204,7 @@ describe("the API request log", () => {
     expect(row?.refused_at).toBe("unmatched");
     // absent, not '' -- a 404 matched nothing and a route named "" does not exist
     expect(row?.endpoint).toBe("~absent");
-  });
+  }, 60_000);
 
   // FR-010, and the verification method is T rather than D. Constitution I is the one
   // principle this project does not accept a demonstration for: a screenshot of the right
@@ -241,7 +248,7 @@ describe("the API request log", () => {
                    AND request_id IN (toUUID('${served.id}'), toUUID('${anonymous.id}'))`),
     );
     expect(foreign).toBe(0);
-  });
+  }, 60_000);
 
   it("records the rate limiter's 429 at all, and names the operation it refused on", async () => {
     // Position 2 is what makes this possible: RateLimitMiddleware refuses with
@@ -259,5 +266,5 @@ describe("the API request log", () => {
     // `rest`, not a route template: the limiter's whole route knowledge is three-valued.
     expect(row?.limited_operation).toBe("rest");
     expect(row?.status).toBe("429");
-  });
+  }, 60_000);
 });

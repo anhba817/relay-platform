@@ -36,7 +36,7 @@ export default defineConfig({
       // so. The media suites reach a real store; without these they reach nothing and
       // the refusal they get is `media_storage_unavailable`, which is a correct answer
       // to the wrong question.
-      RELAY_MINIO_ENDPOINT: "http://localhost:9000",
+      RELAY_MINIO_ENDPOINT: "http://localhost:9100",
       RELAY_MINIO_ACCESS_KEY: "relay",
       RELAY_MINIO_SECRET_KEY: "relay-secret",
       RELAY_MINIO_BUCKET: "relay-media",

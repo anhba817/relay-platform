@@ -70,10 +70,19 @@ describe("the signer, against the store", () => {
     // That 400 was the probe's own: the shell that produced it split the URL on the
     // LAST `?` rather than the first and sent something malformed. Asked through code
     // the store is consistent — a bad signature is a refusal, not a parse error.
-    const tampered = url({ key: "probe/tampered.txt" }).replace(
-      /X-Amz-Signature=./,
-      "X-Amz-Signature=f",
+    //
+    // AND THE MUTATION IS CHECKED, because the first version of this test was a flake
+    // one run in sixteen. It replaced the signature's first character with `f`, which
+    // is a no-op whenever that character already IS `f` — a signature is 64 hex digits,
+    // so the probe sent a VALID url one time in sixteen and the store's honest 200 read
+    // as "the store accepted a tampered signature". It passed three consecutive runs
+    // before it failed. A probe that may not have altered anything has to say so.
+    const signed = url({ key: "probe/tampered.txt" });
+    const tampered = signed.replace(/X-Amz-Signature=(.)/, (_m, c: string) =>
+      `X-Amz-Signature=${c === "f" ? "0" : "f"}`,
     );
+    expect(tampered, "the tamper was a no-op").not.toBe(signed);
+
     const res = await fetch(tampered, { method: "PUT", body: "nope" });
     expect(res.status).toBe(403);
     expect(await res.text()).toContain("SignatureDoesNotMatch");

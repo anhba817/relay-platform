@@ -7,7 +7,7 @@ import { presign } from "./presign";
 // `presign.itest.ts` asks the store and this one asks the algorithm.
 
 const base = {
-  endpoint: "http://localhost:9000",
+  endpoint: "http://localhost:9100",
   bucket: "relay-media",
   accessKey: "relay",
   secretKey: "relay-secret",
