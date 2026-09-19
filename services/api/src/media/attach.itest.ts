@@ -290,6 +290,30 @@ describe("attaching hosted media", () => {
     expect(JSON.stringify(bodies[0])).not.toContain(foreign);
   });
 
+  it("refuses the whole message when the tenth attachment is foreign, storing none (FR-007, T039)", async () => {
+    const mine = await Promise.all(Array.from({ length: 9 }, () => slotFor(tokenA)));
+    const theirs = await slotFor(tokenB);
+    const text = `nine good one bad ${randomUUID()}`;
+
+    const res = await send(
+      { text, attachments: [...mine.map(media), media(theirs)] },
+      tokenA,
+    );
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { field: string }).field).toBe("attachments.9.media_id");
+
+    // ALL OR NOTHING, AND THE NINE ARE THE ASSERTION. A platform that validated each
+    // attachment as it wrote would leave a message carrying nine — which is a message the
+    // sender never wrote, delivered to every member, and no error anybody saw. The
+    // predicate runs before the insert precisely so the answer is the whole message or
+    // none of it.
+    const { rows } = (await db.execute(
+      `SELECT count(*)::int AS n FROM messages
+         WHERE channel_id = '${channelId}' AND text = '${text}'`,
+    )) as unknown as { rows: { n: number }[] };
+    expect(rows[0]!.n).toBe(0);
+  });
+
   it("names the attachment's index in `field`, so a caller with ten is told which (T040)", async () => {
     const mine = await slotFor(tokenA);
     const theirs = await slotFor(tokenB);
@@ -319,12 +343,15 @@ describe("attaching hosted media", () => {
     // SCOPED TO THIS TEST'S OWN CHANNEL, because the lane runs two files at a time and a
     // whole-table count is a neighbour's problem — eight of those were found one failure
     // at a time before anybody swept for the class.
-    const count = async (): Promise<{ rows: number; seq: number }> => {
+    const count = async (): Promise<{ rows: number; seq: number; outbox: number }> => {
       const { rows } = (await db.execute(
-        `SELECT count(*)::int AS n, coalesce(max(sequence), 0)::int AS s
-           FROM messages WHERE channel_id = '${channelId}'`,
-      )) as unknown as { rows: { n: number; s: number }[] };
-      return { rows: rows[0]!.n, seq: rows[0]!.s };
+        `SELECT (SELECT count(*)::int FROM messages WHERE channel_id = '${channelId}') AS n,
+                (SELECT coalesce(max(sequence), 0)::int FROM messages
+                   WHERE channel_id = '${channelId}') AS s,
+                (SELECT count(*)::int FROM outbox
+                   WHERE payload->'data'->>'channel_id' = '${channelId}') AS o`,
+      )) as unknown as { rows: { n: number; s: number; o: number }[] };
+      return { rows: rows[0]!.n, seq: rows[0]!.s, outbox: rows[0]!.o };
     };
 
     const before = await count();
@@ -332,9 +359,13 @@ describe("attaching hosted media", () => {
     expect(res.status).toBe(422);
     const after = await count();
 
-    // BOTH FIGURES. The row count alone would pass against a platform that inserted and
-    // rolled back while `channels.last_sequence` kept its increment — and a gap in the
-    // sequence is what a client's resume cursor reads as a lost message.
+    // THREE FIGURES, AND EACH ONE CAN MOVE WITHOUT THE OTHERS. The row count alone would
+    // pass against a platform that inserted and rolled back while
+    // `channels.last_sequence` kept its increment — and a gap in the sequence is what a
+    // client's resume cursor reads as a lost message. The OUTBOX count is the third,
+    // because the row and the event are written in one transaction and an event for a
+    // message that does not exist is worse than either: the consumer would publish it,
+    // a subscriber would render it, and nothing in the database would agree.
     expect(after).toEqual(before);
   });
 });
