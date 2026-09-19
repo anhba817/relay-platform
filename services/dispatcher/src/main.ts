@@ -283,10 +283,24 @@ export function createDispatcher({
   }
 
   return {
-    /** Force the consumers into existence without processing anything. A suite
-     * using `DeliverPolicy.New` must create its position BEFORE it publishes, or
-     * the message it is about to send lands before the consumer exists and is
-     * never seen. */
+    /** Connect, and ATTEMPT the consumers, without processing anything. A caller
+     * using `DeliverPolicy.New` needs its position to exist before it publishes,
+     * or the message it is about to send lands before the consumer does and is
+     * never seen.
+     *
+     * IT ATTEMPTS RATHER THAN FORCES, AND THE DIFFERENCE COST SIXTEEN TESTS. This
+     * comment used to say *"force the consumers into existence"*, which
+     * `connection_()` cannot promise: its `consumers.add` carries
+     * `.catch(() => undefined)` because neither stream is this service's to
+     * define, so on a broker where the api has not yet published there is nothing
+     * to add a consumer to and this returns having created none. Production is
+     * fine — the poll loop retries and nothing is due yet — and a test that
+     * publishes on the next line is not. `dispatcher.itest.ts` ensures both
+     * streams itself, out of the api's own `dist`, for exactly that reason.
+     *
+     * A comment that describes behaviour no code performs is the defect chapter
+     * 4.10 filed as `gaps.md` 056-10; this is the same sentence shape, and it was
+     * found the same way — by a broker that had never run this project. */
     async ready(): Promise<void> {
       await connection_();
     },

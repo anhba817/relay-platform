@@ -369,6 +369,39 @@ describe("the dispatcher", () => {
     child = spawnApi(apiPort, CREDENTIAL);
     apiUrl = `http://127.0.0.1:${apiPort}`;
     await waitForHealth(`${apiUrl}/healthz`);
+
+    // THE TWO STREAMS, FORCED INTO EXISTENCE BEFORE ANY CONSUMER IS ASKED FOR — AND THIS
+    // SUITE FAILED SIXTEEN WAYS WITHOUT IT ON A BROKER THAT HAD NEVER SEEN THEM.
+    //
+    // `main.ts` declines to define them, for a reason worth keeping: *"The DELIVERIES
+    // stream is created by the API SERVICE, which publishes to it. The dispatcher only
+    // consumes, so it does not define the stream — two definitions of one stream is a
+    // drift waiting for the day they disagree."* Its `consumers.add` therefore carries a
+    // `.catch(() => undefined)` and the poll loop retries, which is right in production
+    // and not enough here: `DeliverPolicy.New` means a consumer created after the publish
+    // never sees it, so `dispatcher.ready()` returning without a consumer is a suite that
+    // publishes into nothing and then reads `NatsError: consumer not found`.
+    //
+    // AND THE API BEING HEALTHY IS NOT THE SAME AS THE STREAMS EXISTING. The api creates
+    // them from its own publishers, whose connections are LAZY — and this lane runs with
+    // `RELAY_OUTBOX_RELAY=off` and `RELAY_EVENT_CONSUMER=off`, so nothing in a healthy api
+    // has published yet. Every local run passed because a broker that has run this project
+    // once already has both streams; CI's fresh JetStream is what said so.
+    //
+    // SO THE SUITE CALLS THE API'S OWN CREATORS, out of the `dist` it already loads. Not a
+    // second definition — the same two functions the api runs — which is what `main.ts`'s
+    // objection is actually about. `ingest.itest.ts`, `attempts.itest.ts` and
+    // `connection-log.itest.ts` each ensure their own stream in `beforeAll` for the same
+    // reason; this one had been relying on a neighbour having done it.
+    const publisher = require_(join(API_DIST, "outbox", "jetstream.publisher.js")) as {
+      ensureStream: (nc: NatsConnection) => Promise<void>;
+    };
+    const deliveries = require_(join(API_DIST, "webhooks", "delivery-relay.js")) as {
+      ensureDeliveriesStream: (nc: NatsConnection) => Promise<void>;
+    };
+    nats ??= await connect({ servers: NATS_URL });
+    await publisher.ensureStream(nats);
+    await deliveries.ensureDeliveriesStream(nats);
     // A per-run position, and only messages published after it exists. Sharing
     // the production durable would hand this suite every delivery every earlier
     // run left behind — and a batch of twenty-five is quickly all backlog, which
