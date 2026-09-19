@@ -4,7 +4,7 @@ import { errorFrameSchema } from "@relay/protocol";
 import { createLogger } from "@relay/service-kit";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "./app.module";
 import { LOGGER } from "./logger";
@@ -35,6 +35,31 @@ async function boot(
 
 describe("api skeleton", () => {
   let app: INestApplication | undefined;
+
+  // THE PRODUCER IS OFF FOR THIS FILE, AND THE REASON IS THE ASSERTION BELOW.
+  //
+  // `logs exactly one structured line per request` swaps the LOGGER provider for an array,
+  // so it counts EVERY line the api emits during the request — not just the access log. The
+  // request-log producer added five chapters later logs its own failure through that same
+  // logger, so with a broker it cannot reach there are two lines, and the test that has been
+  // green since this file was written goes red for a reason it is not about.
+  //
+  // SET HERE AS WELL AS IN `vitest.config.mts`, AND THE TWO SAY DIFFERENT THINGS. The lane's
+  // config makes the Docker-free gate Docker-free — a property of the lane, for whatever
+  // boots an app in it next. This one is this file's own precondition, and it is here because
+  // `vitest.coverage.config.mts` runs the same tests and does NOT set it: the coverage lane
+  // needs the producer ON for the integration suites that assert on its rows. A fix that went
+  // into one of those two configs and not the other is the shape chapter 4.9 paid eight
+  // minutes of a coverage run to find, and this file reproduced it.
+  const producer = process.env["RELAY_REQUEST_LOG"];
+  beforeAll(() => {
+    process.env["RELAY_REQUEST_LOG"] = "off";
+  });
+  afterAll(() => {
+    if (producer === undefined) delete process.env["RELAY_REQUEST_LOG"];
+    else process.env["RELAY_REQUEST_LOG"] = producer;
+  });
+
   afterEach(async () => {
     await app?.close();
     app = undefined;
