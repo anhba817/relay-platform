@@ -151,6 +151,81 @@ describe("the isolation gauntlet", () => {
     expect(verdict.stateChanged, "the victim's messages moved").toBe(false);
   });
 
+  // A FORGED `media_id` ON THE SAME ROUTE, WHICH IS A SECOND BOUNDARY ON ONE PATH.
+  //
+  // The attack above forges a CHANNEL id; this forges a MEDIA id and leaves the channel
+  // honest. They are different walls: the first is `channels.environment_id` and the
+  // second is `media_objects.environment_id`, checked in a different query by different
+  // code, and a platform could hold one and not the other. Naming the route is not
+  // covering it — and neither is attacking it once.
+  //
+  // AND THE ATTACK PLANTS A ROW FOR EACH TENANT, WHICH NO OTHER ONE IN THIS FILE HAS TO.
+  // Both tenants' `media_objects` are otherwise empty, and **an empty table passes a leak
+  // check for the same reason an empty page does** — 4.8's finding, which cost that
+  // chapter a real hole. The victim's row is what the attacker must not reach; the
+  // attacker's own is the control that says the send path works at all when the id is
+  // theirs, so a refusal here cannot be the media feature simply being broken.
+  it("POST /v1/channels/:channelId/messages — a forged media_id is refused, and writes nothing", async () => {
+    attacked.add("POST /v1/channels/:channelId/messages");
+
+    const plant = async (t: { environmentId: string }): Promise<string> => {
+      const id = randomUUID();
+      await db.execute(
+        `INSERT INTO media_objects
+           (id, environment_id, filename, mime_type, declared_bytes, object_key, state)
+         VALUES ('${id}', '${t.environmentId}', 'g.png', 'image/png', 1, 'g/${id}', 'pending')`,
+      );
+      return id;
+    };
+    const victims = await plant(t.victim);
+    const attackers = await plant(t.attacker);
+
+    // THE CONTROL FIRST. If the attacker cannot attach its OWN object, the refusal below
+    // says nothing about tenancy — it says the feature is broken, and the pair would
+    // agree on that just as happily.
+    const control = await fetch(`${url}/v1/channels/${t.attacker.channelId}/messages`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${t.attacker.credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        text: "my own object",
+        user: t.attacker.botExternalId,
+        attachments: [{ type: "media", media_id: attackers }],
+      }),
+    });
+    expect(control.status, "the attacker could not attach its own object").toBe(201);
+
+    const from = (mediaId: string) => ({
+      text: "from the attacker",
+      user: t.attacker.botExternalId,
+      attachments: [{ type: "media", media_id: mediaId }],
+    });
+    const verdict = await writeAttack(
+      url,
+      t.attacker.credential,
+      {
+        method: "POST",
+        path: `/v1/channels/${t.attacker.channelId}/messages`,
+        body: from(victims),
+      },
+      {
+        method: "POST",
+        path: `/v1/channels/${t.attacker.channelId}/messages`,
+        body: from(randomUUID()),
+      },
+      () => t.victim.repo.listMessages(t.victim.channelId, { limit: 50 }),
+    );
+
+    // THE VICTIM'S OBJECT AND AN INVENTED ONE ANSWER IDENTICALLY. That is the property:
+    // an attacker holding a real id it does not own learns nothing that distinguishes it
+    // from an id nobody has, so the route cannot be used to test whether an object exists.
+    expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+    expect(verdict.foreign.status).toBe(422);
+    expect(verdict.stateChanged, "the victim's messages moved").toBe(false);
+  });
+
   // ── the revisions chapter's three routes ────────────────────────────────────────
   //
   // WRITTEN BECAUSE THE ACCOUNTING TEST AT THE BOTTOM OF THIS FILE ASKED FOR THEM. The
