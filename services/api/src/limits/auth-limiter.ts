@@ -60,8 +60,9 @@ export class AuthLimiter {
   /** Has this address already spent its allowance?
    *
    * READS WITHOUT COUNTING. A check that also writes would refuse on its own
-   * questions, and this one runs on every request that presents a credential —
-   * including the valid ones.
+   * questions, and this one is called from `AuthenticateMiddleware`, which
+   * `AppModule.configure()` applies to `{*path}` — so it runs on every request that
+   * presents a credential, including the valid ones.
    *
    * When the shared store is unreachable it answers from the in-process count,
    * which is the whole point: the guarantee gets weaker, not absent. A key the

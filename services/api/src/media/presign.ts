@@ -23,8 +23,14 @@ function signingKey(secret: string, date: string, region: string): Buffer {
 }
 
 export interface PresignOptions {
-  /** `PUT` for an upload or a bucket create, `GET` for a read, `HEAD` to probe. */
-  method: "GET" | "PUT" | "HEAD";
+  /** `PUT` for an upload or a bucket create, `GET` for a read, `HEAD` to probe.
+   *
+   * `DELETE` IS HERE FOR A TEST AND THAT IS SAID RATHER THAN HIDDEN. The api never
+   * deletes — FR-MED-10's sweep is a later chapter — but a probe that creates a bucket
+   * has to remove it, and signing is the only way to reach the store at all. A method
+   * the signer can express and the product does not use is cheaper than a second signer
+   * that exists only for tests. */
+  method: "GET" | "PUT" | "HEAD" | "DELETE";
   /** Origin only — `http://localhost:9100`. */
   endpoint: string;
   bucket: string;
