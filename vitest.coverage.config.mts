@@ -1226,25 +1226,36 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
-        // The slot service. 83.33 / 66.66 / 100 / 83.33 AT THE END OF PHASE 3, and the
-        // three uncovered lines are the three `throw`s — type, size, quota. Phase 4 is
-        // the chapter that writes those tests, so this pin is a floor under a file that
-        // is deliberately half-built, not a judgement about it. Raised at phase 5's close.
+        // The slot service. 100 / 92.85 / 100 / 100, raised from 83.33 / 66.66 / 100 /
+        // 83.33 at the end of phase 3 — the three uncovered lines then were the three
+        // `throw`s, and phases 4 and 5 are the chapters that drive them.
+        //
+        // 92.85 IS 13 OF 14 AND THE FOURTEENTH IS ATTRIBUTED TO LINE 32, WHICH IS
+        // `@Injectable()`. Every branch this file writes has both arms driven over HTTP:
+        // the three refusals, the store probe, and the user resolution in each direction.
+        // v8 counts something in the decorator's own output and there is no source line
+        // to cover — the same shape as 045's note that a `binary-expr` arm counts as
+        // covered when the operand was merely evaluated. Pinned at 92 rather than
+        // measured down to nothing, and named rather than left as a mystery.
         "services/api/src/media/media.service.ts": {
-          branches: 66,
+          branches: 92,
           functions: 100,
-          lines: 83,
-          statements: 83,
+          lines: 100,
+          statements: 100,
         },
-        // The store client. 77.77 / 53.84 / 100 / 85.71. The uncovered line is
-        // `ensureBucket`'s throw, which needs a store that answers something other than
-        // 200 or 409 — phase 4's `media_storage_unavailable` stops it by stopping the
-        // container, which is the only way to reach it honestly.
+        // The store client. 100 / 100 / 100 / 100, from 77.77 / 53.84 / 100 / 85.71.
+        //
+        // WHAT CLOSED IT WAS A SERVER, NOT A MOCK. `ensureBucket`'s throw needs a store
+        // that answers something other than 200 or 409, and a running MinIO cannot be
+        // asked for that on demand — so `store.test.ts` stands up an HTTP server that
+        // answers to order and drives the 403, the 500, and the 409 that is NOT
+        // `BucketAlreadyOwnedByYou`. That last one is the case a status-only check reads
+        // as success: another tenant of the same store owning the bucket.
         "services/api/src/media/store.ts": {
-          branches: 53,
+          branches: 100,
           functions: 100,
-          lines: 85,
-          statements: 77,
+          lines: 100,
+          statements: 100,
         },
       },
     },

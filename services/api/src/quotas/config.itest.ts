@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createDb, createPool, type Db } from "../db/client";
 import { createEnvironment } from "../db/repository";
+import { quotaConfigSchema } from "./config";
 
 // The CHECK constraint, against a live database (T010a).
 //
@@ -83,6 +84,76 @@ describe("environments_quota_config_shape, after 0010 rebuilt it", () => {
       /environments_quota_config_shape/,
     );
     await expect(set([])).rejects.toThrow(/environments_quota_config_shape/);
+  });
+});
+
+// ── the fourth dimension (chapter 4.10, 0016 rebuilt it again) ─────────────────
+//
+// 0016 DROPS AND RESTATES TWELVE CLAUSES WHERE 0014 RESTATED NINE, so every earlier
+// dimension is re-checked below for the reason the block above gives: the risk in a
+// rebuild is the clause it drops, and a dropped clause is invisible from TypeScript.
+describe("environments_quota_config_shape, after 0016 rebuilt it", () => {
+  it("accepts a storage_bytes cap", async () => {
+    await expect(
+      set({ storage_bytes: { hard: 1_073_741_824, soft: 858_993_459 } }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("accepts zero and an explicit null, which are three different states with absent", async () => {
+    await expect(set({ storage_bytes: { hard: 0 } })).resolves.toBeTruthy();
+    await expect(set({ storage_bytes: { hard: null } })).resolves.toBeTruthy();
+    await expect(set({})).resolves.toBeTruthy();
+  });
+
+  it("refuses a negative, a fraction and a non-object", async () => {
+    await expect(set({ storage_bytes: { hard: -1 } })).rejects.toThrow(
+      /environments_quota_config_shape/,
+    );
+    // Bytes are counted, so half of one is a caller who has confused a unit.
+    await expect(set({ storage_bytes: { hard: 1.5 } })).rejects.toThrow(
+      /environments_quota_config_shape/,
+    );
+    await expect(set({ storage_bytes: 1_073_741_824 })).rejects.toThrow(
+      /environments_quota_config_shape/,
+    );
+    await expect(set({ storage_bytes: { soft: "1GB" } })).rejects.toThrow(
+      /environments_quota_config_shape/,
+    );
+  });
+
+  it("still refuses what 0013 and 0014 refused", async () => {
+    await expect(set({ messages: { hard: -1 } })).rejects.toThrow(
+      /environments_quota_config_shape/,
+    );
+    await expect(set({ active_users: { soft: "lots" } })).rejects.toThrow(
+      /environments_quota_config_shape/,
+    );
+    await expect(set({ connection_minutes: { hard: 1.5 } })).rejects.toThrow(
+      /environments_quota_config_shape/,
+    );
+    await expect(set([])).rejects.toThrow(/environments_quota_config_shape/);
+  });
+
+  // ── T032: BOTH HALVES, BECAUSE ONE PASSING PROVES NOTHING ABOUT THE OTHER ──
+  //
+  // The constraint and the parser are two gates on one column and they are written in
+  // two languages. `config.ts`'s own comment says what a disagreement costs: the
+  // constraint accepts a config the parser rejects, `capsFor` fails closed, and **the
+  // cap silently becomes no cap**. A dimension present in one and absent from the other
+  // is exactly that state, so both directions are asked here rather than assumed from
+  // the change having been made in both files.
+  it("and the parser agrees with it about an unimplemented dimension", async () => {
+    // The CHECK enumerates four dimensions and says nothing about a fifth, so the
+    // database accepts one...
+    await expect(set({ disk_inodes: { hard: 10 } })).resolves.toBeTruthy();
+    // ...and `.strict()` is what refuses it, which is the division of labour the quota
+    // chapter described: *"the constraint cannot express 'and nothing else', while a
+    // parser can"*. Two gates, two jobs, and the fifth dimension needs both.
+    expect(quotaConfigSchema.safeParse({ disk_inodes: { hard: 10 } }).success).toBe(false);
+    expect(quotaConfigSchema.safeParse({ storage_bytes: { hard: 10 } }).success).toBe(true);
+
+    // And the reverse direction: what the parser accepts, the column stores.
+    await expect(set({ storage_bytes: { hard: 10 } })).resolves.toBeTruthy();
   });
 });
 

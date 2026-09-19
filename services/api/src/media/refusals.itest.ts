@@ -1,7 +1,5 @@
 import "reflect-metadata";
 
-import { execFileSync } from "node:child_process";
-
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -136,56 +134,62 @@ describe("the four refusals", () => {
   // ── FR-017, and the store is taken away rather than stubbed ────────────────────
   //
   // A TEST THAT STUBS THE FAILURE ASSERTS THE STUB. The api reaches the store through
-  // `fetch` against a signed URL and there is no client object to mock, so the honest
-  // probe is the container: stop it, ask, restart. That is slow and it is the only
-  // version of this test that can fail for the reason it names.
-  describe("when the object store is not there", () => {
-    const compose = (...args: string[]): void => {
-      execFileSync("docker", ["compose", ...args], {
-        cwd: `${__dirname}/../../../..`,
-        stdio: "pipe",
-        timeout: 120_000,
-      });
-    };
+  // `fetch` against a signed URL; there is no client object to mock, and mocking
+  // `storeReachable` would assert that a false return produces a 503, which is the one
+  // part of this nobody doubts. What has to be real is the unreachable store.
+  //
+  // AND THE FIRST VERSION STOPPED THE CONTAINER, WHICH BROKE A TEST IN ANOTHER FILE.
+  // `docker compose stop minio` takes the store away from the MACHINE, and this lane
+  // runs two files at a time — so the isolation gauntlet's own slot request, in
+  // `src/isolation/`, answered 503 where it expected 201. Measured at **two of three
+  // runs**, with the failure appearing in a file that never mentions media storage.
+  //
+  // That is 045's rule one level up. Eight assertions were found scoped wider than their
+  // own subject; this is an ACTION scoped wider than its own test, and the lane cannot
+  // tell the difference — it just goes red somewhere else. **A test may not take a
+  // shared service away from its neighbours.**
+  //
+  // SO THE ENDPOINT MOVES INSTEAD OF THE STORE. Port 1 is privileged and unbindable, so
+  // a request to it is refused by the kernel — the same `ECONNREFUSED` a stopped
+  // container gives, through the same `fetch`, into the same branch. This lane's pool is
+  // `forks`, one process per worker and one file at a time, so `process.env` here is
+  // this file's alone; `finally` puts it back either way.
+  //
+  // AND THE SECOND-APPLICATION VERSION OF THIS DID NOT WORK, which is worth a sentence
+  // because it looks like it should. `MediaService` depends on a REQUEST-scoped
+  // `Repository`, so Nest makes it request-scoped too and `storeConfig()` runs on every
+  // request rather than at boot — an app compiled while the variable was moved still
+  // read the restored value when the request arrived. The env has to be wrong AT THE
+  // MOMENT OF THE REQUEST, which is what this does.
+  it("refuses with the one transient code of the four, and it says retry", async () => {
+    // THE CONTROL COMES FIRST, in the same test, against the same app: without it a 503
+    // from a broken application is indistinguishable from a 503 about the store.
+    expect((await ask({ filename: "a.png", mime_type: "image/png", bytes: 10 })).status).toBe(201);
+    const before = await rows();
 
-    afterAll(() => {
-      compose("start", "minio");
-      // The store is asked, not slept at: a fixed wait would be a bet about this
-      // machine. Up to sixty seconds, in a hook that already has the budget.
-      const deadline = Date.now() + 60_000;
-      const poll = async (): Promise<void> => {
-        for (;;) {
-          try {
-            if ((await fetch(`${store.endpoint}/minio/health/live`)).ok) return;
-          } catch {
-            // still coming up
-          }
-          if (Date.now() > deadline) throw new Error("minio did not come back");
-          await new Promise((r) => setTimeout(r, 250));
-        }
-      };
-      return poll();
-    }, 120_000);
+    const real = process.env.RELAY_MINIO_ENDPOINT;
+    let refused: Awaited<ReturnType<typeof ask>>;
+    try {
+      process.env.RELAY_MINIO_ENDPOINT = "http://127.0.0.1:1";
+      refused = await ask({ filename: "a.png", mime_type: "image/png", bytes: 10 });
+    } finally {
+      if (real === undefined) delete process.env.RELAY_MINIO_ENDPOINT;
+      else process.env.RELAY_MINIO_ENDPOINT = real;
+    }
 
-    it("refuses with the one transient code of the four, and it says retry", async () => {
-      // A HEALTHY ANSWER FIRST, so the refusal below is the store going away rather than
-      // a suite that never worked.
-      expect((await ask({ filename: "a.png", mime_type: "image/png", bytes: 10 })).status).toBe(201);
-      const before = await rows();
+    expect(refused.code).toBe("media_storage_unavailable");
+    expect(refused.status).toBe(503);
+    // THE MESSAGE IS THE POINT OF THE FOURTH CODE. Three refusals are permanent —
+    // transcode, compress, free space — and this one is not, so it is the only one
+    // allowed to tell a client to try again.
+    expect(refused.message).toContain("retried");
 
-      compose("stop", "minio");
+    // AND IT WROTE NO ROW. A refusal that reserved bytes against a store the client
+    // never reached would leak the tenant's quota one outage at a time.
+    expect(await rows()).toBe(before);
 
-      const res = await ask({ filename: "a.png", mime_type: "image/png", bytes: 10 });
-      expect(res.code).toBe("media_storage_unavailable");
-      expect(res.status).toBe(503);
-      // THE MESSAGE IS THE POINT OF THE FOURTH CODE. Three refusals are permanent —
-      // transcode, compress, free space — and this one is not, so it is the only one
-      // allowed to tell a client to try again.
-      expect(res.message).toContain("retried");
-
-      // AND IT STILL WRITES NO ROW. A refusal that reserved bytes against a store the
-      // client never reached would leak the tenant's quota one outage at a time.
-      expect(await rows()).toBe(before);
-    }, 120_000);
-  });
+    // AND IT RECOVERS WITH NOTHING BUT THE VARIABLE PUT BACK. The refusal was about the
+    // store being unreachable and about nothing else in the request.
+    expect((await ask({ filename: "a.png", mime_type: "image/png", bytes: 10 })).status).toBe(201);
+  }, 60_000);
 });

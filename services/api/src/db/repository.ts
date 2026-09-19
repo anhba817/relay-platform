@@ -2530,6 +2530,43 @@ export class Repository {
     { reserved: true } | { reserved: false; committed: number; cap: number }
   > {
     return this.db.transaction(async (tx) => {
+      // THE LOCK FIRST, AND IT IS THE SAME STATEMENT AS THE CAP READ.
+      //
+      // A TRANSACTION IS NOT ENOUGH ON ITS OWN, which is the part a reader copying this
+      // will get wrong. Postgres defaults to READ COMMITTED: two concurrent slot
+      // requests both run `sum(declared_bytes)`, both see the same committed figure,
+      // both find room, and both insert. Wrapping a read and a write in BEGIN/COMMIT
+      // makes them atomic, not serialised — nothing about the transaction stops the
+      // other one reading the same number.
+      //
+      // `FOR UPDATE` on the environment row is what serialises them, and the row was
+      // going to be read anyway for the cap, so the lock costs no extra statement. It
+      // is held for the rest of the transaction, which is one sum and one insert.
+      //
+      // PER TENANT, WHICH IS THE WHOLE POINT. Two tenants' slot requests never wait on
+      // each other; two of one tenant's do, in the order the database picks. That is the
+      // narrowest lock that makes the arithmetic true — an advisory lock on a hash of
+      // the environment id would do the same job and collide between tenants for free.
+      //
+      // The alternative is SERIALIZABLE isolation, which turns the race into a
+      // serialisation failure the caller has to retry. That moves the problem to every
+      // call site instead of solving it here, and this repository has one call site.
+      const [env] = await tx
+        .select({ quotaConfig: environments.quotaConfig })
+        .from(environments)
+        .where(eq(environments.id, this.environmentId))
+        .for("update");
+      // `storage_bytes` resolves like the other three dimensions, and an absent cap
+      // stays absent rather than becoming `Infinity` or `-1` somewhere up the stack.
+      const cap = capsFor(env?.quotaConfig, "storage_bytes").caps.hard;
+
+      // A SUM OVER THE ROWS, NOT A COUNTER ON `environments` (constitution IV). The rows
+      // already say what is committed; a counter would be a second source of truth for
+      // it, and the first thing that goes wrong with one is a delete path that forgets
+      // to decrement. The cost is a sum per slot request over one tenant's media rows,
+      // on the index `media_objects_environment_idx` — and this chapter has no corpus at
+      // a scale where that number would mean anything, so it is stated as a cost rather
+      // than measured into a claim.
       const [sum] = await tx
         .select({
           committed: sql<string>`coalesce(sum(${mediaObjects.declaredBytes}), 0)`,
@@ -2537,14 +2574,6 @@ export class Repository {
         .from(mediaObjects)
         .where(eq(mediaObjects.environmentId, this.environmentId));
       const committed = Number(sum?.committed ?? 0);
-
-      const [env] = await tx
-        .select({ quotaConfig: environments.quotaConfig })
-        .from(environments)
-        .where(eq(environments.id, this.environmentId));
-      // `storage_bytes` resolves like the other three dimensions, and an absent cap
-      // stays absent rather than becoming `Infinity` or `-1` somewhere up the stack.
-      const cap = capsFor(env?.quotaConfig, "storage_bytes").caps.hard;
 
       if (cap !== null && committed + input.declaredBytes > cap) {
         return { reserved: false as const, committed, cap };
