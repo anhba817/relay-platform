@@ -209,6 +209,26 @@ const SHAPES: Readonly<Record<string, Shape>> = {
     read: `SELECT minutes AS v FROM usage_connections WHERE environment_id = $1`,
     marked: (n) => String(n),
   },
+  // HOSTED MEDIA'S, AND ITS MARK IS THE COLUMN THE QUOTA READS. `declared_bytes` is
+  // what `sum()` runs over for the storage cap, so marking it is marking the figure
+  // the chapter is about — and `filename` would have done just as well for the
+  // mechanism while saying nothing about what the table is for.
+  media_objects: {
+    plant: `INSERT INTO media_objects
+              (id, environment_id, user_id, filename, mime_type, declared_bytes, object_key)
+            VALUES ($1, $2, $3, 'bait.jpg', 'image/jpeg', 1, $4)
+            ON CONFLICT (id) DO NOTHING`,
+    values: (s) => [
+      s.mediaObjectId,
+      s.environmentId,
+      s.userId,
+      `sentinel/${s.environmentId}/bait.jpg`,
+    ],
+    touch: `declared_bytes = declared_bytes`,
+    mark: `declared_bytes = $1`,
+    read: `SELECT declared_bytes AS v FROM media_objects WHERE environment_id = $1`,
+    marked: (n) => String(n),
+  },
 };
 
 let admin: pg.Client;

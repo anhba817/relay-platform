@@ -183,7 +183,14 @@ BEGIN
     -- credit path looks a row up by its own key and the reporting path reads one
     -- environment. It is the first guarded table since `read_positions` whose bait can
     -- sit there claimable because there is no claim to be made.
-    'usage_connections'
+    'usage_connections',
+    -- HOSTED MEDIA'S, AND IT IS THE FIRST GUARDED TABLE WHOSE ROWS DESCRIBE SOMETHING
+    -- OUTSIDE THE DATABASE. `media_objects` carries `environment_id` written by the api
+    -- from the authenticated identity, so the WHEN clause compiles like every name
+    -- above — but the row is a claim about an object in a store Relay never touches
+    -- (ADR-13). A cross-environment delete here would orphan bytes rather than lose
+    -- them, which is a different failure from the others and refused the same way.
+    'media_objects'
   ] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS __sentinel_guard_%1$s ON %1$I', t);
     EXECUTE format(

@@ -69,6 +69,9 @@ export interface Sentinel {
    * `(connection_id, period)`, so the bait needs an id of its own rather than
    * borrowing the sentinel's user or channel. */
   usageConnectionId: string;
+  /** Hosted media's, and the sixth guarded table's. Keyed on its own `id`, so the
+   * bait needs one rather than borrowing the sentinel's user or channel. */
+  mediaObjectId: string;
   /** `__sentinel__:<owner>`, on every row, so a failure says whose it is. */
   name: string;
 }
@@ -98,6 +101,7 @@ export function sentinelFor(owner: string): Sentinel {
     quotaPeriod: "1999-01-01",
     quotaNotificationId: id("quota-notification"),
     usageConnectionId: id("usage-connection"),
+    mediaObjectId: id("media-object"),
     name: `__sentinel__:${owner}`,
   };
 }
@@ -153,6 +157,7 @@ export async function plant(
   await q(`DELETE FROM read_positions WHERE environment_id = $1`, [s.environmentId]);
   // The quota chapter's three, and they come before `users` for the reason the note
   // above gives: `usage_active_users` references it.
+  await q(`DELETE FROM media_objects       WHERE environment_id = $1`, [s.environmentId]);
   await q(`DELETE FROM usage_connections   WHERE environment_id = $1`, [s.environmentId]);
   await q(`DELETE FROM quota_notifications WHERE environment_id = $1`, [s.environmentId]);
   await q(`DELETE FROM usage_active_users  WHERE environment_id = $1`, [s.environmentId]);
@@ -287,6 +292,28 @@ export async function plant(
      VALUES ($1, $2, $3, 0)
      ON CONFLICT (connection_id, period) DO UPDATE SET minutes = EXCLUDED.minutes`,
     [s.usageConnectionId, s.quotaPeriod, s.environmentId],
+  );
+
+  // AND HOSTED MEDIA'S. The sixth guarded table, and the first whose row describes
+  // something OUTSIDE the database: a slot the platform agreed to, for an object in a
+  // store Relay never touches (ADR-13).
+  //
+  // IT REUSES THE SENTINEL'S USER, which is the `read_positions` argument — the row
+  // only has to exist for the WHEN clause to have something to test — and it also
+  // exercises the nullable side by being the case where `user_id` is PRESENT. The
+  // absent case belongs to a test rather than to bait.
+  //
+  // `DO UPDATE` on `declared_bytes` for the reason the two rows above give: the id is
+  // derived from the owner, so the key is the same on every run for ever, and a
+  // fixture that guarantees only existence guarantees whatever the first run wrote.
+  // Here the VALUE matters: the storage quota is a `sum(declared_bytes)` over this
+  // table, so a bait row of an unknown size would move a figure a test asserts.
+  await q(
+    `INSERT INTO media_objects
+       (id, environment_id, user_id, filename, mime_type, declared_bytes, object_key)
+     VALUES ($1, $2, $3, 'bait.jpg', 'image/jpeg', 1, $4)
+     ON CONFLICT (id) DO UPDATE SET declared_bytes = EXCLUDED.declared_bytes`,
+    [s.mediaObjectId, s.environmentId, s.userId, `sentinel/${s.environmentId}/bait.jpg`],
   );
 
   // DRAIN BAIT: unpublished events. `outbox` carries no environment_id — it is
