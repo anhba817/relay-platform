@@ -1,0 +1,26 @@
+-- Chapter 4.12 — the reference lookup, and the index that is not the point.
+--
+-- FR-MED-08 issues a signed URL "only to callers authorised to read the referencing
+-- message", so the route has to find which messages reference a `media_id`. That question
+-- lives in `messages.attachments`, a jsonb column nothing has ever queried: every index on
+-- this table today is `(channel_id, sequence)`, `(channel_id, idempotency_key)` or the
+-- primary key.
+--
+-- `jsonb_path_ops` AND NOT THE DEFAULT `jsonb_ops`. The only operator this route uses is
+-- containment -- `attachments @> '[{"type":"media","media_id":"…"}]'` -- which is the one
+-- class `jsonb_path_ops` supports, and the reason it is the smaller of the two.
+--
+-- ON THE WHOLE COLUMN, NOT A PARTIAL INDEX ON THE MEDIA ARM. A partial index
+-- (`WHERE attachments @> '[{"type":"media"}]'`) would be smaller still and would make the
+-- planner's choice depend on the query's predicate matching the index's own -- which works
+-- until somebody writes the query slightly differently and gets a sequential scan with no
+-- error.
+--
+-- `CREATE INDEX` AND NOT `CREATE INDEX CONCURRENTLY`, AND THE CHOICE IS NOT OPEN.
+-- `migrate.ts:46` issues `BEGIN` around every file in this directory, and the server
+-- refuses: `CREATE INDEX CONCURRENTLY cannot run inside a transaction block`. Asked of
+-- Postgres rather than reasoned about. The cost is a lock that blocks writes to `messages`
+-- for the duration of the build -- milliseconds on a lane, a deploy-shaped number on a
+-- table with a million rows, and a table this platform expects to be large.
+CREATE INDEX messages_attachments_gin
+  ON messages USING gin (attachments jsonb_path_ops);

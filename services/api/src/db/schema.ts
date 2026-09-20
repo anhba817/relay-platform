@@ -415,6 +415,18 @@ export const messages = pgTable(
     // constraint above already supplies that ordering, and Postgres walks
     // it backward for newest-first pages. Chapter 2.4 measured it and
     // migration 0001 dropped the redundant twin (SAD §6.3, amended).
+    //
+    // THE FIRST NON-BTREE INDEX IN THIS SCHEMA (chapter 4.12, migration 0017).
+    // `grep -c 'using('` here was 0 before this line: every other entry is a
+    // plain btree or a unique constraint, so there was no local shape to copy.
+    // `jsonb_path_ops` supports containment and nothing else, which is the only
+    // operator the media delivery route uses and the reason it is the smaller
+    // of the two operator classes.
+    //
+    // THE MIGRATION IS THE SOURCE OF TRUTH (ADR-16: forward-only, hand-reviewed
+    // SQL). This declaration exists so the next generator run does not propose
+    // to drop an index the migration created.
+    index("messages_attachments_gin").using("gin", t.attachments.op("jsonb_path_ops")),
   ],
 );
 

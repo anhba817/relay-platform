@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { HttpStatus, Injectable } from "@nestjs/common";
+import { BadRequestException, HttpStatus, Injectable } from "@nestjs/common";
 
 import { Repository } from "../db/repository";
 import { protocolError } from "../protocol-error";
@@ -22,6 +22,22 @@ export interface Slot {
   upload_url: string;
   expires_at: string;
 }
+
+export interface Delivery {
+  url: string;
+  expires_at: string;
+}
+
+/** FR-MED-08's one hour, against the upload slot's fifteen minutes.
+ *
+ * THE URL OUTLIVES THE AUTHORISATION THAT PRODUCED IT AND NOTHING HERE CAN FIX THAT. A
+ * caller issued a URL at minute 0 and removed from the channel at minute 1 holds a
+ * working link until minute 60: the store checks a signature and has never heard of a
+ * channel. Shortening the window trades one exposure for another — a URL that expires
+ * while a page is still rendering is a broken image — and revocation would mean the api
+ * standing in front of the bytes, which is what ADR-13 was decided against. The clause
+ * names the hour, so the hour is what ships and the window is published as a cost. */
+const DELIVERY_SECONDS = 3600;
 
 /** FR-MED-01's fifteen minutes. The STORE enforces it — a URL past its expiry comes
  * back `AccessDenied · Request has expired` from the store's own clock — and
@@ -131,4 +147,56 @@ export class MediaService {
     };
   }
 
+  /** A signed GET for an object this caller may read, or a refusal (FR-MED-08).
+   *
+   * THE SIGNER NEEDED NO CHANGE AND THAT IS ASSERTED RATHER THAN ARRANGED. `presign` has
+   * taken `"GET"` since chapter 4.10, and `presign.itest.ts:53` — titled "FR-MED-08's
+   * precondition" — already proves the other half of this clause from outside the
+   * container: a signed GET answers 200, an unsigned one 403, a tampered one 403. Half of
+   * what this chapter was asked for was built two chapters ago, and re-proving it would
+   * claim work somebody else did.
+   *
+   * THE EXTERNAL ID IS RESOLVED BEFORE THE PREDICATE SEES IT. `req.principal.userExternalId`
+   * is `tuan` or `delivery-bot`; `channelVisibleTo` reaches `isMember`, which compares
+   * against `members.user_id`, a `uuid` column. Handing one straight through is a
+   * caller-triggered 500 where a tenant's ids are not UUID-shaped — and something worse
+   * where they are, because no parse fails, `isMember` simply returns false, and every
+   * private channel silently refuses every member while every public one still works.
+   *
+   * `endpoint` AND NOT `internalEndpoint` (4.11's FR-026). This URL is handed to a client
+   * outside the network and the host is inside the SigV4 signature, so signing with the
+   * api's own address produces a URL the store refuses rather than one that is slow. */
+  async deliver(mediaId: string, userExternalId?: string): Promise<Delivery> {
+    let userId: string | undefined;
+    if (userExternalId !== undefined) {
+      const user = await this.repo.getUserByExternalId(userExternalId);
+      if (!user) throw new BadRequestException("unknown user");
+      userId = user.id;
+    }
+
+    const objectKey = await this.repo.readableMediaObjectKey(mediaId, userId);
+    // ONE ANSWER FOR THREE CONDITIONS — another environment's object, an object
+    // referenced only where this caller cannot read, and an id no object has. The
+    // precedent is `channelVisibleTo`'s own: the leak it was written to close was a
+    // private channel answering `200, empty page` where an absent one answered 404, and
+    // the fix was to make both answer identically. A refusal that names its cause reports
+    // whether somebody else's object exists.
+    if (objectKey === undefined) {
+      throw protocolError(
+        "not_found",
+        "no such media object",
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    return {
+      url: presign({
+        method: "GET",
+        ...this.store,
+        key: objectKey,
+        expiresIn: DELIVERY_SECONDS,
+      }),
+      expires_at: new Date(Date.now() + DELIVERY_SECONDS * 1000).toISOString(),
+    };
+  }
 }
