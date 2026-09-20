@@ -1238,7 +1238,7 @@ export default defineConfig({
         // covered when the operand was merely evaluated. Pinned at 92 rather than
         // measured down to nothing, and named rather than left as a mystery.
         "services/api/src/media/media.service.ts": {
-          branches: 92,
+          branches: 101,
           functions: 100,
           lines: 100,
           statements: 100,
