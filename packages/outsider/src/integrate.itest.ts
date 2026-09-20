@@ -89,6 +89,17 @@ describe("integrating with Relay from the outside", () => {
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   };
 
+  /** The read twin of `post`, added by chapter 4.12 for the delivery route. Eleven
+   *  tests reached the api through `post` alone and the two that needed a GET built
+   *  their own `fetch`; a third would have been the point at which the shape was a
+   *  convention nobody had written down. */
+  const get = async (path: string, auth: string) => {
+    const res = await fetch(`${api}${path}`, {
+      headers: { authorization: `Bearer ${auth}` },
+    });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+
   beforeAll(() => {
     ({ api, ws, credential } = required());
   });
@@ -470,6 +481,27 @@ describe("integrating with Relay from the outside", () => {
       { type: "media", media_id: mediaId },
     ]);
     socket.close();
+
+    // AND THE BYTES COME BACK, FROM OUTSIDE (chapter 4.12, SC-010). The frame above
+    // carries an id and nothing else; a client holding it has to ask for a URL, and
+    // this is the only test in the repository that asks as a customer does — over the
+    // published surface, from a process that started nothing, through a URL whose host
+    // was chosen by the api and has to be reachable from here.
+    //
+    // THAT LAST PART IS THE PROPERTY WORTH HAVING. `RELAY_MINIO_INTERNAL_ENDPOINT`
+    // exists because the host is inside the SigV4 signature, so the address the api
+    // probes the store on and the address it signs for a client cannot be one field. A
+    // delivery URL signed with the internal one is refused rather than slow, and nothing
+    // inside the workspace would notice.
+    const link = await get(`/v1/media/${mediaId}`, credential);
+    expect(link.status, "the platform refused a delivery URL for its own attachment").toBe(200);
+    expect(typeof link.body["expires_at"]).toBe("string");
+
+    const bytes = await fetch(link.body["url"] as string);
+    expect(bytes.status, "the delivery URL was not usable from outside").toBe(200);
+    expect(new Uint8Array(await bytes.arrayBuffer())).toEqual(
+      new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0]),
+    );
   });
 
   /** T100a — **the first `socket.send` in this file's history.**
