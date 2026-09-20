@@ -1226,19 +1226,25 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
-        // The slot service. 100 / 92.85 / 100 / 100, raised from 83.33 / 66.66 / 100 /
-        // 83.33 at the end of phase 3 — the three uncovered lines then were the three
-        // `throw`s, and phases 4 and 5 are the chapters that drive them.
+        // The slot service AND the delivery route. 100 / 95 / 100 / 100, from 92.85 when
+        // it held the slot alone — chapter 4.12 added `deliver`, whose every branch has
+        // both arms driven over HTTP, and the file's proportion of covered arms rose with
+        // it. Raised from 92 to 94 rather than to the measured 95: `session.ts` measured
+        // 87.80 and 85.36 on identical code twenty minutes apart, about one function of
+        // forty, and a ratchet pinned at the observation is a ratchet that teaches people
+        // to lower ratchets. Both numbers are here, which is the convention 045 wrote.
         //
-        // 92.85 IS 13 OF 14 AND THE FOURTEENTH IS ATTRIBUTED TO LINE 32, WHICH IS
-        // `@Injectable()`. Every branch this file writes has both arms driven over HTTP:
-        // the three refusals, the store probe, and the user resolution in each direction.
-        // v8 counts something in the decorator's own output and there is no source line
-        // to cover — the same shape as 045's note that a `binary-expr` arm counts as
-        // covered when the operand was merely evaluated. Pinned at 92 rather than
-        // measured down to nothing, and named rather than left as a mystery.
+        // THE FOURTEENTH ARM IS ATTRIBUTED TO LINE 32, WHICH IS `@Injectable()`. v8 counts
+        // something in the decorator's own output and there is no source line to cover —
+        // the same shape as 045's note that a `binary-expr` arm counts as covered when the
+        // operand was merely evaluated.
+        //
+        // AND THE KEY WAS PROBED IN BOTH DIRECTIONS (T039). Demanding an impossible 101
+        // produced `ERROR: Coverage for branches (95%) does not meet
+        // "services/api/src/media/media.service.ts" threshold (101%)`, which is how this
+        // config says the key binds to a file. A pin whose key matches nothing is silent.
         "services/api/src/media/media.service.ts": {
-          branches: 101,
+          branches: 94,
           functions: 100,
           lines: 100,
           statements: 100,
