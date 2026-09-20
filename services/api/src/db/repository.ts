@@ -5529,6 +5529,103 @@ export class Repository {
     return this.isMember(channelId, userId);
   }
 
+  /** The `object_key` of a media object this caller may read, or `undefined` (FR-MED-08).
+   *
+   * Three questions, and each refusal is the same refusal: does this environment own an
+   * object with that id, which of this environment's channels carry a message referencing
+   * it, and may this caller see any of them.
+   *
+   * TWO QUERIES AND NOT ONE, WHICH IS THE OPPOSITE OF WHAT THE PLAN SAID. The design this
+   * chapter was planned with was a single three-way join — `media_objects` to `messages`
+   * on containment to `channels` — and it is the shape that makes the new GIN index
+   * unusable. The containment operand is built from `o.id`, a value from the other side of
+   * the join, so the planner cannot look it up; it narrows to the tenant's channels and
+   * applies containment as a join filter over every message they hold. Measured on the
+   * lane's busiest tenant, 1,018 messages:
+   *
+   *     one joined query, a hit     Nested Loop, `Rows Removed by Join Filter: 1017`
+   *                                 86 buffers · 1.109 ms · the index unused
+   *     two queries, a hit           3 + 17 buffers · 0.034 + 0.077 ms
+   *                                 `Bitmap Index Scan on messages_attachments_gin`
+   *
+   * Splitting it makes the containment operand a bound value, which is the only form the
+   * index can serve. The scope survives the split — step two still names this environment
+   * — and so does the reason for reading the object row at all: `object_key` is what
+   * `presign` signs, and reading it is what makes the object's own `environment_id` a
+   * check this route performs rather than one it inherits from the send path.
+   *
+   * AND THE SMALL TENANT HID IT. The same one-query plan costs 14 buffers on a
+   * nine-message environment, which is what the analysis passes measured. Its cost is the
+   * tenant's message count; the two-query cost is not.
+   *
+   * `channelVisibleTo` IS REUSED RATHER THAN REWRITTEN, and that is FR-MED-08's note
+   * being satisfied by construction. The clause says media access "inherits channel
+   * membership rather than inventing a parallel ACL system" — a second predicate written
+   * here would be a parallel ACL however faithfully it copied the first. It also answers
+   * the clause's own "or API key" arm, because `userId === undefined` means the tenant is
+   * reading and sees everything it owns.
+   *
+   * AND READING THE CLAUSE LITERALLY WOULD HAVE BEEN STRICTER THAN THE MESSAGE. FR-MED-08
+   * says "channel membership"; this platform checks membership for `private` channels
+   * only, so a membership test would refuse a user the photo in a message whose text they
+   * can read. 11,557 public channels against 1,016 private on this lane. */
+  async readableMediaObjectKey(
+    mediaId: string,
+    userId?: string,
+  ): Promise<string | undefined> {
+    const [object] = await this.db
+      .select({ objectKey: mediaObjects.objectKey })
+      .from(mediaObjects)
+      .where(
+        and(
+          eq(mediaObjects.id, mediaId),
+          eq(mediaObjects.environmentId, this.environmentId),
+        ),
+      );
+    if (!object) return undefined;
+
+    for (const channelId of await this.channelsReferencingMedia(mediaId)) {
+      if (await this.channelVisibleTo(channelId, userId)) return object.objectKey;
+    }
+    return undefined;
+  }
+
+  /** Every channel of this environment holding a message that references this object.
+   *
+   * EVERY REFERENCING CHANNEL, NOT THE FIRST AND NOT EVERY REFERENCE. FR-MED-08's
+   * singular — "the referencing message" — does not describe this platform: FR-MSG-11 has
+   * allowed the same id twice since 3.24, and forwarding a photo is the ordinary way one
+   * object acquires a second reference. Authorisation is a disjunction over them, so a
+   * query that stopped at the first row would refuse a caller whose channel happened to be
+   * second — a correctness bug that presents as flakiness.
+   *
+   * `DISTINCT` BOUNDS IT BY CHANNEL. A photo forwarded into one channel a hundred times is
+   * one authorisation question, not a hundred, and a private channel costs two queries per
+   * question rather than one.
+   *
+   * SCOPED HERE AND NOT ONLY IN THE CALLER. `channelVisibleTo` refuses another tenant's
+   * channel afterwards, so the predicate below is redundant for correctness — and without
+   * it this is the only read in this file that would scan every tenant's rows. A query
+   * whose safety depends on a later call is a query somebody will reuse without it. */
+  private async channelsReferencingMedia(mediaId: string): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ id: channels.id })
+      .from(messages)
+      .innerJoin(channels, eq(channels.id, messages.channelId))
+      .where(
+        and(
+          // THE OPERAND IS A BOUND VALUE, WHICH IS WHAT THE INDEX NEEDS. Built here
+          // rather than in SQL from a joined column: `jsonb_build_array(...)` over
+          // `o.id` is an expression the planner cannot look up.
+          sql`${messages.attachments} @> ${JSON.stringify([
+            { type: "media", media_id: mediaId },
+          ])}::jsonb`,
+          eq(channels.environmentId, this.environmentId),
+        ),
+      );
+    return rows.map((row) => row.id);
+  }
+
   async channelExists(channelId: string): Promise<boolean> {
     const rows = await this.db
       .select({ id: channels.id })
