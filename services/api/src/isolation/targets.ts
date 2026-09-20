@@ -435,6 +435,24 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // covered.
   { method: "POST", path: "/v1/media", accepts: "either", shape: "credential" },
 
+  // ── THE DELIVERY URL (chapter 4.12, FR-MED-08), AND THE DERIVATION FOUND IT NINTH ──
+  //
+  // Run before this entry existed: `45 derived, 38 attacked, 6 exempt` with
+  // `unclassified: ["GET /v1/media/:mediaId"]`. Nine chapters, nine times. 4.11 was the
+  // one chapter that added no route and so broke no streak; this one resumes it.
+  //
+  // `read` AND NOT `credential`, WHICH IS THE OPPOSITE CALL FROM ITS SIBLING ONE ENTRY
+  // UP AND FOR THE SAME REASON. `POST /v1/media` is `credential` because its body carries
+  // no identifier a foreign tenant could forge. This route's whole input IS an
+  // identifier: a `media_id` in the path, minted by the platform for one environment.
+  // That is `read`'s definition — a foreign identifier presented by a caller who should
+  // not be able to name it.
+  //
+  // `either`, matching `@Accepts("application", "user")` on the class, and both arms are
+  // attacked: an application credential of the wrong tenant and a user token of the wrong
+  // tenant reach the same predicate by different paths.
+  { method: "GET", path: "/v1/media/:mediaId", accepts: "either", shape: "read" },
+
   // ── credential, internal, end-user token ─────────────────────────────────────
   //
   // `credential` AND NOT `read`, WHICH IS THE SIBLING ROUTE'S ARGUMENT VERBATIM. The
