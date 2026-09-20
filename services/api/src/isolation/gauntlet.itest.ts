@@ -486,6 +486,77 @@ describe("the isolation gauntlet", () => {
     expect(new Set([byKey.media_id, byToken.media_id, victim.media_id]).size).toBe(3);
   });
 
+  // A FORGED `media_id` IN A READ (chapter 4.12, FR-MED-08). The same id against a
+  // different verb, and a platform could hold one and not the other: the write path
+  // refuses through `assertAttachableMedia` inside `sendMessage`'s transaction, and this
+  // path refuses through three predicates none of which that one uses.
+  //
+  // AND IT PLANTS A REFERENCED OBJECT FOR EACH TENANT, WHICH IS TWO STEPS RATHER THAN
+  // ONE. A planted `media_objects` row is not enough here: an object with no referencing
+  // message is refused to everybody, so a bare plant would make the attacker's control
+  // fail for this chapter's own reason rather than for tenancy. Each tenant's object is
+  // uploaded and attached through its own routes, which is also what makes the control
+  // meaningful.
+  it("GET /v1/media/:mediaId — a foreign object reads as an absent one", async () => {
+    attacked.add("GET /v1/media/:mediaId");
+
+    const referenced = async (tenant: {
+      credential: string;
+      channelId: string;
+      botExternalId: string;
+    }): Promise<string> => {
+      const slot = await fetch(`${url}/v1/media`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${tenant.credential}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ filename: "g.png", mime_type: "image/png", bytes: 16 }),
+      });
+      expect(slot.status, "the fixture could not get a slot").toBe(201);
+      const { media_id } = (await slot.json()) as { media_id: string };
+      const sent = await fetch(`${url}/v1/channels/${tenant.channelId}/messages`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${tenant.credential}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "an object worth reading",
+          user: tenant.botExternalId,
+          attachments: [{ type: "media", media_id }],
+        }),
+      });
+      expect(sent.status, "the fixture could not attach its own object").toBe(201);
+      return media_id;
+    };
+
+    const victims = await referenced(t.victim);
+    const mine = await referenced(t.attacker);
+
+    // THE CONTROL FIRST, AND BOTH CREDENTIAL CLASSES. If the attacker cannot read its
+    // OWN object the refusal below says the feature is broken, not that the boundary
+    // holds — and an empty `media_objects` passes a leak check for the same reason an
+    // empty page does.
+    for (const credential of [t.attacker.credential, attackerToken]) {
+      const control = await fetch(`${url}/v1/media/${mine}`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+      expect(control.status, "the attacker could not read its own object").toBe(200);
+    }
+
+    for (const credential of [t.attacker.credential, attackerToken]) {
+      const verdict = await readAttack(
+        url,
+        credential,
+        { method: "GET", path: `/v1/media/${victims}` },
+        { method: "GET", path: `/v1/media/${randomUUID()}` },
+      );
+      expect(verdict.differences, JSON.stringify(verdict, null, 2)).toEqual([]);
+      expect(verdict.foreign.status).toBe(404);
+    }
+  });
+
   // ── the two routes this chapter added ──────────────────────────────────────────
   //
   // A chapter that adds an endpoint attacks it in the same chapter. The derivation

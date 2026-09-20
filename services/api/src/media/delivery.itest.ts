@@ -45,6 +45,8 @@ describe("delivering hosted media", () => {
   /** Two users of ONE tenant: `alice` is in the private channel, `mallory` is not. */
   let alice: string;
   let mallory: string;
+  /** A token for an external id no user row has — minting does not require one. */
+  let ghost: string;
   const store = storeConfig();
 
   const slot = async (credential: string) => {
@@ -134,6 +136,13 @@ describe("delivering hosted media", () => {
     mallory = (
       await mintUserToken(secret, {
         user: "delivery-mallory",
+        environmentId: env.id,
+        ttlSeconds: 3600,
+      })
+    ).token;
+    ghost = (
+      await mintUserToken(secret, {
+        user: "delivery-ghost",
         environmentId: env.id,
         ttlSeconds: 3600,
       })
@@ -314,6 +323,17 @@ describe("delivering hosted media", () => {
     expect(deleted.status, "the fixture's delete was refused").toBe(204);
 
     expect((await get(mediaId, key.credential)).status).toBe(404);
+  });
+
+  it("refuses a token naming a user this tenant does not have", async () => {
+    // THE ARM THE ROUTE NEEDED AND THE SUITE WOULD NOT HAVE REACHED. `deliver` resolves
+    // the external id before the predicate sees it, and a token can outlive the user it
+    // names. Without this the resolution's failure arm is dead code with a pin over it.
+    // 400 and not 404: this is the same answer `messages.controller.ts` gives, and the
+    // caller's credential is the thing that is wrong rather than the object.
+    const { mediaId } = await attached(publicChannel, key.credential);
+    const res = await get(mediaId, ghost);
+    expect(res.status).toBe(400);
   });
 
   it("refuses a malformed media_id with 400, naming the parameter", async () => {
