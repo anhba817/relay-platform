@@ -827,9 +827,23 @@ describe("integrating with Relay from the outside", () => {
     // **The assertion is now about the property the clause actually asks for**: whatever is
     // in this page belongs to the tenant whose credential fetched it (FR-ANL-07, and
     // constitution I). That holds in both states, which is what makes it worth asserting.
+    //
+    // AND `endpoint` IS NULLABLE, WHICH THIS ASSERTION DENIED UNTIL CHAPTER 4.12. It read
+    // `typeof row["endpoint"]` must be `"string"`, and chapter 4.8 had already measured
+    // the opposite on the platform's own data: NULL on 31 real rows — 23 rate-limited and
+    // 8 unmatched — because a request the router never matched has no route to name. That
+    // chapter built the reader to answer `null` rather than the `\N` ClickHouse writes,
+    // and wrote two tests for it. The seal here went on asserting a string.
+    //
+    // It survived because this suite's rows are the ones this suite made, and every one of
+    // them matches a route. What exposed it was 4.12 measuring the malformed-path-param
+    // class against this same tenant: `GET /v1/channels/not-a-uuid/members` is an
+    // unmatched route, so the demo tenant's log gained a row with no endpoint and the seal
+    // went red for a fact the platform publishes.
     const requests = body["requests"] as Array<Record<string, unknown>>;
     for (const row of requests) {
-      expect(typeof row["endpoint"]).toBe("string");
+      expect(["string", "object"]).toContain(typeof row["endpoint"]);
+      if (row["endpoint"] !== null) expect(typeof row["endpoint"]).toBe("string");
       expect(typeof row["status"]).toBe("number");
       expect(typeof row["request_id"]).toBe("string");
     }

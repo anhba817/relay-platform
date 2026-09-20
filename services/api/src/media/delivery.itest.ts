@@ -299,8 +299,9 @@ describe("delivering hosted media", () => {
       ].map(async (p) => {
         const res = await p;
         expect(res.status).toBe(404);
-        const { request_id: _ignored, ...rest } = (await res.json()) as Record<string, unknown>;
-        return rest;
+        const body = (await res.json()) as Record<string, unknown>;
+        delete body["request_id"];
+        return body;
       }),
     );
 
