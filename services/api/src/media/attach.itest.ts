@@ -278,47 +278,62 @@ describe("attaching hosted media", () => {
     expect(rows[0]!.objects).toBe(1);
   });
 
-  // ── THE HALF OF THE CLAUSE NO FIXTURE CAN REACH (FR-010, SC-006) ────────────────────
+  // ── THE HALF OF THE CLAUSE THAT WAS UNREACHABLE UNTIL 4.13 (FR-010, SC-006) ─────────
   //
-  // FR-MED-06 NAMES TWO STATES AND THE SCHEMA PERMITS ONE. The predicate admits
-  // `pending` and `ready` because the clause says both; `ready` cannot occur, and the
-  // database is what says so rather than a comment. 4.10 wrote
-  // `CHECK (state = 'pending')` deliberately — verification is movement VI's, and a
-  // schema admitting a state nothing produces is a schema making a claim it cannot keep.
-  it("cannot be given a `ready` object to attach, because the database refuses one (SC-006)", async () => {
-    let refusal = "";
-    try {
-      await db.execute(
-        `INSERT INTO media_objects
-           (id, environment_id, filename, mime_type, declared_bytes, object_key, state)
-         VALUES (gen_random_uuid(), '${env.id}', 'r.png', 'image/png', 1, 'r/k', 'ready')`,
-      );
-    } catch (error) {
-      refusal = String((error as { cause?: unknown }).cause ?? error);
-    }
+  // FR-MED-06 NAMES TWO STATES AND THE SCHEMA NOW PERMITS BOTH. When this suite was
+  // written the predicate admitted `pending` and `ready` because the clause says both,
+  // while `CHECK (state = 'pending')` made the second arm unreachable — 4.10 wrote that
+  // constraint deliberately, and these two tests published the database's own refusal as
+  // the evidence.
+  //
+  // **CHAPTER 4.13's `0018_media_states.sql` WIDENS IT, AND THAT IS WHAT THESE TESTS ARE
+  // FOR NOW.** The old pair asserted `violates check constraint
+  // "media_objects_state_check"` for `ready` and for `rejected`; both inserts succeed
+  // today and both assertions went red, measured at that chapter's analysis pass 3 as
+  // `2 failed | 15 passed`. **They were true at 4.11 and the platform grew a scanner.**
+  // What replaces them is the pair of facts that are true now: the second arm is live,
+  // and the constraint still constrains.
+  it("attaches a `ready` object, which was unreachable until the verification chapter (SC-006)", async () => {
+    const id = await slotFor(tokenA);
+    // `ready` is what the media worker's verdict writes; here it is written directly,
+    // because this suite is about the ATTACH predicate and not about how a state is
+    // reached. The insert succeeding at all is the half 4.11 could not test.
+    await db.execute(`UPDATE media_objects SET state = 'ready' WHERE id = '${id}'`);
 
-    // THE TEXT IS THE ASSERTION AND NOT THE THROW. "The insert failed" would pass
-    // against a typo in the column list, a missing environment, or a closed pool — three
-    // things that are not this chapter's evidence. What is being published is that the
-    // constraint by NAME is what stops it, so the chapter can say the arm is unreachable
-    // rather than untested.
-    expect(refusal).toContain('violates check constraint "media_objects_state_check"');
+    const res = await send({ text: "verified", attachments: [media(id)] }, tokenA);
+    expect(res.status, "a `ready` object is inside `state IN ('pending','ready')`").toBe(201);
   });
 
-  it("refuses a state that is neither, which is the same refusal from the other side", async () => {
+  it("refuses a `rejected` object, which is outside the predicate's set (FR-MED-06)", async () => {
+    const id = await slotFor(tokenA);
+    await db.execute(`UPDATE media_objects SET state = 'rejected' WHERE id = '${id}'`);
+
+    // FR-MED-06's refusal arriving for free: the predicate names `pending` and `ready`,
+    // so a scan failure removes the object from it without a second rule being written.
+    const res = await send({ text: "infected", attachments: [media(id)] }, tokenA);
+    expect(res.status).toBe(422);
+  });
+
+  it("refuses a state that is none of the three, which is the same refusal from the other side", async () => {
     let refusal = "";
     try {
       await db.execute(
         `INSERT INTO media_objects
            (id, environment_id, filename, mime_type, declared_bytes, object_key, state)
-         VALUES (gen_random_uuid(), '${env.id}', 'x.png', 'image/png', 1, 'x/k', 'rejected')`,
+         VALUES (gen_random_uuid(), '${env.id}', 's.png', 'image/png', 1, 's/k', 'scanning')`,
       );
     } catch (error) {
       refusal = String((error as { cause?: unknown }).cause ?? error);
     }
-    // `rejected` IS THE OTHER TRANSITION FR-MED-07 NAMES, and it is unreachable for the
-    // same reason. Asserting both is what makes the first one a fact about the CHECK
-    // rather than a fact about the string `ready`.
+
+    // THE TEXT IS THE ASSERTION AND NOT THE THROW. "The insert failed" would pass against
+    // a typo in the column list, a missing environment, or a closed pool — three things
+    // that are not this suite's evidence. The constraint by NAME is what stops it.
+    //
+    // AND `scanning` IS THE EXAMPLE ON PURPOSE. It is the value 4.13 argued against making
+    // a state: what a worker holding an object needs is a lease with a timeout, not a
+    // value somebody must clear after a crash. The decision and this test hold each other
+    // up — if `scanning` ever becomes legal, this goes red and asks why.
     expect(refusal).toContain('violates check constraint "media_objects_state_check"');
   });
 

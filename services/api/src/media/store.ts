@@ -132,3 +132,44 @@ export async function storeReady(config: StoreConfig): Promise<boolean> {
     return false;
   }
 }
+
+/** Remove an object's bytes, keeping the row that records it existed.
+ *
+ * THE SECOND CALL THE API MAKES TO THE STORE DIRECTLY, and the comment at the top of
+ * this file said there was only one until the verification chapter. FR-MED-04 asks for
+ * *"deletion of the object, retaining only the audit record"*, which is two actions in
+ * two places: this one, and leaving `media_objects` alone.
+ *
+ * WHY NOT THE WORKER. It holds the bytes in memory already and could sign nothing at
+ * all if it deleted them itself — but then a worker that crashed between the delete and
+ * the verdict would leave a `pending` row for an object the store no longer has, and
+ * the next sweep would read that 404 as *"not uploaded yet"* and wait forever. The api
+ * deletes only after the verdict is recorded, so the row and the bytes disagree in one
+ * direction only: a `rejected` row whose bytes are still there is repaired by the next
+ * call, and there is no state in which a `pending` row has no bytes it could get.
+ *
+ * S3 DELETE IS IDEMPOTENT AND ANSWERS 204 FOR A KEY THAT WAS NEVER THERE, so a retry
+ * needs no branch. What this returns is whether the store said so — a `false` is worth
+ * a log line and is not worth failing the verdict over, because the row is already
+ * `rejected` and the object is already unattachable. */
+export async function deleteObject(
+  config: StoreConfig,
+  key: string,
+): Promise<boolean> {
+  const url = presign({
+    method: "DELETE",
+    ...config,
+    endpoint: config.internalEndpoint,
+    key,
+    expiresIn: 60,
+  });
+  try {
+    const res = await fetch(url, {
+      method: "DELETE",
+      signal: AbortSignal.timeout(2_000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
