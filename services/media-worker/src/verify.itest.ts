@@ -220,15 +220,97 @@ describe("an uploaded image becomes readable", () => {
     expect(row["verified_type"]).toBe("image/gif");
   });
 
-  it("REJECTS A SIZE THAT DISAGREES WITH THE STORE'S OWN COUNT", async () => {
+  it.each([
+    ["one byte over", 1],
+    ["one byte under", -1],
+    ["five thousand over", 5_000],
+  ])("REJECTS A SIZE THAT DISAGREES BY %s", async (_label, delta) => {
+    // EXACT, NOT "MATERIALLY DIFFERENT". FR-MED-03 says *"contradict their
+    // declaration"*; this task and the acceptance scenario both said "materially" and
+    // neither gave a tolerance. **The quota is what settles it**: `reserveMediaSlot`
+    // sums `declared_bytes` (SRS 1.17), so under any tolerance a client that
+    // under-declares is billed for the declaration and stores the difference. Exact
+    // comparison makes the quota correct by construction — for every `ready` object,
+    // `verified_bytes = declared_bytes`.
+    //
+    // ONE BYTE IS THE TEST THAT MATTERS. A five-thousand-byte mismatch passes under a
+    // tolerance too, so a suite that only tested the large case would be green against
+    // the design this one refuses.
     const png = pngOf(32, 32);
-    const { id, url } = await slot("image/png", png.length + 5_000);
+    const { id, url } = await slot("image/png", png.length + delta);
     await put(url, png);
     await sweepFor(id);
 
     const row = await rowOf(id);
     expect(row["state"]).toBe("rejected");
+    expect(row["rejected_reason"]).toBe("declaration_mismatch");
     expect(Number(row["verified_bytes"])).toBe(png.length);
+  });
+
+  it("AND FOR EVERY READY OBJECT THE TWO NUMBERS ARE EQUAL", async () => {
+    // The invariant the exact comparison buys, asserted over the tenant's whole set
+    // rather than over one row — because it is a property of the quota, not of a test.
+    const r = await pool.query(
+      "select count(*) as n from media_objects " +
+        "where environment_id = $1 and state = 'ready' and verified_bytes <> declared_bytes",
+      [environmentId],
+    );
+    expect(Number(r.rows[0]!["n"])).toBe(0);
+  });
+
+  it("A REJECTED OBJECT STOPS COUNTING AGAINST THE TENANT'S STORAGE (T033)", async () => {
+    // THROUGH THE SAME SUM THE SLOT ROUTE USES, not through a number this test
+    // computes its own way. Otherwise a rejected upload holds a tenant's storage
+    // forever and nothing says so until they hit the cap.
+    const committed = async (): Promise<number> => {
+      const r = await pool.query(
+        "select coalesce(sum(declared_bytes), 0) as c from media_objects " +
+          "where environment_id = $1 and state <> 'rejected'",
+        [environmentId],
+      );
+      return Number(r.rows[0]!["c"]);
+    };
+
+    const gif = gifOf(24, 24);
+    const before = await committed();
+    const { id, url } = await slot("image/png", gif.length);
+    await put(url, gif);
+    expect(await committed(), "a pending object must count").toBe(before + gif.length);
+
+    await sweepFor(id);
+    expect((await rowOf(id))["state"]).toBe("rejected");
+    expect(await committed()).toBe(before);
+
+    // AND THE DECLARATION SURVIVES. The row is the audit record FR-MED-04 keeps, so
+    // `declared_bytes` still says what the client claimed — the bytes stop counting
+    // because the ROW left the sum, not because the column was zeroed.
+    const r = await pool.query(
+      "select declared_bytes from media_objects where id = $1",
+      [id],
+    );
+    expect(Number(r.rows[0]!["declared_bytes"])).toBe(gif.length);
+  });
+
+  it("AN MP4 UPLOADED AS image/png IS REJECTED, HOWEVER THE PUT WAS LABELLED (T035)", async () => {
+    // THE TEST THAT SAYS WHERE `verified_type` COMES FROM. The PUT below sends
+    // `content-type: image/png`, and the store echoes it back on every later `HEAD` —
+    // measured. If this passed, the platform would be reading the client's own claim
+    // twice and calling the second reading a verification.
+    const mp4 = new Uint8Array([
+      0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 2, 0,
+    ]);
+    const { id, url } = await slot("image/png", mp4.length);
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: { "content-type": "image/png" },
+      body: mp4.slice() as unknown as BodyInit,
+    });
+    expect(res.status).toBe(200);
+
+    await sweepFor(id);
+    const row = await rowOf(id);
+    expect(row["state"]).toBe("rejected");
+    expect(row["verified_type"]).toBe("video/mp4");
   });
 
   it("AND THE REJECTED OBJECT'S BYTES ARE GONE (FR-MED-04)", async () => {
