@@ -435,9 +435,31 @@ describe("integrating with Relay from the outside", () => {
       }
     };
 
+    // A REAL PNG, AND THE OLD FIXTURE IS WHY IT HAD TO BECOME ONE.
+    //
+    // This uploaded `[137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0]` — the PNG signature plus
+    // three zeros, with no `IHDR` — and declared 11 bytes for it. **The size was right
+    // and the bytes were not a PNG**, which was invisible until the platform grew
+    // something that reads them: the slot route records *"what the caller said, not what
+    // arrived"*. Under FR-MED-03 that object is `rejected` and never delivers.
+    //
+    // BUILT FROM BYTES RATHER THAN IMPORTED. This package declares no `@relay/*`
+    // dependency and no workspace path may be reached from here, so the fixture is a
+    // literal — which is also the honest shape for a suite claiming to know nothing
+    // about how the platform is built. A 1×1 greyscale PNG with a stored (uncompressed)
+    // deflate block, 67 bytes.
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+      0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+      0x08, 0x00, 0x00, 0x00, 0x00, 0x3a, 0x7e, 0x9b, 0x55, 0x00, 0x00, 0x00,
+      0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x60, 0x00, 0x00, 0x00,
+      0x02, 0x00, 0x01, 0x48, 0xaf, 0xa4, 0x71, 0x00, 0x00, 0x00, 0x00, 0x49,
+      0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ]);
+
     const slot = await post(
       "/v1/media",
-      { filename: "outside.png", mime_type: "image/png", bytes: 11 },
+      { filename: "outside.png", mime_type: "image/png", bytes: png.length },
       credential,
     );
     expect(slot.status, "the platform refused a slot to a published credential").toBe(201);
@@ -447,7 +469,7 @@ describe("integrating with Relay from the outside", () => {
     // claim and is invisible from in-workspace tests that never leave the process.
     const uploaded = await fetch(slot.body["upload_url"] as string, {
       method: "PUT",
-      body: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0]),
+      body: png,
     });
     expect(uploaded.status, "the presigned URL was not usable from outside").toBe(200);
 
@@ -493,7 +515,24 @@ describe("integrating with Relay from the outside", () => {
     // probes the store on and the address it signs for a client cannot be one field. A
     // delivery URL signed with the internal one is refused rather than slow, and nothing
     // inside the workspace would notice.
-    const link = await get(`/v1/media/${mediaId}`, credential);
+    // AND IT IS A POLL NOW, BECAUSE ADR-14's GATE PUT A PROCESS BETWEEN THE UPLOAD AND
+    // THE LINK. *"No signed URL until `ready`"*, and the only thing that produces `ready`
+    // is the media worker — so this assertion stopped being about the delivery route
+    // alone and became the one test in the repository that exercises upload, sweep,
+    // scan, verdict and delivery end to end, from outside. **That is a real cost of the
+    // gate** and it is the one the packaging decision was made with in front of it: the
+    // unpackaged shape the ingester has would have made this unsatisfiable.
+    //
+    // THE DEADLINE IS THE SWEEP INTERVAL PLUS THE WORK. Measured at five-second polling:
+    // p50 5,080 ms from upload to `ready`, of which 7 ms is the work. Thirty seconds is
+    // six intervals, so a failure here means the worker is not running rather than that
+    // it was slow.
+    const deadline = Date.now() + 30_000;
+    let link = await get(`/v1/media/${mediaId}`, credential);
+    while (link.status === 404 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 500));
+      link = await get(`/v1/media/${mediaId}`, credential);
+    }
     expect(link.status, "the platform refused a delivery URL for its own attachment").toBe(200);
     expect(typeof link.body["expires_at"]).toBe("string");
 

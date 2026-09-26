@@ -5731,6 +5731,22 @@ export class Repository {
         and(
           eq(mediaObjects.id, mediaId),
           eq(mediaObjects.environmentId, this.environmentId),
+          // ADR-14's DELIVERY GATE: NO SIGNED URL UNTIL `ready` (FR-012).
+          //
+          // A FOURTH CONDITION AND THE SAME ANSWER. An object still under verification
+          // and an object the scanner refused both answer exactly as a foreign one and
+          // an absent one do — the caller learns that they cannot have it and nothing
+          // about why, which is the same discipline the three conditions above were
+          // written with.
+          //
+          // AND IT COULD NOT HAVE SHIPPED ALONE. `research.md` R4 measured this clause
+          // against 4.12's route BEFORE the state machine existed: **10 of 76 tests
+          // red**, including the isolation gauntlet's own control, because
+          // `media_objects_state_check` permitted one value and no object could ever
+          // be `ready`. The transition and the gate ship together or the gate ships
+          // broken — which is why this line is in the verification chapter and not in
+          // the one that built the route.
+          eq(mediaObjects.state, "ready"),
         ),
       );
     if (!object) return undefined;

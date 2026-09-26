@@ -381,6 +381,44 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // the sixth time in this repository, and the list has never once been ahead of it.
   { method: "POST", path: "/internal/usage/connections", accepts: "platform", shape: "write" },
 
+  // ── THE MEDIA WORKER'S SEAM (chapter 4.13), AND THE DERIVATION FOUND BOTH ────────
+  //
+  // Run before these two entries existed: `unclassified: ["GET /internal/media/pending",
+  // "POST /internal/media/:mediaId/verdict"]`. **The eleventh time in this repository,
+  // and the list has still never been ahead of the derivation.** The task that predicted
+  // this said so in advance for the first time — earlier versions of it hedged that the
+  // derivation *"may report nothing"* and called a green run the finding, which is
+  // backwards: a green run here would mean the derivation could not see `/internal`
+  // routes, and nine of them were already classified.
+  //
+  // BOTH ARE `exempt`, AND FOR A STRONGER REASON THAN `material`'s. Those three take one
+  // opaque id and derive the tenant from the row; these take **no tenant-shaped input at
+  // all**. `pending` has no parameters — the batch is the platform's oldest objects,
+  // whoever owns them — and `verdict` takes one object id and a finding about bytes. One
+  // worker serves every environment, so there is nothing for a forged request to widen.
+  //
+  // THAT IS THE ISOLATION PROPERTY STATED AS THE THING IT IS, and it is the reason the
+  // routes look alarming and are not: everywhere else in this platform a cross-tenant
+  // read is the defect, and here it is the contract. What makes it safe is not a
+  // predicate, it is the absence of a parameter — which `gauntlet.itest.ts` shows by
+  // presenting another tenant's object id to a route that cannot be told whose it is.
+  {
+    method: "GET",
+    path: "/internal/media/pending",
+    accepts: "platform",
+    shape: "exempt",
+    because:
+      "no parameters of any kind beyond a batch size: the route returns the platform's oldest unverified objects across every tenant by design (ADR-04, one worker serves all), so there is no foreign identifier to pair with a named tenant and nothing a forged request could widen.",
+  },
+  {
+    method: "POST",
+    path: "/internal/media/:mediaId/verdict",
+    accepts: "platform",
+    shape: "exempt",
+    because:
+      "one opaque object id and a finding about its bytes, as `material` above: the tenant comes from the row and the caller never says which environment it means. The credential is its only guard, and it is the worker's own rather than the dispatcher's.",
+  },
+
   // ── THE REQUEST LOG (chapter 4.8, FR-ANL-07), AND THE DERIVATION FOUND IT FIRST ──
   //
   // Run before this entry existed: `43 derived, 36 attacked, 6 exempt` with

@@ -215,17 +215,45 @@ describe("the upload slot", () => {
     expect(stored).not.toContain(store.endpoint);
 
     // And the structural half, because the value half would also pass on an empty row.
+    //
+    // SIX COLUMNS ARRIVED WITH THE VERIFICATION CHAPTER and every one of them is NULL
+    // here, which is the assertion below this list: what a slot request records is the
+    // DECLARATION, and everything the platform later learns about the bytes is written
+    // by a process that has read them. This list going stale is the point of writing it
+    // out — migration 0018 turned it red the moment it applied.
     expect(Object.keys(row).sort()).toEqual([
       "created_at",
       "declared_bytes",
+      "duration_ms",
       "environment_id",
       "filename",
+      "height",
       "id",
       "mime_type",
       "object_key",
+      "rejected_reason",
       "state",
       "user_id",
+      "verified_bytes",
+      "verified_type",
+      "width",
     ]);
+
+    // A SLOT KNOWS NOTHING ABOUT THE BYTES, and this is where that is asserted rather
+    // than assumed. The api never opens a socket to the store on this path (ADR-13), so
+    // it cannot have a verified size, a verified type or a dimension — and a row that
+    // arrived with one would mean something had read bytes the api never sees.
+    for (const column of [
+      "verified_bytes",
+      "verified_type",
+      "width",
+      "height",
+      "duration_ms",
+      "rejected_reason",
+    ]) {
+      expect(row[column], `${column} must be null at slot time`).toBeNull();
+    }
+    expect(row["state"]).toBe("pending");
   });
 
   // C5 / 056-10. THE BUCKET NOTHING CREATED.
