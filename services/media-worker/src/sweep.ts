@@ -6,7 +6,8 @@ import {
   VerdictRefusedError,
   type ApiClient,
 } from "./api-client.js";
-import { bucketPresent, headObject, type StoreConfig } from "./store.js";
+import { bucketPresent, type StoreConfig } from "./store.js";
+import { judge, probe, type PendingObject } from "./verify.js";
 
 // ONE PASS OVER THE BACKLOG.
 //
@@ -42,12 +43,7 @@ export interface SweepDeps {
  * do when the store is unreachable; this is about one object's bytes. Phases 3 and 5
  * extend this function and leave the loop alone. */
 export type Verify = (
-  object: {
-    id: string;
-    object_key: string;
-    mime_type: string;
-    declared_bytes: number;
-  },
+  object: PendingObject,
   store: StoreConfig,
 ) => Promise<InternalMediaVerdictRequest | null>;
 
@@ -55,28 +51,10 @@ export type Verify = (
  * the store yet, or the store could not be reached — either way the row stays `pending`
  * and the next sweep finds it. There is no `retry` verdict, because a row recording
  * *"we could not tell"* is one somebody later reads as a fact. */
-export const verifyDeclaration: Verify = async (object, store) => {
-  const head = await headObject(store, object.object_key);
-  if (head === null) return null;
-
-  // THE SIZE HALF OF FR-MED-03, AND THE STORE'S NUMBER IS THE TRUE ONE.
-  // `content-length` is what the store will serve; `declared_bytes` is what the client
-  // said before uploading anything. The `content-type` beside it is the client's own
-  // claim echoed back and is not evidence — which is why the type half needs the bytes
-  // (phase 3) and cannot be answered here.
-  if (head.bytes !== object.declared_bytes) {
-    return {
-      verdict: "rejected",
-      reason: "declaration_mismatch",
-      verified_bytes: head.bytes,
-    };
-  }
-
-  return {
-    verdict: "ready",
-    verified_bytes: head.bytes,
-    verified_type: object.mime_type,
-  };
+export const verifyObject: Verify = async (object, store) => {
+  const found = await probe(object, store);
+  if (found === null) return null;
+  return judge(object, found);
 };
 
 export interface SweepResult {
@@ -93,7 +71,7 @@ export interface SweepResult {
 
 export async function sweepOnce(deps: SweepDeps): Promise<SweepResult> {
   const { api, store, logger } = deps;
-  const verify = deps.verify ?? verifyDeclaration;
+  const verify = deps.verify ?? verifyObject;
   const result: SweepResult = { seen: 0, ready: 0, rejected: 0, waiting: 0 };
 
   // THE BUCKET FIRST, BECAUSE A 404 IS AMBIGUOUS AND THE SWEEP CANNOT SEE IT.

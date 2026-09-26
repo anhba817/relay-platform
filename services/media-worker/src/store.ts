@@ -171,3 +171,29 @@ export async function bucketPresent(
     return false;
   }
 }
+
+/** The first `n` bytes, for the type and dimension probes.
+ *
+ * `Range` RIDES UNSIGNED, which is what makes this cheap. The signature covers the
+ * method, the path, the query and the `host` header only — `X-Amz-SignedHeaders: host`
+ * — so a ranged GET uses the same signature a whole GET would, and the store answers
+ * **206** with a `content-range` of its own. Measured against MinIO: `bytes 0-7/12`.
+ *
+ * A 200 IS NOT A FAILURE. A store that ignores `Range` sends the whole object, and for
+ * an object under `n` bytes that is the same thing — so the body is truncated here
+ * rather than the response refused. What would be wrong is trusting the length. */
+export async function getRange(
+  config: StoreConfig,
+  key: string,
+  n: number,
+  timeoutMs = 30_000,
+): Promise<Uint8Array | null> {
+  const res = await fetch(sign(config, { method: "GET", key }), {
+    method: "GET",
+    headers: { range: `bytes=0-${n - 1}` },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GET ${key}: ${res.status}`);
+  return new Uint8Array((await res.arrayBuffer()).slice(0, n));
+}

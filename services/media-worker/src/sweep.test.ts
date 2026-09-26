@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { InternalMediaVerdictRequest } from "@relay/protocol";
 import { createLogger } from "@relay/service-kit";
 
 import { ApiError, VerdictRefusedError, type ApiClient } from "./api-client.js";
 import type { StoreConfig } from "./store.js";
-import { sweepOnce, verifyDeclaration, type Verify } from "./sweep.js";
+import { sweepOnce, type Verify } from "./sweep.js";
 
 const store: StoreConfig = {
   endpoint: "http://store.invalid",
@@ -157,49 +157,5 @@ describe("one sweep", () => {
   it("an empty backlog is not an error", async () => {
     const result = await sweepOnce({ api: api(), store, logger, probeBucket: yes });
     expect(result).toEqual({ seen: 0, ready: 0, rejected: 0, waiting: 0 });
-  });
-});
-
-describe("the declaration check, which is the size half of FR-MED-03", () => {
-  const head = (status: number, headers: Record<string, string> = {}) =>
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(null, { status, headers })),
-    );
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("passes an object whose bytes match what was declared", async () => {
-    head(200, { "content-length": "10" });
-    expect(await verifyDeclaration(object("a"), store)).toMatchObject({
-      verdict: "ready",
-      verified_bytes: 10,
-    });
-  });
-
-  it("REJECTS A MISMATCH IN EITHER DIRECTION, and reports the store's number", async () => {
-    // A client that declared one byte and uploaded five megabytes is the case FR-MED-03
-    // exists for, and a client that declared more than it sent is the same defect with
-    // the sign flipped — both are a row whose `declared_bytes` is a lie, and the quota
-    // was charged against that number.
-    head(200, { "content-length": "5000000" });
-    expect(await verifyDeclaration(object("a"), store)).toMatchObject({
-      verdict: "rejected",
-      reason: "declaration_mismatch",
-      verified_bytes: 5_000_000,
-    });
-
-    head(200, { "content-length": "3" });
-    expect(await verifyDeclaration(object("a"), store)).toMatchObject({
-      verdict: "rejected",
-      verified_bytes: 3,
-    });
-  });
-
-  it("answers nothing at all for an object the store does not hold", async () => {
-    head(404);
-    expect(await verifyDeclaration(object("a"), store)).toBeNull();
   });
 });
