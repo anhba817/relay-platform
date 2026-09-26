@@ -551,6 +551,12 @@ export const internalMediaPendingItemSchema = z.strictObject({
    * worker's job is to find out whether it is true. */
   mime_type: z.string().min(1),
   declared_bytes: z.number().int().nonnegative(),
+  /** The ordering column, returned so the worker can ask for the next page.
+   *
+   * A KEYSET CURSOR AND NOT AN OFFSET. The batch is ordered by `created_at` over a
+   * partial index keyed on it, so `after` is a range scan; an offset would make the
+   * database walk past everything already seen, on every page. */
+  created_at: z.string(),
 });
 
 export const internalMediaPendingResponseSchema = z.strictObject({

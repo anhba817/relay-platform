@@ -27,8 +27,10 @@ export interface SweepDeps {
   api: ApiClient;
   store: StoreConfig;
   logger: Logger;
-  /** How many objects one pass asks for. The api caps it at 200. */
+  /** How many objects one PAGE asks for. The api caps it at 200. */
   batch?: number;
+  /** How many pages one sweep will walk before giving up until the next interval. */
+  maxPages?: number;
   /** Injected so a test can drive the probe without a scanner. Phase 5 replaces the
    * default with one that streams the bytes through ClamAV. */
   verify?: Verify;
@@ -97,9 +99,32 @@ export async function sweepOnce(deps: SweepDeps): Promise<SweepResult> {
     return { ...result, storeUnavailable: true };
   }
 
-  const objects = (await api.pending(deps.batch ?? 50)).filter(
-    (o) => !refusedByTheApi.has(o.id),
-  );
+  // A SWEEP IS A WHOLE PASS, NOT A FIRST PAGE, AND THAT IS WHAT THE CHAPTER'S HEADLINE
+  // FIGURE MEANS. *"The whole backlog is 4.2 s serial"* is the argument for a sweep over
+  // a client notice; a fixed first page makes it describe something the code does not
+  // do. Measured against a lane with real history: 858 objects in the window, a batch of
+  // fifty, and **the head never moves** — an object nobody uploaded to stays `pending`
+  // until FR-MED-10 reaps it, so a fresh upload was row 858 and was never reached.
+  //
+  // KEYSET, NOT OFFSET. Each page asks for objects created after the last one seen,
+  // which is a range scan on `media_objects_pending_age` rather than a walk past
+  // everything already read.
+  //
+  // AND THE PASS IS BOUNDED. `maxPages` exists so one sweep cannot run forever against a
+  // queue growing faster than it drains; the objects it does not reach are the newest,
+  // and the next sweep starts at the head again. That is the right end to give up on:
+  // an object a second late is better than an object never looked at.
+  const batch = deps.batch ?? 50;
+  const maxPages = deps.maxPages ?? 100;
+  const objects: PendingObject[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page += 1) {
+    const rows = await api.pending(batch, cursor);
+    if (rows.length === 0) break;
+    cursor = rows[rows.length - 1]!.created_at;
+    objects.push(...rows.filter((o) => !refusedByTheApi.has(o.id)));
+    if (rows.length < batch) break;
+  }
   result.seen = objects.length;
 
   for (const object of objects) {

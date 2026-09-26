@@ -406,9 +406,27 @@ services:
       RELAY_MINIO_ACCESS_KEY: relay
       RELAY_MINIO_SECRET_KEY: relay-secret
       RELAY_MINIO_BUCKET: relay-media
+      # AND THE SCANNER'S ADDRESS, WHICH THE FIRST VERSION OF THIS BLOCK OMITTED —
+      # 4.11's MinIO defect, reproduced one chapter later in the service whose whole
+      # subject is reading bytes. `scannerConfigFromEnv` defaults to `localhost:3310`,
+      # which inside this container is this container, and the worker started clean and
+      # logged `scanner: "unreachable"` while every object stayed `pending` forever.
+      #
+      # **NOTHING WOULD HAVE FAILED.** A worker that cannot reach the scanner produces
+      # no verdict, which is FR-009 working exactly as designed — so the symptom is
+      # objects not becoming `ready`, and that is what an un-uploaded object looks like
+      # too. The boot line is the only thing that says so, which is why it prints the
+      # version rather than a boolean.
+      RELAY_CLAMAV_HOST: clamav
+      RELAY_CLAMAV_PORT: "3310"
     depends_on:
       api: { condition: service_healthy }
       minio: { condition: service_healthy }
+      # `service_healthy`, NOT `service_started`, and this one is load-bearing: the
+      # scanner answers its socket roughly twenty-five seconds before its signature
+      # database is current, so a worker that started on "the container is up" would
+      # scan against definitions from a fortnight ago. The health check reads the date.
+      clamav: { condition: service_healthy }
 
 volumes:
   postgres-data:

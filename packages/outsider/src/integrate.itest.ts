@@ -538,9 +538,11 @@ describe("integrating with Relay from the outside", () => {
 
     const bytes = await fetch(link.body["url"] as string);
     expect(bytes.status, "the delivery URL was not usable from outside").toBe(200);
-    expect(new Uint8Array(await bytes.arrayBuffer())).toEqual(
-      new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0]),
-    );
+    // AGAINST THE SAME ARRAY THAT WAS UPLOADED, not a second copy of it. This read
+    // `new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0])` — the old fixture,
+    // written out twice — and when the upload became a real PNG the assertion kept
+    // comparing against eleven bytes that were no longer sent anywhere.
+    expect(new Uint8Array(await bytes.arrayBuffer())).toEqual(png);
   });
 
   /** T100a — **the first `socket.send` in this file's history.**

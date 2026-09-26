@@ -522,12 +522,28 @@ export class ConnectionEnvironmentConflictError extends Error {
 export async function pendingMediaObjects(
   db: Db,
   limit: number,
+  /** A keyset cursor on the ordering column, so the worker can page through the whole
+   * window in one sweep rather than re-reading the first page forever.
+   *
+   * THE FIRST VERSION HAD NO CURSOR AND THAT WAS A STARVATION BUG. Measured against a
+   * lane with real history: **858 objects in the window, a batch of fifty**, and the
+   * head of the queue never moves because an object nobody uploaded to stays `pending`
+   * until FR-MED-10 reaps it. A fresh upload was row 858 and was never reached — the
+   * sealed suite timed out at thirty seconds with the worker running perfectly and
+   * logging nothing, because it logs only when something happened.
+   *
+   * AND THE CHAPTER'S OWN HEADLINE FIGURE ASSUMED PAGING. *"The whole backlog is 4.2 s
+   * serial"* is the argument for the sweep over a client notice; it is only true if a
+   * sweep is a whole pass. A fixed first page made the published arithmetic describe
+   * something the code did not do. */
+  after?: Date,
 ): Promise<
   Array<{
     id: string;
     objectKey: string;
     mimeType: string;
     declaredBytes: number;
+    createdAt: Date;
   }>
 > {
   return db
@@ -536,9 +552,36 @@ export async function pendingMediaObjects(
       objectKey: mediaObjects.objectKey,
       mimeType: mediaObjects.mimeType,
       declaredBytes: mediaObjects.declaredBytes,
+      createdAt: mediaObjects.createdAt,
     })
     .from(mediaObjects)
-    .where(eq(mediaObjects.state, "pending"))
+    .where(
+      and(
+        eq(mediaObjects.state, "pending"),
+        // The cursor, on the same column the index is keyed by, so a page is a range
+        // scan rather than an OFFSET the planner has to walk past.
+        ...(after ? [gt(mediaObjects.createdAt, after)] : []),
+        // AND NOT OLDER THAN FR-MED-10's WINDOW, WHICH IS THE PREDICATE THAT KEEPS THE
+        // QUEUE FROM STARVING. Found by running the sealed suite against a lane with
+        // real history: 3,849 rows in `pending` and **811 of them from the last 24
+        // hours**, the oldest from a week earlier. Oldest-first over the whole table
+        // with a batch of fifty means a fresh upload is row 3,800 — and the 3,038 ahead
+        // of it **never leave**, because an object nobody uploaded to stays `pending`
+        // forever. The queue is not a backlog that drains; it is a wall.
+        //
+        // AN OBJECT PENDING FOR MORE THAN A DAY IS NOT THIS WORKER'S. FR-MED-10
+        // destroys unreferenced objects after 24 hours, so the window is the clause's
+        // and not a number chosen here — and the effect is that this queue holds only
+        // objects a client could still be uploading to. What is given up is an object
+        // whose PUT finished on the twenty-fifth hour, which FR-MED-10 was going to
+        // destroy anyway.
+        //
+        // THE PARTIAL INDEX COVERS IT UNCHANGED. `media_objects_pending_age` is on
+        // `created_at WHERE state = 'pending'`, so this predicate is a range on the
+        // index's own key rather than a filter after it.
+        gt(mediaObjects.createdAt, sql`now() - interval '24 hours'`),
+      ),
+    )
     .orderBy(mediaObjects.createdAt)
     .limit(limit);
 }

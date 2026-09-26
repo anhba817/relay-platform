@@ -423,6 +423,82 @@ export default defineConfig({
           statements: 72,
         },
 
+        // ── THE MEDIA WORKER (chapter 4.13) ──────────────────────────────────
+        //
+        // PINNED BELOW THE MEASURED FIGURE, not at it. `session.ts` measured 87.80 and
+        // 85.36 functions on identical code twenty minutes apart, so a floor at the
+        // observation goes red for no change to the code — and the fix is then to lower
+        // it, which is a ratchet that teaches people to lower ratchets.
+        //
+        // AND EVERY KEY HERE WAS PROBED BOTH WAYS. A per-file threshold whose key
+        // matches no file is SILENT: no error, no warning, nothing. Each of these was
+        // set to an impossible figure once and confirmed to fire.
+        "services/media-worker/src/sniff.ts": {
+          // Ten magic numbers, every arm deleted in turn and every one turning at
+          // least one test red. Nothing here is unreachable.
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/media-worker/src/fixtures.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/media-worker/src/dimensions.ts": {
+          // The four readers' unreachable arms are the width/height bounds on formats
+          // whose fixtures cannot express them — a GIF's size field is 16 bits, so
+          // `> MAX_DIMENSION` is dead for that format and live for PNG.
+          branches: 86,
+          functions: 100,
+          lines: 83,
+          statements: 84,
+        },
+        "services/media-worker/src/sweep.ts": {
+          branches: 90,
+          functions: 100,
+          lines: 96,
+          statements: 96,
+        },
+        "services/media-worker/src/verify.ts": {
+          branches: 86,
+          functions: 100,
+          lines: 100,
+          statements: 95,
+        },
+        "services/media-worker/src/store.ts": {
+          branches: 86,
+          functions: 100,
+          lines: 100,
+          statements: 90,
+        },
+        "services/media-worker/src/scan.ts": {
+          // The lowest of the six, and the reason is socket error handling: a
+          // connection that times out mid-conversation needs a scanner that accepts
+          // and then stops answering, which no fixture in this repository provides.
+          branches: 84,
+          functions: 81,
+          lines: 86,
+          statements: 87,
+        },
+        "services/media-worker/src/api-client.ts": {
+          // 50% branches, and it is the honest figure. Every `if` in this file is a
+          // status check, and the suites reach 200, 404 and 422 but not the 5xx arms —
+          // which are covered in `sweep.test.ts` against a fake client rather than here.
+          branches: 49,
+          functions: 100,
+          lines: 100,
+          statements: 77,
+        },
+        "services/api/src/internal/media.controller.ts": {
+          branches: 89,
+          functions: 100,
+          lines: 93,
+          statements: 93,
+        },
+
         "services/dispatcher/src/expand.ts": {
           branches: 92,
           functions: 100,

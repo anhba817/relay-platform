@@ -101,7 +101,7 @@ describe("an uploaded image becomes readable", () => {
    * backlog and never reach its own fixture. The row is backdated to the front. */
   const sweepFor = async (id: string): Promise<void> => {
     await backdate(id);
-    await sweepOnce({ api: client, store, logger, batch: 1 });
+    await sweepOnce({ api: client, store, logger, batch: 1, maxPages: 1 });
   };
 
   // THROUGH THE API'S OWN POOL, NOT A `pg` CLIENT OF OUR OWN. The workspace's lint rule
@@ -117,9 +117,16 @@ describe("an uploaded image becomes readable", () => {
   // than an intention.
   const backdate = async (id: string): Promise<void> => {
     await pool.query(
-      "update media_objects set created_at = " +
-        "(select coalesce(min(created_at), now()) - interval '1 second' from media_objects) " +
-        "where id = $1",
+      // INSIDE FR-MED-10's WINDOW AND AT THE HEAD OF IT. The batch query excludes
+      // anything older than 24 hours — `pendingMediaObjects` explains why — so a
+      // fixture pinned to the distant past would be invisible to the sweep rather
+      // than first in it. The first version of this helper used `min(created_at) - 1
+      // second`, which was correct until the window existed and silently wrong
+      // afterwards: every test failed with the object left `pending`.
+      "update media_objects set created_at = greatest(" +
+        "(select coalesce(min(created_at), now()) from media_objects " +
+        " where created_at > now() - interval '24 hours') - interval '1 second', " +
+        "now() - interval '23 hours 30 minutes') where id = $1",
       [id],
     );
   };
@@ -352,11 +359,15 @@ describe("an uploaded image becomes readable", () => {
     // that had never held a bucket answered every slot request 503 forever, invisible
     // locally because the volume persists.
     const absent = { ...store, bucket: `probe-${randomUUID()}` };
+    // ONE PAGE, because a sweep is a whole pass now and this assertion is about what a
+    // pass REPORTS rather than about how far it walks. `maxPages: 1` pins the sample so
+    // the numbers below are a fact about the branch and not about the lane's backlog.
     const result = await sweepOnce({
       api: client,
       store: absent,
       logger,
       batch: 5,
+      maxPages: 1,
       probeBucket: async () => true,
     });
     expect(result.storeUnavailable).toBeUndefined();
@@ -392,7 +403,7 @@ describe("an uploaded image becomes readable", () => {
       return real(input, init);
     }) as typeof fetch;
     try {
-      await sweepOnce({ api: client, store, logger, batch: 50 });
+      await sweepOnce({ api: client, store, logger, batch: 50, maxPages: 1 });
     } finally {
       globalThis.fetch = real;
     }

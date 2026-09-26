@@ -1,8 +1,14 @@
 import { createServer, type Server } from "node:http";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { ensureBucket, storeConfig, storeReady, type StoreConfig } from "./store";
+import {
+  deleteObject,
+  ensureBucket,
+  storeConfig,
+  storeReady,
+  type StoreConfig,
+} from "./store";
 
 // THE TWO CALLS THE API MAKES TO THE STORE, AGAINST A SERVER THAT ANSWERS WHAT IT IS
 // TOLD TO.
@@ -151,5 +157,61 @@ describe("the store client, against a server that answers to order", () => {
     });
     expect(split.endpoint).toBe("http://localhost:9100");
     expect(split.internalEndpoint).toBe("http://minio:9000");
+  });
+});
+
+describe("deleting an object's bytes", () => {
+  const config = {
+    endpoint: "http://store.invalid",
+    internalEndpoint: "http://store.invalid",
+    accessKey: "relay",
+    secretKey: "relay-secret",
+    bucket: "relay-media",
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports the store's own answer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 204 })),
+    );
+    expect(await deleteObject(config, "k/1")).toBe(true);
+  });
+
+  it("IS FALSE RATHER THAN THROWING when the store refuses", async () => {
+    // The caller has already written `rejected`, so the object is unattachable whatever
+    // happens here. A throw would turn a log line into a failed verdict and leave the
+    // row `pending` — which is the state that means "come back and scan this again".
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("AccessDenied", { status: 403 })),
+    );
+    expect(await deleteObject(config, "k/1")).toBe(false);
+  });
+
+  it("and false when the store cannot be reached at all", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED");
+      }),
+    );
+    expect(await deleteObject(config, "k/1")).toBe(false);
+  });
+
+  it("signs for the INTERNAL endpoint, because this is the api asking", async () => {
+    let seen = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        seen = String(input);
+        return new Response(null, { status: 204 });
+      }),
+    );
+    await deleteObject({ ...config, internalEndpoint: "http://minio:9000" }, "k/1");
+    expect(seen).toContain("http://minio:9000");
   });
 });
