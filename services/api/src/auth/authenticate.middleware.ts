@@ -56,6 +56,7 @@ export const AUTH_DB = "AUTH_DB";
  * header survives a review. */
 export const PLATFORM_CREDENTIAL_ENV = "RELAY_INTERNAL_CREDENTIAL";
 export const GATEWAY_CREDENTIAL_ENV = "RELAY_INTERNAL_CREDENTIAL_GATEWAY";
+export const WORKER_CREDENTIAL_ENV = "RELAY_INTERNAL_CREDENTIAL_WORKER";
 const PLATFORM_PREFIX = "rk_svc_";
 
 /** Which variable belongs to which service. The dispatcher's keeps its original
@@ -63,17 +64,34 @@ const PLATFORM_PREFIX = "rk_svc_";
 const PLATFORM_SERVICES = [
   [PLATFORM_CREDENTIAL_ENV, "dispatcher"],
   [GATEWAY_CREDENTIAL_ENV, "gateway"],
+  // THE MEDIA WORKER'S OWN, AND REUSING THE DISPATCHER'S WOULD HAVE BEEN INVISIBLE
+  // (chapter 4.13). Two of that chapter's artifacts said it would hold
+  // `RELAY_INTERNAL_CREDENTIAL` "as the dispatcher does", and neither asked what the
+  // credential SAYS: the row below is what `Principal.service` reports, so the only
+  // component that reads a customer's bytes would have logged as the service that never
+  // touched them.
+  [WORKER_CREDENTIAL_ENV, "media-worker"],
 ] as const satisfies ReadonlyArray<readonly [string, string]>;
 
 /** The internal services that exist, DERIVED FROM THE LIST ABOVE rather than
  * retyped beside it (FR-044).
  *
  * `as const` is doing the work: without it `(typeof PLATFORM_SERVICES)[number][1]`
- * widens to `string` and a route could declare a service nobody deploys. With it,
- * adding a third internal service widens this union on its own and every route
- * that must now decide about it stops compiling — which is the connection-metering chapter's lesson
- * from `Dimension`, where adding a config key widened a type and the two-way
- * ternary underneath it was the thing the compiler could not see. */
+ * widens to `string` and a route could declare a service nobody deploys.
+ *
+ * AND THIS COMMENT CLAIMED A COMPILER BEHAVIOUR IT DOES NOT HAVE, UNTIL CHAPTER 4.13
+ * RAN IT. It read: "adding a third internal service widens this union on its own and
+ * every route that must now decide about it stops compiling." **It does not.** A third
+ * entry was added and `tsc --noEmit` exited 0: this union appears in three positions and
+ * every one is `readonly PlatformService[]`, where a new member is purely additive. An
+ * existing route goes on admitting exactly what it admitted. Three of that chapter's
+ * artifacts repeated the sentence before anybody ran it.
+ *
+ * WHAT DOES FORCE THE DECISION IS ONE FILE OVER. `credential.guard.ts` types `AcceptSpec`
+ * so that a bare `@Accepts("platform")` does not compile — a platform route must name
+ * its callers — and `["media-worker"]` is unwriteable until this list holds the row. That
+ * is a hard dependency, and it is a different mechanism from the one this comment
+ * described. */
 export type PlatformService = (typeof PLATFORM_SERVICES)[number][1];
 
 /** Constant-time-ish: compare lengths first, then every byte. A platform

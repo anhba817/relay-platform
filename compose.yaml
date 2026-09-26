@@ -216,8 +216,11 @@ services:
       # and the api refuses to start in production without the first.
       RELAY_WEBHOOK_SECRET_KEY: ${RELAY_WEBHOOK_SECRET_KEY:-}
       RELAY_INTERNAL_CREDENTIAL: ${RELAY_INTERNAL_CREDENTIAL:-rk_svc_local_development_credential_0000}
-      # The api verifies both service credentials, so it holds both.
+      # The api verifies every service credential, so it holds all three. This comment
+      # said "both" for two chapters and the media worker is the third (4.13) — the list
+      # grows with the SERVICES, not with the routes.
       RELAY_INTERNAL_CREDENTIAL_GATEWAY: ${RELAY_INTERNAL_CREDENTIAL_GATEWAY:-rk_svc_local_development_gateway_00000}
+      RELAY_INTERNAL_CREDENTIAL_WORKER: ${RELAY_INTERNAL_CREDENTIAL_WORKER:-rk_svc_local_development_worker_000000}
       # Chapter 4.7. THE FIRST OPERATIONAL SERVICE TO READ THE ANALYTICAL STORE, and that
       # is the subject rather than the plumbing: constitution III says billing, metering and
       # dashboard analytics read only from ClickHouse, and FR-ANL-06 requires comparing them
@@ -314,6 +317,42 @@ services:
     depends_on:
       api: { condition: service_healthy }
       nats: { condition: service_healthy }
+
+  # THE ONLY SERVICE THAT READS THE BYTES (chapter 4.13).
+  #
+  # PROFILED, AND THE DECISION IS THE OPPOSITE OF THE SCANNER'S. Six services start on a
+  # bare `docker compose up -d --wait` and this is not one of them, because the worker
+  # MUTATES SHARED LANE STATE: an unprofiled worker sweeps every `pending` object in the
+  # lane during every suite, deleting bytes and flipping states for fixtures other tests
+  # planted. That is 056-5's *action scoped wider than its own test* at maximum scale —
+  # 4.10's version stopped one container and made `gauntlet.itest.ts` answer 503 in a
+  # file that never mentions media. The scanner, when it arrives, is unprofiled for the
+  # complementary reason: it mutates nothing.
+  #
+  # THE COST IS SC-010. Only a worker inside the composed profile moves an object to
+  # `ready`, so the sealed suite's media test polls `--profile services` rather than
+  # asserting against a bare stack.
+  media-worker:
+    profiles: ["services"]
+    build:
+      context: .
+      dockerfile: services/media-worker/Dockerfile
+    environment:
+      RELAY_API_URL: http://api:4000
+      # ITS OWN CREDENTIAL, NOT THE DISPATCHER'S. `authenticate.middleware.ts` maps
+      # `RELAY_INTERNAL_CREDENTIAL` to the literal `"dispatcher"`, and `Principal.service`
+      # is what every log line and request-log row reports — so sharing it would file the
+      # only service that reads customer bytes under another service's name.
+      RELAY_INTERNAL_CREDENTIAL_WORKER: ${RELAY_INTERNAL_CREDENTIAL_WORKER:-rk_svc_local_development_worker_000000}
+      # ONE ADDRESS, NOT TWO. The api needs both because it signs URLs a client will
+      # hold; the worker signs only for itself, so it has no use for the published one.
+      RELAY_MINIO_INTERNAL_ENDPOINT: http://minio:9000
+      RELAY_MINIO_ACCESS_KEY: relay
+      RELAY_MINIO_SECRET_KEY: relay-secret
+      RELAY_MINIO_BUCKET: relay-media
+    depends_on:
+      api: { condition: service_healthy }
+      minio: { condition: service_healthy }
 
 volumes:
   postgres-data:

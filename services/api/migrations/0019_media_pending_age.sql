@@ -1,0 +1,25 @@
+-- Chapter 4.13 — the sweep's batch query is a SORT, which is what this index is for.
+--
+-- `data-model.md` §5 first said no index was needed, reasoning about the predicate:
+-- `state = 'pending'` matches every row today, so an index on it would select the whole
+-- table. True about the predicate, and the query also carries `ORDER BY created_at LIMIT
+-- 50`. Measured before this file existed, over 3,158 rows:
+--
+--     no index                Seq Scan + top-N heapsort    93 buffers
+--     this partial index      Index Scan, stopping at 50    4 buffers · 0.029 ms
+--
+-- Chapter 4.1's sentence at small scale: "the join is 140 ms of a 698 ms plan and the sort
+-- is 656." The cost is the ordering, not the filter.
+--
+-- AND THE RATIO RUNS THE OPPOSITE WAY FROM 4.12's GIN. That one is 1.62% of `messages` and
+-- stays there, because it indexes every row. This one was 11.96% when every object was
+-- `pending` and shrinks to the size of the backlog as objects resolve — a partial index
+-- over the unresolved set is exactly as large as the work outstanding.
+--
+-- ITS OWN FILE, NOT AN EDIT TO 0018. `schema_migrations` is `(version, applied_at)` with
+-- NO checksum, so the Postgres runner skips an edited applied file in silence — where
+-- `analytics/apply.mjs` keys on `(filename, checksum)` and refuses one. Editing 0018 after
+-- it had run would leave this index absent on the lane and present on a fresh CI database,
+-- with no test able to tell: the sweep works either way, just slower.
+CREATE INDEX media_objects_pending_age
+  ON media_objects (created_at) WHERE state = 'pending';

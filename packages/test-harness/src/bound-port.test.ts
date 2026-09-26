@@ -59,6 +59,13 @@ const BINDS_NOTHING: ReadonlyArray<readonly [string, string]> = [
       "address to read back. It arrived in chapter 4.3 and this entry did not, which is " +
       "the half the derivation cannot supply on its own",
   ],
+  [
+    "services/media-worker/src/main.ts",
+    "a polling sweep with no inbound surface: it asks the api for a batch, reads the " +
+      "object store over HTTP and posts a verdict back, so nothing ever connects TO it. " +
+      "Written in the same commit as the file, because the ingester's entry was not and " +
+      "turbo's cache hid the red for two chapters",
+  ],
 ];
 
 const LISTENERS = serviceMains().filter(

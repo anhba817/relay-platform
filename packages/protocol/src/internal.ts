@@ -533,3 +533,93 @@ export type InternalUsageReportRequest = z.infer<
 export type InternalUsageReportResponse = z.infer<
   typeof internalUsageReportResponseSchema
 >;
+
+// ---------------------------------------------------------------------------
+// The media worker's seam (4.13)
+// ---------------------------------------------------------------------------
+
+/** One object the worker has not reached a verdict on yet.
+ *
+ * NO `environment_id`, AND THAT IS THE POINT. The route it comes from takes no
+ * tenant parameter either — a worker that could ask for one tenant's objects
+ * would be a route worth forging. The worker never needs the tenant, because
+ * everything it does is addressed by object key and reported back by id. */
+export const internalMediaPendingItemSchema = z.strictObject({
+  id: z.string().uuid(),
+  object_key: z.string().min(1),
+  /** What the CLIENT said this is, which is the whole subject of FR-MED-03. The
+   * worker's job is to find out whether it is true. */
+  mime_type: z.string().min(1),
+  declared_bytes: z.number().int().nonnegative(),
+});
+
+export const internalMediaPendingResponseSchema = z.strictObject({
+  objects: z.array(internalMediaPendingItemSchema),
+});
+
+/** Why an object was refused, to the platform.
+ *
+ * TWO VALUES, AND THE CUSTOMER SEES NEITHER. FR-005 requires a scan failure and
+ * a declaration mismatch to be distinguishable; the API's own refusal says only
+ * that the object is not attachable, because telling a caller which of the two
+ * happened tells an attacker whether their payload was recognised. */
+export const mediaRejectionReasonSchema = z.enum([
+  "declaration_mismatch",
+  "scan_failed",
+]);
+
+/** THERE IS NO `retry` ARM, AND ITS ABSENCE IS A DECISION. A transient failure —
+ * the store unreachable, the scanner down — sends nothing at all, so the object
+ * stays `pending` and the next sweep finds it. A verdict meaning "we could not
+ * tell" is a row somebody later reads as a fact. */
+export const internalMediaVerdictRequestSchema = z.discriminatedUnion(
+  "verdict",
+  [
+    z.strictObject({
+      verdict: z.literal("ready"),
+      /** The STORE's count, not the client's. `content-length` on a signed
+       * `HEAD` is the number the store will serve, which is what makes it
+       * worth recording beside `declared_bytes` rather than instead of it. */
+      verified_bytes: z.number().int().nonnegative(),
+      /** Read from the bytes. The store's `content-type` is the client's own
+       * claim echoed back, so it is not evidence of anything. */
+      verified_type: z.string().min(1),
+      /** Present for the kinds a 64 KiB prefix answers for, absent for the
+       * rest — FR-MED-04 is recorded PARTLY MET rather than pretended. */
+      width: z.number().int().positive().optional(),
+      height: z.number().int().positive().optional(),
+      duration_ms: z.number().int().nonnegative().optional(),
+    }),
+    z.strictObject({
+      verdict: z.literal("rejected"),
+      reason: mediaRejectionReasonSchema,
+      /** Optional on this arm: a scan failure knows nothing about the type,
+       * and a mismatch that failed on size alone knows no type either. */
+      verified_bytes: z.number().int().nonnegative().optional(),
+      verified_type: z.string().min(1).optional(),
+    }),
+  ],
+);
+
+/** `applied` false means the row was not `pending` any more and this verdict
+ * changed nothing — a second worker got there first, which is an ordinary
+ * outcome rather than an error. `state` is what the row holds now, so a worker
+ * that lost the race can log what won. */
+export const internalMediaVerdictResponseSchema = z.strictObject({
+  applied: z.boolean(),
+  state: z.enum(["pending", "ready", "rejected"]),
+});
+
+export type InternalMediaPendingItem = z.infer<
+  typeof internalMediaPendingItemSchema
+>;
+export type InternalMediaPendingResponse = z.infer<
+  typeof internalMediaPendingResponseSchema
+>;
+export type MediaRejectionReason = z.infer<typeof mediaRejectionReasonSchema>;
+export type InternalMediaVerdictRequest = z.infer<
+  typeof internalMediaVerdictRequestSchema
+>;
+export type InternalMediaVerdictResponse = z.infer<
+  typeof internalMediaVerdictResponseSchema
+>;

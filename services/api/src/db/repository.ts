@@ -1,6 +1,19 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
 import type { Attachment } from "@relay/protocol";
 
@@ -489,6 +502,110 @@ export class ConnectionEnvironmentConflictError extends Error {
     this.name = "ConnectionEnvironmentConflictError";
     this.connectionId = connectionId;
   }
+}
+
+/** The media worker's batch: objects whose verdict nobody has reached yet (FR-001).
+ *
+ * UNSCOPED, LIKE THE DISPATCHER'S READS AND FOR THE SAME REASON. One worker serves every
+ * environment, so it takes the tenant from the row it finds rather than from a principal
+ * — and the route above it takes no tenant parameter at all, which is the isolation
+ * property to assert rather than a scope to add. A route that could be asked for one
+ * tenant's objects would be a route worth forging.
+ *
+ * OLDEST FIRST, SO A FAILING OBJECT DOES NOT STARVE THE QUEUE BEHIND IT — and so the
+ * 24-hour reap boundary FR-MED-10 will own is approached from the right end.
+ *
+ * AND THE ORDER IS WHAT COSTS, NOT THE FILTER. Every row matches `state = 'pending'`
+ * today, so the predicate selects the table; `media_objects_pending_age` (migration 0019)
+ * is a PARTIAL index on `created_at`, and it took a 50-row batch from a top-N heapsort
+ * over 3,158 rows at 93 buffers to an index scan at 4. */
+export async function pendingMediaObjects(
+  db: Db,
+  limit: number,
+): Promise<
+  Array<{
+    id: string;
+    objectKey: string;
+    mimeType: string;
+    declaredBytes: number;
+  }>
+> {
+  return db
+    .select({
+      id: mediaObjects.id,
+      objectKey: mediaObjects.objectKey,
+      mimeType: mediaObjects.mimeType,
+      declaredBytes: mediaObjects.declaredBytes,
+    })
+    .from(mediaObjects)
+    .where(eq(mediaObjects.state, "pending"))
+    .orderBy(mediaObjects.createdAt)
+    .limit(limit);
+}
+
+/** What a verdict does to the row (FR-MED-03, FR-MED-04).
+ *
+ * `applied` false means the object was not `pending` any more. A second `ready` for a
+ * `ready` object is an ordinary retry and answers 200; a verdict for a `rejected` object
+ * is refused by the caller, because the bytes are gone and letting it through would move
+ * a state whose object no longer exists.
+ *
+ * ONE STATEMENT, AND THE `pending` PREDICATE IS THE LOCK. `UPDATE … WHERE state =
+ * 'pending'` is how two workers racing one object resolve: the second one updates zero
+ * rows and learns it lost. That is the whole of plan open question 6's answer and it
+ * needs no lease, because the transition itself is the compare-and-set.
+ *
+ * AND THE WORKER NEVER TOUCHES POSTGRES (ADR-04) — this runs inside the api, called by a
+ * route on the internal seam, exactly as `creditConnectionMinutes` is. */
+export async function recordMediaVerdict(
+  db: Db,
+  input: {
+    id: string;
+    verdict: "ready" | "rejected";
+    verifiedBytes?: number;
+    verifiedType?: string;
+    width?: number;
+    height?: number;
+    durationMs?: number;
+    reason?: "declaration_mismatch" | "scan_failed";
+  },
+): Promise<{ applied: boolean; state: string | null; objectKey: string | null }> {
+  const [updated] = await db
+    .update(mediaObjects)
+    .set({
+      state: input.verdict,
+      verifiedBytes: input.verifiedBytes ?? null,
+      verifiedType: input.verifiedType ?? null,
+      width: input.width ?? null,
+      height: input.height ?? null,
+      durationMs: input.durationMs ?? null,
+      rejectedReason: input.reason ?? null,
+    })
+    .where(and(eq(mediaObjects.id, input.id), eq(mediaObjects.state, "pending")))
+    .returning({
+      state: mediaObjects.state,
+      // THE KEY COMES BACK FROM THE UPDATE, not from a read before it. A rejection
+      // deletes the bytes and the caller needs the key to do that; fetching it
+      // separately would open a window in which the row moved between the two
+      // statements and the delete addressed somebody else's object.
+      objectKey: mediaObjects.objectKey,
+    });
+
+  if (updated)
+    return { applied: true, state: updated.state, objectKey: updated.objectKey };
+
+  // NOT `pending`: either somebody got there first, or the object does not exist. The
+  // caller needs to tell those apart, so the current state comes back rather than a
+  // bare false.
+  const [row] = await db
+    .select({ state: mediaObjects.state, objectKey: mediaObjects.objectKey })
+    .from(mediaObjects)
+    .where(eq(mediaObjects.id, input.id));
+  return {
+    applied: false,
+    state: row?.state ?? null,
+    objectKey: row?.objectKey ?? null,
+  };
 }
 
 export async function creditConnectionMinutes(
@@ -2588,12 +2705,29 @@ export class Repository {
       // on the index `media_objects_environment_idx` — and this chapter has no corpus at
       // a scale where that number would mean anything, so it is stated as a cost rather
       // than measured into a claim.
+      //
+      // AND THE VERIFICATION CHAPTER IS WHERE THE DELETE PATH ARRIVED, WHICH IS THE
+      // SENTENCE ABOVE BEING TESTED. A rejected object's bytes are destroyed, so they
+      // must stop counting — and the way they stop counting is that the ROW leaves the
+      // sum, not that its `declared_bytes` is zeroed. Zeroing would destroy the fact
+      // FR-MED-03 is about: what the client claimed, which is the audit record
+      // FR-MED-04 says to keep. SRS 1.17 made committed bytes a sum over rows precisely
+      // so a delete needs no subtraction, and this is that decision paying out.
+      //
+      // `pending` STILL COUNTS. An object under verification is bytes the store is
+      // holding, so a tenant cannot open a thousand unverified slots to get around the
+      // cap — and if it turns out bad, the next sum has already stopped charging.
       const [sum] = await tx
         .select({
           committed: sql<string>`coalesce(sum(${mediaObjects.declaredBytes}), 0)`,
         })
         .from(mediaObjects)
-        .where(eq(mediaObjects.environmentId, this.environmentId));
+        .where(
+          and(
+            eq(mediaObjects.environmentId, this.environmentId),
+            ne(mediaObjects.state, "rejected"),
+          ),
+        );
       const committed = Number(sum?.committed ?? 0);
 
       if (cap !== null && committed + input.declaredBytes > cap) {
@@ -5116,12 +5250,20 @@ export class Repository {
    * the tenant can attach and the other produces one nobody can, which makes the
    * nullability pointless because any sentinel would do.
    *
-   * `state IN ('pending', 'ready')` IS WRITTEN IN FULL AND ONLY ONE ARM CAN OCCUR. The
-   * column's CHECK constraint is `state = 'pending'` — 4.10 wrote it that way on purpose,
-   * because verification is movement VI's and a schema admitting a state nothing produces
-   * is a schema making a claim it cannot keep. So `'ready'` is unreachable today and the
-   * predicate says it anyway: the clause names both, and a predicate that named one would
-   * have to be found and widened by whoever builds the scanner.
+   * `state IN ('pending', 'ready')` IS WRITTEN IN FULL AND BOTH ARMS NOW OCCUR. 4.10's
+   * CHECK constraint was `state = 'pending'`, so for two chapters `'ready'` was
+   * unreachable and this comment said so, adding that a predicate naming one arm *"would
+   * have to be found and widened by whoever builds the scanner."* Migration `0018` widens
+   * the constraint to the three states and nothing here needed widening — which is the
+   * only reason that sentence was worth writing. It is corrected rather than left
+   * standing: a comment describing behaviour no code performs is the defect this movement
+   * has now found in `store.ts`, in `docs/07` §6, in `docs/12` row 11 and in a test's
+   * deadline.
+   *
+   * AND `'rejected'` IS OUTSIDE THE SET, WHICH IS FR-MED-06's REFUSAL ARRIVING FOR FREE.
+   * The predicate was written against a three-state world before that world existed, so
+   * a verified-bad object becomes unattachable with no clause added — the set was always
+   * "the two states an attachment may be in", and the third one just started happening.
    *
    * CONSTITUTION VI ASKS FOR 100% BRANCH COVERAGE OF TENANT ISOLATION, AND THIS IS THAT
    * CLAUSE MET RATHER THAN PINNED — with the per-arm evidence, because the percentage
@@ -5132,6 +5274,15 @@ export class Repository {
    *     the three SQL clauses      no JavaScript branch at all. 048 recorded the same
    *                                clause as unmeasurable for a sorting key; a WHERE is
    *                                the same shape from a different direction.
+   *                                RE-RUN AT 4.13 rather than inherited, because the
+   *                                original run was made when only one state could
+   *                                occur, and it is no longer true. Deleting the
+   *                                whole clause -> ONE red, the `rejected` refusal.
+   *                                Narrowing it to `['pending']` -> ONE red, the
+   *                                `ready` attach. Both arms are now separately
+   *                                covered, where at 4.11 neither could be: the
+   *                                recorded result was about a platform that has
+   *                                stopped existing.
    *     `senderMustBeBot ? …`      forced to the user predicate -> exactly ONE test red,
    *                                "lets an API key attach a USER's object". Nothing else
    *                                moved, and that is the finding: an API key's own slot

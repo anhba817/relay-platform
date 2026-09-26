@@ -1148,16 +1148,58 @@ export const mediaObjects = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // WHAT THE WORKER LEARNED, IN COLUMNS RATHER THAN A JSONB BLOB (chapter 4.13,
+    // migration 0018). FR-MED-05's thumbnails want dimensions and FR-MED-12 meters
+    // stored bytes; both are later chapters in this movement and both want a number
+    // they can filter and sum, where a blob makes each one a `->>` and a cast.
+    //
+    // EVERY ONE IS NULLABLE AND THAT IS THE RECORD OF WHICH QUESTIONS WERE ASKED.
+    // Dimensions are null for audio, `duration_ms` for images, and all of them for an
+    // object that was rejected before the probe ran. 4.10 made the same argument for
+    // `user_id` and 4.11 then depended on it.
+    width: integer("width"),
+    height: integer("height"),
+    // NULL FOR EVERYTHING TODAY, AND SAID RATHER THAN DISCOVERED. Chapter 4.13 ships
+    // image dimensions and not audio or video duration: MP4 keeps it in an `mvhd` atom,
+    // WebM in `Segment/Info/Duration`, Ogg in a granule position and MP3 in a header a
+    // VBR stream may not have. FR-MED-04 is recorded PARTLY MET on FR-MED-07's SRS 1.18
+    // precedent — unmet by decision, not by oversight.
+    durationMs: integer("duration_ms"),
+    // THE FACTS BESIDE THE DECLARATION. `declared_bytes` and `mime_type` are what the
+    // caller said, which the comment eight lines up has admitted since 4.10; this is what
+    // the bytes are. Keeping both is what makes a refusal auditable after the object is
+    // deleted, because the row is all that survives it.
+    verifiedBytes: bigint("verified_bytes", { mode: "number" }),
+    verifiedType: text("verified_type"),
+    // A CLOSED SET OF TWO AND NOT A CHECK CONSTRAINT: `declaration_mismatch` and
+    // `scan_failed`. A CHECK would be a fourth thing to widen every time a reason
+    // arrives; the set lives in the protocol package where a reader can see it.
+    rejectedReason: text("rejected_reason"),
   },
   (t) => [
-    // `pending` ALONE, AND THAT IS THE CHAPTER'S SCOPE. `ready` and `rejected`
-    // arrive with the verification and scanning clauses; a CHECK that accepted
-    // them now would be a schema claiming a state nothing can reach.
-    check("media_objects_state_check", sql`${t.state} = 'pending'`),
+    // THREE VALUES SINCE CHAPTER 4.13, AND `pending` ALONE BEFORE IT. 4.10 wrote the
+    // one-value version deliberately — "a CHECK that accepted them now would be a schema
+    // claiming a state nothing can reach" — and the verification chapter is what makes
+    // the claim keepable. The constraint's job is unchanged: a fourth value still fails,
+    // and `attach.itest.ts` asserts that by name using `scanning`, which is the value
+    // this chapter argued against making a state.
+    check(
+      "media_objects_state_check",
+      sql`${t.state} IN ('pending', 'ready', 'rejected')`,
+    ),
     check("media_objects_declared_bytes_check", sql`${t.declaredBytes} > 0`),
     // THE QUOTA'S OWN READ. Committed bytes are a sum over this index rather than
     // a counter on `environments`, which would be a second source of truth for
     // something these rows already say (constitution IV).
     index("media_objects_environment_idx").on(t.environmentId),
+    // THE SWEEP'S OWN READ, AND IT IS THE ORDERING THAT COSTS (migration 0019). The
+    // worker asks for `pending` rows oldest-first in batches; the predicate matches
+    // nearly everything, so what the index buys is the `ORDER BY` — 93 buffers and a
+    // top-N heapsort against 4 buffers and an index scan, measured for a 50-row batch.
+    // Partial, so it shrinks to the size of the backlog as objects resolve rather than
+    // staying the size of the table.
+    index("media_objects_pending_age")
+      .on(t.createdAt)
+      .where(sql`${t.state} = 'pending'`),
   ],
 );

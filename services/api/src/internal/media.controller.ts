@@ -1,0 +1,179 @@
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Inject,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
+
+import {
+  internalMediaVerdictRequestSchema,
+  type InternalMediaPendingResponse,
+  type InternalMediaVerdictRequest,
+  type InternalMediaVerdictResponse,
+} from "@relay/protocol";
+import type { Logger } from "@relay/service-kit";
+
+import { Accepts, CredentialGuard } from "../auth/credential.guard";
+import type { Db } from "../db/client";
+import { pendingMediaObjects, recordMediaVerdict } from "../db/repository";
+import { LOGGER } from "../logger";
+import { deleteObject, storeConfig } from "../media/store";
+import { ZodValidationPipe } from "../messages/zod-validation.pipe";
+import { protocolError } from "../protocol-error";
+
+// THE ONLY SERVICE THAT READS THE BYTES TALKS TO POSTGRES THROUGH HERE.
+//
+// ADR-04 keeps every datastore behind the api, so the worker's two questions — what is
+// there to verify, and here is what I found — are two HTTP routes rather than a second
+// connection pool. `dispatch.controller.ts` is the same seam for the same reason and
+// `services/dispatcher/src/api-client.ts` is its one client.
+//
+// ITS OWN CONTROLLER, BECAUSE THE DECORATOR IS THE ANSWER TO "WHO MAY CALL THIS".
+// `usage.controller.ts` split off from the user-token routes on exactly this argument:
+// a class-level `@Accepts` stops meaning anything the moment two credential classes
+// share a class.
+@Controller("internal/media")
+@UseGuards(CredentialGuard)
+// NAMED, NOT BARE. `@Accepts("platform")` does not compile — `AcceptSpec` requires a
+// platform route to list its services — and the reason is in `credential.guard.ts`:
+// *"an authorization that can be omitted is one that will be, and the omission is
+// invisible."* The gateway terminates connections from the public internet; this
+// service reads customer bytes; neither should be able to stand in for the other.
+//
+// AND `"media-worker"` IS UNWRITEABLE UNTIL `PLATFORM_SERVICES` HAS THE ROW, which is
+// what made the worker's own credential a hard dependency rather than a preference.
+// The union widening on its own compiles fine — measured, `tsc --noEmit` exit 0 — so
+// this line, not the union, is the forcing function.
+@Accepts({ platform: ["media-worker"] })
+export class MediaVerificationController {
+  constructor(
+    @Inject("DB") private readonly db: Db,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  /** `GET /internal/media/pending` — the sweep's batch.
+   *
+   * NO TENANT PARAMETER, AND THAT IS THE ISOLATION PROPERTY. One worker serves every
+   * environment, so there is nothing for a caller to scope and nothing a forged call
+   * could widen. Compare `/internal/usage/connections`, which names environments in its
+   * body and therefore has to refuse an application credential.
+   *
+   * OLDEST FIRST, so an object that keeps failing does not starve the queue behind it
+   * and the 24-hour boundary FR-MED-10 will own is approached from the right end. */
+  @Get("pending")
+  async pending(
+    @Query("limit") limit?: string,
+  ): Promise<InternalMediaPendingResponse> {
+    // A BOUND THE CALLER CANNOT RAISE. The worker streams every object it is handed
+    // through a scanner, so a batch is a memory commitment as much as a query — and the
+    // sweep is a loop, so a smaller batch costs a round trip rather than a record.
+    const parsed = Number(limit ?? 50);
+    const size =
+      Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 200) : 50;
+    const rows = await pendingMediaObjects(this.db, size);
+    return {
+      objects: rows.map((r) => ({
+        id: r.id,
+        object_key: r.objectKey,
+        mime_type: r.mimeType,
+        declared_bytes: r.declaredBytes,
+      })),
+    };
+  }
+
+  /** `POST /internal/media/:mediaId/verdict` — what the worker found.
+   *
+   * IDEMPOTENT BY STATE, NOT BY KEY. The `UPDATE … WHERE state = 'pending'` in
+   * `recordMediaVerdict` is the compare-and-set: two workers racing one object resolve
+   * because the second updates no rows. No lease, no lock, no heartbeat — the
+   * transition itself is the claim.
+   *
+   * AND THE REFUSAL IS THE PART WORTH HAVING. A second `ready` for a `ready` object is
+   * an ordinary retry and answers 200. A verdict for a `rejected` object is refused,
+   * because its bytes are gone: answering 200 would let a stale worker move a state
+   * whose object no longer exists, and the row would then promise a client something
+   * the store cannot serve. */
+  @Post(":mediaId/verdict")
+  @HttpCode(200)
+  async verdict(
+    // A MALFORMED ID IS A 400 HERE AND A 500 ON SIXTEEN PUBLIC ROUTES (`gaps.md`
+    // 058-3). This route is new, so it costs nothing to get right; the sixteen are
+    // recorded with their bill rather than repaired.
+    @Param("mediaId", new ParseUUIDPipe()) mediaId: string,
+    @Body(new ZodValidationPipe(internalMediaVerdictRequestSchema))
+    body: InternalMediaVerdictRequest,
+  ): Promise<InternalMediaVerdictResponse> {
+    // SPREAD RATHER THAN ASSIGNED, because `exactOptionalPropertyTypes` makes
+    // `{ width: undefined }` a different thing from `{}` and the first version of this
+    // wrote the former. A probe that finds no dimensions must leave the column alone,
+    // not set it to a value that reads back the same and typechecks differently.
+    const result = await recordMediaVerdict(this.db, {
+      id: mediaId,
+      verdict: body.verdict,
+      ...(body.verified_bytes !== undefined && {
+        verifiedBytes: body.verified_bytes,
+      }),
+      ...(body.verified_type !== undefined && {
+        verifiedType: body.verified_type,
+      }),
+      ...(body.verdict === "ready" &&
+        body.width !== undefined && { width: body.width }),
+      ...(body.verdict === "ready" &&
+        body.height !== undefined && { height: body.height }),
+      ...(body.verdict === "ready" &&
+        body.duration_ms !== undefined && { durationMs: body.duration_ms }),
+      ...(body.verdict === "rejected" && { reason: body.reason }),
+    });
+
+    if (result.state === null) {
+      throw protocolError(
+        "not_found",
+        "no media object with that id",
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    if (!result.applied && result.state === "rejected") {
+      // 422, NOT 409. `ProtocolErrorFilter`'s ladder has nine rungs and 409 is not one
+      // of them, so a `ConflictException` naming no code answers `internal_error` —
+      // which `connection_environment_conflict` exists in the registry because somebody
+      // measured. 422 is the code for a well-formed request the platform understood and
+      // cannot carry out, the caller's action is the same either way, and the registry
+      // stays at 34.
+      throw protocolError(
+        "unprocessable_request",
+        "this object was rejected and its bytes are gone; a verdict cannot change that",
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+
+    // THE BYTES GO AFTER THE ROW MOVES, NOT BEFORE (FR-MED-04). The row is the audit
+    // record and it stays; only the object is destroyed. Ordering it this way means the
+    // one inconsistency reachable by a crash is a `rejected` row whose bytes survive —
+    // recoverable, and unattachable in the meantime, because the predicate that admits
+    // an attachment reads the state and not the store.
+    if (result.applied && body.verdict === "rejected") {
+      const removed = await deleteObject(storeConfig(), result.objectKey!);
+      if (!removed) {
+        // NOT A FAILURE OF THE VERDICT. The object is already unattachable; what is
+        // left is bytes nobody can reach through this platform, which FR-MED-10's reap
+        // will collect. Logged so it is countable rather than silent.
+        this.logger.log("error", "rejected media object's bytes were not deleted", {
+          media_id: mediaId,
+        });
+      }
+    }
+
+    return {
+      applied: result.applied,
+      state: result.state as InternalMediaVerdictResponse["state"],
+    };
+  }
+}

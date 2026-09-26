@@ -42,7 +42,11 @@ describe("the compose declaration agrees with @relay/config", () => {
     // The services behind `--profile services` are Relay's own and are not
     // infrastructure, so they are excluded by name rather than by pattern: a
     // list is auditable and a pattern would silently absorb the next container.
-    const ours = new Set(["api", "gateway", "dispatcher"]);
+    // AND THE MEDIA WORKER IS THE FOURTH (4.13). This is the list T018 of that
+    // chapter's tasks said was `INFRA_SERVICES` — it is not: a new container of
+    // OURS goes here, and a new container of the INFRASTRUCTURE'S goes there. The
+    // task named the wrong file and the both-directions assertion said so in one run.
+    const ours = new Set(["api", "gateway", "dispatcher", "media-worker"]);
     // Only the `services:` block. Volume names sit at the same indentation one
     // block down, and a match that swept the whole file would report
     // `postgres-data` as an unregistered service.

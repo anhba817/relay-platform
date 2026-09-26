@@ -13,6 +13,7 @@ import { ANALYTICS_PUBLISHER } from "../webhooks/analytics";
 import { BackfillController } from "./backfill.controller";
 import { InternalController } from "./internal.controller";
 import { DispatchController } from "./dispatch.controller";
+import { MediaVerificationController } from "./media.controller";
 import { MembershipsController } from "./memberships.controller";
 import { SessionController } from "./session.controller";
 import { UsageController } from "./usage.controller";
@@ -41,6 +42,9 @@ import { UsageController } from "./usage.controller";
     // And this chapter's, for the same reason and in the same place: `app.module.ts`
     // carries only `HealthController` and already imports this module.
     UsageController,
+    // The media worker's two routes. Fourth controller in a row registered here with
+    // the same note attached, which is how a convention earns the word.
+    MediaVerificationController,
   ],
   providers: [
     {

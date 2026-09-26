@@ -222,6 +222,22 @@ importers:
         specifier: ^4.23.1
         version: 4.23.1
 
+  services/media-worker:
+    dependencies:
+      '@relay/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@relay/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+    devDependencies:
+      '@relay/api':
+        specifier: workspace:*
+        version: link:../api
+      tsx:
+        specifier: ^4.23.1
+        version: 4.23.1
+
 packages:
 
   '@angular-devkit/core@19.2.24':
