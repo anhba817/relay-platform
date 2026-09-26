@@ -70,6 +70,9 @@ export class MediaVerificationController {
   @Get("pending")
   async pending(
     @Query("limit") limit?: string,
+    /** A `created_at` from a previous page, so a sweep can cover the whole window.
+     * Absent means the head of the queue. */
+    @Query("after") after?: string,
   ): Promise<InternalMediaPendingResponse> {
     // A BOUND THE CALLER CANNOT RAISE. The worker streams every object it is handed
     // through a scanner, so a batch is a memory commitment as much as a query — and the
@@ -77,13 +80,22 @@ export class MediaVerificationController {
     const parsed = Number(limit ?? 50);
     const size =
       Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 200) : 50;
-    const rows = await pendingMediaObjects(this.db, size);
+    // A MALFORMED CURSOR IS THE HEAD OF THE QUEUE, NOT A 500. This route's only caller
+    // builds the value from a previous response, so a bad one is a bug rather than an
+    // attack — and starting over is the outcome that loses no object.
+    const cursor = after ? new Date(after) : undefined;
+    const rows = await pendingMediaObjects(
+      this.db,
+      size,
+      cursor && !Number.isNaN(cursor.getTime()) ? cursor : undefined,
+    );
     return {
       objects: rows.map((r) => ({
         id: r.id,
         object_key: r.objectKey,
         mime_type: r.mimeType,
         declared_bytes: r.declaredBytes,
+        created_at: r.createdAt.toISOString(),
       })),
     };
   }

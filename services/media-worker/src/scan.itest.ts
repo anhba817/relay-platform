@@ -95,9 +95,16 @@ describe("a virus is rejected, by a scanner that is running", () => {
 
   const backdate = async (id: string): Promise<void> => {
     await pool.query(
-      "update media_objects set created_at = " +
-        "(select coalesce(min(created_at), now()) - interval '1 second' from media_objects) " +
-        "where id = $1",
+      // INSIDE FR-MED-10's WINDOW AND AT THE HEAD OF IT. The batch query excludes
+      // anything older than 24 hours — `pendingMediaObjects` explains why — so a
+      // fixture pinned to the distant past would be invisible to the sweep rather
+      // than first in it. The first version of this helper used `min(created_at) - 1
+      // second`, which was correct until the window existed and silently wrong
+      // afterwards: every test failed with the object left `pending`.
+      "update media_objects set created_at = greatest(" +
+        "(select coalesce(min(created_at), now()) from media_objects " +
+        " where created_at > now() - interval '24 hours') - interval '1 second', " +
+        "now() - interval '23 hours 30 minutes') where id = $1",
       [id],
     );
   };
@@ -121,6 +128,9 @@ describe("a virus is rejected, by a scanner that is running", () => {
       store,
       logger,
       batch: 1,
+      // ONE PAGE. The fixture is backdated to the head of the window, so a full pass
+      // would scan the lane's whole 24-hour backlog for every assertion.
+      maxPages: 1,
       scanner: over.scanner ?? scanner,
     });
   };

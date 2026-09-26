@@ -42,7 +42,7 @@ export class VerdictRefusedError extends Error {
 export interface ApiClient {
   /** The batch. No tenant parameter, because there is nothing to scope: one worker
    * serves every environment (`contracts/media-verification.md` §2). */
-  pending(limit: number): Promise<InternalMediaPendingItem[]>;
+  pending(limit: number, after?: string): Promise<InternalMediaPendingItem[]>;
   /** What the probe found. Idempotent by state at the api — a second identical
    * verdict answers `applied: false`, which is an outcome and not an error.
    *
@@ -72,9 +72,11 @@ export function createApiClient(
   };
 
   return {
-    async pending(limit) {
+    async pending(limit, after) {
+      const query = new URLSearchParams({ limit: String(limit) });
+      if (after !== undefined) query.set("after", after);
       const res = await fetch(
-        `${baseUrl}/internal/media/pending?limit=${limit}`,
+        `${baseUrl}/internal/media/pending?${query.toString()}`,
         { headers },
       );
       if (!res.ok) throw new ApiError("pending", res.status);

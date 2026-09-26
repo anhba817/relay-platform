@@ -90,7 +90,13 @@ describe("the media worker's seam", () => {
    * the next run's head is not this run's leftovers. */
   const backdate = async (id: string): Promise<void> => {
     await pool.query(
-      "update media_objects set created_at = timestamptz '2000-01-01' where id = $1",
+      // INSIDE FR-MED-10's WINDOW, AT THE HEAD OF IT. The batch excludes anything
+      // older than 24 hours, so a fixture pinned to 2000-01-01 — which this was — is
+      // invisible to the sweep rather than first in it.
+      "update media_objects set created_at = greatest(" +
+        "(select coalesce(min(created_at), now()) from media_objects " +
+        " where created_at > now() - interval '24 hours') - interval '1 second', " +
+        "now() - interval '23 hours 30 minutes') where id = $1",
       [id],
     );
   };

@@ -16,17 +16,25 @@ const store: StoreConfig = {
 
 const logger = createLogger("media-worker-test", () => {});
 
+let clock = 0;
 const object = (id: string) => ({
   id,
   object_key: `k/${id}`,
   mime_type: "image/png",
   declared_bytes: 10,
+  // Ascending, because the sweep pages on this value and two rows sharing it would
+  // make the cursor skip one — which is a real hazard of a keyset cursor on a
+  // non-unique column and is why this fixture never repeats one.
+  created_at: new Date(1_700_000_000_000 + (clock += 1000)).toISOString(),
 });
 
 const api = (
   overrides: Partial<ApiClient> & { objects?: ReturnType<typeof object>[] } = {},
 ): ApiClient => ({
-  pending: async () => overrides.objects ?? [],
+  // ONE PAGE AND THEN NOTHING, which is what a short page means to the sweep. A fake
+  // that returned the same rows for every cursor would make the pass loop to its bound.
+  pending: async (_limit: number, after?: string) =>
+    after === undefined ? (overrides.objects ?? []) : [],
   verdict: async () => ({ applied: true, state: "ready" }),
   ...overrides,
 });
@@ -222,5 +230,61 @@ describe("an object the api refuses with a 4xx", () => {
     };
     await sweepOnce(deps);
     expect(refusedByTheApi.size).toBe(0);
+  });
+});
+
+describe("one sweep is a whole pass", () => {
+  it("PAGES UNTIL THE QUEUE IS EXHAUSTED, because the head never moves on its own", async () => {
+    // Measured against a lane with real history: 858 objects in FR-MED-10's window and
+    // a batch of fifty. An object nobody uploaded to stays `pending` until the reap, so
+    // the first page is the same fifty rows forever and a fresh upload — row 858 — is
+    // never reached. The sealed suite timed out at thirty seconds with the worker
+    // running perfectly and logging nothing, because it logs only when something
+    // happened.
+    const all = Array.from({ length: 125 }, (_, i) => object(`o${i}`));
+    const pages: Array<string | undefined> = [];
+    const result = await sweepOnce({
+      api: api({
+        pending: async (limit: number, after?: string) => {
+          pages.push(after);
+          const from = after
+            ? all.findIndex((o) => o.created_at === after) + 1
+            : 0;
+          return all.slice(from, from + limit);
+        },
+      }),
+      store,
+      logger,
+      batch: 50,
+      probeBucket: yes,
+      verify: async () => null,
+    });
+    expect(result.seen).toBe(125);
+    // 50, 50, 25 — and the third page is short, which is what ends the pass.
+    expect(pages).toHaveLength(3);
+    expect(pages[0]).toBeUndefined();
+  });
+
+  it("and the pass is BOUNDED, so a queue growing faster than it drains cannot hang it", async () => {
+    // A page that is always full never ends on its own. `maxPages` is what stops one
+    // sweep running forever — and the objects it gives up on are the NEWEST, which is
+    // the right end: an object a second late beats an object never looked at.
+    let served = 0;
+    const result = await sweepOnce({
+      api: api({
+        pending: async (limit: number) => {
+          served += 1;
+          return Array.from({ length: limit }, () => object(`endless-${served}`));
+        },
+      }),
+      store,
+      logger,
+      batch: 10,
+      maxPages: 4,
+      probeBucket: yes,
+      verify: async () => null,
+    });
+    expect(served).toBe(4);
+    expect(result.seen).toBe(40);
   });
 });
