@@ -1,5 +1,7 @@
 import "reflect-metadata";
 
+import { crc32, deflateSync } from "node:zlib";
+
 import { randomUUID } from "node:crypto";
 
 import type { INestApplication } from "@nestjs/common";
@@ -49,11 +51,41 @@ describe("delivering hosted media", () => {
   let ghost: string;
   const store = storeConfig();
 
-  const slot = async (credential: string) => {
+  /** A REAL PNG, BUILT HERE, AND THE VERIFICATION CHAPTER IS WHY.
+   *
+   * This fixture declared `bytes: 1024` and uploaded `` `bytes ${randomUUID()}` `` —
+   * **42 bytes of ASCII** — and it was correct when it was written: 4.10's slot route
+   * records *"what the caller said, not what arrived"*, so nothing could disagree with
+   * it. **The fixtures did not rot; the platform grew a check.** Under FR-MED-03 every
+   * object this suite creates would now be rejected twice over, on size and on type.
+   *
+   * Unique per call, because one test asserts that the delivered URL serves the bytes
+   * that were uploaded, and two identical files would let a mixed-up id pass. */
+  let pngCounter = 0;
+  const uniquePng = (): Uint8Array => {
+    const height = 8 + (pngCounter += 1);
+    const width = 16;
+    const raw = Buffer.alloc(height * (1 + width));
+    for (let y = 0; y < height; y += 1) raw[y * (1 + width)] = 0;
+    const u32 = (n: number) =>
+      Buffer.from([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]);
+    const chunk = (type: string, body: Buffer) => {
+      const typed = Buffer.concat([Buffer.from(type, "ascii"), body]);
+      return Buffer.concat([u32(body.length), typed, u32(crc32(typed) >>> 0)]);
+    };
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk("IHDR", Buffer.concat([u32(width), u32(height), Buffer.from([8, 0, 0, 0, 0])])),
+      chunk("IDAT", deflateSync(raw)),
+      chunk("IEND", Buffer.alloc(0)),
+    ]);
+  };
+
+  const slot = async (credential: string, bytes: number) => {
     const res = await fetch(`${url}/v1/media`, {
       method: "POST",
       headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
-      body: JSON.stringify({ filename: "p.png", mime_type: "image/png", bytes: 1024 }),
+      body: JSON.stringify({ filename: "p.png", mime_type: "image/png", bytes }),
     });
     expect(res.status, "the slot route did not issue an id to test with").toBe(201);
     return (await res.json()) as { media_id: string; upload_url: string };
@@ -85,17 +117,46 @@ describe("delivering hosted media", () => {
       headers: { authorization: `Bearer ${credential}` },
     });
 
-  /** A referenced, readable object in one call: slot, upload bytes, send. */
+  /** A referenced, readable object in one call: slot, upload real bytes, mark it
+   * verified, send.
+   *
+   * THE STATE IS WRITTEN DIRECTLY AND THAT IS A DECISION (T048). ADR-14's gate means a
+   * delivery needs an object in `ready`, and the only thing that produces one is the
+   * media worker — so this suite could have spawned it, or polled for it, and either
+   * would make **a delivery test fail when the scanner is down**. That test would then
+   * be reporting somebody else's outage under a name about authorisation.
+   *
+   * The end-to-end path — upload, sweep, verdict, `ready` — is covered where it belongs:
+   * `services/media-worker/src/verify.itest.ts` runs it against a real store and a real
+   * scanner, and the sealed suite runs it against the composed stack. **This file is
+   * about who may hold a URL**, and its fixture states the precondition rather than
+   * producing it.
+   *
+   * THE BYTES ARE A REAL PNG AT ITS REAL LENGTH ANYWAY. Writing the state directly means
+   * nothing checks them here, and an honest fixture costs ten lines — a fixture that
+   * lies about what it uploaded is the thing this chapter is about. */
   const attached = async (
     channel: string,
     credential: string,
-    bytes = `bytes ${randomUUID()}`,
-  ): Promise<{ mediaId: string; bytes: string; messageId: string }> => {
-    const issued = await slot(credential);
-    const put = await fetch(issued.upload_url, { method: "PUT", body: bytes });
+    bytes: Uint8Array = uniquePng(),
+  ): Promise<{ mediaId: string; bytes: Uint8Array; messageId: string }> => {
+    const issued = await slot(credential, bytes.length);
+    const put = await fetch(issued.upload_url, {
+      method: "PUT",
+      body: bytes.slice() as unknown as BodyInit,
+    });
     expect(put.status, "the fixture could not upload its own bytes").toBe(200);
+    await markReady(issued.media_id, bytes.length);
     const message = await send(channel, issued.media_id, credential);
     return { mediaId: issued.media_id, bytes, messageId: message.id };
+  };
+
+  /** What the worker would have written, written by the fixture. */
+  const markReady = async (mediaId: string, bytes: number): Promise<void> => {
+    await db.execute(
+      `UPDATE media_objects SET state = 'ready', verified_bytes = ${bytes}, ` +
+        `verified_type = 'image/png' WHERE id = '${mediaId}'`,
+    );
   };
 
   beforeAll(async () => {
@@ -176,7 +237,10 @@ describe("delivering hosted media", () => {
     // only the body proves the URL names the object the caller asked for.
     const fetched = await fetch(body.url);
     expect(fetched.status).toBe(200);
-    expect(await fetched.text()).toBe(bytes);
+    // BYTES, NOT TEXT. The fixture now uploads a real PNG, and `text()` on binary decodes
+    // as UTF-8 — every byte above 0x7f becomes U+FFFD, so two different images compare
+    // equal and the assertion stops being about identity at all.
+    expect(Buffer.from(await fetched.arrayBuffer())).toEqual(Buffer.from(bytes));
   });
 
   it("signs for one hour, and with the endpoint a CLIENT can reach (FR-026)", async () => {
@@ -277,18 +341,45 @@ describe("delivering hosted media", () => {
     // second authorisation rule that does not follow a message — the parallel ACL
     // FR-MED-08's own note forbids — and FR-MED-10 hard-deletes unreferenced objects after
     // 24 hours, so it would be a read path to a thing already scheduled for destruction.
-    const issued = await slot(key.credential);
-    await fetch(issued.upload_url, { method: "PUT", body: "nobody may read this" });
+    const orphanBytes = uniquePng();
+    const issued = await slot(key.credential, orphanBytes.length);
+    await fetch(issued.upload_url, {
+      method: "PUT",
+      body: orphanBytes.slice() as unknown as BodyInit,
+    });
+    // READY, so the refusal below is about the missing reference and not about the
+    // gate — two reasons for one 404 would make this test unable to say which fired.
+    await markReady(issued.media_id, orphanBytes.length);
     expect((await get(issued.media_id, key.credential)).status).toBe(404);
   });
 
-  it("gives all four refusals ONE body, compared whole", async () => {
+  it("gives all SIX refusals ONE body, compared whole (FR-012)", async () => {
     // THE CODE IS NOT THE ORACLE. A message or an extra field leaks existence exactly as
     // well as a code does, so the comparison is over the whole body with `request_id`
     // removed — the only field that is allowed to differ.
+    //
+    // TWO NEW CONDITIONS ARRIVE WITH ADR-14's GATE, and they are the two that would have
+    // been easiest to get wrong. An object still under verification and an object the
+    // scanner refused are both facts about a caller's own upload, so a helpful platform
+    // would report them — and reporting them here would tell an attacker holding a
+    // guessed id that the object exists, which is exactly what the other four refusals
+    // were built to withhold. FR-MED-09's rejection marker reaches a client through the
+    // message payload, in a later chapter, where the caller has already proved they can
+    // read the message.
     const foreign = await attached(publicChannel, key.credential);
     const unreadable = await attached(privateChannel, key.credential);
-    const orphan = await slot(key.credential);
+    const orphan = await slot(key.credential, uniquePng().length);
+
+    // Referenced and readable, and NOT `ready`: the gate is the only thing refusing it.
+    const stillPending = await attached(publicChannel, key.credential);
+    await db.execute(
+      `UPDATE media_objects SET state = 'pending' WHERE id = '${stillPending.mediaId}'`,
+    );
+    const refused = await attached(publicChannel, key.credential);
+    await db.execute(
+      `UPDATE media_objects SET state = 'rejected', rejected_reason = 'scan_failed' ` +
+        `WHERE id = '${refused.mediaId}'`,
+    );
 
     const bodies = await Promise.all(
       [
@@ -296,6 +387,8 @@ describe("delivering hosted media", () => {
         get(unreadable.mediaId, mallory),
         get(randomUUID(), key.credential),
         get(orphan.media_id, key.credential),
+        get(stillPending.mediaId, key.credential),
+        get(refused.mediaId, key.credential),
       ].map(async (p) => {
         const res = await p;
         expect(res.status).toBe(404);
@@ -305,10 +398,21 @@ describe("delivering hosted media", () => {
       }),
     );
 
-    expect(bodies[1]).toEqual(bodies[0]);
-    expect(bodies[2]).toEqual(bodies[0]);
-    expect(bodies[3]).toEqual(bodies[0]);
+    for (let i = 1; i < bodies.length; i += 1) expect(bodies[i]).toEqual(bodies[0]);
     expect(bodies[0]).toMatchObject({ code: "not_found" });
+  });
+
+  it("and the CONTROL: the same objects deliver once they are ready", async () => {
+    // Without this the test above passes against a route that refuses everything, which
+    // is the shape 4.9 found in the gauntlet and 4.12 found in its own scope probes.
+    const pendingThenReady = await attached(publicChannel, key.credential);
+    await db.execute(
+      `UPDATE media_objects SET state = 'pending' WHERE id = '${pendingThenReady.mediaId}'`,
+    );
+    expect((await get(pendingThenReady.mediaId, key.credential)).status).toBe(404);
+
+    await markReady(pendingThenReady.mediaId, pendingThenReady.bytes.length);
+    expect((await get(pendingThenReady.mediaId, key.credential)).status).toBe(200);
   });
 
   it("stops delivering once the referencing message is deleted (4.11's FR-024)", async () => {

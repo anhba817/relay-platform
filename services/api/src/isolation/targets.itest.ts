@@ -175,6 +175,10 @@ describe("the gauntlet's target list derives from the running application", () =
       "POST /internal/dispatch/material",
       "POST /internal/dispatch/outcome",
       "POST /internal/dispatch/replay",
+      // And the media worker's seam (chapter 4.13). The derivation named both before
+      // the classification did, which is the eleventh time.
+      "GET /internal/media/pending",
+      "POST /internal/media/:mediaId/verdict",
     ];
     const keys = derived.map(targetKey);
     const missing = ADDED.filter((k) => !keys.includes(k));

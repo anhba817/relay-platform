@@ -528,6 +528,17 @@ describe("the isolation gauntlet", () => {
         }),
       });
       expect(sent.status, "the fixture could not attach its own object").toBe(201);
+      // AND `ready`, BECAUSE ADR-14's GATE ARRIVED WITH THE VERIFICATION CHAPTER. Its
+      // own `research.md` R4 measured this clause before the state machine existed and
+      // named **this control** among the ten it turned red — the object was `pending`,
+      // the gate refused it, and the attacker could not read its own object. The
+      // fixture states the precondition rather than spawning a worker to produce it:
+      // a tenancy attack that fails when the scanner is down is reporting somebody
+      // else's outage.
+      await db.execute(
+        `UPDATE media_objects SET state = 'ready', verified_bytes = 16, ` +
+          `verified_type = 'image/png' WHERE id = '${media_id}'`,
+      );
       return media_id;
     };
 
@@ -555,6 +566,62 @@ describe("the isolation gauntlet", () => {
       expect(verdict.differences, JSON.stringify(verdict, null, 2)).toEqual([]);
       expect(verdict.foreign.status).toBe(404);
     }
+  });
+
+  // THE MEDIA WORKER'S SEAM (chapter 4.13), AND IT IS NOT AN ATTACK ON THE ROUTE.
+  //
+  // `targets.ts` classifies both seam routes `exempt`, so nothing here calls
+  // `attacked.add` — an exempt route that this file attacked would be counted twice by
+  // the accounting test and would also be a claim the classification does not make.
+  //
+  // WHAT IT SHOWS INSTEAD IS THE GUARD THAT MAKES THE EXEMPTION TRUE. The verdict route
+  // is deliberately cross-tenant: one worker serves every environment, the tenant comes
+  // from the row, and there is no parameter a forged request could widen. **So the thing
+  // that must hold is that no tenant credential reaches it at all** — and that is
+  // testable with exactly the credentials this file already holds. A route whose safety
+  // rests entirely on its credential is a route whose credential check is worth
+  // asserting where the attacks live, not only in the suite that owns the feature.
+  it("the media seam refuses every TENANT credential, and changes nothing", async () => {
+    const slot = await fetch(`${url}/v1/media`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${t.victim.credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ filename: "v.png", mime_type: "image/png", bytes: 16 }),
+    });
+    expect(slot.status, "the fixture could not get the victim a slot").toBe(201);
+    const { media_id } = (await slot.json()) as { media_id: string };
+
+    for (const credential of [t.attacker.credential, attackerToken]) {
+      const read = await fetch(`${url}/internal/media/pending`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+      expect(read.status).toBe(403);
+
+      const write = await fetch(`${url}/internal/media/${media_id}/verdict`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          verdict: "rejected",
+          reason: "scan_failed",
+        }),
+      });
+      expect(write.status).toBe(403);
+    }
+
+    // AND THE VICTIM'S OBJECT IS UNTOUCHED. A 403 that had already destroyed the bytes
+    // would be a refusal after the fact, which is the shape `writeAttack` exists to
+    // catch everywhere else in this file.
+    const [row] = (
+      (await db.execute(
+        `SELECT state FROM media_objects WHERE id = '${media_id}'`,
+      )) as unknown as { rows: { state: string }[] }
+    ).rows;
+    expect(row!.state).toBe("pending");
   });
 
   // ── the two routes this chapter added ──────────────────────────────────────────
