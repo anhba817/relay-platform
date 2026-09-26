@@ -14,6 +14,21 @@ export default defineConfig({
     globalSetup: ["../../packages/test-harness/src/global-setup.ts"],
     setupFiles: ["../../packages/test-harness/src/setup.ts"],
     include: ["src/**/*.itest.ts"],
+    // SERIAL, AND THIS LANE IS THE ONE THAT NEEDS IT.
+    //
+    // `GET /internal/media/pending` is oldest-first over the WHOLE platform and takes
+    // no tenant parameter — that is the isolation property the route is built around.
+    // It also means two suites sweeping at once are sweeping the same queue: both
+    // backdate their fixture to the head, the second one wins, and the first suite's
+    // sweep verifies the second suite's object. Measured: six tests red across two
+    // files, every one of them `expected 'pending' to be 'ready'`, with nothing wrong
+    // in the worker.
+    //
+    // **An assertion scoped wider than the thing it tests fails for somebody else's
+    // reason** (045-74) — and here it is not an assertion that is too wide but the
+    // ACTION, which is 056-5's shape. `check-lane-scope.py` cannot see it either,
+    // because the scope that is missing is in a route's contract rather than in SQL.
+    fileParallelism: false,
     // A SWEEP WAITS ON ITS OWN INTERVAL, and a suite that spawns the worker as a child
     // waits for at least one pass. `vitest.integration.config.mts` in the api sets no
     // `testTimeout` at all, which 4.10 found hiding a 20-second deadline inside a

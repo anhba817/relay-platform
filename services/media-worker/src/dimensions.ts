@@ -24,12 +24,34 @@ export interface Dimensions {
  * A truncated header, a format with no dimensions, or a prefix that stopped before the
  * `SOF` marker all answer the same way — and the caller records the absence rather than
  * a zero, because a `width` of 0 is a claim about an image that is 0 pixels wide. */
+/** The largest side this will report.
+ *
+ * NOT A FORMAT LIMIT — PNG's own is 2^31 - 1 — BUT A PLAUSIBILITY ONE. This reader sees
+ * at most the first 64 KiB, so a header saying 4,278,190,090 pixels wide is a header it
+ * has no way to check; the largest real photograph is three orders of magnitude under
+ * this. Above it the answer is `null`, which means *the bytes do not say* and is exactly
+ * what a header the reader cannot believe amounts to.
+ *
+ * AND IT IS A REFUSAL, NOT A CLAMP. Recording 1,000,000 for an image that claims four
+ * billion would be a number this platform made up. */
+export const MAX_DIMENSION = 1_000_000;
+
 export function dimensionsOf(bytes: Uint8Array): Dimensions | null {
-  return png(bytes) ?? gif(bytes) ?? webp(bytes) ?? jpeg(bytes);
+  const found = png(bytes) ?? gif(bytes) ?? webp(bytes) ?? jpeg(bytes);
+  if (found === null) return null;
+  const plausible = (n: number): boolean =>
+    Number.isInteger(n) && n > 0 && n <= MAX_DIMENSION;
+  return plausible(found.width) && plausible(found.height) ? found : null;
 }
 
+// `>>> 0`, AND IT IS NOT DEFENSIVENESS — IT WAS MEASURED. JavaScript's `<<` is a SIGNED
+// 32-bit operation, so a PNG whose width has the high bit set reads NEGATIVE: bytes
+// `ff 00 00 0a` give **-16777206** without the shift and 4278190090 with it. The verdict
+// route's schema says `z.number().int().positive()`, so the api answered **400** and the
+// worker retried the same object every sweep forever — found by running the sweep
+// against random bytes behind a PNG signature, which no unit test would have produced.
 const u32be = (b: Uint8Array, at: number): number =>
-  (b[at]! << 24) | (b[at + 1]! << 16) | (b[at + 2]! << 8) | b[at + 3]!;
+  ((b[at]! << 24) | (b[at + 1]! << 16) | (b[at + 2]! << 8) | b[at + 3]!) >>> 0;
 const u16be = (b: Uint8Array, at: number): number => (b[at]! << 8) | b[at + 1]!;
 const u16le = (b: Uint8Array, at: number): number => b[at]! | (b[at + 1]! << 8);
 

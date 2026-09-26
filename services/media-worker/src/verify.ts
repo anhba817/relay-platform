@@ -2,13 +2,26 @@ import type { InternalMediaVerdictRequest } from "@relay/protocol";
 
 import { dimensionsOf } from "./dimensions.js";
 import { sniff, typesAgree } from "./sniff.js";
-import { getRange, headObject, type StoreConfig } from "./store.js";
+import { scan, type ScannerConfig } from "./scan.js";
+import {
+  getRange,
+  headObject,
+  streamObject,
+  type StoreConfig,
+} from "./store.js";
 
 // ONE OBJECT'S VERDICT.
 //
-// THE ORDER IS SIZE, SCAN, TYPE — AND ONLY THE MIDDLE ONE IS UNCONDITIONAL. The scan
-// arrives in phase 5; until then this file answers the two halves that need no second
-// program, in the positions the scan will slot between.
+// THE ORDER IS SCAN, SIZE, TYPE, AND STATING IT TOOK FIVE ANALYSIS PASSES. Each earlier
+// fix was pairwise — the size comparison moved onto the sweep's `HEAD`, and the scan
+// moved ahead of the *type* check so EICAR could reach it — which left the size verdict
+// knowable before the scan and nothing saying whether it short-circuits.
+//
+// **IT DOES NOT.** The scan runs on every object that has bytes, whatever the
+// declaration says, because FR-MED-04 is *"every uploaded object shall be
+// virus-scanned"* — and an object declaring one byte while holding five megabytes is at
+// least as worth scanning as one whose type is wrong. Reading the clause one way and not
+// the other would be reading it selectively.
 //
 // WHAT THE ORDER IS FOR. FR-MED-04 says *"every uploaded object shall be
 // virus-scanned"*, so the type check cannot short-circuit it — an object declaring one
@@ -42,6 +55,10 @@ export interface Probe {
    * sub-second field, and the exactness the spec's client-notice design would have
    * given is a real cost of `research.md` R1's decision. */
   uploadedAt: Date | null;
+  /** The signature the scanner named, when it named one. Present means `scan_failed`
+   * and the type and dimension probes were never run — there is nothing to learn from
+   * the shape of a file that is being destroyed. */
+  infected?: string;
 }
 
 export interface PendingObject {
@@ -62,9 +79,33 @@ export interface PendingObject {
 export async function probe(
   object: PendingObject,
   store: StoreConfig,
+  scanner?: ScannerConfig,
 ): Promise<Probe | null> {
   const head = await headObject(store, object.object_key);
   if (head === null) return null;
+
+  // THE SCAN FIRST, AND UNCONDITIONALLY. Nothing above it can refuse the object, so
+  // there is no path on which an uploaded object reaches a verdict unscanned.
+  if (scanner) {
+    const bytes = await streamObject(store, object.object_key);
+    // The object vanished between the `HEAD` and the `GET` — FR-MED-10's reap, or a
+    // tenant deleted. No verdict, and the next sweep will find the row gone.
+    if (bytes === null) return null;
+    const result = await scan(scanner, bytes);
+    // A SCANNER THAT COULD NOT ANSWER PRODUCES NO VERDICT AT ALL (FR-009). Not
+    // `rejected`, which would destroy a customer's bytes on the strength of an outage;
+    // not `ready`, which would let an unscanned object through. The object stays
+    // `pending` and the next sweep finds it.
+    if (result.outcome === "unavailable") return null;
+    if (result.outcome === "infected") {
+      return {
+        bytes: head.bytes,
+        detectedType: null,
+        uploadedAt: head.lastModified,
+        infected: result.signature,
+      };
+    }
+  }
 
   const prefix = await getRange(store, object.object_key, PROBE_BYTES);
   const detectedType = prefix ? sniff(prefix) : null;
@@ -99,6 +140,18 @@ export function judge(
     verified_bytes: found.bytes,
     ...(found.detectedType ? { verified_type: found.detectedType } : {}),
   });
+
+  // SCAN FIRST, AND IT WINS (T039b). An object can fail both, and `scan_failed` is the
+  // more serious fact about the caller — it is what an operator reading
+  // `rejected_reason` needs, and a mis-declared infected file filed as
+  // `declaration_mismatch` would be a count that understates the thing being counted.
+  if (found.infected !== undefined) {
+    return {
+      verdict: "rejected",
+      reason: "scan_failed",
+      verified_bytes: found.bytes,
+    };
+  }
 
   if (found.bytes !== object.declared_bytes) return rejected();
   if (found.detectedType && !typesAgree(object.mime_type, found.detectedType)) {

@@ -21,6 +21,14 @@ export const INFRA_SERVICES = [
   // conventional 9000, because ClickHouse's native port has published 9000 since
   // this file was written.
   "minio",
+  // The seventh, and the first that reads a customer's bytes (chapter 4.13).
+  // FR-MED-04's scanner: a signature engine is not a thing this workspace can write
+  // in TypeScript, and constitution VII's justification is the clause itself.
+  //
+  // IN THE DEFAULT PROFILE, unlike the media worker that talks to it. This container
+  // mutates nothing; the worker writes, and an unprofiled worker would rewrite every
+  // `pending` fixture in the lane during every suite.
+  "clamav",
 ] as const;
 
 export const DURABLE_VOLUMES = [

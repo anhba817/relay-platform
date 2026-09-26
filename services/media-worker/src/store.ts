@@ -197,3 +197,25 @@ export async function getRange(
   if (!res.ok) throw new Error(`GET ${key}: ${res.status}`);
   return new Uint8Array((await res.arrayBuffer()).slice(0, n));
 }
+
+/** The whole object, as chunks, for the scanner.
+ *
+ * AN ASYNC ITERABLE AND NOT A BUFFER, because the largest allowed object is 100 MB and
+ * `arrayBuffer()` on one costs **142.7 MB of RSS** — measured, 1.4× the object, since
+ * the copy and the original are both live. The worker holds one chunk at a time.
+ *
+ * `null` MEANS THE OBJECT IS NOT THERE, the same answer `headObject` gives, so a caller
+ * that raced FR-MED-10's reap gets an absence rather than an exception. */
+export async function streamObject(
+  config: StoreConfig,
+  key: string,
+  timeoutMs = 120_000,
+): Promise<AsyncIterable<Uint8Array> | null> {
+  const res = await fetch(sign(config, { method: "GET", key, expiresIn: 600 }), {
+    method: "GET",
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok || !res.body) throw new Error(`GET ${key}: ${res.status}`);
+  return res.body as unknown as AsyncIterable<Uint8Array>;
+}

@@ -191,6 +191,62 @@ services:
       retries: 5
 
 
+  clamav:
+    image: clamav/clamav:1.5
+    # The seventh container, and the only one that reads a customer's bytes
+    # (chapter 4.13). Constitution VII asks a new container to justify itself and
+    # FR-MED-04 is the justification: *"every uploaded object shall be
+    # virus-scanned"*, which is not a thing this workspace can write in TypeScript.
+    #
+    # NOT PROFILED, WHICH IS THE OPPOSITE ANSWER FROM THE WORKER'S. The worker
+    # WRITES — an unprofiled one would sweep every `pending` object in the lane
+    # during every suite, rewriting fixtures other tests planted. This container
+    # mutates nothing, and the worker's own suites need it up when a bare
+    # `docker compose up -d --wait` is all that ran.
+    #
+    # A REAL SCANNER RATHER THAN A FAKE, for mailpit's reason one clause over: a
+    # stub records what the sender passed, and the question FR-MED-04 asks is what
+    # a scanner DID with the bytes. The measurements this chapter publishes — that
+    # EICAR plus two hundred spaces is `OK`, that the signature matches the file
+    # and not a substring — are unavailable from anything we could write.
+    ports:
+      - "${RELAY_CLAMAV_PORT:-3310}:3310"
+    healthcheck:
+      # THE DATE, NOT A PING, AND THE WINDOW IS MEASURED.
+      #
+      # `zPING` answers `PONG` from a scanner whose signature database is thirteen
+      # days old, because `freshclam` downloads 355,678 signatures AFTER clamd
+      # starts answering. Measured on this image: `28122/Sun Sep 13` at twelve,
+      # sixteen, twenty and twenty-five seconds, `28135/Sat Sep 26` at thirty. A
+      # liveness probe passes at twelve, `--wait` returns, and the worker starts
+      # scanning against definitions from a fortnight ago.
+      #
+      # That is chapter 4.2's `/ping`, 4.9's unset credential and 4.10's bucket for
+      # the fourth time — *a check that cannot fail for the reason you care about
+      # is not a check* — and this one has a measured window rather than a
+      # hypothesis. `clamdscan -V` asks the DAEMON, so it reports the database the
+      # daemon has loaded rather than what is on disk.
+      #
+      # SEVEN DAYS. ClamAV publishes daily; a bound of one would go red on any
+      # machine that starts the stack before freshclam's first run of the day, and
+      # a bound of thirty would pass the window this check exists to catch.
+      test:
+        - CMD-SHELL
+        - >-
+          V=$$(clamdscan -V) &&
+          D=$$(echo "$$V" | cut -d/ -f3) &&
+          B=$$(date -D "%a %b %d %H:%M:%S %Y" -d "$$D" +%s) &&
+          [ $$(( ($$(date +%s) - $$B) / 86400 )) -le 7 ]
+      interval: 5s
+      timeout: 10s
+      # LONGER THAN THE OTHERS, because this is not "is it up" — it is "has
+      # freshclam finished", and the answer is a 355,678-signature download that is
+      # bandwidth-bound and unbounded on a slow link. Twenty retries at five
+      # seconds is 100 s of grace after the start period.
+      retries: 20
+      start_period: 30s
+
+
   # --- the services (the webhook dispatcher chapter) -----------------------
   # Behind `--profile services`, for the reason above.
 

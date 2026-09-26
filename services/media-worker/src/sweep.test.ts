@@ -1,11 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { InternalMediaVerdictRequest } from "@relay/protocol";
 import { createLogger } from "@relay/service-kit";
 
 import { ApiError, VerdictRefusedError, type ApiClient } from "./api-client.js";
 import type { StoreConfig } from "./store.js";
-import { sweepOnce, type Verify } from "./sweep.js";
+import { refusedByTheApi, sweepOnce, type Verify } from "./sweep.js";
 
 const store: StoreConfig = {
   endpoint: "http://store.invalid",
@@ -157,5 +157,70 @@ describe("one sweep", () => {
   it("an empty backlog is not an error", async () => {
     const result = await sweepOnce({ api: api(), store, logger, probeBucket: yes });
     expect(result).toEqual({ seen: 0, ready: 0, rejected: 0, waiting: 0 });
+  });
+});
+
+describe("an object the api refuses with a 4xx", () => {
+  beforeEach(() => refusedByTheApi.clear());
+  afterEach(() => refusedByTheApi.clear());
+
+  it("IS NOT RETRIED, because a 400 is this worker's bug and not a transient failure", async () => {
+    // Measured before this branch existed: a signed-shift defect made the PNG reader
+    // report a negative width, the verdict schema refused it with 400, and the worker
+    // re-streamed the same eight objects through ClamAV every second for as long as it
+    // ran. The log said exactly what was wrong and nothing acted on it.
+    const verdict = vi.fn(async () => {
+      throw new ApiError("verdict", 400);
+    });
+    const deps = {
+      api: api({ objects: [object("a")], verdict }),
+      store,
+      logger,
+      probeBucket: yes,
+      verify: async () => ready,
+    };
+    await sweepOnce(deps);
+    expect(verdict).toHaveBeenCalledTimes(1);
+
+    // The second sweep does not even look at it.
+    const second = await sweepOnce(deps);
+    expect(verdict).toHaveBeenCalledTimes(1);
+    expect(second.seen).toBe(0);
+  });
+
+  it("but a 5xx IS retried, because that one is the api's and may pass", async () => {
+    const verdict = vi.fn(async () => {
+      throw new ApiError("verdict", 503);
+    });
+    const deps = {
+      api: api({ objects: [object("a")], verdict }),
+      store,
+      logger,
+      probeBucket: yes,
+      verify: async () => ready,
+    };
+    await sweepOnce(deps);
+    await sweepOnce(deps);
+    expect(verdict).toHaveBeenCalledTimes(2);
+  });
+
+  it("and a REFUSED verdict (422) is not remembered either — it needs no retry", async () => {
+    // 422 means somebody else rejected the object, so the row has already left
+    // `pending` and the batch will not contain it again. Adding it to the set would be
+    // a second mechanism for something the query already handles.
+    const deps = {
+      api: api({
+        objects: [object("a")],
+        verdict: async (id: string) => {
+          throw new VerdictRefusedError(id);
+        },
+      }),
+      store,
+      logger,
+      probeBucket: yes,
+      verify: async () => ready,
+    };
+    await sweepOnce(deps);
+    expect(refusedByTheApi.size).toBe(0);
   });
 });
