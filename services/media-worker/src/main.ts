@@ -1,6 +1,7 @@
 import { createLogger } from "@relay/service-kit";
 
 import { createApiClient } from "./api-client.js";
+import { scannerConfigFromEnv, version } from "./scan.js";
 import { storeConfigFromEnv } from "./store.js";
 import { sweepOnce } from "./sweep.js";
 
@@ -30,6 +31,7 @@ async function main(): Promise<void> {
     process.env["RELAY_INTERNAL_CREDENTIAL_WORKER"] ?? "",
   );
   const store = storeConfigFromEnv();
+  const scanner = scannerConfigFromEnv();
 
   let stopping = false;
   const stop = (): void => {
@@ -38,11 +40,19 @@ async function main(): Promise<void> {
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
 
-  logger.log("info", "media worker started", { interval_ms: INTERVAL_MS });
+  // THE SCANNER'S VERSION AT BOOT, LOGGED RATHER THAN CHECKED HERE. The staleness
+  // decision belongs to `compose.yaml`'s health check, which can stop the container
+  // from being declared ready; a worker that refused to start would take the
+  // verification path down for a database that is thirteen days old and working. What
+  // this line buys is that the figure is in the log when somebody asks.
+  logger.log("info", "media worker started", {
+    interval_ms: INTERVAL_MS,
+    scanner: (await version(scanner)) ?? "unreachable",
+  });
 
   while (!stopping) {
     try {
-      const result = await sweepOnce({ api, store, logger });
+      const result = await sweepOnce({ api, store, logger, scanner });
       // LOGGED ONLY WHEN SOMETHING HAPPENED. A sweep over an empty backlog every five
       // seconds would otherwise be the loudest thing in the log, and 4.4 measured what
       // a per-request producer costs the analytical path.

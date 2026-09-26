@@ -7,6 +7,7 @@ import {
   type ApiClient,
 } from "./api-client.js";
 import { bucketPresent, type StoreConfig } from "./store.js";
+import type { ScannerConfig } from "./scan.js";
 import { judge, probe, type PendingObject } from "./verify.js";
 
 // ONE PASS OVER THE BACKLOG.
@@ -35,6 +36,10 @@ export interface SweepDeps {
    * bucket; a unit test has no store and the point of this dependency is the BRANCH it
    * guards, which is the one that produces silence. */
   probeBucket?: (store: StoreConfig) => Promise<boolean>;
+  /** WHERE THE SCANNER IS, AND ITS ABSENCE IS NOT "SKIP THE SCAN" AT RUNTIME. `main.ts`
+   * always supplies one; a suite about dimensions omits it so the test needs no
+   * scanner, and `scan.itest.ts` is what covers the arm that has one. */
+  scanner?: ScannerConfig;
 }
 
 /** What a single object's verification decides.
@@ -51,11 +56,13 @@ export type Verify = (
  * the store yet, or the store could not be reached — either way the row stays `pending`
  * and the next sweep finds it. There is no `retry` verdict, because a row recording
  * *"we could not tell"* is one somebody later reads as a fact. */
-export const verifyObject: Verify = async (object, store) => {
-  const found = await probe(object, store);
-  if (found === null) return null;
-  return judge(object, found);
-};
+export const verifyObject =
+  (scanner?: ScannerConfig): Verify =>
+  async (object, store) => {
+    const found = await probe(object, store, scanner);
+    if (found === null) return null;
+    return judge(object, found);
+  };
 
 export interface SweepResult {
   seen: number;
@@ -69,9 +76,17 @@ export interface SweepResult {
   storeUnavailable?: true;
 }
 
+/** Objects whose verdict the api refused with a 4xx this process cannot fix.
+ *
+ * PROCESS-LOCAL AND UNBOUNDED, WHICH IS STATED RATHER THAN HIDDEN. Each entry is a UUID
+ * string — about 100 bytes — so a worker would need a hundred thousand such objects to
+ * cost 10 MB, and a hundred thousand of them means the deploy is broken rather than the
+ * set. It is exported so a test can clear it; nothing in production does. */
+export const refusedByTheApi = new Set<string>();
+
 export async function sweepOnce(deps: SweepDeps): Promise<SweepResult> {
   const { api, store, logger } = deps;
-  const verify = deps.verify ?? verifyObject;
+  const verify = deps.verify ?? verifyObject(deps.scanner);
   const result: SweepResult = { seen: 0, ready: 0, rejected: 0, waiting: 0 };
 
   // THE BUCKET FIRST, BECAUSE A 404 IS AMBIGUOUS AND THE SWEEP CANNOT SEE IT.
@@ -82,7 +97,9 @@ export async function sweepOnce(deps: SweepDeps): Promise<SweepResult> {
     return { ...result, storeUnavailable: true };
   }
 
-  const objects = await api.pending(deps.batch ?? 50);
+  const objects = (await api.pending(deps.batch ?? 50)).filter(
+    (o) => !refusedByTheApi.has(o.id),
+  );
   result.seen = objects.length;
 
   for (const object of objects) {
@@ -129,6 +146,22 @@ export async function sweepOnce(deps: SweepDeps): Promise<SweepResult> {
           media_id: object.id,
           status: error.status,
         });
+        // A 4xx THAT IS NOT 404 OR 422 IS THIS WORKER'S BUG, NOT A TRANSIENT FAILURE,
+        // and retrying it costs a scan every interval forever.
+        //
+        // MEASURED, AND IT IS WHY THIS BRANCH EXISTS. A signed-shift defect in the PNG
+        // reader produced a negative `width`, the verdict schema refused it with 400,
+        // and the worker re-streamed the same eight objects through ClamAV on every
+        // sweep — eight objects, every second, with the log saying exactly what was
+        // wrong and nothing acting on it. The object stays `pending`, which is the safe
+        // state and lets a fixed worker resolve it; what this stops is paying for the
+        // scan again while this process lives.
+        //
+        // IN MEMORY AND NOT IN A COLUMN, deliberately. A `failed_verdict_at` column
+        // would be a second place the object's fate is recorded, and the thing it
+        // records is a bug that will be fixed by a deploy — which clears this set for
+        // free.
+        if (error.status >= 400 && error.status < 500) refusedByTheApi.add(object.id);
         continue;
       }
       throw error;

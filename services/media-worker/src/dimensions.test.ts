@@ -2,7 +2,7 @@ import { inflateSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { dimensionsOf } from "./dimensions.js";
+import { dimensionsOf, MAX_DIMENSION } from "./dimensions.js";
 import { gifOf, jpegOf, pngOf, webpOf } from "./fixtures.js";
 
 // RED PER FORMAT, NOT ONCE (T024).
@@ -87,5 +87,53 @@ describe("dimensions, from the header and nothing else", () => {
     const wav = new Uint8Array(64);
     wav.set([...("RIFF" + "\0\0\0\0" + "WAVEfmt ")].map((c) => c.charCodeAt(0)));
     expect(dimensionsOf(wav)).toBeNull();
+  });
+});
+
+describe("headers this reader refuses to believe", () => {
+  // EVERY ONE OF THESE WAS FOUND BY RUNNING, not by reading. A sweep over 256 KiB of
+  // random bytes behind a PNG signature produced a NEGATIVE width, the verdict route
+  // answered 400, and the worker re-streamed the same objects through the scanner on
+  // every sweep for as long as it ran.
+
+  it("READS A HIGH BIT AS UNSIGNED, which JavaScript's `<<` does not", () => {
+    // `ff 00 00 0a` is 4,278,190,090. With signed shifts it reads -16,777,206, and a
+    // negative width is refused by the verdict schema — so the defect surfaced as an
+    // api 400 three layers away from the arithmetic that caused it.
+    const file = pngOf(8, 8);
+    file.set([0xff, 0x00, 0x00, 0x0a], 16);
+    // Above MAX_DIMENSION, so the answer is null rather than a number — but the point
+    // is that it is not NEGATIVE, which is what the next assertion pins.
+    expect(dimensionsOf(file)).toBeNull();
+    const raw = ((file[16]! << 24) | (file[17]! << 16) | (file[18]! << 8) | file[19]!) >>> 0;
+    expect(raw).toBe(4_278_190_090);
+  });
+
+  it("answers null above MAX_DIMENSION rather than clamping to it", () => {
+    // A clamp would put a number this platform invented in a column that claims to
+    // record what the bytes said.
+    const file = pngOf(MAX_DIMENSION + 1, 8);
+    expect(dimensionsOf(file)).toBeNull();
+    expect(dimensionsOf(pngOf(MAX_DIMENSION, 8))).toEqual({
+      width: MAX_DIMENSION,
+      height: 8,
+    });
+  });
+
+  it("answers null for a zero dimension, in either position", () => {
+    expect(dimensionsOf(pngOf(0, 8))).toBeNull();
+    expect(dimensionsOf(pngOf(8, 0))).toBeNull();
+  });
+
+  it("refuses an implausible GIF, JPEG and WebP too, not only PNG", () => {
+    // The bound is applied once, after the readers, so a format added later inherits it
+    // — which is the difference between a rule and four copies of a check.
+    expect(dimensionsOf(gifOf(65535, 65535))).toEqual({
+      width: 65535,
+      height: 65535,
+    });
+    const jpeg = jpegOf(8, 8);
+    jpeg.set([0x00, 0x00], jpeg.indexOf(0xc0, 20) + 5);
+    expect(dimensionsOf(jpeg)).toBeNull();
   });
 });
