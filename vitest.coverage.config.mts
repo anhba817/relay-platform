@@ -493,7 +493,26 @@ export default defineConfig({
           statements: 77,
         },
         "services/api/src/internal/media.controller.ts": {
-          branches: 89,
+          // 83, FROM TWO ENVIRONMENTS THAT DISAGREE, AND THE DISAGREEMENT IS NOT A
+          // SWING. This was pinned at 89 from a single local observation of 90.90 —
+          // the mistake 045 names in as many words, *"pin below the lower observation
+          // by the observed swing and put both numbers in the config"*, with only one
+          // observation to go on. CI then reported **84.61 on three consecutive runs**.
+          //
+          // AND IT IS A DIFFERENT MEASUREMENT, NOT A NOISIER ONE. The denominator
+          // moves: v8 sees **33 branch points here locally and 13 in CI**, same commit,
+          // same Node 22.23.2, all 136 test files green on both. 90.90 is 30/33 and
+          // 84.61 is 11/13. **A percentage whose denominator changes with the machine
+          // is a claim about the machine**, and no number pinned here can mean what the
+          // ratchet wants it to mean until that is understood. `gaps.md` 059-20.
+          //
+          // The eight sibling pins this feature added on the same day are stable across
+          // both environments, which is what localises it to this file — the only one
+          // of the nine that is a decorated NestJS class reached through DI.
+          //
+          // 83 is below the lower of the two and still catches a real regression: the
+          // arms this file has are the 404, the 422, the byte deletion and its log.
+          branches: 83,
           functions: 100,
           lines: 93,
           statements: 93,
