@@ -478,10 +478,28 @@ export default defineConfig({
           // The lowest of the six, and the reason is socket error handling: a
           // connection that times out mid-conversation needs a scanner that accepts
           // and then stops answering, which no fixture in this repository provides.
-          branches: 84,
+          //
+          // AND THE SECOND OF NINE PINS THAT WAS A CLAIM ABOUT ONE MACHINE. Set from a
+          // single local run, then measured in CI:
+          //
+          //     local   88.23 / 85.71 / 82.35 / 87.30      s / b / f / l
+          //     CI      86.76 / 80.95 / 82.35 / 85.71
+          //
+          // Lower in CI on three of four, by up to **4.76 points of branches** — and
+          // the arms that move are exactly the ones a real scanner's timing decides:
+          // a socket that refuses, a reply that never comes. `functions` is identical
+          // in both, which is the tell that the file is fully reached and only its
+          // error arms vary.
+          //
+          // Pinned below the lower of the two. The seven siblings were checked in the
+          // same run rather than assumed: `dimensions.ts` and `sniff.ts` are identical
+          // across environments, `sweep.ts` and `api-client.ts` measure HIGHER in CI,
+          // and only this file and `media.controller.ts` needed moving. `gaps.md`
+          // 059-20.
+          branches: 79,
           functions: 81,
-          lines: 86,
-          statements: 87,
+          lines: 84,
+          statements: 85,
         },
         "services/media-worker/src/api-client.ts": {
           // 50% branches, and it is the honest figure. Every `if` in this file is a
