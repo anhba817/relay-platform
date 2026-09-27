@@ -1214,6 +1214,17 @@ export default defineConfig({
         // **TWO UNREACHABLE ARMS, BOTH NAMED, BOTH TYPE-MANDATED**, and the file is at
         // 100 on every other measure. An uncovered arm is cheaper than a lie about a
         // type — 4.7's sentence, now applying twice in the same file.
+        //
+        // AND A THIRD ARM THAT WAS CI's DOING, NOT THIS FILE'S. This pin was red on
+        // every CI run from the day it was written: `ci.yml` set
+        // `RELAY_CLICKHOUSE_HOST: localhost` for the lanes job — **the value line 58
+        // already defaults to** — so `process.env[…] ?? "localhost"` never evaluated its
+        // right-hand side there and the run measured **86.95, uncovered 58, 108, 115**.
+        // Reproduced locally by setting the variable, byte for byte, and fixed by
+        // deleting it: five readers all default to `localhost`, so it changed nothing
+        // else. **The pin was right and the environment was wrong**, which is the
+        // opposite of the two pins 4.13 had to lower — and worth telling apart before
+        // reaching for the ratchet. `gaps.md` 059-22.
         "services/api/src/metering/clickhouse.ts": {
           branches: 91,
           functions: 100,

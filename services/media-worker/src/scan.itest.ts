@@ -101,10 +101,25 @@ describe("a virus is rejected, by a scanner that is running", () => {
       // than first in it. The first version of this helper used `min(created_at) - 1
       // second`, which was correct until the window existed and silently wrong
       // afterwards: every test failed with the object left `pending`.
+      // A MILLISECOND STEP AND A FLOOR ONE MINUTE INSIDE THE WINDOW, and the first
+      // version of this was a slow leak. It stepped by a SECOND from a floor of
+      // `now() - 23h30m`, so after about 1,800 fixtures every later one landed ON the
+      // floor — same instant, no ordering between them — and a new fixture stopped
+      // being first in the batch. Measured on this machine after a day of runs:
+      // **3,235 rows pinned at the floor, 1,513 of them inside the sweep window**, and
+      // twelve tests across these two files failed in milliseconds.
+      //
+      // **CI NEVER SEES IT AND THAT IS THE POINT.** A fresh database has no pile, so
+      // the fixture is always first there and the defect belongs to the machine that
+      // has run the suite most — the same asymmetry as an image cached since the
+      // chapter that added it, pointing the other way.
+      //
+      // A millisecond step against 59 minutes of room is three and a half million
+      // fixtures before the floor is reachable.
       "update media_objects set created_at = greatest(" +
         "(select coalesce(min(created_at), now()) from media_objects " +
-        " where created_at > now() - interval '24 hours') - interval '1 second', " +
-        "now() - interval '23 hours 30 minutes') where id = $1",
+        " where created_at > now() - interval '24 hours') - interval '1 millisecond', " +
+        "now() - interval '23 hours 59 minutes') where id = $1",
       [id],
     );
   };
