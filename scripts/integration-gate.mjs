@@ -110,6 +110,27 @@ const args = [
   // gateway's 12 suites, the e2e journey, the ingester, the dispatcher and the harness are
   // never executed — and the gate reports one failure where six lanes are unknown.
   "--continue",
+  // AND THE PREFIX, WITHOUT WHICH THIS GATE READS NOTHING ANYWHERE IT MATTERS.
+  //
+  // `--log-order` defaults to `auto`, and on GitHub Actions turbo resolves it to GROUPED:
+  // it emits `##[group]@relay/api:test:integration` and then prints the task's lines
+  // **unprefixed** inside the fold. The parser below keys on `^(\S+):test:integration:`,
+  // so in CI it matched **zero lines of the whole run** — every lane read `did not run`
+  // and the gate failed the step with `no summary from` all seven, on every push since it
+  // was written.
+  //
+  // THE SUITES WERE GREEN THE WHOLE TIME. The same run printed `Test Files 2 passed (2)`,
+  // `40 passed (40)`, `12 passed (12)` and four more — **63 collected, which is exactly
+  // the number this gate expects.** It reported `0 ran` of them.
+  //
+  // So this is 045's shape in the instrument built to prevent it: *a zero that means
+  // "never looked" printing the same line as a zero that means "clean"*, in a script whose
+  // own header says it refuses rather than guessing. It refused honestly and for a reason
+  // that had nothing to do with the tests.
+  //
+  // Pinned rather than detected: `stream` is what a developer's terminal already gets, so
+  // this makes CI read the way the machine the gate was written on does.
+  "--log-order=stream",
   ...EXCLUDED.map((name) => `--filter=!${name}`),
   ...process.argv.slice(2),
 ];
