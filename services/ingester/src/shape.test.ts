@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { route, shape, shapeRequest } from "./shape.js";
+import {
+  CONNECTION_CLOSED_TYPE,
+  CONNECTION_OPENED_TYPE,
+  route,
+  shape,
+  shapeConnection,
+  shapeRequest,
+} from "./shape.js";
 
 const valid = {
   delivery_id: "22222222-2222-4222-8222-222222222222",
@@ -201,6 +208,87 @@ describe("shapeRequest drops `type` and says absent rather than empty", () => {
 
   it("refuses a non-object", () => {
     expect(shapeRequest(null)).toBeNull();
+  });
+
+  // THE OTHER ARM OF THE SAME TERNARY, AND NOTHING HAD EVER TAKEN IT. The test above
+  // proves an absent `limited_operation` becomes null; this proves a present one
+  // survives, which is the half that carries the value. Both arms of one expression,
+  // and only one of them was checked — 4.8 measured the column NULL on 11,660 of
+  // 11,683 rows, so the fixtures inherited the 99.8% case and never wrote the other.
+  it("keeps a limited_operation that genuinely arrives", () => {
+    const limited = { ...validRequest, limited_operation: "send" };
+    expect(shapeRequest(limited)?.limited_operation).toBe("send");
+  });
+});
+
+// `shapeConnection` HAD NO TESTS IN THIS FILE AT ALL, which is why two of its refusals
+// were dark: every call it had ever seen came through `ingest.itest.ts` carrying a
+// record the gateway had just written, and a valid record cannot exercise a refusal.
+describe("shapeConnection refuses what it will never be able to shape", () => {
+  const validConnection = {
+    type: CONNECTION_OPENED_TYPE,
+    environment_id: "6f1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d",
+    ts: "2026-09-27T12:00:00.000Z",
+    connection_id: "a1b2c3d4-5e6f-4708-9a0b-1c2d3e4f5061",
+    user_external_id: "tuan",
+  };
+
+  it("shapes a valid open, so the refusals below are about the record", () => {
+    // The control. Without it every assertion under this heading passes against a
+    // function that returns null for everything.
+    const row = shapeConnection(validConnection);
+    expect(row?.event).toBe("opened");
+    expect(row?.close_code).toBeNull();
+    expect(row?.duration_ms).toBeNull();
+  });
+
+  it("shapes a valid close", () => {
+    const row = shapeConnection({
+      ...validConnection,
+      type: CONNECTION_CLOSED_TYPE,
+      close_code: 1000,
+      duration_ms: 4200,
+    });
+    expect(row?.event).toBe("closed");
+    expect(row?.close_code).toBe(1000);
+  });
+
+  it("refuses a non-object", () => {
+    // `shapeRequest` has had this test since 4.4 and its neighbour never got one.
+    expect(shapeConnection(null)).toBeNull();
+    expect(shapeConnection("connection.opened")).toBeNull();
+    expect(shapeConnection(7)).toBeNull();
+  });
+
+  // THE CLOSED SET, WHICH THE SOURCE ARGUES FOR AND NOTHING CHECKED. Its comment
+  // rejects `e.type.split(".")[1]` because that "would turn any `connection.*` record
+  // into a row with whatever word followed the dot -- a shaper that cannot be wrong
+  // about a record it has never seen". **That argument had no test.** A third
+  // connection event added upstream tomorrow must be refused here rather than shaped
+  // into a row whose `event` is a word nobody chose.
+  it("refuses a connection.* type outside the two it knows", () => {
+    for (const type of [
+      "connection.resumed",
+      "connection.migrated",
+      "connection.",
+      "connection",
+      "opened",
+    ]) {
+      expect(shapeConnection({ ...validConnection, type })).toBeNull();
+    }
+  });
+
+  it("refuses a record missing any field the row requires", () => {
+    for (const field of [
+      "environment_id",
+      "ts",
+      "connection_id",
+      "user_external_id",
+    ]) {
+      const missing: Record<string, unknown> = { ...validConnection };
+      delete missing[field];
+      expect(shapeConnection(missing), `${field} absent`).toBeNull();
+    }
   });
 });
 
