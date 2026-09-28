@@ -679,6 +679,84 @@ describe("the socket (chapter 2.5)", () => {
     socket.close();
   });
 
+  it("a media transition arrives as media.updated, not as a revision of a message", async () => {
+    const fanout = stubFanout();
+    harness = await boot(stubApi({}), undefined, fanout);
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+
+    fanout.emitRevision({
+      kind: "media",
+      media_id: "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21",
+      channel: CHANNEL,
+      state: "ready",
+    });
+    await settle();
+
+    const updates = frames.filter((f) => f.type === "media.updated");
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      payload: { media_id: "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21", state: "ready" },
+    });
+    // THE FALSIFYING HALF, AND IT IS WHY THE TERNARY BECAME A SWITCH. A two-way
+    // conditional on `kind === "updated"` sends everything else down the `deleted`
+    // branch, so a media transition would have arrived as `message.deleted` — a frame
+    // telling a client its message is gone. The compiler stopped that shape because the
+    // media arm has no `message`; this is the assertion that would have caught it if the
+    // arm had carried one.
+    expect(frames.filter((f) => f.type === "message.deleted")).toEqual([]);
+    expect(frames.filter((f) => f.type === "message.updated")).toEqual([]);
+    socket.close();
+  });
+
+  // T042/T043 — CONSTITUTION I ON THE DELIVERY SIDE. A transition is addressed to a
+  // CHANNEL, and a connection receives it only if it is subscribed to that channel.
+  // Subscription follows membership (`session.ts:593`), so a non-member receives
+  // nothing without this path needing an access rule of its own.
+  it("a media transition for a channel this connection is not in reaches nobody", async () => {
+    const fanout = stubFanout();
+    harness = await boot(stubApi({}), undefined, fanout);
+    const socket = new WebSocket(`${harness.url}?token=${await token()}`);
+    const frames = record(socket);
+    await nextFrame(socket, "connection.ack");
+    await settle();
+
+    // A POSITIVE CONTROL FIRST, so the silence below is evidence rather than a bet that
+    // nothing was delivered for an unrelated reason.
+    fanout.emitRevision({
+      kind: "media",
+      media_id: "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21",
+      channel: CHANNEL,
+      state: "ready",
+    });
+    await settle();
+    expect(frames.filter((f) => f.type === "media.updated")).toHaveLength(1);
+
+    fanout.emitRevision({
+      kind: "media",
+      media_id: "c72cfefc-c53f-4fa6-b2be-3cfee4b5fe32",
+      channel: "99999999-9999-9999-9999-999999999999",
+      state: "rejected",
+    });
+    await settle();
+
+    // STILL ONE. The second transition names a channel this connection never joined,
+    // and the stub fabric routes on the subject exactly as Redis does.
+    //
+    // **AND THIS IS ALSO THE UNDER-DELIVERY CASE, WHICH IS THE SAFE DIRECTION.**
+    // FR-MED-08 authorises by channel VISIBILITY — a user may read a public channel's
+    // messages without being a member — while a connection subscribes by MEMBERSHIP.
+    // So subscribers are a subset of authorised readers: a non-member of a PUBLIC
+    // channel is entitled to the photo and will not get this frame. The set is
+    // narrower, never wider, so FR-007 holds by construction and history is the repair.
+    // Recorded here so nobody later "fixes" it by broadcasting wider, which is the
+    // direction that would leak.
+    expect(frames.filter((f) => f.type === "media.updated")).toHaveLength(1);
+    socket.close();
+  });
+
   it("a deletion arrives as message.deleted, with no text on it", async () => {
     const fanout = stubFanout();
     harness = await boot(stubApi({}), undefined, fanout);
