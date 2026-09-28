@@ -173,6 +173,12 @@ const DRIVER_EXEMPT = [
     // that is JSON and not a transition) that no module-level API can produce,
     // because each only ever publishes payloads its own schema built.
     "services/api/src/fanout/fanout.itest.ts",
+    // Chapter 4.14, and reason (4) exactly. This suite drives the verdict ROUTE and
+    // asserts a frame reached `revision:{channel}` — the subject, not the call. A spy
+    // on the publisher would prove the controller asked; only a subscriber proves the
+    // fan-out chose the right channels, published once per channel, and published
+    // nothing at all for an object nobody attached.
+    "services/api/src/media/media-updated.itest.ts",
     "services/gateway/src/presence.itest.ts",
     "services/gateway/src/membership.itest.ts",
     "services/gateway/src/typing.itest.ts",
