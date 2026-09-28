@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  forwardedMessageSchema,
   frameSchema,
   mediaUpdatedSchema,
   messageDeletedSchema,
@@ -341,6 +342,47 @@ describe("media.updated, the frame that lets a placeholder resolve (4.14)", () =
         type: "media.updated",
         payload: { ...frame.payload, state: "pending" },
       }).success,
+    ).toBe(false);
+  });
+});
+
+describe("the live delivery reader and the binary that ran before this deploy (4.14)", () => {
+  const ID = "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21";
+  const base = {
+    id: "m1",
+    channel: "c1",
+    seq: 1,
+    user: "u1",
+    text: "hello",
+    created_at: "2026-09-28T00:00:00.000Z",
+  };
+
+  // T028. `gateway/src/fanout.ts` parses every frame off the fabric with
+  // `forwardedMessageSchema` and answers a failure with a log line and a `return` — the
+  // frame is dropped, the sender already holds its 201, and no socket on that instance
+  // sees it. An envelope written before this chapter carries a media attachment with no
+  // `state`; if this reader required one, a rolling deploy would drop every message
+  // carrying a photo.
+  it("parses a forwarded message whose media attachment has no state", () => {
+    const envelope = { ...base, attachments: [{ type: "media", media_id: ID }] };
+    expect(forwardedMessageSchema.parse(envelope)).toEqual(envelope);
+  });
+
+  it("parses one written after, and keeps the state", () => {
+    const envelope = {
+      ...base,
+      attachments: [{ type: "media", media_id: ID, state: "rejected" }],
+    };
+    expect(forwardedMessageSchema.parse(envelope)).toEqual(envelope);
+  });
+
+  // AND THE STRICT SHAPE REFUSES THE OLD ONE, which is what makes the pair meaningful:
+  // `messageSchema` is what the api BUILDS and must always say, `forwardedMessageSchema`
+  // is what a relay READS and must never insist.
+  it("and the built shape refuses a media attachment with no state", () => {
+    expect(
+      messageSchema.safeParse({ ...base, attachments: [{ type: "media", media_id: ID }] })
+        .success,
     ).toBe(false);
   });
 });

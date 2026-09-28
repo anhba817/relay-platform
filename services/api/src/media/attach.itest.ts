@@ -133,13 +133,20 @@ describe("attaching hosted media", () => {
     const res = await send({ text: "look", attachments: [media(id)] }, tokenA);
     expect(res.status).toBe(201);
 
-    // EXACTLY AS SENT, which is FR-013 and is a claim about what is ABSENT. No `state`,
-    // no filename, nothing the platform knows about the object — the slot is `pending`
-    // and stays `pending` until movement VI, and a client cannot tell from this payload.
-    // `toEqual` on the whole array is the assertion; checking `media_id` alone would pass
-    // against a payload that had grown three fields.
+    // EXACTLY AS SENT PLUS ONE FIELD, AND MOVEMENT VI IS WHY. This assertion read
+    // `[{ type: "media", media_id: id }]` from 4.11 until chapter 4.14, under a comment
+    // saying the slot *"stays `pending` until movement VI, and a client cannot tell from
+    // this payload"*. That chapter arrived and a client can tell. **The test was a true
+    // statement about the platform and the platform grew a field**, which is the same
+    // shape ADR-14's gate produced ten times one chapter earlier.
+    //
+    // `toEqual` ON THE WHOLE ARRAY IS STILL THE ASSERTION. FR-013's claim is about what
+    // is ABSENT — no filename, no size, nothing else the platform knows — and checking
+    // `media_id` alone would pass against a payload that had grown three more fields.
+    // The state is the one addition, and `pending` is what it must be: nothing has
+    // verified this object.
     const body = (await res.json()) as { attachments: unknown[] };
-    expect(body.attachments).toEqual([{ type: "media", media_id: id }]);
+    expect(body.attachments).toEqual([{ type: "media", media_id: id, state: "pending" }]);
   });
 
   it("returns the attachment unchanged through HISTORY too (FR-013, T028a)", async () => {
@@ -160,7 +167,10 @@ describe("attaching hosted media", () => {
     const body = (await page.json()) as { messages: { text: string; attachments: unknown[] }[] };
     const mine = body.messages.find((m) => m.text === text);
     expect(mine, "the message just sent was not in history").toBeDefined();
-    expect(mine!.attachments).toEqual([{ type: "media", media_id: id }]);
+    // PLUS THE STATE, since chapter 4.14 — and this door is the reason the three are
+    // asserted separately. Each is built by different code, so a state present on the
+    // send response and absent here would be a defect no single test could see.
+    expect(mine!.attachments).toEqual([{ type: "media", media_id: id, state: "pending" }]);
   });
 
   it("accepts an API key's own slot (T025)", async () => {
@@ -245,9 +255,12 @@ describe("attaching hosted media", () => {
     // `repository.ts` STATES THIS PROPERTY AND THIS CHAPTER CREATES THE FIRST THING IT
     // PROTECTS. An edit does not change attachments — true for the URL arm since 3.24,
     // and until now there was no hosted attachment to preserve.
+    // AND THE THIRD DOOR CARRIES THE STATE TOO (chapter 4.14). "Unchanged" still means
+    // unchanged: the edit does not touch the attachment, and the state it reports is the
+    // object's own, read when the response is built rather than copied from the message.
     const body = (await edited.json()) as { text: string; attachments: unknown[] };
     expect(body.text).toBe("after");
-    expect(body.attachments).toEqual([{ type: "media", media_id: id }]);
+    expect(body.attachments).toEqual([{ type: "media", media_id: id, state: "pending" }]);
   });
 
   it("unlinks the attachment on delete and leaves the media row standing (FR-024, T028c)", async () => {

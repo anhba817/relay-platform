@@ -233,12 +233,17 @@ describe("POST /v1/channels/:channelId/messages", () => {
         attachments: [{ type: "media", media_id }],
       });
       expect(res.status).toBe(201);
-      // AND IT COMES BACK AS SENT. `state` is not on the wire — FR-013 — so what a
-      // reader gets is the two keys the client wrote and nothing the platform knows
-      // about the object. The slot is `pending` and will stay `pending` until movement
-      // VI, and a client cannot tell from this payload.
+      // AND IT COMES BACK AS SENT, PLUS THE ONE FIELD MOVEMENT VI ADDS. This read
+      // `[{ type, media_id }]` under a comment saying the slot *"will stay `pending`
+      // until movement VI, and a client cannot tell from this payload"*. Chapter 4.14
+      // is movement VI and a client can tell. **The fourth assertion of this shape** —
+      // three are in `media/attach.itest.ts` and this one lives a directory away, which
+      // is why running the media suite alone did not find it.
+      //
+      // Still `toEqual` on the whole array: FR-013's claim is about what is ABSENT, and
+      // a property check would pass against a payload that had grown a filename too.
       const body = (await res.json()) as { attachments: unknown[] };
-      expect(body.attachments).toEqual([{ type: "media", media_id }]);
+      expect(body.attachments).toEqual([{ type: "media", media_id, state: "pending" }]);
     });
 
     // THE SECOND SENT `"m_1"`, WHICH IS NOW A 400 AT THE SCHEMA AND WAS A 422 AT THE
