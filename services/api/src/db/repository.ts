@@ -15,7 +15,11 @@ import {
   type SQL,
 } from "drizzle-orm";
 
-import type { Attachment } from "@relay/protocol";
+import type {
+  Attachment,
+  DeliveredAttachment,
+  MediaState,
+} from "@relay/protocol";
 
 import {
   DEFAULT_LIMITS,
@@ -2414,10 +2418,17 @@ export interface MessageRow {
    * parse refuses at runtime, with no compiler anywhere in between. Required here means
    * every path that builds a row is named by `tsc` instead.
    *
-   * `Attachment[]` AND NOT `Attachment[] | null`, so the null lives only in the column.
-   * FR-007: a message with none is returned with an empty list rather than an absent or
-   * null field, and the `?? []` that makes that true belongs at the read, once. */
-  attachments: Attachment[];
+   * `DeliveredAttachment[]` AND NOT `Attachment[] | null`, so the null lives only in
+   * the column. FR-007: a message with none is returned with an empty list rather than
+   * an absent or null field, and the `?? []` that makes that true belongs at the read,
+   * once.
+   *
+   * **DELIVERED SINCE CHAPTER 4.14.** This interface is what a READ returns, and every
+   * read runs `withMediaStates` over it, so a media attachment on a row that reaches a
+   * caller always carries the state its object is in. A write path that builds one of
+   * these has to say the state too — which is the compiler naming the sites rather than
+   * a convention somebody has to remember. */
+  attachments: DeliveredAttachment[];
   created_at: string;
   /** When it was last edited, or `null` (FR-003). Optional on this
    * interface rather than required, because the WRITE paths build a row that has never
@@ -4301,7 +4312,11 @@ export class Repository {
       idempotencyKey?: string;
     },
   ): Promise<MessageRow> {
-    return this.db.transaction(async (tx) => {
+    // FR-MED-07: decorated AFTER the transaction commits. The media state is not
+    // part of this write and reading it on the transaction's own connection would
+    // tie one fact's freshness to another's commit. One extra statement.
+    return this.withMediaState(
+      await this.db.transaction(async (tx) => {
       // ONE PERIOD FOR THE WHOLE TRANSACTION, taken before anything is checked.
       // The cap check and the increment must agree about which month this is; a
       // send that checked August and incremented September would be refused
@@ -4757,7 +4772,8 @@ export class Repository {
         attachments: attachments ?? [],
         created_at: createdAt,
       };
-    });
+    }),
+    );
   }
 
   /** Change what a message says (FR-001, FR-002, FR-003, FR-004).
@@ -4796,7 +4812,11 @@ export class Repository {
       userId,
     }: { text: string; userId: string },
   ): Promise<EditedMessageRow> {
-    return this.db.transaction(async (tx) => {
+    // FR-MED-07: decorated AFTER the transaction commits. The media state is not
+    // part of this write and reading it on the transaction's own connection would
+    // tie one fact's freshness to another's commit. One extra statement.
+    return this.withMediaState(
+      await this.db.transaction(async (tx) => {
       // THE ROW AND ITS CHANNEL IN ONE READ, joined so the tenant scope and the
       // channel-membership of the message are the same question. `messageId` alone
       // would edit a message of any channel of any tenant that guessed a uuid.
@@ -4963,7 +4983,8 @@ export class Repository {
         edited_at: toIso(editedAt),
         prior_text: row.text,
       };
-    });
+    }),
+    );
   }
 
   /** Turn a message into a tombstone (FR-006, FR-006a, FR-009).
@@ -5626,7 +5647,10 @@ export class Repository {
         `idempotency key ${idempotencyKey} conflicted but its message is missing — index inconsistency`,
       );
     }
-    return {
+    // FR-MED-07: the same decoration every other read does. An idempotent retry gets
+    // the state the object is in NOW, not the state it was in when the first send
+    // committed — which is the point of reading it at serve time.
+    return this.withMediaState({
       ...row,
       // FR-007's `?? []`, AT THE READ. The column holds NULL for a message with no
       // attachments and `[]` is what a client gets, so exactly one place converts.
@@ -5634,7 +5658,7 @@ export class Repository {
       // `||` here is how a `0` or a `""` becomes a default somewhere else.
       attachments: row.attachments ?? [],
       created_at: toIso(row.created_at),
-    };
+    });
   }
 
   /** Does this channel resolve IN THIS TENANT? (chapter 2.8.)
@@ -5817,6 +5841,69 @@ export class Repository {
    * channel afterwards, so the predicate below is redundant for correctness — and without
    * it this is the only read in this file that would scan every tenant's rows. A query
    * whose safety depends on a later call is a query somebody will reuse without it. */
+  /** FR-MED-07's first sentence: an attachment is served with the state its object is
+   * in **right now**, not the state it was in when the message was sent.
+   *
+   * **TWO QUERIES PER PAGE AND NOT ONE PER ROW.** The obvious shape is a correlated
+   * subquery that decorates each row's jsonb, which is one lookup per message per
+   * attachment; 4.12 measured what that costs on the read path — 1,042 buffers against
+   * 84 — and the repair was to make the operand a value the planner already has. Here
+   * the whole page's media ids are collected first and fetched with one `= any(...)`
+   * against the primary key, scoped by environment. A fifty-message page costs one extra
+   * statement, whatever it attaches.
+   *
+   * **THE STATE IS NOT STORED ON THE MESSAGE, AND THAT IS FR-002 RATHER THAN A
+   * SHORTCUT.** `messages.attachments` holds what the sender declared. Writing a state
+   * into it would make every verdict a write across every referencing message and give
+   * one fact two homes, which is constitution IV.
+   *
+   * An id with no row — an object erased between the message being read and this
+   * query — is served as `pending`, because the alternative is dropping the attachment
+   * and a reader would see a message that never had it. FR-MED-10 destroys unreferenced
+   * objects, and a referenced one is not among them. */
+  private async withMediaStates<T extends { attachments: Attachment[] }>(
+    rows: T[],
+  ): Promise<(Omit<T, "attachments"> & { attachments: DeliveredAttachment[] })[]> {
+    const ids = [
+      ...new Set(
+        rows.flatMap((row) =>
+          row.attachments.filter((a) => a.type === "media").map((a) => a.media_id),
+        ),
+      ),
+    ];
+    const states = new Map<string, MediaState>();
+    if (ids.length > 0) {
+      const found = await this.db
+        .select({ id: mediaObjects.id, state: mediaObjects.state })
+        .from(mediaObjects)
+        .where(
+          and(
+            inArray(mediaObjects.id, ids),
+            // THE TENANT PREDICATE, on a lookup by primary key that does not need it to
+            // return the right rows — and constitution I is about the layer, not about
+            // whether a given query could get away without it.
+            eq(mediaObjects.environmentId, this.environmentId),
+          ),
+        );
+      for (const row of found) states.set(row.id, row.state as MediaState);
+    }
+    return rows.map((row) => ({
+      ...row,
+      attachments: row.attachments.map((a) =>
+        a.type === "media" ? { ...a, state: states.get(a.media_id) ?? "pending" } : a,
+      ),
+    }));
+  }
+
+  /** One row, same query, same rule. Named separately so a caller reads as what it is
+   * rather than as an array of one. */
+  private async withMediaState<T extends { attachments: Attachment[] }>(
+    row: T,
+  ): Promise<Omit<T, "attachments"> & { attachments: DeliveredAttachment[] }> {
+    const [decorated] = await this.withMediaStates([row]);
+    return decorated!;
+  }
+
   private async channelsReferencingMedia(mediaId: string): Promise<string[]> {
     const rows = await this.db
       .selectDistinct({ id: channels.id })
@@ -5972,7 +6059,12 @@ export class Repository {
           .where(scoped(gt(messages.sequence, afterSeq)))
           .orderBy(asc(messages.sequence))
           .limit(limit));
-    return rows.map((row) => ({
+    // FR-MED-07: the state each media attachment's object is in NOW, added after the
+    // page is read and in one query for the whole page (see `withMediaStates`). It is
+    // read here rather than stored on the message, so a message sent before a verdict
+    // reflects the verdict the next time anybody reads it.
+    return this.withMediaStates(
+      rows.map((row) => ({
       ...row,
       /** FR-007's `?? []`, IN THE MAP AND NOT IN THE CALLER.
        *
@@ -5987,7 +6079,8 @@ export class Repository {
       // key and a null one are the same value through `??` — the control test for this
       // field was green before the field existed because its first draft used `??`.
       edited_at: row.edited_at === null ? null : toIso(row.edited_at),
-    }));
+      })),
+    );
   }
 
   /** Resume backfill (chapter 2.7, FR-RTM-03): for each cursor, everything
