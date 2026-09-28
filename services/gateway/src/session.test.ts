@@ -6,7 +6,12 @@ import type { AddressInfo } from "node:net";
 
 import { createLogger, type Logger } from "@relay/service-kit";
 import { serve } from "@relay/service-kit";
-import { CLOSE_CODES, type Frame, type RevisionFabric } from "@relay/protocol";
+import {
+  channelOfRevision,
+  CLOSE_CODES,
+  type Frame,
+  type RevisionFabric,
+} from "@relay/protocol";
 
 import type { InternalSendResponse, Message } from "@relay/protocol";
 
@@ -160,8 +165,13 @@ function stubFanout(): Fanout & {
     // The same rule the message emitter honours: a revision published to a subject this
     // instance has not subscribed to does not arrive.
     emitRevision: (revision: RevisionFabric) => {
-      if (subjects.includes(revision.message.channel)) {
-        deliverRevision(revision.message.channel, revision);
+      // `channelOfRevision` FOR THE REASON PRODUCTION USES IT: not every arm carries a
+      // message. A harness that cannot route the media arm would leave every test
+      // downstream of it unable to exercise that path — and it would do so while
+      // staying green, which is worse than a red test.
+      const channel = channelOfRevision(revision);
+      if (subjects.includes(channel)) {
+        deliverRevision(channel, revision);
       }
     },
     subscribe: async (channelId) => {

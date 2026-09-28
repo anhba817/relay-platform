@@ -1,4 +1,6 @@
 import {
+  channelOfRevision,
+  logFieldsOfRevision,
   forwardedMessageSchema,
   subjectForChannel,
   subjectForChannelRevision,
@@ -105,7 +107,7 @@ export function createFanout({
         logger.log("error", "fanout.invalid_payload", { subject });
         return;
       }
-      deliverRevision(revision.data.message.channel, revision.data);
+      deliverRevision(channelOfRevision(revision.data), revision.data);
       return;
     }
     // The fabric is inside the trust boundary, and frames are STILL
@@ -142,7 +144,7 @@ export function createFanout({
     async publishRevision(revision) {
       try {
         await publisher.publish(
-          subjectForChannelRevision(revision.message.channel),
+          subjectForChannelRevision(channelOfRevision(revision)),
           JSON.stringify(revision),
         );
       } catch (error) {
@@ -150,7 +152,7 @@ export function createFanout({
         // committed, and a client that missed the frame repairs by re-reading history —
         // which is what the revisions chapter's resume decision rests on.
         logger.log("error", "fanout.publish_failed", {
-          channel: revision.message.channel,
+          ...logFieldsOfRevision(revision),
           error: String(error),
         });
       }

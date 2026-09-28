@@ -260,7 +260,10 @@ describe("fan-out across instances", () => {
 
     const [, revision] = await nextRevision(g2);
     expect(revision.kind).toBe("deleted");
-    expect(revision.message.seq).toBe(9);
+    // GUARDED, like the `updated` assertion above it. Before the media arm existed
+    // every arm had a message and the guard was optional; now it is what makes the
+    // assertion type-check, and asserting the kind first is what makes it meaningful.
+    expect(revision.kind === "deleted" && revision.message.seq).toBe(9);
     expect(g2.deliveries).toEqual([]);
     await g2.fanout.unsubscribe(CHANNEL);
   });
@@ -276,7 +279,7 @@ describe("fan-out across instances", () => {
     await g2.fanout.subscribe(own);
     await g1.fanout.publishRevision({ kind: "updated", message: messageOn(own, 10) });
     const [, revision] = await nextRevision(g2);
-    expect(revision.message.seq).toBe(10);
+    expect(revision.kind === "updated" && revision.message.seq).toBe(10);
 
     await g2.fanout.unsubscribe(own);
     await g1.fanout.publishRevision({ kind: "updated", message: messageOn(own, 11) });
@@ -310,7 +313,7 @@ describe("fan-out across instances", () => {
     // the schema and not a dead subscription.
     await raw.fanout.publishRevision({ kind: "updated", message: messageOn(CHANNEL, 14) });
     const [, good] = await nextRevision(g2);
-    expect(good.message.seq).toBe(14);
+    expect(good.kind === "updated" && good.message.seq).toBe(14);
     await raw.fanout.close();
     await g2.fanout.unsubscribe(CHANNEL);
   });

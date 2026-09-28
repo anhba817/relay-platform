@@ -395,12 +395,38 @@ export function attachSessions({
   function deliverRevision(channelId: string, revision: RevisionFabric): void {
     for (const connection of registry.subscribersOf(channelId)) {
       if (connection.phase === "buffering") continue;
-      send(
-        connection.socket,
-        revision.kind === "updated"
-          ? { type: "message.updated", payload: revision.message }
-          : { type: "message.deleted", payload: revision.message },
-      );
+      // A SWITCH AND NOT A TERNARY, because there are three arms now and the third is
+      // not a variant of the other two (chapter 4.14). A two-way conditional would have
+      // sent a media transition as `message.deleted`; the compiler stopped that only
+      // because the media arm has no `message` to read. The `never` below is what makes
+      // a FOURTH arm a type error here rather than a frame silently taking the last
+      // branch.
+      //
+      // `media.updated` IS ONE LETTER FROM `message.updated` AND THEY SIT ADJACENT ON
+      // PURPOSE. Both can describe the same message: an edit changes its text, this
+      // changes what one of its attachments resolves to.
+      switch (revision.kind) {
+        case "updated":
+          send(connection.socket, { type: "message.updated", payload: revision.message });
+          break;
+        case "deleted":
+          send(connection.socket, { type: "message.deleted", payload: revision.message });
+          break;
+        case "media":
+          send(connection.socket, {
+            type: "media.updated",
+            payload: {
+              media_id: revision.media_id,
+              channel: revision.channel,
+              state: revision.state,
+            },
+          });
+          break;
+        default: {
+          const unreachable: never = revision;
+          return unreachable;
+        }
+      }
     }
   }
   fanout?.onRevision(deliverRevision);

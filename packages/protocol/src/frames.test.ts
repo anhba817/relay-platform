@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { frameSchema, messageDeletedSchema, messageSchema, parseFrame } from "./frames.js";
+import {
+  frameSchema,
+  mediaUpdatedSchema,
+  messageDeletedSchema,
+  messageSchema,
+  parseFrame,
+} from "./frames.js";
 
 // The contract must bite: for every frame, one specimen that parses and a
 // table of malformed near-misses that MUST reject. A schema that accepts
@@ -264,8 +270,12 @@ describe("the deleted frame carries an identity and no text", () => {
 describe("the frame union's membership", () => {
   const members = frameSchema.options.map((o) => o.shape.type.value);
 
-  it("has eleven members", () => {
-    expect(members).toHaveLength(11);
+  // TWELVE SINCE CHAPTER 4.14, AND THIS TEST IS WHY THE COUNT IS WRITTEN DOWN. It went
+  // red on `media.updated` the moment the frame joined the union, which is the whole
+  // job of an accounting assertion: a frame added and not announced is a contract
+  // change nobody reviewed.
+  it("has twelve members", () => {
+    expect(members).toHaveLength(12);
   });
 
   it("names exactly two inbound frames, and both end in `.send`", () => {
@@ -287,5 +297,50 @@ describe("the frame union's membership", () => {
     expect(
       parseFrame({ type: "typing.send", payload: { channel: "c1" } }).success,
     ).toBe(true);
+  });
+});
+
+describe("media.updated, the frame that lets a placeholder resolve (4.14)", () => {
+  const MEDIA = "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21";
+  const CHANNEL = "6f1d2e3a-4b5c-4d6e-8f90-a1b2c3d4e5f6";
+  const frame = {
+    type: "media.updated",
+    payload: { media_id: MEDIA, channel: CHANNEL, state: "ready" },
+  } as const;
+
+  it("parses through the union every frame must belong to", () => {
+    expect(frameSchema.parse(frame)).toEqual(frame);
+  });
+
+  // NO `reason`. The cause of a rejection is a closed set of two, and putting it on a
+  // channel fabric tells every subscriber that a member's upload failed a virus scan.
+  // FR-MED-06's three refusals are byte-identical for the same reason.
+  it("refuses a rejection reason, which would be a fact about somebody else", () => {
+    expect(
+      mediaUpdatedSchema.safeParse({
+        type: "media.updated",
+        payload: { ...frame.payload, state: "rejected", reason: "scan_failed" },
+      }).success,
+    ).toBe(false);
+  });
+
+  // NO message id. One object can be attached by several messages in one channel, so
+  // naming one would be picking one of several and calling it the one.
+  it("refuses a message id", () => {
+    expect(
+      mediaUpdatedSchema.safeParse({
+        type: "media.updated",
+        payload: { ...frame.payload, message_id: MEDIA },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("refuses state pending, which is not a transition out of pending", () => {
+    expect(
+      mediaUpdatedSchema.safeParse({
+        type: "media.updated",
+        payload: { ...frame.payload, state: "pending" },
+      }).success,
+    ).toBe(false);
   });
 });

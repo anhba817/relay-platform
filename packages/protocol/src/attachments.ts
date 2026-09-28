@@ -103,6 +103,43 @@ const urlArm = z.strictObject({
  * vanishing. */
 export const attachmentSchema = z.discriminatedUnion("type", [urlArm, mediaArm]);
 
+/** FR-MED-07's first sentence: the three states a media object can be in, as the wire
+ * spells them. One declaration, because `0018`'s CHECK constraint and this enum are the
+ * same closed set seen from two sides and two spellings would be the `idem_key` against
+ * `idempotency_key` defect this file's own header names. */
+export const MEDIA_STATES = ["pending", "ready", "rejected"] as const;
+
+/** WHAT THE PLATFORM BUILDS, WHICH IS NOT WHAT A SENDER DECLARES (FR-MED-07).
+ *
+ * **One schema was serving both, and that is what made this chapter's first plan
+ * impossible.** `attachmentSchema` above is embedded by four things: three request doors
+ * — `messages.schema.ts:40`, `frames.ts:94` and `internal.ts:35` — and **`messageSchema`
+ * at `frames.ts:46`, which is the payload the api BUILDS**. A sender must not be able to
+ * declare a state; a delivered attachment must always carry one. Those are opposite
+ * requirements on one shape.
+ *
+ * **REQUIRED, NOT OPTIONAL, and `frames.ts:89` already wrote the argument for a
+ * different field**: *"a caller may send none, and a payload the platform BUILDS must
+ * always say."* Required is what makes the compiler name every construction site — which
+ * is how the set of doors was derived rather than listed, after a hand list of three
+ * turned out to be six.
+ *
+ * THE URL ARM IS UNCHANGED AND SHARED. A `url` attachment has no state to carry: nothing
+ * uploaded it, nothing scanned it, and FR-MED-03's verification never touches it. Giving
+ * it one for symmetry would be a field that is always the same value, which is a field
+ * a reader has to learn and can never use. */
+const deliveredMediaArm = mediaArm.extend({
+  state: z.enum(MEDIA_STATES),
+});
+
+export const deliveredAttachmentSchema = z.discriminatedUnion("type", [
+  urlArm,
+  deliveredMediaArm,
+]);
+
+export type DeliveredAttachment = z.infer<typeof deliveredAttachmentSchema>;
+export type MediaState = (typeof MEDIA_STATES)[number];
+
 /** THE SAME UNION FOR A READER THAT FORWARDS RATHER THAN JUDGES, and it is one export
  * because there were nearly four copies of it.
  *
@@ -136,6 +173,17 @@ export const attachmentSchema = z.discriminatedUnion("type", [urlArm, mediaArm])
  * with no `type` is still a refusal, so the reader can still tell an attachment from
  * garbage. */
 export const forwardedAttachmentSchema = z.union([
+  // DELIVERED FIRST, AND THE ORDER IS THE WHOLE OF THIS CHANGE. A delivered media
+  // attachment already parsed before this line existed — it fails `attachmentSchema`'s
+  // strict arm on the unknown `state` key and falls through to the loose one — so
+  // nothing was broken and nothing is fixed. What changes is the TYPE: matched by the
+  // loose arm a delivered value degrades to `{ type: string }`, and the escape hatch
+  // FR-018d put there for an arm nobody has written yet starts absorbing one we did.
+  deliveredAttachmentSchema,
+  // STILL SECOND, AND REMOVING IT WOULD BE THE EXPENSIVE MISTAKE. An envelope written
+  // by the binary that ran before this deploy carries a media attachment with no
+  // `state`, and this is the only arm that accepts it. The cost of getting that wrong
+  // is `message.term()` — destroyed after the send was acknowledged, never redelivered.
   attachmentSchema,
   z.looseObject({ type: z.string() }),
 ]);

@@ -50,6 +50,23 @@ export function isChannelRevisionSubject(subject: string): boolean {
 /** What crosses `revision:{channel_id}` between gateway instances. Consumed only by
  * gateways; each arm becomes the wire frame `frames.ts` already published.
  *
+ * **THE SUBJECT IS NAMED `revision:` AND CARRIES MORE THAN MESSAGE REVISIONS** (chapter
+ * 4.14). Its contract is *something changed about what this channel's messages show* —
+ * an edit, a deletion, or an attachment's media object reaching a terminal state. The
+ * name is narrower than the contents and it stays: renaming a subject is a wire change
+ * and a fence-chain change across every chapter that publishes this file. **A name that
+ * has quietly widened is worse than one that has widened on the record**, so this is the
+ * record.
+ *
+ * WHY THIS SUBJECT RATHER THAN A SIXTH GRAMMAR (ADR-33). ADR-19's rule is that a kind
+ * which cannot share a payload type cannot share a subject, and ADR-20 admitted two
+ * payload types onto one subject under a test this arm also passes: *a receiver
+ * subscribes to both or neither*. `fanout.ts` already subscribes `chan:` and `revision:`
+ * together under one reference count, calling them co-extensive by construction. And
+ * ADR-25's threshold is per-channel SUBSCRIBEs exceeding six: a sixth grammar would have
+ * sat exactly on the bound and spent the last of the headroom on a kind whose subscriber
+ * set is identical to one that already exists.
+ *
  * `discriminatedUnion`, so the two arms cannot be confused and an unknown `kind` is a
  * rejection rather than a silent pass. `strictObject` inside each arm for the reason
  * `membershipFabricSchema` gives: a field added on one side of a rolling deploy fails
@@ -66,6 +83,60 @@ export const revisionFabricSchema = z.discriminatedUnion("kind", [
   // socket untouched: a refusal there is `fanout.invalid_payload` and a dropped edit.
   z.strictObject({ kind: z.literal("updated"), message: forwardedMessageSchema }),
   z.strictObject({ kind: z.literal("deleted"), message: messageDeletedPayloadSchema }),
+  // THE THIRD ARM CARRIES NO MESSAGE, WHICH IS THE PART EVERY READER HAS TO LEARN
+  // (FR-MED-07). The other two are about a message; this one is about an OBJECT a
+  // message references, so its channel is a field rather than `message.channel`. Eight
+  // sites in production reached through `.message` for the subject, the routing key or
+  // a log field before this arm existed.
+  //
+  // `state` IS TWO VALUES AND NOT THREE. The frame announces a transition OUT of
+  // `pending`, so `pending` is a value the producer cannot emit; admitting it would be
+  // a state nothing can reach, which is the argument `0018` made for refusing a fourth
+  // value in the column.
+  //
+  // NO `reason`. A rejection's cause is a closed set of two and broadcasting it would
+  // tell every subscriber that a member's upload failed a virus scan. FR-MED-06's three
+  // refusals are already byte-identical for the same reason: a refusal that names its
+  // cause reports a fact about somebody else.
+  z.strictObject({
+    kind: z.literal("media"),
+    media_id: z.uuid(),
+    channel: z.string().min(1),
+    state: z.enum(["ready", "rejected"]),
+  }),
 ]);
 
 export type RevisionFabric = z.infer<typeof revisionFabricSchema>;
+
+/** THE CHANNEL A REVISION IS ABOUT, ASKED OF THE MODULE THAT OWNS THE GRAMMAR.
+ *
+ * Before chapter 4.14 every arm carried a `message` and eight sites in two services
+ * reached through `revision.message.channel` for the subject, the routing key or a log
+ * field. The media arm has no message, so each of those was a place that had to learn a
+ * third shape — and `REVISION_SUBJECT_PREFIX` is exported for exactly the reason this
+ * function now exists: *a literal there would be a second place that knows this
+ * grammar.* A per-arm `switch` repeated eight times is eight places that know it.
+ *
+ * The compiler keeps this honest: the `switch` is exhaustive over the union, so a fourth
+ * arm is a type error here rather than a subject somebody forgot to derive. */
+export function channelOfRevision(revision: RevisionFabric): string {
+  switch (revision.kind) {
+    case "updated":
+    case "deleted":
+      return revision.message.channel;
+    case "media":
+      return revision.channel;
+  }
+}
+
+/** What a log line can say about any arm, since only two of the three have a message id.
+ * `message_id` is absent rather than `undefined` for the media arm: a field that reads
+ * `undefined` looks like a value the code failed to compute, and one that is missing
+ * looks like what it is — inapplicable. */
+export function logFieldsOfRevision(
+  revision: RevisionFabric,
+): { channel: string; kind: string; message_id?: string } {
+  return revision.kind === "media"
+    ? { channel: revision.channel, kind: revision.kind }
+    : { channel: revision.message.channel, kind: revision.kind, message_id: revision.message.id };
+}

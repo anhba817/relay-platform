@@ -254,3 +254,39 @@ describe("the api's fan-out publisher", () => {
     expect(publishes).toHaveLength(1);
   });
 });
+
+describe("the media arm, which carries no message (4.14)", () => {
+  const mediaRevision = {
+    kind: "media",
+    media_id: "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21",
+    channel: "c1",
+    state: "ready",
+  } as const;
+
+  // THE SUBJECT COMES FROM THE ARM'S OWN CHANNEL FIELD. Before this chapter the
+  // publisher read `revision.message.channel`, which the media arm does not have —
+  // it would have published to `revision:undefined`, a subject nobody subscribes to,
+  // and `publishRevision` never rejects, so nothing would have said so.
+  it("publishes to the channel named on the arm itself", async () => {
+    const { logger } = sink();
+    await createMessagePublisher({ logger }).publishRevision(mediaRevision, context);
+    expect(publishes).toHaveLength(1);
+    expect(publishes[0]?.[0]).toBe("revision:c1");
+  });
+
+  // `publishRevision` NEVER REJECTS by contract, so a test that only checks the happy
+  // path cannot tell a published frame from a swallowed one. This asserts what the log
+  // says, and that a media arm logs no `message_id` rather than logging `undefined`.
+  it("logs without throwing when the broker is down, and omits message_id", async () => {
+    throwing = true;
+    const { lines, logger } = sink();
+    await expect(
+      createMessagePublisher({ logger }).publishRevision(mediaRevision, context),
+    ).resolves.toBeUndefined();
+    const failure = lines.find((l) => l["msg"] === "fanout.publish_failed");
+    expect(failure).toBeDefined();
+    expect(failure?.["channel"]).toBe("c1");
+    expect(failure?.["kind"]).toBe("media");
+    expect("message_id" in (failure ?? {})).toBe(false);
+  });
+});

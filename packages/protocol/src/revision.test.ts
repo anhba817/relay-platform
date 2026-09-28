@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   isChannelRevisionSubject,
+  channelOfRevision,
+  logFieldsOfRevision,
   revisionFabricSchema,
   subjectForChannelRevision,
 } from "./revision.js";
@@ -111,5 +113,60 @@ describe("the revision fabric payload", () => {
     expect(
       revisionFabricSchema.safeParse({ kind: "created", message }).success,
     ).toBe(false);
+  });
+});
+
+describe("the third arm: a transition of an object a message references (4.14)", () => {
+  const MEDIA = "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21";
+  const CHANNEL = "6f1d2e3a-4b5c-4d6e-8f90-a1b2c3d4e5f6";
+  const arm = { kind: "media", media_id: MEDIA, channel: CHANNEL, state: "ready" } as const;
+
+  it("parses, and its channel is a field rather than a message's", () => {
+    expect(revisionFabricSchema.parse(arm)).toEqual(arm);
+  });
+
+  // `pending` IS A STATE THE PRODUCER CANNOT EMIT. The frame announces a transition out
+  // of it, so admitting it would be a value nothing can reach — `0018`'s argument for
+  // refusing a fourth value in the column, applied to the wire.
+  it("refuses state pending, which no transition can announce", () => {
+    expect(revisionFabricSchema.safeParse({ ...arm, state: "pending" }).success).toBe(false);
+  });
+
+  it("refuses an unknown key, like both older arms", () => {
+    expect(
+      revisionFabricSchema.safeParse({ ...arm, reason: "scan_failed" }).success,
+    ).toBe(false);
+  });
+
+  it("refuses an unknown kind rather than guessing", () => {
+    expect(revisionFabricSchema.safeParse({ ...arm, kind: "media.v2" }).success).toBe(false);
+  });
+});
+
+describe("channelOfRevision answers for every arm (4.14)", () => {
+  const CHANNEL = "6f1d2e3a-4b5c-4d6e-8f90-a1b2c3d4e5f6";
+
+  // Eight production sites reached through `revision.message.channel` before the media
+  // arm existed. This is the one place that knows which field each arm keeps it in.
+  it("reads a media arm's own channel field", () => {
+    expect(
+      channelOfRevision({
+        kind: "media",
+        media_id: "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21",
+        channel: CHANNEL,
+        state: "rejected",
+      }),
+    ).toBe(CHANNEL);
+  });
+
+  it("omits message_id for a media arm rather than logging undefined", () => {
+    const fields = logFieldsOfRevision({
+      kind: "media",
+      media_id: "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21",
+      channel: CHANNEL,
+      state: "ready",
+    });
+    expect(fields).toEqual({ channel: CHANNEL, kind: "media" });
+    expect("message_id" in fields).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   attachmentSchema,
+  deliveredAttachmentSchema,
   forwardedAttachmentSchema,
   MAX_ATTACHMENTS,
   refineTextAndAttachments,
@@ -43,7 +44,14 @@ export const messageSchema = z.strictObject({
    *
    * FR-007: a message with none carries `[]` rather than an absent key,
    * so a reader needs no special case. `?? []` at the read sites, never `?? null`. */
-  attachments: z.array(attachmentSchema),
+  // DELIVERED, NOT DECLARED (FR-MED-07). This is the payload the api BUILDS, and it was
+  // sharing `attachmentSchema` with three request doors — `messages.schema.ts:40`,
+  // `messageSendSchema` below, and `internal.ts:35`. A sender must not be able to say
+  // what state an object is in; a delivered attachment must always say. One schema
+  // cannot hold both rules, and the state is read when the message is SERVED rather
+  // than stored on the row, so a message sent before a verdict reflects it afterwards
+  // without being rewritten (constitution IV: one home for one fact).
+  attachments: z.array(deliveredAttachmentSchema),
   created_at: z.iso.datetime(), // UTC, RFC 3339 (constitution: timestamps)
 });
 
@@ -192,6 +200,40 @@ export const messageDeletedSchema = z.strictObject({
   payload: messageDeletedPayloadSchema,
 });
 
+/** FR-MED-07's second sentence: a placeholder resolves without polling.
+ *
+ * **THE NAME IS `media.updated` AND THE COLLISION WAS WEIGHED, NOT MISSED.** It sits one
+ * letter from `message.updated`, and both can describe the same message: an edited
+ * message carrying a media attachment produces `message.updated` when its text changes
+ * and this frame when its object is verified. Three names were considered —
+ * `media.updated`, `attachment.updated` and `media.state_changed`. The clause says
+ * *"a `media.updated` event"* in as many words, and a frame named differently from the
+ * requirement that mandates it costs every future reader a lookup. The collision is
+ * mitigated where it actually bites, which is the `switch` in `session.ts`: the two
+ * arms sit adjacent with this sentence between them.
+ *
+ * **IT CARRIES NO MESSAGE ID, AND THAT IS NOT AN OMISSION.** One object can be attached
+ * by several messages in one channel — 44 objects on the development lane are referenced
+ * from two channels, and FR-MSG-11 has allowed the same id twice since chapter 3.24. The
+ * frame answers *this object changed*, and a client rendering per message finds its own
+ * by media id. Naming one message would be picking one of several and calling it the
+ * one.
+ *
+ * **AND IT IS AN OPTIMISATION OVER A FLOOR THAT DOES NOT NEED IT.** Every door already
+ * serves the attachment's state, read when the message is served. A client that never
+ * receives this frame — because it attached an object that was already terminal, because
+ * it was disconnected, or because an un-upgraded gateway dropped it during a deploy —
+ * reads the right state from history. The frame removes polling; it is not how the
+ * answer is known. */
+export const mediaUpdatedSchema = z.strictObject({
+  type: z.literal("media.updated"),
+  payload: z.strictObject({
+    media_id: z.uuid(),
+    channel: z.string().min(1),
+    state: z.enum(["ready", "rejected"]),
+  }),
+});
+
 export const membershipChangedSchema = z.strictObject({
   type: z.literal("membership.changed"),
   payload: z.strictObject({
@@ -277,6 +319,9 @@ export const frameSchema = z.discriminatedUnion("type", [
   messageCreatedSchema,
   messageUpdatedSchema,
   messageDeletedSchema,
+  // FR-MED-07. Adjacent to `messageUpdatedSchema` on purpose: the two are one letter
+  // apart and can describe the same message, so a reader meets them together.
+  mediaUpdatedSchema,
   membershipChangedSchema,
   presenceChangedSchema,
   typingSchema,
@@ -291,6 +336,7 @@ export type Message = z.infer<typeof messageSchema>;
  * needs a name of its own — otherwise every producer re-declares the shape inline and the
  * schema stops being the single statement of it. */
 export type MessageDeleted = z.infer<typeof messageDeletedPayloadSchema>;
+export type MediaUpdated = z.infer<typeof mediaUpdatedSchema>;
 export type ConnectionAck = z.infer<typeof connectionAckSchema>;
 export type MessageSend = z.infer<typeof messageSendSchema>;
 export type MessageAck = z.infer<typeof messageAckSchema>;

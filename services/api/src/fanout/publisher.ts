@@ -1,4 +1,6 @@
 import {
+  channelOfRevision,
+  logFieldsOfRevision,
   subjectForChannel,
   subjectForChannelRevision,
   type Message,
@@ -132,16 +134,17 @@ export function createMessagePublisher({
       if (now() < downUntil) return;
       try {
         await redis.publish(
-          subjectForChannelRevision(revision.message.channel),
+          // `channelOfRevision` AND NOT `revision.message.channel` (chapter 4.14). The
+          // media arm has no message, and the module that owns the grammar is the one
+          // that should answer which channel an arm is about.
+          subjectForChannelRevision(channelOfRevision(revision)),
           JSON.stringify(revision),
         );
         downUntil = 0;
       } catch (error) {
         downUntil = now() + DOWN_WINDOW_MS;
         logger.log("error", "fanout.publish_failed", {
-          channel: revision.message.channel,
-          message_id: revision.message.id,
-          kind: revision.kind,
+          ...logFieldsOfRevision(revision),
           request_id: context.requestId,
           environment_id: context.environmentId,
           error: String(error),

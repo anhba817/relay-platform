@@ -6,6 +6,7 @@ import {
   ATTACHMENT_URL_MAX,
   MAX_ATTACHMENTS,
   attachmentSchema,
+  deliveredAttachmentSchema,
   forwardedAttachmentSchema,
   refineTextAndAttachments,
 } from "./attachments.js";
@@ -206,5 +207,60 @@ describe("the text-and-attachments pair rule (FR-019, FR-019b)", () => {
       // path produces a refusal that names nothing.
       expect(result.error!.issues[0]!.path, JSON.stringify(value)).toEqual(["text"]);
     }
+  });
+});
+
+describe("the delivered attachment carries a state the sender cannot declare (4.14)", () => {
+  const ID = "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21";
+
+  // T010. THE STATE IS REQUIRED ON WHAT THE PLATFORM BUILDS. `frames.ts:89` wrote the
+  // argument for a different field: a caller may send none, and a payload the platform
+  // BUILDS must always say.
+  it.each(["pending", "ready", "rejected"] as const)("accepts state %s", (state) => {
+    const parsed = deliveredAttachmentSchema.parse({ type: "media", media_id: ID, state });
+    expect(parsed).toEqual({ type: "media", media_id: ID, state });
+  });
+
+  it("refuses a delivered media attachment with no state", () => {
+    expect(deliveredAttachmentSchema.safeParse({ type: "media", media_id: ID }).success).toBe(
+      false,
+    );
+  });
+
+  it("refuses a fourth state, which the column's CHECK also refuses", () => {
+    expect(
+      deliveredAttachmentSchema.safeParse({ type: "media", media_id: ID, state: "scanning" })
+        .success,
+    ).toBe(false);
+  });
+
+  // The url arm has nothing to carry a state about: nothing uploaded it and nothing
+  // scanned it. Shared with `attachmentSchema` rather than duplicated.
+  it("leaves the url arm alone", () => {
+    const url = { type: "url", kind: "image", url: "https://example.test/a.png" } as const;
+    expect(deliveredAttachmentSchema.parse(url)).toEqual(url);
+  });
+
+  // T011. ALL THREE REQUEST DOORS SHARE `attachmentSchema`, so one assertion covers
+  // `messages.schema.ts:40`, `messageSendSchema` and `internal.ts:35`. No refusal is
+  // written here — `strictObject` already refuses the key — and this pins it against a
+  // future widening that would let a caller name a state the platform decides.
+  it("the REQUEST shape refuses a state, which is what the three send doors share", () => {
+    const result = attachmentSchema.safeParse({ type: "media", media_id: ID, state: "ready" });
+    expect(result.success).toBe(false);
+    expect(result.success === false && result.error.issues[0]?.message).toContain("state");
+  });
+
+  // T011a. THE ROLLING-DEPLOY CASE, AND THE EXPENSIVE ONE TO GET WRONG. An envelope
+  // written by the previous binary has no `state`; a reader that required one would
+  // answer `message.term()` — destroyed after the send was acknowledged.
+  it("the FORWARDING shape still parses an envelope written before this chapter", () => {
+    const old = { type: "media", media_id: ID };
+    expect(forwardedAttachmentSchema.parse(old)).toEqual(old);
+  });
+
+  it("the forwarding shape keeps the state rather than degrading to the loose arm", () => {
+    const now = { type: "media", media_id: ID, state: "ready" };
+    expect(forwardedAttachmentSchema.parse(now)).toEqual(now);
   });
 });
