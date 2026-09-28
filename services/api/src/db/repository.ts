@@ -554,6 +554,7 @@ export async function pendingMediaObjects(
     .select({
       id: mediaObjects.id,
       objectKey: mediaObjects.objectKey,
+      environmentId: mediaObjects.environmentId,
       mimeType: mediaObjects.mimeType,
       declaredBytes: mediaObjects.declaredBytes,
       createdAt: mediaObjects.createdAt,
@@ -604,6 +605,44 @@ export async function pendingMediaObjects(
  *
  * AND THE WORKER NEVER TOUCHES POSTGRES (ADR-04) — this runs inside the api, called by a
  * route on the internal seam, exactly as `creditConnectionMinutes` is. */
+/** THE CHANNELS A MEDIA OBJECT IS REFERENCED FROM, for a caller that has no repository.
+ *
+ * **A MODULE-LEVEL SIBLING OF `recordMediaVerdict`, AND THE SCOPE IS AN ARGUMENT RATHER
+ * THAN A CONSTRUCTOR.** `Repository.channelsReferencingMedia` is the delivery gate's,
+ * and it takes its tenant from `this.environmentId` — which the verdict seam does not
+ * have, because its caller is a worker. The query body is the same one, deliberately:
+ * 4.12 built and tested it, and a second lookup written for this path would drift from
+ * the one that decides who may read the bytes.
+ *
+ * **THE PREDICATE IS NOT OPTIONAL EVEN THOUGH THE LOOKUP WOULD WORK WITHOUT IT.**
+ * `media_id` is a primary key, so an unscoped query returns exactly these rows. It would
+ * also be a read of a shared table with no tenant predicate, which constitution I
+ * forbids in the data-access layer and which `check-lane-scope.py` exists to find. The
+ * environment travels out of the verdict's own `RETURNING` list so this can be asked
+ * properly.
+ *
+ * The containment operand is built here as a bound value rather than in SQL from a
+ * joined column — 4.12 measured the difference at 1,042 buffers against 84. */
+export async function channelsReferencingMediaIn(
+  db: Db,
+  environmentId: string,
+  mediaId: string,
+): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ id: channels.id })
+    .from(messages)
+    .innerJoin(channels, eq(channels.id, messages.channelId))
+    .where(
+      and(
+        sql`${messages.attachments} @> ${JSON.stringify([
+          { type: "media", media_id: mediaId },
+        ])}::jsonb`,
+        eq(channels.environmentId, environmentId),
+      ),
+    );
+  return rows.map((row) => row.id);
+}
+
 export async function recordMediaVerdict(
   db: Db,
   input: {
@@ -616,7 +655,23 @@ export async function recordMediaVerdict(
     durationMs?: number;
     reason?: "declaration_mismatch" | "scan_failed";
   },
-): Promise<{ applied: boolean; state: string | null; objectKey: string | null }> {
+): Promise<{
+  applied: boolean;
+  state: string | null;
+  objectKey: string | null;
+  /** THE TENANT, BECAUSE THIS FUNCTION IS THE ONLY PLACE THAT KNOWS IT (chapter 4.14).
+   *
+   * This is a module-level function on a raw `Db`, deliberately outside the
+   * tenant-scoped repository, because its caller is a worker rather than a tenant — and
+   * the worker's principal carries `environmentId: undefined` by design (4.4). FR-MED-07
+   * needs the transition announced on every channel referencing the object, and that
+   * lookup is scoped by environment. Without this value the caller's only options are a
+   * second read that can disagree with the compare-and-set, or an unscoped query, which
+   * is constitution I in the data-access layer.
+   *
+   * `null` only when no such object exists, which the caller answers with a 404. */
+  environmentId: string | null;
+}> {
   const [updated] = await db
     .update(mediaObjects)
     .set({
@@ -636,22 +691,35 @@ export async function recordMediaVerdict(
       // separately would open a window in which the row moved between the two
       // statements and the delete addressed somebody else's object.
       objectKey: mediaObjects.objectKey,
+      // AND THE TENANT, for the same reason: the fan-out FR-MED-07 needs is scoped by
+      // environment, and this statement is the only one that knows which.
+      environmentId: mediaObjects.environmentId,
     });
 
   if (updated)
-    return { applied: true, state: updated.state, objectKey: updated.objectKey };
+    return {
+      applied: true,
+      state: updated.state,
+      objectKey: updated.objectKey,
+      environmentId: updated.environmentId,
+    };
 
   // NOT `pending`: either somebody got there first, or the object does not exist. The
   // caller needs to tell those apart, so the current state comes back rather than a
   // bare false.
   const [row] = await db
-    .select({ state: mediaObjects.state, objectKey: mediaObjects.objectKey })
+    .select({
+      state: mediaObjects.state,
+      objectKey: mediaObjects.objectKey,
+      environmentId: mediaObjects.environmentId,
+    })
     .from(mediaObjects)
     .where(eq(mediaObjects.id, input.id));
   return {
     applied: false,
     state: row?.state ?? null,
     objectKey: row?.objectKey ?? null,
+    environmentId: row?.environmentId ?? null,
   };
 }
 
@@ -5905,22 +5973,11 @@ export class Repository {
   }
 
   private async channelsReferencingMedia(mediaId: string): Promise<string[]> {
-    const rows = await this.db
-      .selectDistinct({ id: channels.id })
-      .from(messages)
-      .innerJoin(channels, eq(channels.id, messages.channelId))
-      .where(
-        and(
-          // THE OPERAND IS A BOUND VALUE, WHICH IS WHAT THE INDEX NEEDS. Built here
-          // rather than in SQL from a joined column: `jsonb_build_array(...)` over
-          // `o.id` is an expression the planner cannot look up.
-          sql`${messages.attachments} @> ${JSON.stringify([
-            { type: "media", media_id: mediaId },
-          ])}::jsonb`,
-          eq(channels.environmentId, this.environmentId),
-        ),
-      );
-    return rows.map((row) => row.id);
+    // ONE QUERY BODY, TWO CALLERS (chapter 4.14). The verdict seam has no repository to
+    // call this on, so the statement moved to a module-level function that takes the
+    // scope as an argument. Delegating rather than repeating is what keeps the delivery
+    // gate and the fan-out asking the same question of the same predicate.
+    return channelsReferencingMediaIn(this.db, this.environmentId, mediaId);
   }
 
   async channelExists(channelId: string): Promise<boolean> {

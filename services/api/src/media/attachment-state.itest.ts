@@ -35,7 +35,6 @@ describe("an attachment is served with the state its object is in now", () => {
   let key: { credential: string };
   let repo: Repository;
   let channelId: string;
-  let botId: string;
   const store = storeConfig();
 
   const slot = async (): Promise<string> => {
@@ -90,17 +89,12 @@ describe("an attachment is served with the state its object is in now", () => {
     env = await createEnvironment(db, { name: "attachment-state-itest" });
     key = await createApiKey(db, { environmentId: env.id });
     repo = new Repository(db, env.id);
-    const bot = await repo.upsertUser("state-bot", {
+    await repo.upsertUser("state-bot", {
       display_name: "State Bot",
       kind: "bot",
       description: "reads attachment states in an integration test",
     });
-    // THE ROW ID, NOT THE EXTERNAL ID. `editMessage` compares against
-    // `messages.user_id`, which is a uuid; passing "state-bot" answers
-    // NotMessageAuthorError — a fixture failing for the platform's reason, which
-    // attach.itest.ts hit twice in its own setup and wrote down both times.
-    botId = bot.id;
-    void botId;
+
     const channel = await repo.createChannel("states", "public");
     channelId = channel.id;
 

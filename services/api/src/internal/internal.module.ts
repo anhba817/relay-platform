@@ -1,9 +1,21 @@
-import { Module, Scope } from "@nestjs/common";
+import {
+  Inject,
+  Injectable,
+  Module,
+  type OnModuleDestroy,
+  Scope,
+} from "@nestjs/common";
 
 import { MessagesModule } from "../messages/messages.module";
 import { AuthModule } from "../auth/auth.module";
 import { createDb, createPool, type Db } from "../db/client";
+import {
+  createMessagePublisher,
+  MESSAGE_PUBLISHER,
+  type MessagePublisher,
+} from "../fanout/publisher";
 import { LOGGER, apiLogger } from "../logger";
+import type { Logger } from "@relay/service-kit";
 import {
   createJetStreamPublisher,
   ensureAnalyticsStream,
@@ -29,6 +41,22 @@ import { UsageController } from "./usage.controller";
 // so this module declares its own — the same DEFAULT-scoped factory every other
 // module here uses, and a smaller change than widening 2.2's exports for a
 // reason 2.2 has nothing to do with.
+/** Closes the publisher this module declares. `MessagesModule` has its twin, and the
+ * two are separate clients on purpose: sharing one would mean exporting a token that
+ * module withholds, and `ANALYTICS_PUBLISHER` already set the precedent for a second
+ * client in this process — argued rather than assumed. The cost is one more Redis
+ * connection per api instance. */
+@Injectable()
+export class InternalMessagePublisherLifecycle implements OnModuleDestroy {
+  constructor(
+    @Inject(MESSAGE_PUBLISHER) private readonly publisher: MessagePublisher,
+  ) {}
+
+  async onModuleDestroy(): Promise<void> {
+    await this.publisher.close();
+  }
+}
+
 @Module({
   imports: [MessagesModule, AuthModule],
   controllers: [
@@ -75,6 +103,30 @@ import { UsageController } from "./usage.controller";
       useFactory: apiLogger,
       scope: Scope.DEFAULT,
     },
+    // FR-MED-07's producer needs a fabric, and this module had no way to reach one.
+    //
+    // `MessagesModule` declares `MESSAGE_PUBLISHER` and **deliberately does not export
+    // it** — its own comment says so — so importing that module gives the controllers
+    // here nothing to inject. Same reason `LOGGER` and `ANALYTICS_PUBLISHER` are
+    // redeclared above: a provider is visible to the module that declares it and to
+    // nothing it imports.
+    //
+    // **WITHOUT THIS THE FAILURE IS A RUNTIME ONE.** `Nest can't resolve dependencies of
+    // the MediaVerificationController` on the first request, after lint, typecheck and
+    // every unit test pass — which is exactly what chapter 4.10 recorded when
+    // `MediaModule` declared a service it did not provide: *"Only a running app asks
+    // that question."* `media-verdict.itest.ts` is the test that asks it.
+    {
+      provide: MESSAGE_PUBLISHER,
+      inject: [LOGGER],
+      useFactory: (logger: Logger): MessagePublisher =>
+        createMessagePublisher({ logger }),
+      scope: Scope.DEFAULT,
+    },
+    // AND SOMETHING HAS TO CLOSE IT. `MessagesModule` pairs its publisher with a
+    // lifecycle for the same reason; a second client with no `OnModuleDestroy` leaks its
+    // connection on shutdown, and the api is a process that gets restarted.
+    InternalMessagePublisherLifecycle,
   ],
 })
 export class InternalModule {}

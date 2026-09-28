@@ -22,8 +22,16 @@ import type { Logger } from "@relay/service-kit";
 
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
 import type { Db } from "../db/client";
-import { pendingMediaObjects, recordMediaVerdict } from "../db/repository";
+import {
+  channelsReferencingMediaIn,
+  pendingMediaObjects,
+  recordMediaVerdict,
+} from "../db/repository";
 import { LOGGER } from "../logger";
+import {
+  MESSAGE_PUBLISHER,
+  type MessagePublisher,
+} from "../fanout/publisher";
 import { deleteObject, storeConfig } from "../media/store";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
 import { protocolError } from "../protocol-error";
@@ -56,6 +64,10 @@ export class MediaVerificationController {
   constructor(
     @Inject("DB") private readonly db: Db,
     @Inject(LOGGER) private readonly logger: Logger,
+    // FR-MED-07's producer. `InternalModule` declares its own — `MessagesModule`
+    // withholds this token — and without that declaration this line is a runtime
+    // failure on the first request that lint and typecheck both pass.
+    @Inject(MESSAGE_PUBLISHER) private readonly publisher: MessagePublisher,
   ) {}
 
   /** `GET /internal/media/pending` — the sweep's batch.
@@ -183,9 +195,61 @@ export class MediaVerificationController {
       }
     }
 
+    // FR-MED-07's SECOND SENTENCE, AND IT HANGS OFF `applied` RATHER THAN OFF THE
+    // REQUEST. The compare-and-set already distinguishes *a transition happened* from
+    // *a verdict arrived*: a stale worker's second verdict updates no rows, answers
+    // `applied: false`, and must announce nothing. A producer keyed on the request
+    // would tell every subscriber twice.
+    //
+    // **AFTER `deleteObject`, WHICH IS A CHOICE AND NOT AN ACCIDENT.** For a rejection
+    // the bytes are destroyed above; publishing first would announce `rejected` while
+    // they still exist. Neither order is observable to a client — FR-MED-08's gate
+    // reads the state and not the store, so a `rejected` object is unreadable either
+    // way — so the tie is broken by saying the true thing later rather than the
+    // convenient thing sooner. The cost is one store round trip on the worker's
+    // request, on the rejection path only.
+    //
+    // AND THERE IS NO TRANSACTION TO BE INSIDE OF. `recordMediaVerdict` is an
+    // `UPDATE … RETURNING` and, when nothing applies, a follow-up `SELECT`; this
+    // controller manages none. A crash between the update and the publish loses one
+    // frame, and the floor repairs it: every door already serves the state, so the
+    // client learns it on the next read. That is the same shape 4.13 recorded for the
+    // upload sweep — the mechanism is the state, the frame is the optimisation.
+    if (result.applied && result.environmentId !== null) {
+      await this.announce(result.environmentId, mediaId, result.state);
+    }
+
     return {
       applied: result.applied,
       state: result.state as InternalMediaVerdictResponse["state"],
     };
+  }
+
+  /** One frame per channel holding a message that references this object.
+   *
+   * **AN EMPTY LIST IS SUCCESS, AND IT IS THE COMMON CASE.** 4,725 of the development
+   * lane's 5,403 media objects are referenced by nothing — slots taken and never used.
+   * FR-006: publish nothing, fail nothing.
+   *
+   * **PER CHANNEL AND NOT PER MESSAGE.** `channelsReferencingMediaIn` is
+   * `selectDistinct` over channels, so two messages in one channel attaching one object
+   * produce one frame. A client rendering per message finds its own by media id; the
+   * frame answers *this object changed*.
+   *
+   * **AND IT NEVER THROWS**, which is `publishRevision`'s own contract: the row is
+   * committed and the worker's verdict must not fail because a fabric is down. */
+  private async announce(
+    environmentId: string,
+    mediaId: string,
+    state: string | null,
+  ): Promise<void> {
+    if (state !== "ready" && state !== "rejected") return;
+    const channels = await channelsReferencingMediaIn(this.db, environmentId, mediaId);
+    for (const channel of channels) {
+      await this.publisher.publishRevision(
+        { kind: "media", media_id: mediaId, channel, state },
+        { requestId: "media-verdict", environmentId },
+      );
+    }
   }
 }
