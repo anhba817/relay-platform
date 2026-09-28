@@ -318,6 +318,33 @@ describe("fan-out across instances", () => {
     await g2.fanout.unsubscribe(CHANNEL);
   });
 
+  // CHAPTER 4.14, AND THE ONE THING NEITHER OTHER SUITE CAN SHOW. The api's
+  // `media-updated.itest.ts` proves the producer publishes; `session.test.ts` proves a
+  // gateway routes the arm to a subscribed socket, against a STUB fabric. Only two real
+  // clients over real Redis prove the arm survives the wire — and this is the arm that
+  // carries no `message`, so every site deriving a subject or a routing key from
+  // `revision.message.channel` had to learn a third shape.
+  it("carries a media transition to the other instance, routed by its own channel", async () => {
+    await g1.fanout.publishRevision({
+      kind: "media",
+      media_id: "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21",
+      channel: CHANNEL,
+      state: "ready",
+    });
+
+    const [channelId, revision] = await nextRevision(g2);
+    // THE CHANNEL THE ROUTER CHOSE. Before this arm existed the router read
+    // `revision.data.message.channel` — a field this arm does not have, and the
+    // failure would have been a subject of `revision:undefined` that nobody subscribes
+    // to, published by a function whose contract is never to reject.
+    expect(channelId).toBe(CHANNEL);
+    expect(revision.kind).toBe("media");
+    expect(revision.kind === "media" && revision.media_id).toBe(
+      "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21",
+    );
+    expect(revision.kind === "media" && revision.state).toBe("ready");
+  });
+
   // THE SUBJECT GRAMMAR'S TEST MOVED IN THE FAN-OUT CHAPTER, to
   // `packages/protocol/src/fanout.test.ts`, along with `subjectFor` itself. It
   // was a pure string assertion sitting in a suite that needs a running Redis;
