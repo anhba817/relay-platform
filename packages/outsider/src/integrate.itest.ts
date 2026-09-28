@@ -498,9 +498,20 @@ describe("integrating with Relay from the outside", () => {
 
     // BOTH ARMS, IN ORDER, ON THE SOCKET. The url arm proves nothing new; what it does is
     // hold the order claim, which one attachment cannot show.
+    //
+    // AND THE MEDIA ARM CARRIES ITS STATE SINCE CHAPTER 4.14 — **the fifth assertion of
+    // this shape and the only one no local lane reaches.** `pnpm test`,
+    // `pnpm test:integration` and `pnpm coverage` all skip this suite: it needs a
+    // composed stack and three environment variables, so CI's sealed job and a
+    // hand-run are the only things that execute it. The other four were found by the
+    // api lane and the coverage lane; this one was found by CI.
+    //
+    // `pending` is right and is not a race. The object was uploaded but nothing has
+    // verified it — this suite runs no media worker, which is what makes the value
+    // stable rather than timing-dependent.
     expect(delivered.payload.attachments).toEqual([
       { type: "url", kind: "image", url: "https://example.test/outside-url.png" },
-      { type: "media", media_id: mediaId },
+      { type: "media", media_id: mediaId, state: "pending" },
     ]);
     socket.close();
 

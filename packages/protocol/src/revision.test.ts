@@ -70,7 +70,11 @@ describe("the revision subject (ADR-24)", () => {
 describe("the revision fabric payload", () => {
   it("takes an edit as a whole message", () => {
     const parsed = revisionFabricSchema.parse({ kind: "updated", message });
-    expect(parsed.kind).toBe("updated");
+    // NARROWED BEFORE READING `message`, because chapter 4.14's third arm does not have
+    // one. `expect(parsed.kind)` alone does not narrow for the compiler, and `pnpm
+    // build` never said so: `tsconfig.build.json` excludes tests, so only
+    // `pnpm typecheck` reaches this file.
+    if (parsed.kind !== "updated") throw new Error("expected the updated arm");
     expect(Object.keys(parsed.message).sort()).toEqual([
       "attachments",
       "channel",
@@ -84,7 +88,7 @@ describe("the revision fabric payload", () => {
 
   it("takes a deletion as an identity with no text", () => {
     const parsed = revisionFabricSchema.parse({ kind: "deleted", message: tombstone });
-    expect(parsed.kind).toBe("deleted");
+    if (parsed.kind !== "deleted") throw new Error("expected the deleted arm");
     expect(Object.keys(parsed.message).sort()).toEqual([
       "channel",
       "deleted_at",
