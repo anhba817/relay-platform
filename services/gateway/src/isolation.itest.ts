@@ -767,6 +767,16 @@ const DIRECTIONS: ReadonlyArray<readonly [string, "inbound" | "outbound", string
   // an inbound frame's sample and the case would be dead code a task required.
   // Said here because the next reader adding an inbound type will wonder.
   ["typing.send", "inbound", "this chapter: a client may say it is typing (session.ts)"],
+  // CHAPTER 4.14, AND THE FOURTH PLACE THIS REPOSITORY COUNTS FRAMES. The other three
+  // are the protocol union's own length, the gateway's advertised vocabulary, and the
+  // "classified exactly once" check below. All four fired on `media.updated`, which is
+  // what an accounting assertion is for: a frame added and not announced is a contract
+  // change nobody reviewed.
+  //
+  // OUTBOUND, and the reason is the same one `message.created` has: the server decides
+  // that an object's state changed, and it decides who is told. A client uttering this
+  // would be claiming a verdict it did not reach about bytes it never read.
+  ["media.updated", "outbound", "a verdict the server reached; a client claiming one would forge it"],
   ["error", "outbound", "the server's refusal shape"],
 ];
 
@@ -787,6 +797,14 @@ function sample(type: string, channel: string, user: string): unknown {
     created_at: new Date().toISOString(),
   };
   switch (type) {
+    // 4.14. A forged `media.updated` must be WELL-FORMED so its refusal is
+    // `unknown_frame_type` and not `invalid_frame` — the loop above exists to test the
+    // direction check, and a malformed sample would be refused a phase earlier.
+    case "media.updated":
+      return {
+        type,
+        payload: { media_id: randomUUID(), channel, state: "ready" },
+      };
     case "connection.ack":
       // AND `revisions` FOR THE SAME REASON, ONE FIELD LATER. This chapter made it
       // required on the ack, so this sample stopped satisfying `connectionAckSchema`
@@ -856,11 +874,12 @@ describe("every frame in the union is classified, in both directions", () => {
     (option) => (option.shape.type as { value: string }).value,
   );
 
-  it("derives all eleven members from the union itself", () => {
-    // ELEVEN with this chapter's `typing.send`. **The title carries the number
-    // too**, and updating the assertion without the title is how the presence
-    // chapter shipped a good test under a false name.
-    expect(members.length).toBe(11);
+  it("derives all twelve members from the union itself", () => {
+    // TWELVE with chapter 4.14's `media.updated`; eleven with the typing chapter's
+    // `typing.send`. **The title carries the number too**, and updating the assertion
+    // without the title is how the presence chapter shipped a good test under a false
+    // name — so both moved here.
+    expect(members.length).toBe(12);
   });
 
   it("classifies every member exactly once", () => {

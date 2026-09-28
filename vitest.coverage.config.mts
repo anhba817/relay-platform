@@ -532,8 +532,21 @@ export default defineConfig({
           // arms this file has are the 404, the 422, the byte deletion and its log.
           branches: 83,
           functions: 100,
-          lines: 93,
-          statements: 93,
+          // 92 AND 92, FROM 93 AND 93, AND THE REASON IS A STATEMENT NO TEST CAN REACH
+          // (chapter 4.14). The file gained `announce`, and one of its statements is a
+          // `ready`/`rejected` guard that is unreachable: it runs only when the
+          // compare-and-set applied, and one that applied set the state to the verdict.
+          // The per-arm probe established that by deleting it and watching nothing turn
+          // red; it stays because it is what narrows `string | null` for the compiler.
+          //
+          // **This is not the branch pin's problem two lines up.** That one is a
+          // denominator that differs between this machine and CI (059-20) — two
+          // figures that are not samples of one quantity. This is one figure, measured
+          // the same everywhere, with an uncoverable statement in it. 059-22's rule:
+          // ask what the number is measuring before you move it, because both present
+          // as a red pin.
+          lines: 92,
+          statements: 92,
         },
 
         "services/dispatcher/src/expand.ts": {

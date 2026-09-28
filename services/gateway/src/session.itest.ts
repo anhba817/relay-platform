@@ -1290,6 +1290,20 @@ describe("the socket's delivery, with a fan-out attached", () => {
       created_at: new Date().toISOString(),
     };
     switch (type) {
+      // 4.14, AND THE THIRD TIME THIS FILE HAS PAID THE SAME BILL. The comment on
+      // `connection.ack` below records the second: a field added to a frame makes the
+      // forged sample malformed, and the loop then asserts `invalid_frame` — the
+      // refusal a phase BEFORE the direction check it exists for. A new frame does it
+      // too, by having no case at all.
+      case "media.updated":
+        return {
+          type,
+          payload: {
+            media_id: "b61bfdfb-b42e-4e95-a1ed-2bedd3a4ed21",
+            channel,
+            state: "ready",
+          },
+        };
       case "connection.ack":
       // AND `revisions` FOR THE SAME REASON, ONE FIELD LATER. This chapter made it
       // required on the ack, so the sample above stopped satisfying
@@ -1421,7 +1435,13 @@ describe("the socket's delivery, with a fan-out attached", () => {
       .map((option) => (option.shape.type as { value: string }).value)
       .filter((type) => type !== "message.send" && type !== "typing.send");
 
-    expect(outbound).toHaveLength(9);
+    // TEN SINCE CHAPTER 4.14's `media.updated`. **The FIFTH place this repository
+    // counts frames**, after the protocol union's own length, the gateway's advertised
+    // vocabulary, `isolation.itest.ts`'s derived count and its classified-exactly-once
+    // check. Every one of the five fired on this chapter, which is the argument for
+    // having them: a server-to-client frame added without a direction is one a client
+    // could forge.
+    expect(outbound).toHaveLength(10);
 
     for (const type of outbound) {
       const socket = connect(await mintToken());

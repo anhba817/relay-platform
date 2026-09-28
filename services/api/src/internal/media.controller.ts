@@ -243,6 +243,18 @@ export class MediaVerificationController {
     mediaId: string,
     state: string | null,
   ): Promise<void> {
+    // **THIS GUARD IS UNREACHABLE AT RUNTIME AND LOAD-BEARING AT COMPILE TIME**, and
+    // the per-arm probe is what established the difference: deleting it turns nothing
+    // red across the whole suite. It cannot fire, because `announce` is called only
+    // when the compare-and-set applied, and a compare-and-set that applied set the
+    // state to the verdict — which is `ready` or `rejected` and nothing else.
+    //
+    // It stays because `state` arrives typed `string | null` and this is what narrows
+    // it to the two values the fabric arm accepts. Deleting it would need a cast, and a
+    // cast is a claim the compiler stops checking. **4.11 found an early return that
+    // was an optimisation wearing a branch's clothes; this is the other kind — a type
+    // narrowing wearing a runtime guard's clothes**, and saying which it is costs three
+    // lines and stops somebody later reading its coverage as a gap.
     if (state !== "ready" && state !== "rejected") return;
     const channels = await channelsReferencingMediaIn(this.db, environmentId, mediaId);
     for (const channel of channels) {
