@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   bucketPresent,
+  getObject,
   headObject,
+  putObject,
   sign,
   storeConfigFromEnv,
   type StoreConfig,
@@ -147,5 +149,78 @@ describe("the bucket probe", () => {
   it("is true for a 200", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
     expect(await bucketPresent(store)).toBe(true);
+  });
+});
+
+// THE FOURTH READER AND THE FIRST WRITER (chapter 4.15).
+//
+// This service had four readers and no writer until FR-MED-05 needed one. `getObject`
+// is the only call that holds a whole object: `streamObject` hands the scanner 64 KiB at
+// a time because the largest allowed object is 100 MB, and a rendition cannot be made
+// from a stream that has already been consumed.
+describe("fetching a whole object to render", () => {
+  const respond = (status: number, body?: BodyInit, headers: HeadersInit = {}) =>
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body ?? null, { status, headers })));
+
+  it("returns the bytes", async () => {
+    respond(200, new Uint8Array([1, 2, 3, 4]), { "content-length": "4" });
+    const out = await getObject(store, "k/1", 1024);
+    expect(out).toEqual(new Uint8Array([1, 2, 3, 4]));
+  });
+
+  it("answers null for a 404, the same absence headObject gives", async () => {
+    respond(404);
+    expect(await getObject(store, "k/1", 1024)).toBeNull();
+  });
+
+  it("throws on any other refusal rather than returning empty bytes", async () => {
+    respond(503);
+    await expect(getObject(store, "k/1", 1024)).rejects.toThrow("503");
+  });
+
+  it("refuses an object larger than the caller will hold", async () => {
+    // NOT DEFENSIVENESS — the 1.4x RSS ratio applied. The caller is the image path,
+    // where FR-MED-02 caps an object at 10 MB, so a `content-length` above the cap means
+    // the row and the store disagree and buffering it would spend memory on a number
+    // this function could have read first.
+    respond(200, new Uint8Array(8), { "content-length": "99999999" });
+    await expect(getObject(store, "k/1", 1024)).rejects.toThrow("exceeds");
+  });
+});
+
+describe("writing a rendition to the store", () => {
+  it("PUTs the bytes and reports success", async () => {
+    const seen: { method?: string; type?: string | null }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        seen.push({
+          method: init.method,
+          type: new Headers(init.headers).get("content-type"),
+        });
+        return new Response(null, { status: 200 });
+      }),
+    );
+    expect(await putObject(store, "k/thumb", new Uint8Array([1, 2]), "image/webp")).toBe(true);
+    expect(seen[0]!.method).toBe("PUT");
+    expect(seen[0]!.type).toBe("image/webp");
+  });
+
+  it("reports failure rather than throwing when the store refuses", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 403 })));
+    expect(await putObject(store, "k/thumb", new Uint8Array([1]), "image/webp")).toBe(false);
+  });
+
+  it("reports failure when the store cannot be reached at all", async () => {
+    // A rendition that could not be written must become a recorded reason on the parent,
+    // not an exception that kills the sweep for every object behind it.
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ECONNREFUSED"); }));
+    expect(await putObject(store, "k/thumb", new Uint8Array([1]), "image/webp")).toBe(false);
+  });
+
+  it("signs a PUT, which this signer could not do before 4.15", () => {
+    const url = sign(store, { method: "PUT", key: "k/thumb" });
+    expect(url).toContain("X-Amz-Signature=");
+    expect(url).toContain("relay-media/k/thumb");
   });
 });

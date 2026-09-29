@@ -1,8 +1,9 @@
 import { createServer, type Server } from "node:http";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  deleteObjectWithRenditions,
   deleteObject,
   ensureBucket,
   storeConfig,
@@ -213,5 +214,61 @@ describe("deleting an object's bytes", () => {
     );
     await deleteObject({ ...config, internalEndpoint: "http://minio:9000" }, "k/1");
     expect(seen).toContain("http://minio:9000");
+  });
+});
+
+// FR-003's STORE HALF (chapter 4.15), WHICH HAS NO PRODUCTION CALLER AND IS TESTED HERE
+// FOR THAT REASON. `media_objects_parent_fk` is ON DELETE CASCADE, so the database half
+// is correct for every path present and future; the store has no cascade, and nothing in
+// this platform deletes a `media_objects` row yet — the rejection path deletes bytes and
+// keeps the row on purpose. The caller arrives with the erasure chapter.
+describe("deleting a parent's bytes and its renditions' together", () => {
+  const config = {
+    endpoint: "http://minio:9000",
+    internalEndpoint: "http://minio:9000",
+    accessKey: "relay",
+    secretKey: "relay-secret",
+    bucket: "relay-media",
+  };
+  const seen: string[] = [];
+  const respond = (ok: (url: string) => boolean) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        seen.push(new URL(url).pathname);
+        return new Response(null, { status: ok(url) ? 204 : 500 });
+      }),
+    );
+
+  beforeEach(() => {
+    seen.length = 0;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("deletes every key and reports success", async () => {
+    respond(() => true);
+    expect(await deleteObjectWithRenditions(config, "env/parent", ["env/thumb"])).toBe(true);
+    expect(seen).toHaveLength(2);
+    expect(seen.join(" ")).toContain("parent");
+    expect(seen.join(" ")).toContain("thumb");
+  });
+
+  it("attempts every key even when one fails, and says the whole thing failed", async () => {
+    // A partial failure leaves bytes nobody can reach through this platform — the same
+    // condition the rejection path already tolerates and logs. What must not happen is
+    // one refusal stopping the others: that would leave MORE unreachable bytes, not
+    // fewer, and the caller has no way to retry the ones that were skipped.
+    respond((url) => !url.includes("thumb"));
+    expect(await deleteObjectWithRenditions(config, "env/parent", ["env/thumb"])).toBe(false);
+    expect(seen, "a failure stopped the other deletes").toHaveLength(2);
+  });
+
+  it("deletes the parent alone when it has no renditions", async () => {
+    respond(() => true);
+    expect(await deleteObjectWithRenditions(config, "env/parent", [])).toBe(true);
+    expect(seen).toHaveLength(1);
   });
 });

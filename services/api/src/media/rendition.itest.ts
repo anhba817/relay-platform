@@ -232,10 +232,24 @@ describe("a rendition belongs to its parent", () => {
       // deletion this goes red, and whoever is holding it reads the paragraph above and
       // wires `deleteObjectWithRenditions` into the path they just built.
       const { execSync } = await import("node:child_process");
+      const { existsSync } = await import("node:fs");
+      const { join, dirname } = await import("node:path");
+
+      // THE ROOT IS FOUND, NOT ASSUMED. The first version searched `src` relative to
+      // `process.cwd()`, which is `services/api` under the integration config and the
+      // REPOSITORY ROOT under `vitest.coverage.config.mts` — so the same test looked at
+      // two different places and found nothing in one of them. **The positive control
+      // below is what caught it**, by refusing rather than passing on an empty sweep.
+      let root = process.cwd();
+      while (!existsSync(join(root, "pnpm-workspace.yaml")) && dirname(root) !== root) {
+        root = dirname(root);
+      }
+      const target = join(root, "services", "api", "src");
+
       const sweep = (pattern: string): string[] =>
         execSync(
-          `grep -rn '${pattern}' --include='*.ts' src | grep -v '\\.test\\.\\|\\.itest\\.' || true`,
-          { encoding: "utf8", cwd: process.cwd() },
+          `grep -rn '${pattern}' --include='*.ts' ${target} | grep -v '\\.test\\.\\|\\.itest\\.' || true`,
+          { encoding: "utf8" },
         )
           .split("\n")
           .filter(Boolean);
