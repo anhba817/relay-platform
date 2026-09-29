@@ -12,6 +12,7 @@ import {
   createApiKey,
   createEnvironment,
   environmentSigningSecret,
+  recordMediaVerdict,
   Repository,
   unreferencedMediaIn,
 } from "../db/repository";
@@ -303,6 +304,140 @@ describe("a rendition belongs to its parent", () => {
       // nobody may read the rendition. FR-MED-08 in both directions.
       expect((await fetchMedia(parent, memberToken)).status).toBe(404);
       expect((await fetchMedia(rendition, memberToken)).status).toBe(404);
+    });
+  });
+
+  // ── THE VERDICT AND THE RENDITION ARE ONE FACT (T037b) ──────────────────────────────
+
+  describe("the transaction recordMediaVerdict did not have", () => {
+    /** A `pending` parent, since the compare-and-set needs one. */
+    const plantPending = async (): Promise<string> => {
+      const { rows } = (await db.execute(sql`
+        INSERT INTO media_objects (id, environment_id, filename, mime_type, declared_bytes,
+                                   state, object_key)
+        VALUES (gen_random_uuid(), ${env.id}, 'q.png', 'image/png', 4096,
+                'pending', ${env.id} || '/' || gen_random_uuid())
+        RETURNING id`)) as unknown as { rows: { id: string }[] };
+      return rows[0]!.id;
+    };
+
+    it("leaves the parent pending when the rendition insert fails", async () => {
+      const parent = await plantPending();
+      const taken = await plantParent();
+
+      // FORCE THE INSERT TO FAIL by reusing an id that already exists. The verdict's
+      // UPDATE lands first inside the transaction, so without one the parent would be
+      // `ready` with no rendition and no reason — the absence FR-007 forbids.
+      await expect(
+        recordMediaVerdict(db, {
+          id: parent,
+          verdict: "ready",
+          verifiedBytes: 4096,
+          verifiedType: "image/png",
+          rendition: {
+            id: taken,
+            kind: "thumbnail",
+            objectKey: `${env.id}/dup`,
+            bytes: 7104,
+            width: 320,
+            height: 240,
+          },
+        }),
+      ).rejects.toThrow();
+
+      const { rows } = (await db.execute(
+        sql`SELECT state FROM media_objects WHERE id = ${parent}`,
+      )) as unknown as { rows: { state: string }[] };
+      // RUN RED AGAINST THE UNTRANSACTED VERSION FIRST — it reported `ready` here, which
+      // is the whole reason this test exists. A test that passes because nothing made it
+      // fail is the shape this project keeps paying for.
+      expect(rows[0]!.state, "the verdict committed without its rendition").toBe("pending");
+    });
+
+    it("writes both when the rendition is good", async () => {
+      const parent = await plantPending();
+      const renditionId = crypto.randomUUID();
+      const result = await recordMediaVerdict(db, {
+        id: parent,
+        verdict: "ready",
+        verifiedBytes: 4096,
+        verifiedType: "image/png",
+        rendition: {
+          id: renditionId,
+          kind: "thumbnail",
+          objectKey: `${env.id}/${renditionId}`,
+          bytes: 7104,
+          width: 320,
+          height: 240,
+        },
+      });
+      expect(result.applied).toBe(true);
+
+      const { rows } = (await db.execute(sql`
+        SELECT state, parent_id, rendition, declared_bytes, user_id
+        FROM media_objects WHERE id = ${renditionId}`)) as unknown as {
+        rows: { state: string; parent_id: string; rendition: string; declared_bytes: string }[];
+      };
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.parent_id).toBe(parent);
+      expect(rows[0]!.rendition).toBe("thumbnail");
+      expect(rows[0]!.state).toBe("ready");
+      // FR-012: the quota sums `declared_bytes` over every non-rejected row, so a
+      // rendition's actual length has to land in the column whose comment says it holds
+      // what the caller declared. Nobody declared this one.
+      expect(Number(rows[0]!.declared_bytes)).toBe(7104);
+    });
+
+    it("records a reason on the parent when no rendition was made", async () => {
+      const parent = await plantPending();
+      await recordMediaVerdict(db, {
+        id: parent,
+        verdict: "ready",
+        verifiedBytes: 4096,
+        verifiedType: "image/png",
+        renditionFailedReason: "decode_failed",
+      });
+      const { rows } = (await db.execute(sql`
+        SELECT state, rendition_failed_reason FROM media_objects WHERE id = ${parent}`)) as unknown as {
+        rows: { state: string; rendition_failed_reason: string }[];
+      };
+      // FR-008: a failed rendition never stops the parent reaching `ready`, because the
+      // sweep re-reads `pending` rows for ever and an object stuck there is an infinite
+      // retry wearing a state's clothes.
+      expect(rows[0]!.state).toBe("ready");
+      // FR-007: a value, not an absence.
+      expect(rows[0]!.rendition_failed_reason).toBe("decode_failed");
+    });
+
+    it("writes one rendition when the verdict is delivered twice", async () => {
+      const parent = await plantPending();
+      const mk = (id: string) => ({
+        id: parent,
+        verdict: "ready" as const,
+        verifiedBytes: 4096,
+        verifiedType: "image/png",
+        rendition: {
+          id,
+          kind: "thumbnail",
+          objectKey: `${env.id}/${id}`,
+          bytes: 7104,
+          width: 320,
+          height: 240,
+        },
+      });
+      const first = await recordMediaVerdict(db, mk(crypto.randomUUID()));
+      const second = await recordMediaVerdict(db, mk(crypto.randomUUID()));
+
+      expect(first.applied).toBe(true);
+      // FR-010. The compare-and-set is what stops the second: the row is no longer
+      // `pending`, so the UPDATE matches nothing and the INSERT below it never runs.
+      // Asserted by issuing the duplicate rather than by reasoning that it cannot happen
+      // — which is what 4.14's five accounting tests were each protecting against.
+      expect(second.applied).toBe(false);
+      const { rows } = (await db.execute(
+        sql`SELECT count(*)::text AS n FROM media_objects WHERE parent_id = ${parent}`,
+      )) as unknown as { rows: { n: string }[] };
+      expect(rows[0]!.n, "a duplicate verdict wrote a second rendition").toBe("1");
     });
   });
 
