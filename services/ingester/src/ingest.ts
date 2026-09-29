@@ -16,7 +16,13 @@ import { ANALYTICS_STREAM } from "@relay/protocol";
 import type { Logger } from "@relay/service-kit";
 
 import type { ClickHouse } from "./clickhouse.js";
-import { route, type AttemptRow, type ConnectionRow, type RequestRow } from "./shape.js";
+import {
+  route,
+  type AttemptRow,
+  type ConnectionRow,
+  type MediaStoredRow,
+  type RequestRow,
+} from "./shape.js";
 
 // TWO BOUNDS, AND THEY ARE THE SAD's RATHER THAN DR-11's. `docs/05-sad.md` §4 describes this
 // service as batch-inserting "every 2 s or 10k rows (DR-11)" and chose those numbers; DR-11
@@ -37,6 +43,7 @@ export interface IngestResult {
   writtenAttempts: number;
   writtenRequests: number;
   writtenConnections: number;
+  writtenMediaEvents: number;
   malformed: number;
   /** Records this consumer recognised as somebody else's and left on the stream. A record
    *  nobody claims has to be visible as a number, or the difference between "nothing arrived"
@@ -69,6 +76,7 @@ export async function ingestOnce({
   const attempts: AttemptRow[] = [];
   const requests: RequestRow[] = [];
   const connections: ConnectionRow[] = [];
+  const mediaEvents: MediaStoredRow[] = [];
   const pending: Array<{ ack: () => void }> = [];
   let malformed = 0;
   let unclaimed = 0;
@@ -106,9 +114,32 @@ export async function ingestOnce({
       continue;
     }
 
-    if (routed.kind === "attempt") attempts.push(routed.row);
-    else if (routed.kind === "request") requests.push(routed.row);
-    else connections.push(routed.row);
+    // AN EXHAUSTIVE SWITCH, NOT A CHAIN ENDING IN `else` (4.16). The previous shape was
+    // `else connections.push(routed.row)`, and a fourth `kind` fell into the connections
+    // array by default — **which the compiler caught the moment the fourth arm existed**:
+    // `Argument of type 'ConnectionRow | MediaStoredRow' is not assignable to parameter of
+    // type 'ConnectionRow'`. It caught this one because the row shapes differ; two record
+    // types that happened to be structurally compatible would have passed silently into
+    // the wrong table. 4.14 replaced the same shape in `session.ts` for the same reason:
+    // the `never` below makes a fifth type a compile error in one place.
+    switch (routed.kind) {
+      case "attempt":
+        attempts.push(routed.row);
+        break;
+      case "request":
+        requests.push(routed.row);
+        break;
+      case "connection":
+        connections.push(routed.row);
+        break;
+      case "media":
+        mediaEvents.push(routed.row);
+        break;
+      default: {
+        const exhaustive: never = routed;
+        throw new Error(`unrouted kind: ${JSON.stringify(exhaustive)}`);
+      }
+    }
     pending.push({ ack: () => m.ack() });
   }
 
@@ -121,13 +152,16 @@ export async function ingestOnce({
   await store.insert(attempts);
   await store.insertRequests(requests);
   await store.insertConnections(connections);
+  await store.insertMediaEvents(mediaEvents);
   for (const p of pending) p.ack();
 
   return {
-    written: attempts.length + requests.length + connections.length,
+    written:
+      attempts.length + requests.length + connections.length + mediaEvents.length,
     writtenAttempts: attempts.length,
     writtenRequests: requests.length,
     writtenConnections: connections.length,
+    writtenMediaEvents: mediaEvents.length,
     malformed,
     unclaimed,
   };

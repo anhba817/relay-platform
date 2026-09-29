@@ -12,6 +12,8 @@
 // way of getting it wrong -- but the function is the thing that has to be right.
 
 /** The publisher's record, as it arrives on `analytics.webhook.attempt.{env}`. */
+import { MEDIA_STORED_TYPE } from "@relay/protocol";
+
 export interface AttemptEvent {
   delivery_id: string;
   endpoint_id: string;
@@ -187,6 +189,11 @@ export function shapeRequest(raw: unknown): RequestRow | null {
  *  a router that parses subjects has to be right about tokens too, and a malformed token
  *  publishes a subject one level deeper that no intended filter matches. */
 export const API_REQUEST_TYPE = "api.request";
+/** 4.16's discriminator is IMPORTED, not retyped. `"api.request"` above is the third copy
+ * of one string across two services that cannot import each other's code; both already
+ * depend on `@relay/protocol`, so a fourth copy would have been a choice. Re-exported as
+ * well as imported, so a reader of this file finds all four types in one place. */
+export { MEDIA_STORED_TYPE };
 export const CONNECTION_OPENED_TYPE = "connection.opened";
 export const CONNECTION_CLOSED_TYPE = "connection.closed";
 
@@ -267,10 +274,73 @@ export function shapeConnection(raw: unknown): ConnectionRow | null {
   };
 }
 
+/** The api's storage record, as it arrives on `analytics.media.stored.{env}` (4.16). */
+export interface MediaStoredEvent {
+  type: string;
+  environment_id: string;
+  media_id: string;
+  event: string;
+  kind: string;
+  bytes_delta: number;
+  occurred_at: string;
+}
+
+/** One row of `relay_analytics.media_events`, keyed by column name. */
+export interface MediaStoredRow {
+  environment_id: string;
+  media_id: string;
+  event: string;
+  kind: string;
+  bytes_delta: number;
+  ts: string;
+}
+
+/** THE SIGN IS CARRIED AND THIS READER DOES NOT SECOND-GUESS IT. `bytes_delta` arrives
+ * signed; deriving it here from `event` would put the rule in a second place, and
+ * `stored_delta` one table over is what that looks like after two chapters — a column
+ * whose sign comes from `multiIf(event = 'created', 1, …)` and whose name reads as bytes.
+ *
+ * A CLOSED SET FOR BOTH LABELS, not a substring of anything. `shapeConnection` records
+ * why: `e.type.split(".")[1]` would turn any `media.*` record into a row carrying whatever
+ * word followed the dot.
+ *
+ * AND `occurred_at` BECOMES `ts`, matching every other table's column. The wire says when
+ * it happened; the column says the same thing in the name the schema uses. */
+export function shapeMediaStored(raw: unknown): MediaStoredRow | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const e = raw as Partial<MediaStoredEvent>;
+
+  if (
+    !isString(e.environment_id) ||
+    !isString(e.media_id) ||
+    !isString(e.occurred_at) ||
+    !isString(e.event) ||
+    !isString(e.kind) ||
+    !isNumber(e.bytes_delta)
+  ) {
+    return null;
+  }
+  if (!MEDIA_EVENTS.includes(e.event)) return null;
+  if (!MEDIA_KINDS.includes(e.kind)) return null;
+
+  return {
+    environment_id: e.environment_id,
+    media_id: e.media_id,
+    event: e.event,
+    kind: e.kind,
+    bytes_delta: e.bytes_delta,
+    ts: e.occurred_at,
+  };
+}
+
+const MEDIA_EVENTS: readonly string[] = ["reserved", "rejected", "rendition", "deleted"];
+const MEDIA_KINDS: readonly string[] = ["image", "audio", "video"];
+
 export type Shaped =
   | { kind: "attempt"; row: AttemptRow }
   | { kind: "request"; row: RequestRow }
   | { kind: "connection"; row: ConnectionRow }
+  | { kind: "media"; row: MediaStoredRow }
   | { kind: "malformed" }
   | { kind: "unclaimed"; type: string };
 
@@ -303,6 +373,13 @@ export function route(raw: unknown): Shaped {
   if (type === CONNECTION_OPENED_TYPE || type === CONNECTION_CLOSED_TYPE) {
     const row = shapeConnection(raw);
     return row === null ? { kind: "malformed" } : { kind: "connection", row };
+  }
+
+  // The fourth arm (chapter 4.16). ONE TYPE, ONE TABLE — unlike the connection arm, which
+  // folds two because they are one table.
+  if (type === MEDIA_STORED_TYPE) {
+    const row = shapeMediaStored(raw);
+    return row === null ? { kind: "malformed" } : { kind: "media", row };
   }
 
   // Anything else is somebody's record and not this consumer's. Leaving it costs the stream's

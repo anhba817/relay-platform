@@ -1,0 +1,33 @@
+-- Chapter 4.16 — two columns on the rollup that billing already reads.
+--
+-- A COLUMN ON THE EXISTING TABLE, NOT A NEW ROLLUP, and 4.6's finding is what makes that
+-- safe rather than convenient. That chapter measured a rollup whose KEY carried an
+-- attribution dimension and made the billing read touch **147,534 rows against 281**.
+-- This changes no key: `(environment_id, day)` is unchanged, the row count does not move,
+-- and DR-10's whole point is that billing opens one rollup for one tenant-day.
+--
+-- Two views already write into this table — `0011` from `message_events` and `0012` from
+-- `connection_events` — so a third from `media_events` is the established pattern.
+ALTER TABLE relay_analytics.daily_usage_billing
+    -- NOT `stored_bytes`, AND THE NAME IS THE POINT. `stored_delta` already exists on this
+    -- table and counts stored MESSAGES: `sum(multiIf(event = 'created', 1, event =
+    -- 'deleted', -1, 0))`. It reads as bytes and is not, which is how this chapter's
+    -- premise check nearly concluded the work was half done. A column called
+    -- `stored_bytes` beside it would read as the same quantity measured differently.
+    ADD COLUMN IF NOT EXISTS stored_bytes_delta Int64,
+    -- FR-009's counts, AND `SimpleAggregateFunction(sumMap, …)` RATHER THAN A PLAIN `Map`
+    -- BECAUSE A PLAIN MAP DOES NOT SUM. Measured on ClickHouse 25.3.14.14 before this line
+    -- was written: two rows at one key holding `map('image',2,'audio',1)` and
+    -- `map('image',3,'video',5)` merge under `SummingMergeTree` to
+    -- **`{'image':2,'audio':1}`** — the first row wins, `image` is not summed and `video`
+    -- is gone, while an `Int64` beside it sums correctly. Plain `String` keys fail the same
+    -- way, so `LowCardinality` is not the cause, and three separate `UInt64` columns work.
+    --
+    -- With `SimpleAggregateFunction` the same two rows merge to
+    -- `{'audio':1,'image':5,'video':5}`, and a materialised view can write it — also
+    -- measured, because a type that merges on direct insert and not through a view would
+    -- be half a fix.
+    --
+    -- THE KEY IS PLAIN `String`, not `LowCardinality`, because that is the combination
+    -- that was measured. Guessing is how the first version of this column was wrong.
+    ADD COLUMN IF NOT EXISTS uploads_by_kind SimpleAggregateFunction(sumMap, Map(String, UInt64))

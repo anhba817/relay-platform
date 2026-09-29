@@ -323,6 +323,57 @@ export function apiRequestSubject(environmentId: string): string {
   );
 }
 
+/** Storage metering's action (FR-MED-12, DR-17, chapter 4.16). */
+export const MEDIA_STORED_ACTION = { domain: "media", action: "stored" };
+
+export function mediaStoredSubject(environmentId: string): string {
+  return analyticsSubjectFor(
+    MEDIA_STORED_ACTION.domain,
+    MEDIA_STORED_ACTION.action,
+    environmentId,
+  );
+}
+
+/** THE DISCRIMINATOR, SHARED — which the three record types before this one are not.
+ *
+ * `"api.request"` is written as a literal in `services/api/src/request-log/event.ts`
+ * twice and again as `API_REQUEST_TYPE` in `services/ingester/src/shape.ts`: three
+ * copies of one string across two services that cannot import each other's code. Nothing
+ * has drifted yet, and the only thing standing between them is that nobody has retyped
+ * it. **This one is shared from the start** — both services already depend on
+ * `@relay/protocol`, so the cost is nothing and the failure it prevents is a producer
+ * publishing a type the consumer will not claim, which `ingest.ts` answers by
+ * redelivering the record for seven days while the `unclaimed` counter is the only
+ * signal (049). Not a refactor of the existing three; a choice not to add a fourth. */
+export const MEDIA_STORED_TYPE = "media.stored";
+
+/** What the api publishes when a tenant's stored bytes change (FR-001).
+ *
+ * **THE SIGN IS CARRIED, NEVER INFERRED FROM `event`.** `reserved` and `rendition` are
+ * positive and `rejected` and `deleted` negative, and a reader that derives that from
+ * the name puts the rule in a second place. `daily_usage_billing.stored_delta` is the
+ * counter-example living one table over: its sign comes from
+ * `multiIf(event = 'created', 1, …)` and its name has since read to a planner as though
+ * it counted bytes.
+ *
+ * **`bytes_delta` IS THE QUOTA'S QUANTITY** (FR-002). `reserveMediaSlot` sums
+ * `declared_bytes` where `state <> 'rejected'`, so a `pending` object is already charged
+ * and the meter agrees by construction rather than by reconciliation.
+ *
+ * **`kind` IS PRESENT ON EVERY RECORD INCLUDING `deleted`**, so the view that builds
+ * FR-009's per-kind counts can reverse them with the same expression. */
+export const mediaStoredRecordSchema = z.strictObject({
+  type: z.literal(MEDIA_STORED_TYPE),
+  environment_id: z.uuid(),
+  media_id: z.uuid(),
+  event: z.enum(["reserved", "rejected", "rendition", "deleted"]),
+  kind: z.enum(["image", "audio", "video"]),
+  bytes_delta: z.number().int(),
+  occurred_at: z.string().min(1),
+});
+
+export type MediaStoredRecord = z.infer<typeof mediaStoredRecordSchema>;
+
 /** The token for a request that resolved to no tenant.
  *
  * A SEPARATE FUNCTION, NOT A RELAXED ARGUMENT TO `analyticsSubjectFor`. That validator

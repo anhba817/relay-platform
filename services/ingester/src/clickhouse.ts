@@ -1,11 +1,17 @@
 // The write side. Node's own `fetch` against the HTTP interface -- no client package, which
 // is what keeps `grep -c clickhouse pnpm-lock.yaml` at 0 by design rather than by luck.
-import type { AttemptRow, ConnectionRow, RequestRow } from "./shape.js";
+import type {
+  AttemptRow,
+  ConnectionRow,
+  MediaStoredRow,
+  RequestRow,
+} from "./shape.js";
 
 const DB = "relay_analytics";
 const ATTEMPTS = "webhook_attempts";
 const REQUESTS = "api_requests";
 const CONNECTIONS = "connection_events";
+const MEDIA_EVENTS = "media_events";
 
 // TWO SETTINGS, TWO DIFFERENT FAILURES, AND NEITHER IS OPTIONAL.
 //
@@ -29,6 +35,9 @@ export interface ClickHouse {
    *  shapes are three types, and a `table` parameter would let the compiler watch a
    *  `ConnectionRow` go into `api_requests` without a word. */
   insertConnections(rows: ConnectionRow[]): Promise<void>;
+  /** The fourth table (chapter 4.16). A fourth call for the reason there is a third —
+   *  and the name says what it inserts, which `insert` above does not. */
+  insertMediaEvents(rows: MediaStoredRow[]): Promise<void>;
   count(): Promise<number>;
   countRequests(): Promise<number>;
   countConnections(): Promise<number>;
@@ -102,6 +111,16 @@ export function createClickHouse({
       if (rows.length === 0) return;
       await post(
         `INSERT INTO ${DB}.${CONNECTIONS} FORMAT JSONEachRow`,
+        rows.map((r) => JSON.stringify(r)).join("\n"),
+      );
+    },
+    // THE EMPTY GUARD IS LOAD-BEARING HERE MORE THAN ANYWHERE. Storage records arrive on
+    // slot requests and verdicts, which the lane produces in ones and twos against
+    // 118,238 api requests — so nearly every batch carries none of these at all.
+    async insertMediaEvents(rows: MediaStoredRow[]): Promise<void> {
+      if (rows.length === 0) return;
+      await post(
+        `INSERT INTO ${DB}.${MEDIA_EVENTS} FORMAT JSONEachRow`,
         rows.map((r) => JSON.stringify(r)).join("\n"),
       );
     },

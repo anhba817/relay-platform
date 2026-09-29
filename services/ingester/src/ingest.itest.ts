@@ -51,6 +51,9 @@ const refusing = {
   insertConnections: async (): Promise<void> => {
     throw new Error("store down");
   },
+  insertMediaEvents: async (): Promise<void> => {
+    throw new Error("store down");
+  },
   count: async (): Promise<number> => 0,
   countRequests: async (): Promise<number> => 0,
   countConnections: async (): Promise<number> => 0,
@@ -186,8 +189,15 @@ describe("a record of an unrecognised type is left on the stream", () => {
     // `writtenConnections` to `IngestResult` broke both of these, and that is the check
     // working: a result this service reports is a contract, and a field appearing in it
     // is a decision somebody writes down rather than one a `toMatchObject` absorbs.
+    //
+    // AND 4.16's `writtenMediaEvents` BROKE THEM AGAIN — twice now, which is the evidence
+    // that this is a tripwire rather than a list somebody typed. Worth contrasting with
+    // the field-by-field block further down: that one names every counter and asserts the
+    // rest are zero, and a new counter added without touching it is never asserted absent.
+    // Same file, two accounting styles, and only one of them notices a new field.
     expect(first).toEqual({
       written: 2, writtenAttempts: 1, writtenRequests: 1, writtenConnections: 0,
+      writtenMediaEvents: 0,
       malformed: 1, unclaimed: 1,
     });
 
@@ -199,6 +209,7 @@ describe("a record of an unrecognised type is left on the stream", () => {
     });
     expect(second).toEqual({
       written: 0, writtenAttempts: 0, writtenRequests: 0, writtenConnections: 0,
+      writtenMediaEvents: 0,
       malformed: 0, unclaimed: 1,
     });
 
@@ -429,6 +440,13 @@ describe("a connection's two records become two rows", () => {
     expect(result.writtenConnections).toBe(CONN_N * 2);
     expect(result.writtenAttempts).toBe(0);
     expect(result.writtenRequests).toBe(0);
+    // THE FOURTH COUNTER JOINS THE BLOCK, and the reason is that it would not have to.
+    // Adding `writtenMediaEvents` to the result breaks nothing here: this block names
+    // every counter and asserts the others are zero, so a new one that is never named is
+    // never asserted absent, and the suite keeps passing while the accounting quietly
+    // stops being complete. 4.14 found the loud version of this — five frame counts that
+    // all fired; this is the quiet version, where none would.
+    expect(result.writtenMediaEvents).toBe(0);
     expect(result.malformed).toBe(0);
     expect(result.unclaimed).toBe(0);
     expect(await rows(CONN_ENV)).toBe(CONN_N * 2);
