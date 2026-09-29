@@ -190,7 +190,9 @@ describe("fetching a whole object to render", () => {
 
 describe("writing a rendition to the store", () => {
   it("PUTs the bytes and reports success", async () => {
-    const seen: { method?: string; type?: string | null }[] = [];
+    // `exactOptionalPropertyTypes` is on, so an optional property and a property that
+    // may hold `undefined` are different types. `init.method` is the second kind.
+    const seen: { method: string | undefined; type: string | null }[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_url: string, init: RequestInit) => {

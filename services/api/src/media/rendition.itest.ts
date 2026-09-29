@@ -2,7 +2,6 @@ import "reflect-metadata";
 
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
-import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mintUserToken } from "../auth/user-token";
@@ -47,11 +46,11 @@ describe("a rendition belongs to its parent", () => {
   /** A `ready` parent, planted directly. The slot route would do, but this suite is about
    * what happens to rows and a slot costs a signed round trip to the store per object. */
   const plantParent = async (opts: { bytes?: number } = {}): Promise<string> => {
-    const { rows } = (await db.execute(sql`
+    const { rows } = (await db.execute(`
       INSERT INTO media_objects (id, environment_id, filename, mime_type, declared_bytes,
                                  state, object_key, width, height)
-      VALUES (gen_random_uuid(), ${env.id}, 'p.png', 'image/png', ${opts.bytes ?? 4096},
-              'ready', ${env.id} || '/' || gen_random_uuid(), 1200, 900)
+      VALUES (gen_random_uuid(), '${env.id}', 'p.png', 'image/png', ${opts.bytes ?? 4096},
+              'ready', '${env.id}' || '/' || gen_random_uuid(), 1200, 900)
       RETURNING id`)) as unknown as { rows: { id: string }[] };
     return rows[0]!.id;
   };
@@ -59,11 +58,11 @@ describe("a rendition belongs to its parent", () => {
   /** A thumbnail of that parent. `state` is `ready` because
    * `media_objects_rendition_state_check` permits nothing else. */
   const plantRendition = async (parentId: string): Promise<string> => {
-    const { rows } = (await db.execute(sql`
+    const { rows } = (await db.execute(`
       INSERT INTO media_objects (id, environment_id, filename, mime_type, declared_bytes,
                                  state, object_key, parent_id, rendition, width, height)
-      VALUES (gen_random_uuid(), ${env.id}, 'p-thumbnail.webp', 'image/webp', 7104,
-              'ready', ${env.id} || '/' || gen_random_uuid(), ${parentId}, 'thumbnail',
+      VALUES (gen_random_uuid(), '${env.id}', 'p-thumbnail.webp', 'image/webp', 7104,
+              'ready', '${env.id}' || '/' || gen_random_uuid(), '${parentId}', 'thumbnail',
               320, 240)
       RETURNING id`)) as unknown as { rows: { id: string }[] };
     return rows[0]!.id;
@@ -71,7 +70,7 @@ describe("a rendition belongs to its parent", () => {
 
   const backdate = (id: string, interval: string) =>
     db.execute(
-      sql`UPDATE media_objects SET created_at = now() - ${sql.raw(`interval '${interval}'`)} WHERE id = ${id}`,
+      `UPDATE media_objects SET created_at = now() - interval '${interval}' WHERE id = '${id}'`,
     );
 
   const attach = (mediaId: string, channel = channelId) =>
@@ -206,14 +205,14 @@ describe("a rendition belongs to its parent", () => {
       const rendition = await plantRendition(parent);
 
       const before = (await db.execute(
-        sql`SELECT count(*)::text AS n FROM media_objects WHERE id = ${parent} OR parent_id = ${parent}`,
+        `SELECT count(*)::text AS n FROM media_objects WHERE id = '${parent}' OR parent_id = '${parent}'`,
       )) as unknown as { rows: { n: string }[] };
       expect(before.rows[0]!.n).toBe("2");
 
-      await db.execute(sql`DELETE FROM media_objects WHERE id = ${parent}`);
+      await db.execute(`DELETE FROM media_objects WHERE id = '${parent}'`);
 
       const after = (await db.execute(
-        sql`SELECT count(*)::text AS n FROM media_objects WHERE id = ${rendition}`,
+        `SELECT count(*)::text AS n FROM media_objects WHERE id = '${rendition}'`,
       )) as unknown as { rows: { n: string }[] };
       expect(after.rows[0]!.n, "the cascade did not fire").toBe("0");
     });
@@ -311,6 +310,26 @@ describe("a rendition belongs to its parent", () => {
       expect(a).toEqual(b);
     });
 
+    it("refuses another tenant's credential identically", async () => {
+      const parent = await plantParent();
+      const rendition = await plantRendition(parent);
+      expect((await attach(parent, privateChannelId)).status).toBe(201);
+
+      // ANOTHER TENANT ENTIRELY, which is a stronger question than the non-member above:
+      // that one asks whether channel visibility is enforced, this asks whether the
+      // environment predicate is. `otherKey` existed unused until `pnpm lint` said so —
+      // a second tenant set up and never asked anything, which is a fixture that looks
+      // like coverage.
+      const refused = await fetchMedia(rendition, otherKey.credential);
+      const absent = await fetchMedia(crypto.randomUUID(), otherKey.credential);
+      expect(refused.status).toBe(absent.status);
+      const a = (await refused.json()) as Record<string, unknown>;
+      const b = (await absent.json()) as Record<string, unknown>;
+      delete a["request_id"];
+      delete b["request_id"];
+      expect(a).toEqual(b);
+    });
+
     it("refuses a rendition whose parent is referenced by nothing", async () => {
       const parent = await plantParent();
       const rendition = await plantRendition(parent);
@@ -326,11 +345,28 @@ describe("a rendition belongs to its parent", () => {
   describe("the transaction recordMediaVerdict did not have", () => {
     /** A `pending` parent, since the compare-and-set needs one. */
     const plantPending = async (): Promise<string> => {
-      const { rows } = (await db.execute(sql`
+      // BACKDATED PAST THE SWEEP'S WINDOW, AND THAT IS NOT TIDINESS.
+      //
+      // `GET /internal/media/pending` is oldest-first over the WHOLE platform and takes
+      // no tenant parameter — the isolation property the route is built around, and the
+      // reason the worker's own lane runs serially. A `pending` row planted here joins
+      // that queue, and the media worker's `verify.itest.ts` then sweeps MY fixtures
+      // instead of its own: **8 of its tests went red, every one `expected 'pending' to
+      // be 'rejected'`, with nothing wrong in the worker.** 185 rows from this feature's
+      // suites were sitting in the window when it was measured.
+      //
+      // 056-5's class — an ACTION scoped wider than its own test, which
+      // `check-lane-scope.py` cannot see because the scope that is missing is in a
+      // route's contract rather than in SQL. The repair uses the predicate the sweep
+      // already has: it excludes anything older than FR-MED-10's 24 hours, so a
+      // backdated row is invisible to it and still `pending` for the compare-and-set
+      // this test drives directly.
+      const { rows } = (await db.execute(`
         INSERT INTO media_objects (id, environment_id, filename, mime_type, declared_bytes,
-                                   state, object_key)
-        VALUES (gen_random_uuid(), ${env.id}, 'q.png', 'image/png', 4096,
-                'pending', ${env.id} || '/' || gen_random_uuid())
+                                   state, object_key, created_at)
+        VALUES (gen_random_uuid(), '${env.id}', 'q.png', 'image/png', 4096,
+                'pending', '${env.id}' || '/' || gen_random_uuid(),
+                now() - interval '30 days')
         RETURNING id`)) as unknown as { rows: { id: string }[] };
       return rows[0]!.id;
     };
@@ -351,7 +387,7 @@ describe("a rendition belongs to its parent", () => {
           rendition: {
             id: taken,
             kind: "thumbnail",
-            objectKey: `${env.id}/dup`,
+            objectKey: `'${env.id}'/dup`,
             bytes: 7104,
             width: 320,
             height: 240,
@@ -360,7 +396,7 @@ describe("a rendition belongs to its parent", () => {
       ).rejects.toThrow();
 
       const { rows } = (await db.execute(
-        sql`SELECT state FROM media_objects WHERE id = ${parent}`,
+        `SELECT state FROM media_objects WHERE id = '${parent}'`,
       )) as unknown as { rows: { state: string }[] };
       // RUN RED AGAINST THE UNTRANSACTED VERSION FIRST — it reported `ready` here, which
       // is the whole reason this test exists. A test that passes because nothing made it
@@ -379,7 +415,7 @@ describe("a rendition belongs to its parent", () => {
         rendition: {
           id: renditionId,
           kind: "thumbnail",
-          objectKey: `${env.id}/${renditionId}`,
+          objectKey: `'${env.id}'/'${renditionId}'`,
           bytes: 7104,
           width: 320,
           height: 240,
@@ -387,9 +423,9 @@ describe("a rendition belongs to its parent", () => {
       });
       expect(result.applied).toBe(true);
 
-      const { rows } = (await db.execute(sql`
+      const { rows } = (await db.execute(`
         SELECT state, parent_id, rendition, declared_bytes, user_id
-        FROM media_objects WHERE id = ${renditionId}`)) as unknown as {
+        FROM media_objects WHERE id = '${renditionId}'`)) as unknown as {
         rows: { state: string; parent_id: string; rendition: string; declared_bytes: string }[];
       };
       expect(rows).toHaveLength(1);
@@ -411,8 +447,8 @@ describe("a rendition belongs to its parent", () => {
         verifiedType: "image/png",
         renditionFailedReason: "decode_failed",
       });
-      const { rows } = (await db.execute(sql`
-        SELECT state, rendition_failed_reason FROM media_objects WHERE id = ${parent}`)) as unknown as {
+      const { rows } = (await db.execute(`
+        SELECT state, rendition_failed_reason FROM media_objects WHERE id = '${parent}'`)) as unknown as {
         rows: { state: string; rendition_failed_reason: string }[];
       };
       // FR-008: a failed rendition never stops the parent reaching `ready`, because the
@@ -433,7 +469,7 @@ describe("a rendition belongs to its parent", () => {
         rendition: {
           id,
           kind: "thumbnail",
-          objectKey: `${env.id}/${id}`,
+          objectKey: `'${env.id}'/'${id}'`,
           bytes: 7104,
           width: 320,
           height: 240,
@@ -449,7 +485,7 @@ describe("a rendition belongs to its parent", () => {
       // — which is what 4.14's five accounting tests were each protecting against.
       expect(second.applied).toBe(false);
       const { rows } = (await db.execute(
-        sql`SELECT count(*)::text AS n FROM media_objects WHERE parent_id = ${parent}`,
+        `SELECT count(*)::text AS n FROM media_objects WHERE parent_id = '${parent}'`,
       )) as unknown as { rows: { n: string }[] };
       expect(rows[0]!.n, "a duplicate verdict wrote a second rendition").toBe("1");
     });

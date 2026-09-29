@@ -2,7 +2,6 @@ import "reflect-metadata";
 
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
-import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
@@ -43,20 +42,33 @@ describe("a thumbnail reaches every door that serves a message", () => {
     thumbnail?: { media_id: string; width: number; height: number };
   };
 
+  // `created_at` IS BACKDATED PAST THE SWEEP'S 24-HOUR WINDOW, and that is not tidiness.
+  // A `pending` row planted here joins the global queue `GET /internal/media/pending`
+  // serves — oldest-first over the whole platform, no tenant parameter — and the media
+  // worker's own suite then sweeps this suite's fixtures instead of its own. Measured:
+  // 8 of its tests red, every one `expected 'pending' to be 'rejected'`, with nothing
+  // wrong in the worker. 056-5's class: an ACTION scoped wider than its own test, which
+  // `check-lane-scope.py` cannot see because the missing scope is in a route's contract
+  // rather than in SQL. The sweep already excludes anything older than FR-MED-10's 24
+  // hours, so a backdated row is invisible to it and still `pending` for this suite.
+  //
+  // (And this comment lived INSIDE the template string in its first draft, where `//`
+  // is SQL text and the backticks closed the literal.)
   const plant = async (opts: { withRendition: boolean; state?: string }) => {
-    const { rows } = (await db.execute(sql`
+    const { rows } = (await db.execute(`
       INSERT INTO media_objects (id, environment_id, filename, mime_type, declared_bytes,
-                                 state, object_key, width, height)
-      VALUES (gen_random_uuid(), ${env.id}, 'p.png', 'image/png', 4096,
-              ${opts.state ?? "ready"}, ${env.id} || '/' || gen_random_uuid(), 1200, 900)
+                                 state, object_key, width, height, created_at)
+      VALUES (gen_random_uuid(), '${env.id}', 'p.png', 'image/png', 4096,
+              '${opts.state ?? "ready"}', '${env.id}' || '/' || gen_random_uuid(), 1200, 900,
+              now() - interval '30 days')
       RETURNING id`)) as unknown as { rows: { id: string }[] };
     const parent = rows[0]!.id;
     if (opts.withRendition) {
-      await db.execute(sql`
+      await db.execute(`
         INSERT INTO media_objects (id, environment_id, filename, mime_type, declared_bytes,
                                    state, object_key, parent_id, rendition, width, height)
-        VALUES (gen_random_uuid(), ${env.id}, 'thumbnail.webp', 'image/webp', 7104,
-                'ready', ${env.id} || '/' || gen_random_uuid(), ${parent}, 'thumbnail',
+        VALUES (gen_random_uuid(), '${env.id}', 'thumbnail.webp', 'image/webp', 7104,
+                'ready', '${env.id}' || '/' || gen_random_uuid(), '${parent}', 'thumbnail',
                 320, 240)`);
     }
     return parent;
