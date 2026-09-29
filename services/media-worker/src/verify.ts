@@ -64,6 +64,15 @@ export interface Probe {
 export interface PendingObject {
   id: string;
   object_key: string;
+  /** The tenant, so a rendition's key can be written in the platform's own
+   * `${environment_id}/${id}` layout rather than derived from the parent's (4.15).
+   *
+   * AND THIS INTERFACE IS A SECOND COPY OF `internalMediaPendingItemSchema`, which is
+   * how adding one field cost two edits. It predates the shape being on the wire at all
+   * and is narrower on purpose — the worker uses four of the five fields. Worth folding
+   * into the protocol type the next time either changes for another reason; not worth a
+   * refactor in a chapter about thumbnails. */
+  environment_id: string;
   mime_type: string;
   declared_bytes: number;
 }

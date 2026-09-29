@@ -20,6 +20,9 @@ let clock = 0;
 const object = (id: string) => ({
   id,
   object_key: `k/${id}`,
+  // 4.15: the worker builds a rendition's key as `${environment_id}/${uuid}`, the same
+  // layout an upload gets, so the tenant travels on the pending item.
+  environment_id: "00000000-0000-0000-0000-0000000000e1",
   mime_type: "image/png",
   declared_bytes: 10,
   // Ascending, because the sweep pages on this value and two rows sharing it would

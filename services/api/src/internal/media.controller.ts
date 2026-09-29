@@ -105,6 +105,9 @@ export class MediaVerificationController {
       objects: rows.map((r) => ({
         id: r.id,
         object_key: r.objectKey,
+        // 4.15: the worker needs the tenant to name a rendition's key in the platform's
+        // own `${environment_id}/${id}` layout. The query already selected it.
+        environment_id: r.environmentId,
         mime_type: r.mimeType,
         declared_bytes: r.declaredBytes,
         created_at: r.createdAt.toISOString(),
@@ -154,6 +157,25 @@ export class MediaVerificationController {
       ...(body.verdict === "ready" &&
         body.duration_ms !== undefined && { durationMs: body.duration_ms }),
       ...(body.verdict === "rejected" && { reason: body.reason }),
+      // FR-MED-05. The bytes are already in the store — the worker wrote them before it
+      // asked for this transition, so a verdict that never arrives leaves an orphaned
+      // object rather than a row pointing at nothing. That is the cheaper direction:
+      // FR-MED-10's reap collects bytes, and no reaper can invent a missing rendition.
+      ...(body.verdict === "ready" &&
+        body.rendition !== undefined && {
+          rendition: {
+            id: body.rendition.id,
+            kind: body.rendition.kind,
+            objectKey: body.rendition.object_key,
+            bytes: body.rendition.bytes,
+            width: body.rendition.width,
+            height: body.rendition.height,
+          },
+        }),
+      ...(body.verdict === "ready" &&
+        body.rendition_failed_reason !== undefined && {
+          renditionFailedReason: body.rendition_failed_reason,
+        }),
     });
 
     if (result.state === null) {

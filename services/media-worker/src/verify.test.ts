@@ -14,6 +14,7 @@ const store: StoreConfig = {
 const object = (over: Partial<PendingObject> = {}): PendingObject => ({
   id: "a",
   object_key: "k/a",
+  environment_id: "00000000-0000-0000-0000-0000000000e1",
   mime_type: "image/png",
   declared_bytes: 100,
   ...over,

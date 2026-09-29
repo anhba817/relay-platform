@@ -8,6 +8,7 @@ import {
 } from "./api-client.js";
 import { bucketPresent, type StoreConfig } from "./store.js";
 import type { ScannerConfig } from "./scan.js";
+import { withRendition } from "./rendition.js";
 import { judge, probe, type PendingObject } from "./verify.js";
 
 // ONE PASS OVER THE BACKLOG.
@@ -63,7 +64,12 @@ export const verifyObject =
   async (object, store) => {
     const found = await probe(object, store, scanner);
     if (found === null) return null;
-    return judge(object, found);
+    // FR-MED-05 (4.15). `judge` stays a pure function over the probe — the rendition
+    // needs three round trips and cannot live in it, which is why this seam grew rather
+    // than that one. A `rejected` verdict passes straight through: FR-009 wants no
+    // derived bytes for a refused object, and never writing them is cheaper than a
+    // cleanup path that has to be correct.
+    return withRendition(judge(object, found), object, found, store);
   };
 
 export interface SweepResult {

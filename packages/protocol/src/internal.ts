@@ -5,6 +5,8 @@ import {
   forwardedAttachmentSchema,
   MAX_ATTACHMENTS,
   refineTextAndAttachments,
+  RENDITIONS,
+  RENDITION_FAILED,
 } from "./attachments.js";
 
 import { forwardedMessageSchema } from "./frames.js";
@@ -547,6 +549,19 @@ export type InternalUsageReportResponse = z.infer<
 export const internalMediaPendingItemSchema = z.strictObject({
   id: z.string().uuid(),
   object_key: z.string().min(1),
+  /** THE TENANT, SO THE WORKER CAN NAME A RENDITION'S KEY IN THE PLATFORM'S OWN LAYOUT
+   * (chapter 4.15). Object keys are `${environment_id}/${id}` — `media.service.ts:108`
+   * — and FR-MED-05's derived objects use the same shape, so the worker has to know the
+   * first half to write the second.
+   *
+   * NOT A TENANCY LEAK, AND WORTH SAYING WHY. This service already holds the object's id
+   * and its key; the environment is the one whose object it was handed, and it reaches
+   * no database with it (ADR-04 — the worker holds no Postgres credential). The
+   * alternative was deriving the rendition's key from the parent's, which `schema.ts`
+   * forbids in its own words: `object_key` is *"OPAQUE, AND NOT A PATH INTO THE STORE …
+   * keeping them separate is what lets the storage layout change without breaking a
+   * published contract."* */
+  environment_id: z.string().uuid(),
   /** What the CLIENT said this is, which is the whole subject of FR-MED-03. The
    * worker's job is to find out whether it is true. */
   mime_type: z.string().min(1),
@@ -595,6 +610,27 @@ export const internalMediaVerdictRequestSchema = z.discriminatedUnion(
       width: z.number().int().positive().optional(),
       height: z.number().int().positive().optional(),
       duration_ms: z.number().int().nonnegative().optional(),
+      /** FR-MED-05. What the worker produced and already wrote to the store, or nothing.
+       *
+       * ABSENT IS NOT A FAILURE. Three cases reach here with no rendition and only one
+       * of them is wrong: the object is not an image, the image is already inside the
+       * bound (`research.md` R2 — the output would be 97.3% of the parent and the same
+       * pixels), or generation failed. The third sets `rendition_failed_reason` and the
+       * first two set neither, which is why this is not a nullable field with a reason
+       * beside it. */
+      rendition: z
+        .strictObject({
+          id: z.string().uuid(),
+          kind: z.enum(RENDITIONS),
+          object_key: z.string().min(1),
+          bytes: z.number().int().positive(),
+          width: z.number().int().positive(),
+          height: z.number().int().positive(),
+        })
+        .optional(),
+      /** FR-007's *"a value, not an absence"*. Recorded on the PARENT, because a
+       * rendition that was never made has no row to carry it. */
+      rendition_failed_reason: z.enum(RENDITION_FAILED).optional(),
     }),
     z.strictObject({
       verdict: z.literal("rejected"),

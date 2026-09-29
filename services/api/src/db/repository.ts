@@ -545,6 +545,7 @@ export async function pendingMediaObjects(
   Array<{
     id: string;
     objectKey: string;
+    environmentId: string;
     mimeType: string;
     declaredBytes: number;
     createdAt: Date;
@@ -731,6 +732,16 @@ export async function recordMediaVerdict(
     height?: number;
     durationMs?: number;
     reason?: "declaration_mismatch" | "scan_failed";
+    /** FR-MED-05. Already written to the store by the worker; this records the row. */
+    rendition?: {
+      id: string;
+      kind: string;
+      objectKey: string;
+      bytes: number;
+      width: number;
+      height: number;
+    };
+    renditionFailedReason?: string;
   },
 ): Promise<{
   applied: boolean;
@@ -749,7 +760,8 @@ export async function recordMediaVerdict(
    * `null` only when no such object exists, which the caller answers with a 404. */
   environmentId: string | null;
 }> {
-  const [updated] = await db
+  return db.transaction(async (tx) => {
+  const [updated] = await tx
     .update(mediaObjects)
     .set({
       state: input.verdict,
@@ -759,6 +771,7 @@ export async function recordMediaVerdict(
       height: input.height ?? null,
       durationMs: input.durationMs ?? null,
       rejectedReason: input.reason ?? null,
+      renditionFailedReason: input.renditionFailedReason ?? null,
     })
     .where(and(eq(mediaObjects.id, input.id), eq(mediaObjects.state, "pending")))
     .returning({
@@ -771,20 +784,64 @@ export async function recordMediaVerdict(
       // AND THE TENANT, for the same reason: the fan-out FR-MED-07 needs is scoped by
       // environment, and this statement is the only one that knows which.
       environmentId: mediaObjects.environmentId,
+      // AND THE UPLOADER (4.15), so a rendition inserted below carries the same
+      // `user_id` as its parent. FR-MED-10's second sentence makes compliance erasure
+      // delete *"a user's media objects and derived objects"*, and it will find both on
+      // one predicate only if the rendition was written with the parent's user. Reading
+      // it from the same statement rather than a second SELECT is this list's whole
+      // argument, applied once more.
+      userId: mediaObjects.userId,
     });
 
-  if (updated)
+  if (updated) {
+    // FR-MED-05's ROW, IN THE SAME TRANSACTION AS THE TRANSITION THAT EARNED IT.
+    //
+    // **THERE WAS NO TRANSACTION HERE UNTIL CHAPTER 4.15, AND THE PLAN SAID THERE WAS.**
+    // An analysis pass found it by opening this function rather than by reading the
+    // plan, which had written "insert the rendition row in the same transaction as the
+    // verdict" about a bare `UPDATE`. Without one, an UPDATE that lands and an INSERT
+    // that fails leaves the parent `ready` with no rendition AND no recorded reason —
+    // the absence FR-007 forbids and the silence FR-008 was written against.
+    //
+    // **TWO MECHANISMS, TWO DIFFERENT WINDOWS, AND NEITHER IS REDUNDANT.** `RETURNING`
+    // above is still how the key and the tenant come back, because a separate SELECT
+    // could read a row that moved between the two statements. The transaction is what
+    // makes the verdict and the rendition one fact. A reader who sees both should not
+    // conclude that one of them is belt-and-braces.
+    if (input.rendition) {
+      await tx.insert(mediaObjects).values({
+        id: input.rendition.id,
+        environmentId: updated.environmentId,
+        // THE PARENT'S UPLOADER, so erasure by user finds the rendition on the same
+        // predicate that finds the object it came from (FR-MED-10's second sentence).
+        userId: updated.userId,
+        filename: `${input.rendition.kind}.webp`,
+        mimeType: "image/webp",
+        // NOBODY DECLARED THIS. The column's comment says so; the quota sums it, and
+        // FR-012 wants derived bytes counted on the same basis as uploaded ones.
+        declaredBytes: input.rendition.bytes,
+        state: "ready",
+        objectKey: input.rendition.objectKey,
+        width: input.rendition.width,
+        height: input.rendition.height,
+        verifiedBytes: input.rendition.bytes,
+        verifiedType: "image/webp",
+        parentId: input.id,
+        rendition: input.rendition.kind,
+      });
+    }
     return {
       applied: true,
       state: updated.state,
       objectKey: updated.objectKey,
       environmentId: updated.environmentId,
     };
+  }
 
   // NOT `pending`: either somebody got there first, or the object does not exist. The
   // caller needs to tell those apart, so the current state comes back rather than a
   // bare false.
-  const [row] = await db
+  const [row] = await tx
     .select({
       state: mediaObjects.state,
       objectKey: mediaObjects.objectKey,
@@ -798,6 +855,7 @@ export async function recordMediaVerdict(
     objectKey: row?.objectKey ?? null,
     environmentId: row?.environmentId ?? null,
   };
+  });
 }
 
 export async function creditConnectionMinutes(

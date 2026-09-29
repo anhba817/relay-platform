@@ -61,7 +61,13 @@ export function storeConfigFromEnv(
 }
 
 export interface SignOptions {
-  method: "GET" | "HEAD";
+  /** `"PUT"` ARRIVED WITH CHAPTER 4.15 AND THE NARROWER TYPE WAS RIGHT UNTIL THEN.
+   * This service read what a client uploaded and produced nothing, so a signer that
+   * could not sign a write was a true statement about the worker rather than a
+   * limitation — the compiler refused `putObject` before a reviewer could. Widened
+   * deliberately, with the reason, because the next person to see three verbs here
+   * should know the third one is FR-MED-05's and not a convenience. */
+  method: "GET" | "HEAD" | "PUT";
   key?: string;
   expiresIn?: number;
   now?: Date;
@@ -218,4 +224,85 @@ export async function streamObject(
   if (res.status === 404) return null;
   if (!res.ok || !res.body) throw new Error(`GET ${key}: ${res.status}`);
   return res.body as unknown as AsyncIterable<Uint8Array>;
+}
+
+/** The whole object, buffered — the fourth call this worker makes to the store, and the
+ * first that holds an object in memory.
+ *
+ * **WHY A FOURTH CALL AND NOT A REUSE OF THE THIRD.** `streamObject` hands ClamAV an
+ * `AsyncIterable` which the scan consumes once; a stream cannot be read twice, and the
+ * comment above it explains why it is a stream rather than a buffer — 100 MB objects at
+ * 1.4× RSS. `getRange` takes 64 KiB for the probe. So a rendition needs bytes nothing
+ * currently holds, and `research.md` R9 is the argument for paying a round trip rather
+ * than teeing the scan (which would buffer every video) or buffering once up front
+ * (which would do it before anything knows the object is an image).
+ *
+ * **`maxBytes` IS NOT DEFENSIVENESS, IT IS THE 1.4× RATIO APPLIED.** The caller is the
+ * image path, where FR-MED-02 caps an object at 10 MB; a `content-length` that exceeds
+ * the cap means the row and the store disagree, and buffering it would be spending
+ * memory on the strength of a number this function could have checked first.
+ *
+ * `null` for a missing object, matching `headObject` and `streamObject`, so a caller that
+ * raced a deletion gets an absence rather than an exception. */
+export async function getObject(
+  config: StoreConfig,
+  key: string,
+  maxBytes: number,
+  timeoutMs = 60_000,
+): Promise<Uint8Array | null> {
+  const res = await fetch(sign(config, { method: "GET", key, expiresIn: 600 }), {
+    method: "GET",
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GET ${key}: ${res.status}`);
+  const declared = Number(res.headers.get("content-length") ?? "0");
+  if (declared > maxBytes) {
+    throw new Error(`GET ${key}: ${declared} bytes exceeds ${maxBytes}`);
+  }
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+/** Put bytes into the store — **the first write this service has ever made.**
+ *
+ * Before this the worker had four readers and no writer: `headObject`, `bucketPresent`,
+ * `getRange` and `streamObject`. That asymmetry was the shape of the service, not an
+ * oversight — it reads what a client uploaded and tells the api what it found. A
+ * rendition is the first thing it produces.
+ *
+ * **THE HOST IS INSIDE THE SIGNATURE** (4.11), which is why this signs against
+ * `internalEndpoint` like `deleteObject` in the api does: the worker's address for the
+ * store and a client's are different strings and cannot be one field.
+ *
+ * `content-type` IS SENT AND IS NOT EVIDENCE. The store echoes whatever it is told —
+ * 4.13 measured twelve MP4 bytes sent as `image/png` answering `HEAD` with `image/png` —
+ * so this sets it for a client's benefit on delivery and nothing downstream trusts it. */
+export async function putObject(
+  config: StoreConfig,
+  key: string,
+  bytes: Uint8Array,
+  contentType: string,
+  timeoutMs = 30_000,
+): Promise<boolean> {
+  const url = sign(config, { method: "PUT", key, expiresIn: 600 });
+  try {
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: { "content-type": contentType },
+      // `Buffer.from` rather than the Uint8Array itself: `BodyInit` does not admit
+      // `Uint8Array<ArrayBufferLike>` under this lib, and a cast would hide that the
+      // conversion is a view rather than a copy.
+      // A COPY, AND IT IS CHEAPER THAN THE CAST IT REPLACES. `BodyInit` wants a view
+      // over a plain `ArrayBuffer`, and what arrives here is `Uint8Array<ArrayBufferLike>`
+      // — TypeScript 5.7 separated those, and a `SharedArrayBuffer`-backed view really
+      // cannot be sent. `new Uint8Array(bytes)` copies into a fresh buffer; a thumbnail
+      // is single-digit kilobytes, so the copy is free and the alternative is an
+      // `as unknown as BodyInit` that would be wrong for one real input.
+      body: new Blob([new Uint8Array(bytes)]),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
