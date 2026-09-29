@@ -100,3 +100,35 @@ export async function storedMessages(
   // and it cannot.
   return Number(rows.flat()[0]);
 }
+
+
+/** FR-MED-12's level: the bytes a tenant is storing as of a day (chapter 4.16).
+ *
+ * **DR-17's TECHNIQUE, AND `storedMessages` ABOVE IS THE SHAPE.** *"A daily rollup
+ * summing `media_events` deltas (uploaded/deleted)"* — the same accumulation one table
+ * over, with two of that function's details copied deliberately: no empty-result guard,
+ * because a bare aggregate with no `GROUP BY` always returns exactly one row, and
+ * `flat()[0]` rather than `rows[0]?.[0]`, because the optional chain is a branch too.
+ *
+ * **AND THE ANSWER IS SHORT BY WHATEVER THE TTL REMOVED.** This sums from the beginning
+ * of time, and `daily_usage_billing` carries `TTL toDateTime(day) + toIntervalMonth(25)`
+ * — so a level older than the retention horizon is understated by exactly the deltas
+ * that were deleted, permanently, with nothing in the system able to notice.
+ *
+ * `storedMessages` has the same defect and has never shown it, because `message_events`
+ * holds 0 rows and has no producer. **This is the first reader of this shape that will
+ * carry live data**, which is why SRS 1.23 bounds FR-MED-12 at the horizon and names
+ * DR-17's inventory as what re-bases a truncated sum: the object store holds the level
+ * directly, so the reconciliation can restate it. */
+export async function storedBytes(
+  store: ClickHouse,
+  environmentId: string,
+  asOf: string,
+): Promise<number> {
+  const rows = await store.query(
+    `SELECT sum(stored_bytes_delta) FROM ${DB}.daily_usage_billing
+      WHERE environment_id = toUUID('${environmentId}') AND day <= '${asOf}'
+      FORMAT TSV`,
+  );
+  return Number(rows.flat()[0]);
+}

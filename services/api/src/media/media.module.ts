@@ -2,6 +2,11 @@ import { Module, Scope } from "@nestjs/common";
 import { REQUEST } from "@nestjs/core";
 
 import { AuthModule } from "../auth/auth.module";
+import { LOGGER, apiLogger } from "../logger";
+import { ensureAnalyticsStream } from "../outbox/jetstream.publisher";
+import { createJetStreamPublisher } from "../outbox/jetstream.publisher";
+import type { Publisher } from "../outbox/publisher";
+import { ANALYTICS_PUBLISHER } from "../webhooks/analytics";
 import { createDb, createPool, type Db } from "../db/client";
 import { Repository } from "../db/repository";
 import { MediaController } from "./media.controller";
@@ -41,6 +46,21 @@ import type { RequestWithTenant } from "../messages/request-with-tenant";
       useFactory: (db: Db, req: RequestWithTenant) =>
         new Repository(db, req.principal?.environmentId ?? ""),
     },
+    // A THIRD COPY OF THE SAME FACTORY, AND THE RULE THAT FORCES IT IS WRITTEN IN
+    // `internal.module.ts`: *"a provider is visible to the module that declares it and to
+    // nothing it imports"* — and `InternalModule` has no `exports:` array. `AppModule`
+    // already provides `ANALYTICS_PUBLISHER` for its middleware and `InternalModule` for
+    // the dispatcher; this module needs it for FR-MED-12's storage deltas (4.16).
+    //
+    // The cost is the one `app.module.ts` states: another lazy NATS connection and another
+    // idempotent `ensureAnalyticsStream` at boot. **And declaring a service without its
+    // providers compiles, typechecks and lints**, then fails at the first request with
+    // `Nest can't resolve dependencies` — 4.10's finding, in this very file's header.
+    {
+      provide: ANALYTICS_PUBLISHER,
+      useFactory: (): Publisher => createJetStreamPublisher({ ensure: ensureAnalyticsStream }),
+    },
+    { provide: LOGGER, useFactory: () => apiLogger() },
     MediaService,
   ],
 })

@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
 
-import { BadRequestException, HttpStatus, Injectable } from "@nestjs/common";
+import { BadRequestException, HttpStatus, Inject, Injectable } from "@nestjs/common";
+
+import type { Logger } from "@relay/service-kit";
 
 import { Repository } from "../db/repository";
 import { protocolError } from "../protocol-error";
 import { KIND_CAPS, kindOf } from "./kinds";
+import { LOGGER } from "../logger";
+import { publishStorageDelta } from "../metering/storage-event";
+import type { Publisher } from "../outbox/publisher";
+import { ANALYTICS_PUBLISHER } from "../webhooks/analytics";
 import { presign } from "./presign";
 import { storeConfig, storeReady, type StoreConfig } from "./store";
 
@@ -49,7 +55,11 @@ const SLOT_SECONDS = 900;
 export class MediaService {
   private readonly store: StoreConfig = storeConfig();
 
-  constructor(private readonly repo: Repository) {}
+  constructor(
+    private readonly repo: Repository,
+    @Inject(ANALYTICS_PUBLISHER) private readonly analytics: Publisher,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
 
   async createSlot(input: SlotRequest, userExternalId?: string): Promise<Slot> {
     // ORDER MATTERS AND IT IS THE CLAUSE'S. Type, then size, then quota: the first two
@@ -137,6 +147,26 @@ export class MediaService {
       ...this.store,
       key: objectKey,
       expiresIn: SLOT_SECONDS,
+    });
+
+    // FR-MED-12's `reserved` DELTA — **AFTER THE COMMIT, OUTSIDE THE TRANSACTION, AND NOT
+    // AWAITED.** `webhooks/analytics.ts` records the decision: *"guarantee independence →
+    // the publish happens after the commit, outside it, and a crash in that gap loses the
+    // record"*, because a blocked outcome transaction is what constitution III names as a
+    // design failure. And a publish INSIDE a transaction that rolls back would emit a
+    // delta for a slot that was never created — a permanent overcount, which is the whole
+    // thing this chapter argues nothing corrects.
+    //
+    // THE BYTES ARE THE QUOTA'S (FR-002). `reserveMediaSlot` sums `declared_bytes` where
+    // `state <> 'rejected'`, so a `pending` object is already charged and the meter says
+    // the same number for the same reason rather than by agreement.
+    void publishStorageDelta(this.analytics, this.logger, {
+      environmentId: this.repo.environment,
+      mediaId: id,
+      cause: "reserved",
+      kind,
+      bytesDelta: input.bytes,
+      occurredAt: new Date(),
     });
 
     return {

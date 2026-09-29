@@ -746,6 +746,10 @@ export async function recordMediaVerdict(
 ): Promise<{
   applied: boolean;
   state: string | null;
+  /** 4.16: the quota's quantity, so a `rejected` delta can negate it. `null` only when
+   * no such object exists, like the fields beside it. */
+  declaredBytes: number | null;
+  mimeType: string | null;
   objectKey: string | null;
   /** THE TENANT, BECAUSE THIS FUNCTION IS THE ONLY PLACE THAT KNOWS IT (chapter 4.14).
    *
@@ -784,6 +788,16 @@ export async function recordMediaVerdict(
       // AND THE TENANT, for the same reason: the fan-out FR-MED-07 needs is scoped by
       // environment, and this statement is the only one that knows which.
       environmentId: mediaObjects.environmentId,
+      // AND THE BYTES AND THE MIME TYPE (4.16), which the verdict seam needs and did not
+      // have. A `rejected` delta has to negate the quota's own quantity —
+      // `declared_bytes`, which `reserveMediaSlot` sums — and FR-009's per-kind count
+      // needs the type. The input carries a field called `kind` and it is the
+      // RENDITION's (`"thumbnail"`), which is the near-miss a reader would use by
+      // accident. **Third chapter running that this list was short**: 4.14 added
+      // `environmentId`, 4.15 added `userId`, and each time the repair was the same —
+      // the statement that already reads the row is the one that should say.
+      declaredBytes: mediaObjects.declaredBytes,
+      mimeType: mediaObjects.mimeType,
       // AND THE UPLOADER (4.15), so a rendition inserted below carries the same
       // `user_id` as its parent. FR-MED-10's second sentence makes compliance erasure
       // delete *"a user's media objects and derived objects"*, and it will find both on
@@ -833,6 +847,8 @@ export async function recordMediaVerdict(
     return {
       applied: true,
       state: updated.state,
+      declaredBytes: updated.declaredBytes,
+      mimeType: updated.mimeType,
       objectKey: updated.objectKey,
       environmentId: updated.environmentId,
     };
@@ -844,6 +860,8 @@ export async function recordMediaVerdict(
   const [row] = await tx
     .select({
       state: mediaObjects.state,
+      declaredBytes: mediaObjects.declaredBytes,
+      mimeType: mediaObjects.mimeType,
       objectKey: mediaObjects.objectKey,
       environmentId: mediaObjects.environmentId,
     })
@@ -852,6 +870,8 @@ export async function recordMediaVerdict(
   return {
     applied: false,
     state: row?.state ?? null,
+    declaredBytes: row?.declaredBytes ?? null,
+    mimeType: row?.mimeType ?? null,
     objectKey: row?.objectKey ?? null,
     environmentId: row?.environmentId ?? null,
   };
