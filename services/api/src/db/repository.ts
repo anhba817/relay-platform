@@ -6112,6 +6112,11 @@ export class Repository {
       ),
     ];
     const states = new Map<string, MediaState>();
+    /** FR-MED-05: the parent's rendition, if it has one. */
+    const thumbnails = new Map<
+      string,
+      { media_id: string; width: number; height: number }
+    >();
     if (ids.length > 0) {
       const found = await this.db
         .select({ id: mediaObjects.id, state: mediaObjects.state })
@@ -6126,12 +6131,63 @@ export class Repository {
           ),
         );
       for (const row of found) states.set(row.id, row.state as MediaState);
+
+      // THE RENDITIONS OF THIS PAGE'S OBJECTS — a THIRD query per page, not a second
+      // per row, and not a join.
+      //
+      // **WHY NOT A JOIN ON THE QUERY ABOVE.** A left join to the same table on
+      // `parent_id` would return one row per (object, rendition) pair and make the
+      // `states` map above a group-by in Node. One more `= any(...)` over the partial
+      // index `media_objects_parent_idx` is cheaper to read and, measured on this
+      // lane, indistinguishable to run. 4.12's rule is about the OPERAND being a bound
+      // value, which both shapes satisfy; the cost it warned about was a correlated
+      // subquery per row, which neither is.
+      //
+      // SAME TENANT PREDICATE, FOR THE SAME REASON. `parent_id` is already constrained
+      // to this environment by `media_objects_parent_fk`, so this clause cannot change
+      // the result — and 4.12 found three tenancy scopes whose individual removal
+      // turned nothing red, which is exactly what a clause that cannot change a result
+      // looks like from a test suite.
+      const derived = await this.db
+        .select({
+          id: mediaObjects.id,
+          parentId: mediaObjects.parentId,
+          width: mediaObjects.width,
+          height: mediaObjects.height,
+        })
+        .from(mediaObjects)
+        .where(
+          and(
+            inArray(mediaObjects.parentId, ids),
+            eq(mediaObjects.rendition, "thumbnail"),
+            eq(mediaObjects.environmentId, this.environmentId),
+          ),
+        );
+      for (const row of derived) {
+        // A rendition without dimensions cannot be offered: the whole point of sending
+        // it is a box the client can reserve, and `{media_id}` alone would make a
+        // caller fetch the bytes to find out how big they are.
+        if (row.parentId && row.width !== null && row.height !== null) {
+          thumbnails.set(row.parentId, {
+            media_id: row.id,
+            width: row.width,
+            height: row.height,
+          });
+        }
+      }
     }
     return rows.map((row) => ({
       ...row,
-      attachments: row.attachments.map((a) =>
-        a.type === "media" ? { ...a, state: states.get(a.media_id) ?? "pending" } : a,
-      ),
+      attachments: row.attachments.map((a) => {
+        if (a.type !== "media") return a;
+        const thumbnail = thumbnails.get(a.media_id);
+        return {
+          ...a,
+          state: states.get(a.media_id) ?? "pending",
+          // ABSENT, NEVER NULL. A spread of `undefined` would still create the key.
+          ...(thumbnail ? { thumbnail } : {}),
+        };
+      }),
     }));
   }
 

@@ -156,8 +156,33 @@ export type RenditionFailure = (typeof RENDITION_FAILED)[number];
  * uploaded it, nothing scanned it, and FR-MED-03's verification never touches it. Giving
  * it one for symmetry would be a field that is always the same value, which is a field
  * a reader has to learn and can never use. */
+/** FR-MED-05 ON THE WIRE. Absent when there is no rendition, and never `null`.
+ *
+ * **OPTIONAL, AND THAT IS WEAKER THAN `state` IN A WAY WORTH NAMING.** `state` above is
+ * required precisely so the compiler lists every place a message is built; an optional
+ * property is silently correct everywhere, so the door set for this field had to be
+ * derived by asserting on delivered payloads instead of by reading a build error. The
+ * derivation is in `specs/061-chapter-4-15/doors.txt`.
+ *
+ * **ABSENT RATHER THAN `null` WITH A REASON.** Three cases produce no rendition and only
+ * one is a failure: the attachment is not an image, the image was already inside the
+ * bound (`research.md` R2 — the output would be 97.3% of the parent and the same
+ * pixels), or generation failed. A client's question is only *"is there a smaller one"*;
+ * the reason lives on the row, where an operator can read it, rather than in every
+ * delivered message.
+ *
+ * **THE DIMENSIONS ARE THE RENDITION'S OWN**, not the parent's. Sending them is the
+ * whole reason a thumbnail helps before its bytes arrive: without a box to reserve, the
+ * page jumps when the image lands. */
+const thumbnailRef = z.strictObject({
+  media_id: z.uuid(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
 const deliveredMediaArm = mediaArm.extend({
   state: z.enum(MEDIA_STATES),
+  thumbnail: thumbnailRef.optional(),
 });
 
 export const deliveredAttachmentSchema = z.discriminatedUnion("type", [
