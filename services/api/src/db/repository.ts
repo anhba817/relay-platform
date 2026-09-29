@@ -643,6 +643,83 @@ export async function channelsReferencingMediaIn(
   return rows.map((row) => row.id);
 }
 
+/** WHICH OF A TENANT'S MEDIA OBJECTS NOTHING REFERENCES ANY MORE — FR-MED-10's predicate.
+ *
+ * **CALLED BY NOTHING YET, AND THAT IS NOT AN OVERSIGHT.** FR-MED-10's reaper does not
+ * exist; `docs/12` row 22, the erasure chapter, is where it gets a caller. Chapter 4.15
+ * writes the predicate here anyway because the alternative is what happened to
+ * FR-MED-07's first sentence — three chapters cited the clause, every one of them
+ * implemented the half it needed, and nobody noticed the other half was unmet. A
+ * predicate with a test and no caller is weaker than one with both, and much stronger
+ * than a sentence in a specification. Its test drives it directly.
+ *
+ * **A RENDITION IS NEVER RETURNED, WHICH IS THE WHOLE OF FR-002.** The obvious reading —
+ * *"a rendition is unreferenced when its parent is"* — would have the reaper delete
+ * parent and rendition separately and depend on the order. It does not need to: a
+ * rendition cannot outlive its parent, because `media_objects_parent_fk` is
+ * `ON DELETE CASCADE`. So this asks only about uploads, and the renditions follow. The
+ * clause *"its reachability is its parent's"* is discharged by the foreign key rather
+ * than by a second arm of a predicate somebody has to keep in step.
+ *
+ * **TWO QUERIES, NOT ONE, AND 4.12 MEASURED WHY.** The natural single statement puts
+ * `NOT EXISTS (… attachments @> … m.id …)` against each candidate, which builds the
+ * containment operand from a column on the other side of the join — a GIN index cannot
+ * be looked up with a value the planner does not have yet, and that chapter measured the
+ * difference at **1,042 buffers against 84**, with the index present and idle. Here the
+ * candidates come back first and their ids go into the second query as bound values.
+ *
+ * The scope is an argument rather than a constructor, for `channelsReferencingMediaIn`'s
+ * reason: the caller will be a job, not a request. */
+export async function unreferencedMediaIn(
+  db: Db,
+  environmentId: string,
+  olderThan: Date,
+  limit = 100,
+): Promise<string[]> {
+  const candidates = await db
+    .select({ id: mediaObjects.id })
+    .from(mediaObjects)
+    .where(
+      and(
+        eq(mediaObjects.environmentId, environmentId),
+        isNull(mediaObjects.parentId),
+        lt(mediaObjects.createdAt, olderThan),
+      ),
+    )
+    .orderBy(mediaObjects.createdAt)
+    .limit(limit);
+  if (candidates.length === 0) return [];
+
+  // ONE QUERY FOR THE WHOLE BATCH: the messages that reference AT LEAST ONE candidate,
+  // each containment operand a bound value so the GIN index on `messages.attachments`
+  // can be looked up rather than scanned. What comes back is the attachment arrays, and
+  // the intersection is arithmetic in Node — cheaper than asking Postgres to unnest and
+  // far easier to read than a lateral join nobody will revisit.
+  const rows = await db
+    .select({ attachments: sql<Attachment[] | null>`${messages.attachments}` })
+    .from(messages)
+    .innerJoin(channels, eq(channels.id, messages.channelId))
+    .where(
+      and(
+        eq(channels.environmentId, environmentId),
+        or(
+          ...candidates.map(
+            (row) =>
+              sql`${messages.attachments} @> ${JSON.stringify([
+                { type: "media", media_id: row.id },
+              ])}::jsonb`,
+          ),
+        ),
+      ),
+    );
+  const referencedIds = new Set<string>();
+  for (const row of rows)
+    for (const attachment of row.attachments ?? [])
+      if (attachment.type === "media") referencedIds.add(attachment.media_id);
+
+  return candidates.map((row) => row.id).filter((id) => !referencedIds.has(id));
+}
+
 export async function recordMediaVerdict(
   db: Db,
   input: {
@@ -5473,6 +5550,18 @@ export class Repository {
                 eq(mediaObjects.userId, senderUserId),
               ),
           inArray(mediaObjects.state, ["pending", "ready"]),
+          // 4.15: A RENDITION IS NOT ATTACHABLE (FR-004), AND IT WOULD HAVE BEEN.
+          //
+          // A thumbnail is `ready` and belongs to the environment, so it satisfies every
+          // condition above and a sender who learned its id could attach it. It is not a
+          // thing a client uploaded and it is not a thing a message should name: the
+          // message names the parent, and the rendition rides along on delivery.
+          //
+          // IN THIS PREDICATE RATHER THAN BESIDE IT, so the refusal is the one arm this
+          // function already produces. A separate check with its own error code would
+          // tell a caller that somebody else's rendition exists, which is precisely what
+          // FR-MED-06's three-conditions-one-answer rule forbids.
+          isNull(mediaObjects.parentId),
         ),
       );
 
@@ -5860,7 +5949,13 @@ export class Repository {
     userId?: string,
   ): Promise<string | undefined> {
     const [object] = await this.db
-      .select({ objectKey: mediaObjects.objectKey })
+      .select({
+        objectKey: mediaObjects.objectKey,
+        // 4.15: null for an upload, the parent for a rendition. Fetched in the statement
+        // that already reads this row rather than by a second lookup, for the reason the
+        // verdict's own `RETURNING` list gives — a second read can disagree with the first.
+        parentId: mediaObjects.parentId,
+      })
       .from(mediaObjects)
       .where(
         and(
@@ -5886,7 +5981,26 @@ export class Repository {
       );
     if (!object) return undefined;
 
-    for (const channelId of await this.channelsReferencingMedia(mediaId)) {
+    // FR-MED-05: A RENDITION IS AUTHORISED THROUGH ITS PARENT, BY THE SAME PREDICATE.
+    //
+    // A thumbnail is named by no message — the message names the parent — so
+    // `channelsReferencingMedia` returns nothing for it and the loop below refuses it.
+    // **That is FR-MED-08 working exactly as written**, not a bug: an object with no
+    // referencing message is readable by nobody, including whoever uploaded it. What
+    // FR-MED-05's "sharing the parent's lifecycle" adds is that a rendition's
+    // reachability IS the parent's, so the question is asked about the parent instead.
+    //
+    // **ONE SUBSTITUTION, NOT A SECOND PREDICATE.** FR-005 requires the authorisation to
+    // be the same predicate rather than a copy of it, so this changes which id the
+    // existing loop asks about and changes nothing else. A copy would be the third
+    // tenancy scope 4.12 found whose individual removal turned nothing red.
+    //
+    // The state condition above already applied to the row that was fetched: a rendition
+    // is `ready` by `media_objects_rendition_state_check`, and a rendition of a parent
+    // that never reached `ready` cannot exist, because generation runs after the verdict
+    // that would refuse it.
+    const authorisingId = object.parentId ?? mediaId;
+    for (const channelId of await this.channelsReferencingMedia(authorisingId)) {
       if (await this.channelVisibleTo(channelId, userId)) return object.objectKey;
     }
     return undefined;

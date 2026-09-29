@@ -173,3 +173,37 @@ export async function deleteObject(
     return false;
   }
 }
+
+/** DELETE A MEDIA OBJECT'S BYTES AND ITS RENDITIONS' BYTES TOGETHER — FR-003's store half.
+ *
+ * **CALLED BY NOTHING YET, AND THE REASON IS WORTH READING BEFORE WRITING A CALLER.**
+ * Nothing in this platform deletes a `media_objects` ROW. The one live deletion is the
+ * rejection path above, which removes bytes and keeps the row on purpose — migration
+ * `0018` says *"a rejected object's row is all that survives it"*, because a refusal has
+ * to stay auditable after the object is gone. `media_objects_parent_fk` is
+ * `ON DELETE CASCADE`, so the database half of FR-003 is already correct for every
+ * present and future path; **the store has no cascade and this is the whole of what
+ * stands in for one.** The caller arrives with FR-MED-10's reaper — `docs/12` row 22,
+ * the erasure chapter.
+ *
+ * The convention this comment follows is `CLAUDE.md`'s: a claim about when a symbol runs
+ * names the thing that runs it, so that the claim rots visibly. *"On boot, every boot"*
+ * was false for `ensureBucket` for two chapters because nothing named its caller.
+ *
+ * **A REJECTED PARENT NEVER HAS RENDITIONS**, so the rejection path needs no change:
+ * generation runs after the scan and the declaration check, which is the ordering that
+ * makes FR-009 free rather than a cleanup.
+ *
+ * Every delete is attempted even if an earlier one fails, and the result says whether
+ * ALL of them succeeded. A partial failure leaves bytes nobody can reach through this
+ * platform — the same condition the rejection path already tolerates and logs. */
+export async function deleteObjectWithRenditions(
+  config: StoreConfig,
+  parentKey: string,
+  renditionKeys: readonly string[],
+): Promise<boolean> {
+  const results = await Promise.all(
+    [parentKey, ...renditionKeys].map((key) => deleteObject(config, key)),
+  );
+  return results.every(Boolean);
+}
