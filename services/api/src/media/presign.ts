@@ -41,6 +41,10 @@ export interface PresignOptions {
   accessKey: string;
   secretKey: string;
   region?: string;
+  /** Extra query parameters, signed with the rest (4.16). A bucket listing pages with
+   *  `marker`, and a parameter outside the signature is a 403 rather than an ignored
+   *  hint. Empty for every caller that predates the inventory. */
+  params?: Record<string, string>;
   /** Seconds. FR-003 says 15 minutes for an upload slot, and the STORE enforces it —
    * a URL past its expiry is refused with `AccessDenied · Request has expired` from
    * the store's own clock, with nothing asked of us. */
@@ -60,6 +64,7 @@ export function presign(options: PresignOptions): string {
     region = "us-east-1",
     expiresIn = 900,
     now = new Date(),
+    params = {},
   } = options;
 
   const host = new URL(endpoint).host;
@@ -67,15 +72,27 @@ export function presign(options: PresignOptions): string {
   const date = amzDate.slice(0, 8);
   const scope = `${date}/${region}/s3/aws4_request`;
 
-  // ORDER MATTERS AND `URLSearchParams` PRESERVES INSERTION ORDER. The canonical query
-  // string is the signed parameters sorted by name, and these five already are.
-  const query = new URLSearchParams({
-    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
-    "X-Amz-Credential": `${accessKey}/${scope}`,
-    "X-Amz-Date": amzDate,
-    "X-Amz-Expires": String(expiresIn),
-    "X-Amz-SignedHeaders": "host",
-  });
+  // ORDER MATTERS, AND SINCE 4.16 IT IS SORTED RATHER THAN ARRANGED. The canonical query
+  // string is every signed parameter ordered by name, and the five below were written in
+  // that order by hand — which was true and stopped being a safe thing to rely on the
+  // moment a caller could add its own. `marker` and `max-keys` happen to sort after
+  // `X-Amz-*` because uppercase precedes lowercase in ASCII; a parameter beginning with a
+  // digit would not, and the failure is a `SignatureDoesNotMatch` with nothing to read.
+  //
+  // **EVERY PARAMETER MUST BE INSIDE THE SIGNATURE.** Measured before this was written:
+  // appending `&list-type=2` to an already-signed URL answers
+  // `SignatureDoesNotMatch` — which is how a bucket listing that needs pagination
+  // discovered it needed this argument at all.
+  const signed: [string, string][] = [
+    ["X-Amz-Algorithm", "AWS4-HMAC-SHA256"],
+    ["X-Amz-Credential", `${accessKey}/${scope}`],
+    ["X-Amz-Date", amzDate],
+    ["X-Amz-Expires", String(expiresIn)],
+    ["X-Amz-SignedHeaders", "host"],
+    ...Object.entries(params),
+  ];
+  signed.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const query = new URLSearchParams(signed);
 
   // SEGMENT BY SEGMENT. `encodeURIComponent` on the whole path would escape the
   // separators too, and a key with a slash in it is the normal case here.

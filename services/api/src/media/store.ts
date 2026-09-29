@@ -207,3 +207,72 @@ export async function deleteObjectWithRenditions(
   );
   return results.every(Boolean);
 }
+
+/** One entry of the object store's own inventory (DR-17, chapter 4.16). */
+export interface StoredObject {
+  key: string;
+  bytes: number;
+}
+
+/** WHAT THE STORE SAYS IT HOLDS — the only thing that can contradict the meter.
+ *
+ * DR-17 asks for the rollup to be *"reconciled weekly against an object-storage inventory
+ * listing"*, and nothing in this platform could list a bucket. It turned out to be nearly
+ * free: `presign` with no key signs `/{bucket}`, which is a listing, and it already
+ * documented that case at 4.10.
+ *
+ * **IT PAGES, AND THAT IS NOT OPTIONAL.** One response carries 1,000 keys with
+ * `IsTruncated: true` against a bucket holding 8,120 objects. **4.13's sweep read one page
+ * and an object nobody uploaded to stayed `pending` for ever**; a reconciliation that
+ * read one page would report agreement for the 7,000 it never looked at. V1 pages with
+ * `marker` — V2's `continuation-token` belongs to `list-type=2`, which is not what was
+ * measured.
+ *
+ * **NO `HEAD` PER OBJECT.** Each entry carries its own `<Size>`, so the inventory costs
+ * nine requests rather than 8,120: **430 ms against 11.5 s** at this lane's size.
+ *
+ * XML BY REGULAR EXPRESSION, DELIBERATELY. The response is a fixed S3 shape with two
+ * elements this needs; a parser would be a dependency (ADR-30's ratio) and this platform
+ * has hand-written a SigV4 signer rather than take one. */
+export async function listObjects(
+  config: StoreConfig,
+  opts: { maxPages?: number } = {},
+): Promise<{ objects: StoredObject[]; pages: number; truncated: boolean }> {
+  const maxPages = opts.maxPages ?? 100;
+  const objects: StoredObject[] = [];
+  let marker: string | undefined;
+  let pages = 0;
+
+  for (; pages < maxPages; ) {
+    const url = presign({
+      method: "GET",
+      ...config,
+      endpoint: config.internalEndpoint,
+      expiresIn: 300,
+      ...(marker === undefined ? {} : { params: { marker } }),
+    });
+    const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`LIST ${config.bucket}: ${res.status}`);
+    const xml = await res.text();
+    pages += 1;
+
+    // `[\s\S]` rather than the `s` flag, to match the file's target without a lib bump.
+    const entries = xml.matchAll(
+      /<Contents>[\s\S]*?<Key>([^<]+)<\/Key>[\s\S]*?<Size>(\d+)<\/Size>[\s\S]*?<\/Contents>/g,
+    );
+    let last: string | undefined;
+    for (const m of entries) {
+      objects.push({ key: m[1]!, bytes: Number(m[2]) });
+      last = m[1]!;
+    }
+
+    if (!/<IsTruncated>true<\/IsTruncated>/.test(xml) || last === undefined) {
+      return { objects, pages, truncated: false };
+    }
+    marker = last;
+  }
+  // THE PAGE CAP IS REPORTED, NOT SWALLOWED. A caller that stops early must be able to
+  // say its answer is partial — the alternative is a reconciliation reporting agreement
+  // about a bucket it did not finish reading.
+  return { objects, pages, truncated: true };
+}
