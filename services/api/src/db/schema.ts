@@ -5,6 +5,7 @@ import {
   boolean,
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -1140,8 +1141,13 @@ export const mediaObjects = pgTable(
     userId: uuid("user_id").references(() => users.id),
     filename: text("filename").notNull(),
     mimeType: text("mime_type").notNull(),
-    // WHAT THE CALLER SAID, NOT WHAT ARRIVED. FR-MED-03 verifies the object and is
-    // a later chapter, so every quota sum in this one is over declarations.
+    // WHAT THE CALLER SAID, NOT WHAT ARRIVED — for an UPLOAD. FR-MED-03 verifies the
+    // object and is a later chapter, so every quota sum in that one is over declarations.
+    //
+    // AND FOR A RENDITION NOBODY SAID ANYTHING, so it holds the actual length (4.15).
+    // The quota sums this column over every non-`rejected` row, and FR-012 wants derived
+    // bytes accounted on the same basis as uploaded ones; a second column summed alongside
+    // would make all three readers of the total learn about it.
     declaredBytes: bigint("declared_bytes", { mode: "number" }).notNull(),
     state: text("state").notNull().default("pending"),
     objectKey: text("object_key").notNull(),
@@ -1175,6 +1181,23 @@ export const mediaObjects = pgTable(
     // `scan_failed`. A CHECK would be a fourth thing to widen every time a reason
     // arrives; the set lives in the protocol package where a reader can see it.
     rejectedReason: text("rejected_reason"),
+    // CHAPTER 4.15 — FR-MED-05's "sharing the parent's lifecycle", which is the only
+    // part of that clause that needed a migration (0020). A rendition is referenced by
+    // no message, so FR-MED-08's gate refuses it and FR-MED-10's reap would collect it;
+    // both are correct, and both are why the relationship has to be expressible at all.
+    //
+    // NULL FOR EVERYTHING A CLIENT UPLOADED, and non-null exactly when this row exists
+    // because another one does. The pair is a CHECK, so the discriminator cannot
+    // disagree with itself.
+    parentId: uuid("parent_id"),
+    // THE CLOSED SET LIVES IN `@relay/protocol`, NOT IN A CHECK — 0018's argument for
+    // `rejected_reason`, and the same reason: a CHECK is a fourth thing to widen. One
+    // member today, `thumbnail`. `poster` is the video half and is not built (ADR-34).
+    rendition: text("rendition"),
+    // ON THE PARENT, NOT ON THE RENDITION. FR-007 wants an allowed type that produced no
+    // rendition recorded as a value rather than as an absence, and the row left to ask is
+    // the parent's. Null when nothing was attempted and null when it worked.
+    renditionFailedReason: text("rendition_failed_reason"),
   },
   (t) => [
     // THREE VALUES SINCE CHAPTER 4.13, AND `pending` ALONE BEFORE IT. 4.10 wrote the
@@ -1201,5 +1224,44 @@ export const mediaObjects = pgTable(
     index("media_objects_pending_age")
       .on(t.createdAt)
       .where(sql`${t.state} = 'pending'`),
+    // CHAPTER 4.15 (migration 0020). A row is an upload or a rendition and there is no
+    // third thing for a reader to guess at.
+    check(
+      "media_objects_rendition_pairing_check",
+      sql`(${t.parentId} IS NULL) = (${t.rendition} IS NULL)`,
+    ),
+    // A RENDITION HAS NO LIFECYCLE OF ITS OWN AND THIS IS WHAT KEEPS IT THAT WAY.
+    // `state` is NOT NULL DEFAULT 'pending', so a rendition row carries something; it
+    // carries `ready`. Without this the column quietly becomes a second state machine
+    // that only ever holds one value — what 0018 argued `scanning` out of being.
+    check(
+      "media_objects_rendition_state_check",
+      sql`${t.rendition} IS NULL OR ${t.state} = 'ready'`,
+    ),
+    // CONSTITUTION I, GIVEN TO THE DATABASE RATHER THAN TO A PREDICATE SOMEBODY KEEPS.
+    // A single-column `REFERENCES media_objects(id)` would let a rendition name a row in
+    // another environment, because the environment is a second column and a one-column
+    // foreign key never looks at it. This unique exists only so the composite key below
+    // has something to point at — it adds no uniqueness the primary key lacks, and that
+    // is its whole cost: 344 kB against a 1,504 kB heap, measured at 6,646 rows.
+    unique("media_objects_id_environment_key").on(t.id, t.environmentId),
+    foreignKey({
+      columns: [t.parentId, t.environmentId],
+      foreignColumns: [t.id, t.environmentId],
+      name: "media_objects_parent_fk",
+    }).onDelete("cascade"),
+    // ONE RENDITION OF EACH KIND PER PARENT (FR-010), AND PARTIAL BECAUSE IT WAS MEASURED.
+    // As a plain table constraint a btree indexes NULLs too, so it covered all 6,646 rows
+    // at 168 kB to police the zero rows that had a parent. Restricted to those rows it is
+    // 8,192 bytes and refuses the same duplicates — re-run to check that making it partial
+    // had not made it decorative.
+    uniqueIndex("media_objects_parent_rendition_key")
+      .on(t.parentId, t.rendition)
+      .where(sql`${t.parentId} IS NOT NULL`),
+    // The delivery join's read, and the unreferenced predicate's. Partial on 0019's
+    // precedent: it stays the size of the rendition population, not of the table.
+    index("media_objects_parent_idx")
+      .on(t.parentId)
+      .where(sql`${t.parentId} IS NOT NULL`),
   ],
 );

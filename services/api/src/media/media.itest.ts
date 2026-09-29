@@ -221,6 +221,12 @@ describe("the upload slot", () => {
     // DECLARATION, and everything the platform later learns about the bytes is written
     // by a process that has read them. This list going stale is the point of writing it
     // out — migration 0018 turned it red the moment it applied.
+    //
+    // AND THREE MORE ARRIVED WITH 0020, WHICH TURNED IT RED AGAIN, ON PURPOSE. The
+    // tripwire has now fired for two consecutive migrations to this table, which is the
+    // only evidence that it is a tripwire and not a list somebody once typed. A rendition
+    // is a row derived from another row (FR-MED-05), and a slot request creates neither
+    // one nor a reason for one to be missing — so all three are null here too.
     expect(Object.keys(row).sort()).toEqual([
       "created_at",
       "declared_bytes",
@@ -231,7 +237,10 @@ describe("the upload slot", () => {
       "id",
       "mime_type",
       "object_key",
+      "parent_id",
       "rejected_reason",
+      "rendition",
+      "rendition_failed_reason",
       "state",
       "user_id",
       "verified_bytes",
@@ -250,6 +259,13 @@ describe("the upload slot", () => {
       "height",
       "duration_ms",
       "rejected_reason",
+      // 4.15. An upload is not derived from anything, and nothing has yet tried to
+      // derive from it — `parent_id` and `rendition` are the pair `0020`'s CHECK keeps
+      // in step, and `rendition_failed_reason` records a failure that cannot have
+      // happened before the bytes exist.
+      "parent_id",
+      "rendition",
+      "rendition_failed_reason",
     ]) {
       expect(row[column], `${column} must be null at slot time`).toBeNull();
     }

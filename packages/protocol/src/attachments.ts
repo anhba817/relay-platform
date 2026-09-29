@@ -109,6 +109,34 @@ export const attachmentSchema = z.discriminatedUnion("type", [urlArm, mediaArm])
  * `idempotency_key` defect this file's own header names. */
 export const MEDIA_STATES = ["pending", "ready", "rejected"] as const;
 
+/** FR-MED-05's derived objects, as the wire and the column spell them (chapter 4.15).
+ *
+ * A CLOSED SET HERE AND NOT A CHECK CONSTRAINT, which is migration `0018`'s argument for
+ * `rejected_reason`: a CHECK is a fourth thing to widen every time a kind arrives, and
+ * `0020` deliberately leaves the column unconstrained for that reason.
+ *
+ * ONE MEMBER, AND THE SET IS STILL A SET. `poster` is FR-MED-05's video half and is not
+ * built — a poster frame needs a video decoder, and ffmpeg measured 113,994,336 B against
+ * the image half's 30,380,799 B, for the harder half of a clause whose easier half
+ * (duration) chapter 4.13 already declined. SRS 1.22 and ADR-34 carry the reasoning and
+ * the reversal condition. Being a set rather than a boolean is what makes that a future
+ * insert instead of a future migration. */
+export const RENDITIONS = ["thumbnail"] as const;
+export type Rendition = (typeof RENDITIONS)[number];
+
+/** WHY A PARENT HAS NO RENDITION, WHICH FR-007 REQUIRES TO BE A VALUE AND NOT AN ABSENCE.
+ *
+ * Recorded on the parent, because a rendition that was never made has no row to carry it.
+ * `unsupported_source` is an allowed type this platform cannot decode — derived from what
+ * the decoder reports rather than listed, so the set of types that get a rendition is a
+ * measurement and not a second hand-maintained table. */
+export const RENDITION_FAILED = [
+  "unsupported_source",
+  "decode_failed",
+  "store_write_failed",
+] as const;
+export type RenditionFailure = (typeof RENDITION_FAILED)[number];
+
 /** WHAT THE PLATFORM BUILDS, WHICH IS NOT WHAT A SENDER DECLARES (FR-MED-07).
  *
  * **One schema was serving both, and that is what made this chapter's first plan
