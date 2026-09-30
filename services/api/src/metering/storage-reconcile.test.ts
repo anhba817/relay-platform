@@ -4,6 +4,7 @@ import {
   assertEnvironmentId,
   driftFor,
   exitCodeFor,
+  outstandingReservations,
   partitionByTenant,
   STORAGE_THRESHOLD,
   verdictFor,
@@ -94,6 +95,42 @@ describe("attributing the inventory", () => {
     ]);
     expect(byTenant.size).toBe(1);
     expect(unattributable).toEqual({ keys: 2, bytes: 1_000 });
+  });
+});
+
+describe("which reservations are still outstanding", () => {
+  const OTHER = "22222222-2222-2222-2222-222222222222";
+  const pending = [
+    { environmentId: ENV, objectKey: `${ENV}/uploaded`, declaredBytes: 400 },
+    { environmentId: ENV, objectKey: `${ENV}/never-came`, declaredBytes: 1_000 },
+    { environmentId: OTHER, objectKey: `${OTHER}/never-came`, declaredBytes: 70 },
+  ];
+
+  it("does not count a pending object the store already holds", () => {
+    // **A PENDING ROW IS NOT AUTOMATICALLY AN OUTSTANDING RESERVATION**, and the lane is
+    // what said so: 267 of its 6,580 pending rows name a key the bucket holds, 6,533,174
+    // declared bytes — 21% of everything in it. 4.13's sweep is why that is ordinary; an
+    // object is uploaded and stays `pending` until the sweep HEADs it. Counting those as
+    // outstanding subtracts them twice and invents a `meter-low`.
+    const out = outstandingReservations(pending, new Set([`${ENV}/uploaded`]));
+    expect(out.get(ENV)).toBe(1_000);
+    expect(out.get(OTHER)).toBe(70);
+  });
+
+  it("names no tenant whose every reservation has landed", () => {
+    // Absent, not zero: the caller defaults it, and a tenant with nothing outstanding
+    // must not be dragged into the comparison by this read alone.
+    const out = outstandingReservations(pending, new Set(pending.map((p) => p.objectKey)));
+    expect(out.size).toBe(0);
+  });
+
+  it("is the term that turns a raw gap into a verdict", () => {
+    // The two halves in one assertion: the same tenant reads `meter-high` without the
+    // term and `reservations-only` with it.
+    const bare: StorageComparison = { environmentId: ENV, metered: 1_400, inStore: 400, reserved: 0 };
+    expect(verdictFor(bare)).toBe("meter-high");
+    const out = outstandingReservations(pending, new Set([`${ENV}/uploaded`]));
+    expect(verdictFor({ ...bare, reserved: out.get(ENV) ?? 0 })).toBe("reservations-only");
   });
 });
 
