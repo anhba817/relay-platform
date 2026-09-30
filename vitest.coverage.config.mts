@@ -510,6 +510,52 @@ export default defineConfig({
           lines: 100,
           statements: 77,
         },
+        // ── CHAPTER 4.16's OWN THREE FILES ──────────────────────────────────
+        //
+        // **THIS CHAPTER SHIPPED THREE SOURCE FILES AND ALMOST PINNED NONE OF
+        // THEM**, which is the defect the quota chapter's note further down
+        // already records: *"this one shipped seven and left the ratchet nothing
+        // to hold, which is visible only by comparing two chapters."* The global
+        // floor is an aggregate, so an unpinned file at 20% passes as long as the
+        // rest carry it — 68 of the 139 files this run sees are unpinned, and the
+        // lowest is at 20.00.
+        //
+        // ONE OBSERVATION EACH, SO THE PINS SIT BELOW IT BY A MARGIN. 045's rule
+        // is *pin below the lower observation by the observed swing and put both
+        // numbers in the config*, and there is only one observation here — so the
+        // margin is a guess rather than a measurement, and it is written down as
+        // one. Measured 2026-09-30, full run, 145 files, 2,113 tests:
+        //
+        //   storage-reconcile.ts   st 100.00  br  90.38  fn 100  ln 100.00
+        //   storage-reads.ts       st 100.00  br 100.00  fn 100  ln 100.00
+        //   storage-event.ts       st 100.00  br 100.00  fn 100  ln 100.00
+        //
+        // `storage-reconcile.ts`'s branches are the composed half's — the
+        // truncated-listing arm and the `?? null` defaults, which a live store
+        // will not produce on demand. The pure half is exercised to the letter.
+        "services/api/src/metering/storage-reconcile.ts": {
+          statements: 95,
+          branches: 85,
+          functions: 100,
+          lines: 95,
+        },
+        "services/api/src/db/storage-reads.ts": {
+          statements: 95,
+          branches: 95,
+          functions: 100,
+          lines: 95,
+        },
+        // **PINNED AT 100 RATHER THAN AT WHAT IT MEASURED FIRST.** This file read
+        // 66.66% statements with no pin to notice, and the missing third was the
+        // `catch` — which is not a defensive branch but the whole of what *"a lost
+        // record is the accepted cost"* means in code. A test drives it now, so
+        // the pin is what the file achieves rather than what it achieved.
+        "services/api/src/metering/storage-event.ts": {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
         "services/api/src/internal/media.controller.ts": {
           // 83, FROM TWO ENVIRONMENTS THAT DISAGREE, AND THE DISAGREEMENT IS NOT A
           // SWING. This was pinned at 89 from a single local observation of 90.90 —
