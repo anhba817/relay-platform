@@ -70,7 +70,10 @@ const rowsForEnv = async (): Promise<number> =>
       `http://localhost:${process.env["RELAY_CLICKHOUSE_HTTP_PORT"] ?? "8123"}/`,
       {
         method: "POST",
-        headers: { Authorization: "Basic " + Buffer.from("relay:relay").toString("base64") },
+        headers: {
+          Authorization:
+            "Basic " + Buffer.from("relay:relay").toString("base64"),
+        },
         body: `SELECT count() FROM relay_analytics.webhook_attempts FINAL
                  WHERE environment_id = toUUID('${ENV}')`,
       },
@@ -78,7 +81,9 @@ const rowsForEnv = async (): Promise<number> =>
   );
 
 beforeAll(async () => {
-  nc = await connect({ servers: process.env["RELAY_NATS_URL"] ?? "nats://localhost:4222" });
+  nc = await connect({
+    servers: process.env["RELAY_NATS_URL"] ?? "nats://localhost:4222",
+  });
   const jsm = await nc.jetstreamManager();
   await jsm.streams.delete(STREAM).catch(() => undefined);
   await jsm.streams.add({ name: STREAM, subjects: ["itest.ingest.>"] });
@@ -90,7 +95,10 @@ beforeAll(async () => {
   });
   const js = nc.jetstream();
   for (let n = 1; n <= 10; n++) {
-    await js.publish("itest.ingest.x", new TextEncoder().encode(JSON.stringify(record(n))));
+    await js.publish(
+      "itest.ingest.x",
+      new TextEncoder().encode(JSON.stringify(record(n))),
+    );
   }
 });
 
@@ -98,11 +106,16 @@ afterAll(async () => {
   const jsm = await nc.jetstreamManager();
   await jsm.streams.delete(STREAM).catch(() => undefined);
   // Clean up the probe's rows before anything else counts them.
-  await fetch(`http://localhost:${process.env["RELAY_CLICKHOUSE_HTTP_PORT"] ?? "8123"}/`, {
-    method: "POST",
-    headers: { Authorization: "Basic " + Buffer.from("relay:relay").toString("base64") },
-    body: `DELETE FROM relay_analytics.webhook_attempts WHERE environment_id = toUUID('${ENV}')`,
-  });
+  await fetch(
+    `http://localhost:${process.env["RELAY_CLICKHOUSE_HTTP_PORT"] ?? "8123"}/`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: "Basic " + Buffer.from("relay:relay").toString("base64"),
+      },
+      body: `DELETE FROM relay_analytics.webhook_attempts WHERE environment_id = toUUID('${ENV}')`,
+    },
+  );
   await nc.close();
 });
 
@@ -112,7 +125,13 @@ describe("a redelivery does not become a second row", () => {
 
     // 1. A batch of five is offered and the store refuses, so nothing is acknowledged.
     const refused = await ingestOnce({
-      nc, store: refusing, logger, batchRows: 5, batchMs: 1000, stream: STREAM, durable: DURABLE,
+      nc,
+      store: refusing,
+      logger,
+      batchRows: 5,
+      batchMs: 1000,
+      stream: STREAM,
+      durable: DURABLE,
     }).catch(() => null);
     expect(refused).toBeNull();
     expect(await rowsForEnv()).toBe(0);
@@ -121,7 +140,13 @@ describe("a redelivery does not become a second row", () => {
     //    case the token design could not survive.
     await new Promise((r) => setTimeout(r, 1500));
     const first = await ingestOnce({
-      nc, store, logger, batchRows: 3, batchMs: 1000, stream: STREAM, durable: DURABLE,
+      nc,
+      store,
+      logger,
+      batchRows: 3,
+      batchMs: 1000,
+      stream: STREAM,
+      durable: DURABLE,
     });
     expect(first.written).toBeGreaterThan(0);
 
@@ -129,7 +154,13 @@ describe("a redelivery does not become a second row", () => {
     for (let i = 0; i < 6; i++) {
       await new Promise((r) => setTimeout(r, 1200));
       await ingestOnce({
-        nc, store, logger, batchRows: 10, batchMs: 1000, stream: STREAM, durable: DURABLE,
+        nc,
+        store,
+        logger,
+        batchRows: 10,
+        batchMs: 1000,
+        stream: STREAM,
+        durable: DURABLE,
       });
     }
 
@@ -166,11 +197,15 @@ describe("a record of an unrecognised type is left on the stream", () => {
     });
     const js = nc.jetstream();
     const put = async (o: unknown): Promise<void> => {
-      await js.publish("itest.route.x", new TextEncoder().encode(JSON.stringify(o)));
+      await js.publish(
+        "itest.route.x",
+        new TextEncoder().encode(JSON.stringify(o)),
+      );
     };
-    await put(record(101));                                   // an attempt: written
-    await put({ type: "media.scanned", media_id: "m1" });     // not ours: left alone
-    await put({                                               // ours now, and written
+    await put(record(101)); // an attempt: written
+    await put({ type: "media.scanned", media_id: "m1" }); // not ours: left alone
+    await put({
+      // ours now, and written
       type: "api.request",
       request_id: "77777777-7777-4777-8777-777777777777",
       ts: "2026-09-14T10:00:00.500Z",
@@ -180,10 +215,16 @@ describe("a record of an unrecognised type is left on the stream", () => {
       principal_kind: "none",
       refused_at: "handler",
     });
-    await put({ delivery_id: "only-this" });                  // no type, missing fields: poison
+    await put({ delivery_id: "only-this" }); // no type, missing fields: poison
 
     const first = await ingestOnce({
-      nc, store, logger, batchRows: 10, batchMs: 1000, stream: OTHER, durable: OTHER_DURABLE,
+      nc,
+      store,
+      logger,
+      batchRows: 10,
+      batchMs: 1000,
+      stream: OTHER,
+      durable: OTHER_DURABLE,
     });
     // A WHOLE-OBJECT EQUALITY, WHICH IS WHY 4.5 HAD TO COME THROUGH HERE. Adding
     // `writtenConnections` to `IngestResult` broke both of these, and that is the check
@@ -196,21 +237,35 @@ describe("a record of an unrecognised type is left on the stream", () => {
     // rest are zero, and a new counter added without touching it is never asserted absent.
     // Same file, two accounting styles, and only one of them notices a new field.
     expect(first).toEqual({
-      written: 2, writtenAttempts: 1, writtenRequests: 1, writtenConnections: 0,
+      written: 2,
+      writtenAttempts: 1,
+      writtenRequests: 1,
+      writtenConnections: 0,
       writtenMediaEvents: 0,
-      malformed: 1, unclaimed: 1,
+      malformed: 1,
+      unclaimed: 1,
     });
 
     // Past ack_wait: the unclaimed record comes back. The terminated one does not, and
     // neither do the two that were written and acknowledged.
     await new Promise((r) => setTimeout(r, 1500));
     const second = await ingestOnce({
-      nc, store, logger, batchRows: 10, batchMs: 1000, stream: OTHER, durable: OTHER_DURABLE,
+      nc,
+      store,
+      logger,
+      batchRows: 10,
+      batchMs: 1000,
+      stream: OTHER,
+      durable: OTHER_DURABLE,
     });
     expect(second).toEqual({
-      written: 0, writtenAttempts: 0, writtenRequests: 0, writtenConnections: 0,
+      written: 0,
+      writtenAttempts: 0,
+      writtenRequests: 0,
+      writtenConnections: 0,
       writtenMediaEvents: 0,
-      malformed: 0, unclaimed: 1,
+      malformed: 0,
+      unclaimed: 1,
     });
 
     await jsm.streams.delete(OTHER).catch(() => undefined);
@@ -249,9 +304,21 @@ describe("the request table keeps absent and empty apart", () => {
       limited_operation: null,
     };
     const rows = [
-      { ...base, request_id: "aaaaaaaa-0000-4000-8000-000000000001", endpoint: null },
-      { ...base, request_id: "aaaaaaaa-0000-4000-8000-000000000002", endpoint: "" },
-      { ...base, request_id: "aaaaaaaa-0000-4000-8000-000000000003", endpoint: "/v1/webhooks" },
+      {
+        ...base,
+        request_id: "aaaaaaaa-0000-4000-8000-000000000001",
+        endpoint: null,
+      },
+      {
+        ...base,
+        request_id: "aaaaaaaa-0000-4000-8000-000000000002",
+        endpoint: "",
+      },
+      {
+        ...base,
+        request_id: "aaaaaaaa-0000-4000-8000-000000000003",
+        endpoint: "/v1/webhooks",
+      },
     ];
     await store.insertRequests(rows);
 
@@ -291,7 +358,9 @@ describe("the request table keeps absent and empty apart", () => {
       "input_format_skip_unknown_fields=0&date_time_input_format=best_effort",
     );
     expect(out).toContain("Code: 117");
-    expect(out).toContain("Unknown field found while parsing JSONEachRow format: type");
+    expect(out).toContain(
+      "Unknown field found while parsing JSONEachRow format: type",
+    );
   });
 });
 
@@ -364,12 +433,17 @@ const RED_ENV = "9f000000-0000-4000-8000-00000000beef";
 
 const CONN_N = 4;
 
-const connRecord = (n: number, kind: "opened" | "closed"): Record<string, unknown> => ({
+const connRecord = (
+  n: number,
+  kind: "opened" | "closed",
+): Record<string, unknown> => ({
   type: `connection.${kind}`,
   connection_id: `9f000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
   environment_id: CONN_ENV,
   user_external_id: `person-${n}`,
-  ts: new Date(Date.UTC(2026, 8, 14, 13, 0, n * 2 + (kind === "closed" ? 1 : 0))).toISOString(),
+  ts: new Date(
+    Date.UTC(2026, 8, 14, 13, 0, n * 2 + (kind === "closed" ? 1 : 0)),
+  ).toISOString(),
   ...(kind === "closed" ? { close_code: 1000, duration_ms: 1000 } : {}),
 });
 
@@ -508,5 +582,170 @@ describe("a connection's two records become two rows", () => {
       await ch(`DELETE FROM relay_analytics.connection_events
                  WHERE environment_id = toUUID('${RED_ENV}')`);
     }
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// CHAPTER 4.16 — THE MEDIA ARM, DRAINED IN PROCESS.
+//
+// **THIS SUITE EXISTS BECAUSE `pnpm coverage` COULD NOT SEE THE PATH AT ALL.** The media
+// producer is exercised end to end by `services/api/src/media/storage-metering.itest.ts`,
+// which **spawns the ingester as a child process** (4.9 — it has no Dockerfile), so none
+// of the code under test is instrumented: `shapeMediaStored`, `route()`'s fourth arm and
+// `insertMediaEvents` measured 78.57%, 81.37% and 83.78% against pins of 100 and 84 while
+// every one of them was being executed on every run of that suite, in another process.
+//
+// **A GREEN LANE IS A CLAIM ABOUT WHAT WAS RE-RUN** (050), and a coverage number is a
+// claim about what ran IN THIS PROCESS. The repair is a suite that drains the same records
+// in process, against the same real store.
+// ---------------------------------------------------------------------------
+
+const MEDIA_STREAM = "ITEST_MEDIA";
+const MEDIA_DURABLE = "itest-media-ingester";
+const MEDIA_ENV = "9f000000-0000-4000-8000-00000000med1";
+
+const mediaRecord = (
+  over: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  type: "media.stored",
+  environment_id: MEDIA_ENV,
+  media_id: "9f000000-0000-4000-8000-00000000aa01",
+  event: "reserved",
+  kind: "image",
+  bytes_delta: 4096,
+  occurred_at: new Date(Date.UTC(2026, 8, 14, 13, 0, 0)).toISOString(),
+  ...over,
+});
+
+describe("a media.stored record becomes a media_events row", () => {
+  beforeAll(async () => {
+    const jsm = await nc.jetstreamManager();
+    await jsm.streams.delete(MEDIA_STREAM).catch(() => undefined);
+    await jsm.streams.add({ name: MEDIA_STREAM, subjects: ["itest.media.>"] });
+    await jsm.consumers.add(MEDIA_STREAM, {
+      durable_name: MEDIA_DURABLE,
+      ack_policy: AckPolicy.Explicit,
+      // Sixty seconds, for the reason the connection suite above records in full: a fetch
+      // window longer than `ack_wait` is a batch that redelivers into itself.
+      ack_wait: 60_000_000_000,
+      max_deliver: -1,
+    });
+    await ch(
+      `ALTER TABLE relay_analytics.media_events DELETE WHERE environment_id = toUUID('${MEDIA_ENV}')`,
+    );
+  });
+
+  afterAll(async () => {
+    const jsm = await nc.jetstreamManager();
+    await jsm.streams.delete(MEDIA_STREAM).catch(() => undefined);
+    await ch(
+      `ALTER TABLE relay_analytics.media_events DELETE WHERE environment_id = toUUID('${MEDIA_ENV}')`,
+    );
+  });
+
+  const mediaRows = async (): Promise<string> =>
+    (
+      await ch(`SELECT event, kind, bytes_delta FROM relay_analytics.media_events
+                 WHERE environment_id = toUUID('${MEDIA_ENV}') ORDER BY event`)
+    ).trim();
+
+  it("writes the good records and terminates the malformed ones, counting each", async () => {
+    const js = nc.jetstream();
+    const enc = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
+    // Two that shape, and one of each way the shaper can refuse. **The refusals are the
+    // uncovered half**: a valid record cannot exercise them, which is the sentence 4.13
+    // wrote about this very file when it raised `shape.ts` to 100.
+    await js.publish("itest.media.a", enc(mediaRecord()));
+    await js.publish(
+      "itest.media.b",
+      enc(
+        mediaRecord({
+          media_id: "9f000000-0000-4000-8000-00000000aa02",
+          event: "rendition",
+          bytes_delta: 700,
+        }),
+      ),
+    );
+    await js.publish("itest.media.c", enc(mediaRecord({ event: "uploaded" }))); // not in the set
+    await js.publish("itest.media.d", enc(mediaRecord({ kind: "document" }))); // not in the set
+    await js.publish(
+      "itest.media.e",
+      enc(mediaRecord({ bytes_delta: "4096" })),
+    ); // not a number
+    await js.publish("itest.media.f", enc(mediaRecord({ media_id: 7 }))); // not a string
+    await js.publish("itest.media.g", enc({ type: "media.stored" })); // nothing at all
+    await js.publish("itest.media.h", enc([mediaRecord()])); // an array
+
+    const result = await ingestOnce({
+      nc,
+      store,
+      logger,
+      batchRows: 100,
+      batchMs: 2000,
+      stream: MEDIA_STREAM,
+      durable: MEDIA_DURABLE,
+    });
+
+    expect(result.writtenMediaEvents).toBe(2);
+    expect(result.malformed).toBe(6);
+    // SPLIT BY TABLE. This batch carries media records and nothing else, so the other
+    // three counters must be zero — the block the connection suite above argues for.
+    expect(result.writtenAttempts).toBe(0);
+    expect(result.writtenRequests).toBe(0);
+    expect(result.writtenConnections).toBe(0);
+    expect(result.unclaimed).toBe(0);
+    expect(await mediaRows()).toBe(
+      "rendition\timage\t700\nreserved\timage\t4096",
+    );
+  }, 60_000);
+
+  it("leaves nothing acknowledged when the insert is refused", async () => {
+    // The whole batch, or none of it: `ingestOnce` acknowledges only after every insert
+    // returns. **This is the arm SC-005 depends on** — a ClickHouse outage must cost the
+    // record nothing, and the measurement that showed it (T050) could only watch a log.
+    const js = nc.jetstream();
+    await js.publish(
+      "itest.media.i",
+      new TextEncoder().encode(
+        JSON.stringify(
+          mediaRecord({
+            media_id: "9f000000-0000-4000-8000-00000000aa03",
+            bytes_delta: 11,
+          }),
+        ),
+      ),
+    );
+
+    await expect(
+      ingestOnce({
+        nc,
+        store: refusing,
+        logger,
+        batchRows: 100,
+        batchMs: 2000,
+        stream: MEDIA_STREAM,
+        durable: MEDIA_DURABLE,
+      }),
+    ).rejects.toThrow("store down");
+
+    // **ASK THE BROKER, RATHER THAN ASK FOR IT BACK.** The obvious next line is a second
+    // drain asserting the record lands — and it measured `0`, because this consumer's
+    // `ack_wait` is sixty seconds and the message is still outstanding to the fetch that
+    // failed. **That is a claim about `ack_wait`, not about durability**, and it is the
+    // mirror of the trap the connection suite above records: there a window LONGER than
+    // `ack_wait` made a batch redeliver into itself, and here a window SHORTER than it
+    // makes a redelivery look like a lost record.
+    //
+    // What the test is actually about is that nothing was acknowledged, and the consumer
+    // says so directly: one message outstanding, none acknowledged, nothing dropped.
+    const jsm = await nc.jetstreamManager();
+    const info = await jsm.consumers.info(MEDIA_STREAM, MEDIA_DURABLE);
+    expect(info.num_ack_pending + info.num_pending).toBe(1);
+    expect(await mediaRows()).not.toContain("\t11");
+
+    // And the live form of this is T050, measured against the real stack: ClickHouse
+    // stopped, a slot request answered **201**, two `ingester.batch_failed` lines, and
+    // the record queryable 27 s after the store came back — with its own `occurred_at`
+    // as `ts`, so the outage does not move the day the bytes were charged.
   }, 60_000);
 });

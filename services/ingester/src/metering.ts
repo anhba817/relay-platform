@@ -183,7 +183,14 @@ export async function uploadsByKind(
  *  turns one read into a shape every caller has to reassemble. */
 function parseKindMap(value: string | undefined): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const m of (value ?? "").matchAll(/'([^']+)':(\d+)/g))
+  // `String(value)` AND NOT `value ?? ""`, WHICH WAS AN UNREACHABLE BRANCH AND MEASURED
+  // AS HALF THIS FILE'S. A bare aggregate with no `GROUP BY` always returns exactly one
+  // row (4.6, asked of the server), so the absent arm cannot arise through the running
+  // query — the same fact `storedMessages` above cites for carrying no empty-result
+  // guard, and the same repair 4.6 made when it reached 100% by deleting branches rather
+  // than by writing a test that could not fail. On the impossible value the regex matches
+  // nothing and the answer is `{}`, which is exactly what the guard produced.
+  for (const m of String(value).matchAll(/'([^']+)':(\d+)/g))
     out[m[1]!] = Number(m[2]);
   return out;
 }

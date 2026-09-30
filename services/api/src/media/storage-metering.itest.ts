@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
 import { createDb, createPool, type Db } from "../db/client";
-import { createApiKey, createEnvironment } from "../db/repository";
+import { createApiKey, createEnvironment, Repository } from "../db/repository";
 import { ensureBucket, storeConfig } from "./store";
 
 // FR-MED-12's DAILY FIGURE, END TO END (US1).
@@ -272,6 +272,48 @@ describe("a tenant's stored bytes have a daily history", () => {
       "reserved\timage\t9000\nrejected\timage\t-9000",
     );
   }, 90_000);
+
+  it("emits nothing for an object whose declared type is no longer in the vocabulary", async () => {
+    // **THE ARM THE COVERAGE PIN FOUND, AND IT IS REACHABLE — just not through the slot
+    // route.** `kindOf` answers `null` for a type outside `ALLOWED_TYPES` and the slot
+    // route refuses those, so the first version of `meterStorage` recorded the arm as
+    // unreachable and left it untested: `media.controller.ts` measured 91.89% statements
+    // against a pin of 92 and the missing statements were that `return`.
+    //
+    // It is reachable the moment `ALLOWED_TYPES` changes, which is a deploy and not a
+    // hypothetical: a row written under the old vocabulary outlives it, and its verdict
+    // still arrives. The object is planted through `reserveMediaSlot` — the repository
+    // does not validate the type, the SERVICE does — which is exactly the shape a
+    // narrowed vocabulary leaves behind.
+    const stale = await createEnvironment(db, {
+      name: "storage-metering-itest-stale",
+    });
+    const id = randomUUID();
+    const reserved = await new Repository(db, stale.id).reserveMediaSlot({
+      id,
+      userId: null,
+      filename: "archive.zip",
+      mimeType: "application/zip",
+      declaredBytes: 5_000,
+      objectKey: `${stale.id}/${id}`,
+    });
+    expect(reserved.reserved).toBe(true);
+
+    const res = await verdict(id, {
+      verdict: "rejected",
+      reason: "declaration_mismatch",
+      verified_bytes: 1,
+    });
+    expect(res.status).toBe(200);
+
+    // NO KIND MEANS NO RECORD, and the alternative is worse than silence: a record with
+    // no kind lands as `''` in a `LowCardinality(String)` column, where 4.4 measured that
+    // an absent field and an explicit empty string are indistinguishable — so the
+    // per-kind count would grow a nameless bucket nothing could ever explain.
+    await new Promise((r) => setTimeout(r, 2_000));
+    expect(await eventsFor(stale.id)).toBe("");
+    expect(await rollupFor(stale.id)).toEqual({ byKind: "{}", bytes: 0 });
+  }, 60_000);
 
   it("counts uploads by kind, separately, summing to the day's total (SC-007)", async () => {
     // FR-009, THROUGH THE WHOLE PATH. The type was measured against the server in phase 2

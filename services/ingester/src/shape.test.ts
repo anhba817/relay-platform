@@ -6,6 +6,7 @@ import {
   route,
   shape,
   shapeConnection,
+  shapeMediaStored,
   shapeRequest,
 } from "./shape.js";
 
@@ -47,8 +48,16 @@ describe("shape renames attempted_at to ts", () => {
 
   it("emits exactly the table's ten columns", () => {
     expect(Object.keys(shape(valid) ?? {}).sort()).toEqual([
-      "attempt", "delivery_id", "endpoint_id", "environment_id", "error",
-      "event_id", "latency_ms", "outcome", "status", "ts",
+      "attempt",
+      "delivery_id",
+      "endpoint_id",
+      "environment_id",
+      "error",
+      "event_id",
+      "latency_ms",
+      "outcome",
+      "status",
+      "ts",
     ]);
   });
 });
@@ -195,7 +204,9 @@ describe("shapeRequest drops `type` and says absent rather than empty", () => {
     delete tenantless["environment_id"];
     const row = shapeRequest(tenantless);
     expect(row?.environment_id).toBeNull();
-    expect(row?.environment_id).not.toBe("00000000-0000-0000-0000-000000000000");
+    expect(row?.environment_id).not.toBe(
+      "00000000-0000-0000-0000-000000000000",
+    );
   });
 
   it("maps an absent limited_operation to null", () => {
@@ -395,5 +406,86 @@ describe("an array of records is malformed, not a batch", () => {
       ts: "2026-09-14T12:00:00.000Z",
     });
     expect(routed.kind).toBe("malformed");
+  });
+});
+
+// `shapeMediaStored` REFUSES WHAT IT WILL NEVER BE ABLE TO SHAPE (chapter 4.16), and the
+// block above says why this exists: **a valid record cannot exercise a refusal**, so a
+// shaper tested only through the pipeline is tested on its accepting half alone.
+// `ingest.itest.ts` drains the closed-set refusals against a real broker; these are the
+// ones no publisher can produce — a payload that is not an object at all.
+
+const validMedia = {
+  type: "media.stored",
+  environment_id: "9f000000-0000-4000-8000-00000000med1",
+  media_id: "9f000000-0000-4000-8000-00000000aa01",
+  event: "reserved",
+  kind: "image",
+  bytes_delta: 4096,
+  occurred_at: "2026-09-14T13:00:00.000Z",
+};
+
+describe("shapeMediaStored refuses what it will never be able to shape", () => {
+  it("renames occurred_at to ts and carries the rest through", () => {
+    // THE RENAME IS THE ONE SILENT FAILURE HERE. `shape.ts`'s header records it for the
+    // attempt shaper: a field that stops being renamed lands as a column the table does
+    // not have, and the insert says so — but only at the far end.
+    expect(shapeMediaStored(validMedia)).toEqual({
+      environment_id: validMedia.environment_id,
+      media_id: validMedia.media_id,
+      event: "reserved",
+      kind: "image",
+      bytes_delta: 4096,
+      ts: "2026-09-14T13:00:00.000Z",
+    });
+  });
+
+  it("takes a negative delta, because a rejection is one", () => {
+    // The sign is CARRIED, never derived from `event` — `0016` argues that in full, with
+    // `stored_delta` one table over as the counter-example.
+    expect(
+      shapeMediaStored({
+        ...validMedia,
+        event: "rejected",
+        bytes_delta: -4096,
+      }),
+    ).toMatchObject({ event: "rejected", bytes_delta: -4096 });
+  });
+
+  it("refuses a payload that is not an object", () => {
+    expect(shapeMediaStored(null)).toBeNull();
+    expect(shapeMediaStored("media.stored")).toBeNull();
+    expect(shapeMediaStored(7)).toBeNull();
+    expect(shapeMediaStored(undefined)).toBeNull();
+  });
+
+  it("refuses a value outside either closed set", () => {
+    // `uploaded` is the word DR-17 and the SRS's data dictionary both use, and it is not
+    // one of the four this platform emits — so it is the wrong value a reader is most
+    // likely to send.
+    expect(shapeMediaStored({ ...validMedia, event: "uploaded" })).toBeNull();
+    expect(shapeMediaStored({ ...validMedia, kind: "document" })).toBeNull();
+  });
+
+  it("refuses a record missing any field it must carry", () => {
+    for (const field of [
+      "environment_id",
+      "media_id",
+      "occurred_at",
+      "event",
+      "kind",
+      "bytes_delta",
+    ] as const) {
+      const missing: Record<string, unknown> = { ...validMedia };
+      delete missing[field];
+      expect(shapeMediaStored(missing), `${field} absent`).toBeNull();
+    }
+  });
+
+  it("refuses a byte count that arrived as a string", () => {
+    // 4.4's column type caught the mirror of this at the far end: `latency_ms` was
+    // `UInt32` while the producer sent fractions, and only traffic said so. A shaper that
+    // passes a string through writes it into an `Int64`.
+    expect(shapeMediaStored({ ...validMedia, bytes_delta: "4096" })).toBeNull();
   });
 });

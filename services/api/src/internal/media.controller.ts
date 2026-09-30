@@ -246,7 +246,7 @@ export class MediaVerificationController {
     // upload sweep — the mechanism is the state, the frame is the optimisation.
     if (result.applied && result.environmentId !== null) {
       await this.announce(result.environmentId, mediaId, result.state);
-      this.meterStorage(mediaId, body, result);
+      this.meterStorage(mediaId, result.environmentId, body, result);
     }
 
     return {
@@ -272,10 +272,18 @@ export class MediaVerificationController {
    * construction. A rendition adds its own. */
   private meterStorage(
     mediaId: string,
+    /** **A `string`, NOT `string | null`, AND THAT IS A DELETED BRANCH.** The first
+     *  version took the whole result and re-checked `environmentId === null` on its first
+     *  line — a guard its only caller already makes, three lines up, in the condition that
+     *  decides whether to call at all. **The per-arm probe found it**: deleting the check
+     *  turned nothing red in five suites, which for a reachable arm means untested and for
+     *  this one meant unreachable. Narrowing the parameter is 051's repair — *"100/100/100
+     *  /100 by deleting branches, because both arms were unreachable"* — and it is stronger
+     *  than a test, because the compiler now refuses a caller that has not checked. */
+    environmentId: string,
     body: InternalMediaVerdictRequest,
-    result: { environmentId: string | null; declaredBytes: number | null; mimeType: string | null },
+    result: { declaredBytes: number | null; mimeType: string | null },
   ): void {
-    if (result.environmentId === null) return;
     // `kindOf` returns null for a type outside `ALLOWED_TYPES`, which cannot reach here —
     // the slot route refused it. Recorded rather than asserted: a record with no kind
     // would land as `''` in a `LowCardinality(String)` column, and 4.4 measured that an
@@ -285,7 +293,7 @@ export class MediaVerificationController {
 
     if (body.verdict === "rejected" && result.declaredBytes !== null) {
       void publishStorageDelta(this.analytics, this.logger, {
-        environmentId: result.environmentId,
+        environmentId,
         mediaId,
         cause: "rejected",
         kind,
@@ -297,7 +305,7 @@ export class MediaVerificationController {
 
     if (body.verdict === "ready" && body.rendition !== undefined) {
       void publishStorageDelta(this.analytics, this.logger, {
-        environmentId: result.environmentId,
+        environmentId,
         mediaId: body.rendition.id,
         cause: "rendition",
         kind,

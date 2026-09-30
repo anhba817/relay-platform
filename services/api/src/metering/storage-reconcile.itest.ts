@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createDb, createPool, type Db } from "../db/client";
-import { createEnvironment, Repository } from "../db/repository";
+import {
+  createEnvironment,
+  recordMediaVerdict,
+  Repository,
+} from "../db/repository";
 import { presign } from "../media/presign";
 import { deleteObject, ensureBucket, storeConfig } from "../media/store";
 import { createAnalyticalStore, type AnalyticalStore } from "./clickhouse";
@@ -231,6 +235,43 @@ describe("the meter against the store, tenant by tenant", () => {
     const after = rowFor(await reconcileStorage(db, store, config), env);
     expect(after?.reserved).toBe(40_000); // the 7,000 is no longer outstanding
     expect(after?.inStore).toBe(17_000); // and the bucket counts it
+    await ch(
+      `ALTER TABLE relay_analytics.daily_usage_billing DELETE WHERE environment_id = '${env}'`,
+    );
+  });
+
+  it("counts only a PENDING slot as outstanding, which the probe found nothing checked", async () => {
+    // **T046's ARM A11.** Deleting `where(state = 'pending')` from `pendingMediaObjects`
+    // turned nothing red across five suites — and the arm is plainly reachable, so that
+    // was a fixture problem rather than a dead branch: every media row the other tests
+    // plant is pending, so a read that returned all of them would give the same answer.
+    // 061's finding exactly — *choosing the wrong suites looks like an uncovered arm* —
+    // one level down, where it is the wrong FIXTURE.
+    const env = (
+      await createEnvironment(db, { name: "storage-reconcile-ready" })
+    ).id;
+    await meter(env, 30_000);
+    const readyId = await reserve(env, 20_000);
+    const stillPending = await reserve(env, 10_000);
+    expect(stillPending).not.toBe(readyId);
+
+    // The real transition, not an UPDATE: the object is verified and becomes `ready`.
+    const applied = await recordMediaVerdict(db, {
+      id: readyId,
+      verdict: "ready",
+      verifiedBytes: 20_000,
+      verifiedType: "image/png",
+    });
+    expect(applied.applied).toBe(true);
+
+    // Only the slot still waiting is outstanding. A `ready` object is one the platform
+    // believes the store HOLDS, so counting it as an unfulfilled reservation would
+    // explain away a gap the comparison exists to report.
+    const row = rowFor(await reconcileStorage(db, store, config), env);
+    expect(row?.reserved).toBe(10_000);
+    expect(row?.inStore).toBe(0);
+    // 30,000 metered, nothing in the bucket, 10,000 explained — 20,000 is not.
+    expect(row?.verdict).toBe("meter-high");
     await ch(
       `ALTER TABLE relay_analytics.daily_usage_billing DELETE WHERE environment_id = '${env}'`,
     );

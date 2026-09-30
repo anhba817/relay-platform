@@ -1,11 +1,21 @@
 import { createServer, type Server } from "node:http";
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   deleteObjectWithRenditions,
   deleteObject,
   ensureBucket,
+  listObjects,
   storeConfig,
   storeReady,
   type StoreConfig,
@@ -61,7 +71,10 @@ describe("the store client, against a server that answers to order", () => {
     // store distinguishes "already there" from "went wrong", so no flag has to. `storeReady`
     // reaches it only on a 404, so in practice it fires once per store — but "once" is a
     // property of the caller and this function is safe without it.
-    reply = { status: 409, body: "<Error><Code>BucketAlreadyOwnedByYou</Code></Error>" };
+    reply = {
+      status: 409,
+      body: "<Error><Code>BucketAlreadyOwnedByYou</Code></Error>",
+    };
     expect(await ensureBucket(config)).toBe("exists");
   });
 
@@ -70,14 +83,20 @@ describe("the store client, against a server that answers to order", () => {
     // wrong, which is a store the api will fail against on every slot request. It throws
     // rather than returning, because its caller — `storeReady` — is the thing that decides
     // a failure is a 503, and it has to say enough for an operator to tell 403 from 500.
-    reply = { status: 403, body: "<Error><Code>SignatureDoesNotMatch</Code></Error>" };
+    reply = {
+      status: 403,
+      body: "<Error><Code>SignatureDoesNotMatch</Code></Error>",
+    };
     await expect(ensureBucket(config)).rejects.toThrow(/HTTP 403/);
     await expect(ensureBucket(config)).rejects.toThrow(/SignatureDoesNotMatch/);
 
     // And a 409 that is NOT the name: another tenant of the same store owns the bucket,
     // which is fatal rather than idempotent. Matching on the status alone would read
     // this as "already ours".
-    reply = { status: 409, body: "<Error><Code>BucketAlreadyExists</Code></Error>" };
+    reply = {
+      status: 409,
+      body: "<Error><Code>BucketAlreadyExists</Code></Error>",
+    };
     await expect(ensureBucket(config)).rejects.toThrow(/HTTP 409/);
   });
 
@@ -147,7 +166,8 @@ describe("the store client, against a server that answers to order", () => {
     // consumers want `localhost:9100`, so the field has to be invisible until it isn't.
     expect(storeConfig({}).internalEndpoint).toBe("http://localhost:9100");
     expect(
-      storeConfig({ RELAY_MINIO_ENDPOINT: "http://elsewhere:9100" }).internalEndpoint,
+      storeConfig({ RELAY_MINIO_ENDPOINT: "http://elsewhere:9100" })
+        .internalEndpoint,
     ).toBe("http://elsewhere:9100");
 
     // SET IS THE COMPOSE CASE, and it is the one that was answering 503: the client is
@@ -212,7 +232,10 @@ describe("deleting an object's bytes", () => {
         return new Response(null, { status: 204 });
       }),
     );
-    await deleteObject({ ...config, internalEndpoint: "http://minio:9000" }, "k/1");
+    await deleteObject(
+      { ...config, internalEndpoint: "http://minio:9000" },
+      "k/1",
+    );
     expect(seen).toContain("http://minio:9000");
   });
 });
@@ -250,7 +273,9 @@ describe("deleting a parent's bytes and its renditions' together", () => {
 
   it("deletes every key and reports success", async () => {
     respond(() => true);
-    expect(await deleteObjectWithRenditions(config, "env/parent", ["env/thumb"])).toBe(true);
+    expect(
+      await deleteObjectWithRenditions(config, "env/parent", ["env/thumb"]),
+    ).toBe(true);
     expect(seen).toHaveLength(2);
     expect(seen.join(" ")).toContain("parent");
     expect(seen.join(" ")).toContain("thumb");
@@ -262,13 +287,127 @@ describe("deleting a parent's bytes and its renditions' together", () => {
     // one refusal stopping the others: that would leave MORE unreachable bytes, not
     // fewer, and the caller has no way to retry the ones that were skipped.
     respond((url) => !url.includes("thumb"));
-    expect(await deleteObjectWithRenditions(config, "env/parent", ["env/thumb"])).toBe(false);
+    expect(
+      await deleteObjectWithRenditions(config, "env/parent", ["env/thumb"]),
+    ).toBe(false);
     expect(seen, "a failure stopped the other deletes").toHaveLength(2);
   });
 
   it("deletes the parent alone when it has no renditions", async () => {
     respond(() => true);
-    expect(await deleteObjectWithRenditions(config, "env/parent", [])).toBe(true);
+    expect(await deleteObjectWithRenditions(config, "env/parent", [])).toBe(
+      true,
+    );
     expect(seen).toHaveLength(1);
+  });
+});
+
+// ── CHAPTER 4.16: THE INVENTORY LISTING ──────────────────────────────────────────
+//
+// Against MinIO this pages correctly over 1,775 real objects, which
+// `storage-reconcile.itest.ts` exercises on every run. **What a real store will not do on
+// demand is truncate at page one** — that depends on how many objects happen to be in the
+// bucket — and the page cap cannot be reached at all without a hundred pages of them. That
+// is the half this file is for, and it is the division of labour this file's header
+// already states.
+
+describe("listing a bucket's inventory", () => {
+  const config = {
+    endpoint: "http://minio:9000",
+    internalEndpoint: "http://minio:9000",
+    accessKey: "relay",
+    secretKey: "relay-secret",
+    bucket: "relay-media",
+  };
+  const seen: string[] = [];
+
+  /** One S3 `ListBucketResult`, with as many entries as asked for. */
+  const page = (
+    keys: readonly (readonly [string, number])[],
+    truncated: boolean,
+  ): string =>
+    `<?xml version="1.0"?><ListBucketResult>` +
+    keys
+      .map(([k, n]) => `<Contents><Key>${k}</Key><Size>${n}</Size></Contents>`)
+      .join("") +
+    `<IsTruncated>${truncated}</IsTruncated></ListBucketResult>`;
+
+  /** Serve a fixed sequence of pages, then an empty final one. */
+  const serve = (pages: string[], status = 200) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        seen.push(url);
+        const body =
+          pages.length > 1 ? (pages.shift() as string) : (pages[0] as string);
+        return new Response(body, { status });
+      }),
+    );
+
+  beforeEach(() => {
+    seen.length = 0;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("follows the marker across pages and reports that it finished", async () => {
+    serve([
+      page(
+        [
+          ["env-a/1", 10],
+          ["env-a/2", 20],
+        ],
+        true,
+      ),
+      page([["env-b/3", 30]], false),
+    ]);
+
+    const inv = await listObjects(config);
+    expect(inv.objects).toEqual([
+      { key: "env-a/1", bytes: 10 },
+      { key: "env-a/2", bytes: 20 },
+      { key: "env-b/3", bytes: 30 },
+    ]);
+    expect(inv.pages).toBe(2);
+    expect(inv.truncated).toBe(false);
+    // THE SECOND REQUEST CARRIES THE LAST KEY OF THE FIRST PAGE, and the marker is inside
+    // the signature — one appended afterwards answers `SignatureDoesNotMatch`, which is
+    // why `presign` takes parameters at all.
+    expect(seen[0]).not.toContain("marker=");
+    expect(seen[1]).toContain("marker=env-a%2F2");
+  });
+
+  it("stops at the page cap and SAYS the answer is partial", async () => {
+    // **A RECONCILIATION THAT REPORTS AGREEMENT ABOUT A BUCKET IT DID NOT FINISH READING
+    // IS 4.13's ONE-PAGE SWEEP** inside the instrument written to catch it. The cap is
+    // reported, never swallowed: `reconcileStorage` turns every `inStore` to `null` on a
+    // truncated listing and the script exits 2 rather than printing verdicts.
+    serve([page([["env-a/x", 1]], true)]); // forever truncated
+    const inv = await listObjects(config, { maxPages: 3 });
+    expect(inv.pages).toBe(3);
+    expect(inv.truncated).toBe(true);
+    expect(inv.objects).toHaveLength(3);
+    expect(seen).toHaveLength(3);
+  });
+
+  it("stops on a truncated page that carried no keys, rather than looping", async () => {
+    // `IsTruncated: true` WITH AN EMPTY BODY HAS NO MARKER TO ADVANCE, so the next
+    // request would be the same request. `last === undefined` is the guard, and a store
+    // that claims more and shows none is the only way to reach it.
+    serve([page([], true)]);
+    expect(await listObjects(config)).toEqual({
+      objects: [],
+      pages: 1,
+      truncated: false,
+    });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("refuses a listing the store would not give", async () => {
+    serve(["AccessDenied"], 403);
+    await expect(listObjects(config)).rejects.toThrow(
+      `LIST ${config.bucket}: 403`,
+    );
   });
 });

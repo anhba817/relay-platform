@@ -50,13 +50,15 @@ export async function main(): Promise<void> {
 
   const nc = await connect({ servers: url });
   const jsm = await nc.jetstreamManager();
-  await jsm.consumers.add(ANALYTICS_STREAM, {
-    durable_name: DURABLE,
-    ack_policy: AckPolicy.Explicit,
-    ack_wait: ACK_WAIT_NS,
-    max_deliver: MAX_DELIVER,
-    filter_subject: ALL_ANALYTICS_SUBJECT,
-  }).catch(() => undefined); // already there; leave it alone
+  await jsm.consumers
+    .add(ANALYTICS_STREAM, {
+      durable_name: DURABLE,
+      ack_policy: AckPolicy.Explicit,
+      ack_wait: ACK_WAIT_NS,
+      max_deliver: MAX_DELIVER,
+      filter_subject: ALL_ANALYTICS_SUBJECT,
+    })
+    .catch(() => undefined); // already there; leave it alone
 
   const store = createClickHouse();
   let running = true;
@@ -87,6 +89,14 @@ export async function main(): Promise<void> {
           attempts: r.writtenAttempts,
           requests: r.writtenRequests,
           connections: r.writtenConnections,
+          // THE FIFTH RECORD TYPE, AND IT WAS MISSING FROM THIS LINE FOR A WHOLE
+          // CHAPTER. `IngestResult` has carried `writtenMediaEvents` since 4.16's
+          // phase 2 and nothing printed it, so a media delta showed up only inside
+          // `written` — a total that moved by one with no field saying which arm moved
+          // it. Found while watching this log through a ClickHouse outage (T050), which
+          // is the exact situation where an operator has nothing else to read. 4.13:
+          // *"the boot line is the only thing that said so."*
+          media: r.writtenMediaEvents,
           malformed: r.malformed,
           unclaimed: r.unclaimed,
         });
