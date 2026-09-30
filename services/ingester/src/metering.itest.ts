@@ -1,7 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClickHouse } from "./clickhouse.js";
-import { dailyUsage, storedMessages } from "./metering.js";
+import {
+  dailyUsage,
+  storedBytes,
+  storedMessages,
+  uploadsByKind,
+} from "./metering.js";
 
 // THE ROLLUP FR-ANL-05 NAMES, ASSERTED AGAINST THE STORE THAT HOLDS IT.
 //
@@ -18,6 +23,13 @@ import { dailyUsage, storedMessages } from "./metering.js";
 // opens. A whole-table `count()` here would fail for a neighbour's reason.
 
 const ENV = "6a000000-0000-4000-8000-0000000051a6";
+/** Chapter 4.16's tenant, SEPARATE FROM `ENV` and cleaned by the same function.
+ *
+ *  A second id rather than a second suite: these reads open `daily_usage_billing`, which
+ *  the tests above feed through `0011` as a side effect of planting `message_events`, and
+ *  a byte level summed over a tenant that also has message rollups is a figure two
+ *  chapters are writing. */
+const MEDIA_ENV = "6a000000-0000-4000-8000-0000000051b0";
 const DAY = "2026-09-20";
 
 const auth =
@@ -37,7 +49,8 @@ async function ch(sql: string): Promise<string> {
     body: sql,
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(text.trim().split("\n")[0] ?? "clickhouse refused");
+  if (!res.ok)
+    throw new Error(text.trim().split("\n")[0] ?? "clickhouse refused");
   return text.trim();
 }
 
@@ -53,7 +66,10 @@ const openOnly = (id: number, at: string): string =>
 
 /** Mutations are asynchronous. Poll for what must be gone rather than sleeping at it — a
  *  flat sleep before an assertion is a bet that the server is idle. */
-async function settle(predicate: () => Promise<boolean>, ms = 15_000): Promise<boolean> {
+async function settle(
+  predicate: () => Promise<boolean>,
+  ms = 15_000,
+): Promise<boolean> {
   const deadline = Date.now() + ms;
   for (;;) {
     if (await predicate()) return true;
@@ -63,9 +79,28 @@ async function settle(predicate: () => Promise<boolean>, ms = 15_000): Promise<b
 }
 
 async function clean(): Promise<void> {
-  await ch(`ALTER TABLE relay_analytics.connection_events DELETE WHERE environment_id = '${ENV}'`);
-  await ch(`ALTER TABLE relay_analytics.message_events DELETE WHERE environment_id = '${ENV}'`);
-  await ch(`ALTER TABLE relay_analytics.daily_usage_v2 DELETE WHERE environment_id = '${ENV}'`);
+  await ch(
+    `ALTER TABLE relay_analytics.connection_events DELETE WHERE environment_id = '${ENV}'`,
+  );
+  await ch(
+    `ALTER TABLE relay_analytics.message_events DELETE WHERE environment_id = '${ENV}'`,
+  );
+  await ch(
+    `ALTER TABLE relay_analytics.daily_usage_v2 DELETE WHERE environment_id = '${ENV}'`,
+  );
+  // CHAPTER 4.16's TWO TABLES, AND THE ROLLUP BOTH TENANTS REACH. `daily_usage_billing`
+  // was never read by this suite before 4.16 and so was never purged; `0011` has been
+  // writing `ENV`'s rows into it on every run since 4.6. A read that had not existed is
+  // exactly where 059-12's slow leak hides — a pile a fresh database never shows and CI
+  // therefore never sees.
+  await ch(
+    `ALTER TABLE relay_analytics.media_events DELETE WHERE environment_id = '${MEDIA_ENV}'`,
+  );
+  for (const env of [ENV, MEDIA_ENV]) {
+    await ch(
+      `ALTER TABLE relay_analytics.daily_usage_billing DELETE WHERE environment_id = '${env}'`,
+    );
+  }
   // The delete above does not reach 4.2's rollup: a materialised view does not propagate
   // deletes, and its storage is an implicit inner table addressed by its own name.
   const inner = await ch(
@@ -88,7 +123,10 @@ async function clean(): Promise<void> {
     );
     return Number(n) === 0;
   });
-  if (!gone) throw new Error("mutations did not finish; the next test would read leftovers");
+  if (!gone)
+    throw new Error(
+      "mutations did not finish; the next test would read leftovers",
+    );
 }
 
 beforeAll(async () => {
@@ -303,5 +341,79 @@ describe("the read answers from rollup rows", () => {
     // 046's Nullable(UUID) fix, surviving into a rollup fed by two views.
     const rows = await dailyUsage(store, ENV, "2026-09-22", "2026-09-22");
     expect(rows[0]?.activeUsers).toBe(2);
+  });
+
+  // ── CHAPTER 4.16: THE TWO READS OF `daily_usage_billing` ──────────────────────────
+  //
+  // **NEITHER OF THESE HAD A TEST WHEN THIS SECTION WAS WRITTEN, AND `uploadsByKind` HAD
+  // NO CALLER EITHER** — one writer in `0018` and nothing that read it, which is 4.6's
+  // *"the rollup nobody read"* one movement later, in a column added three commits
+  // earlier. The reads are planted through `media_events` rather than through the api,
+  // because this suite has no api: what it can prove is that the view and the two reads
+  // agree, and `storage-metering.itest.ts` proves the producer reaches them.
+
+  it("sums the byte level with no lower bound, and counts uploads within a window", async () => {
+    await ch(
+      `INSERT INTO relay_analytics.media_events
+         (environment_id, media_id, event, kind, bytes_delta, ts) VALUES
+         ('${MEDIA_ENV}','6a000000-0000-4000-8000-00000000d001','reserved','image', 1000,'2026-09-22 10:00:00'),
+         ('${MEDIA_ENV}','6a000000-0000-4000-8000-00000000d002','reserved','audio', 2000,'2026-09-22 11:00:00'),
+         ('${MEDIA_ENV}','6a000000-0000-4000-8000-00000000d003','reserved','image', 4000,'2026-09-23 09:00:00'),
+         ('${MEDIA_ENV}','6a000000-0000-4000-8000-00000000d002','rejected','audio',-2000,'2026-09-23 10:00:00'),
+         ('${MEDIA_ENV}','6a000000-0000-4000-8000-00000000d004','rendition','image', 500,'2026-09-23 11:00:00')`,
+    );
+
+    // A STOCK: every delta up to the day, and no lower bound. As of the 22nd, two
+    // reservations; as of the 23rd, plus one reservation and one rendition, minus the
+    // rejection.
+    expect(await storedBytes(store, MEDIA_ENV, "2026-09-22")).toBe(3_000);
+    expect(await storedBytes(store, MEDIA_ENV, "2026-09-23")).toBe(5_500);
+
+    // A FLOW: closed at both ends, and **the rendition is not in it** (FR-010). The 23rd
+    // saw one upload and one rendition; the count says one.
+    expect(
+      await uploadsByKind(store, MEDIA_ENV, "2026-09-23", "2026-09-23"),
+    ).toEqual({
+      image: 1,
+    });
+    // And a rejected upload stays counted as an upload — it happened. Its BYTES come
+    // back out; its occurrence does not. The two columns answer different questions and
+    // this is the assertion that says so in one place.
+    expect(
+      await uploadsByKind(store, MEDIA_ENV, "2026-09-22", "2026-09-22"),
+    ).toEqual({
+      image: 1,
+      audio: 1,
+    });
+    expect(
+      await uploadsByKind(store, MEDIA_ENV, "2026-09-22", "2026-09-23"),
+    ).toEqual({
+      image: 2,
+      audio: 1,
+    });
+  });
+
+  it("gives a kind with no uploads no entry at all, rather than a zero", async () => {
+    // `dailyUsage`'s rule one level down: a group with no input emits nothing, so an
+    // absent key is the absence of data and not a measurement of none. A caller that
+    // wants the full vocabulary fills it; this does not pretend to.
+    const only = await uploadsByKind(
+      store,
+      MEDIA_ENV,
+      "2026-09-23",
+      "2026-09-23",
+    );
+    expect(Object.keys(only)).toEqual(["image"]);
+    expect(only["video"]).toBeUndefined();
+  });
+
+  it("gives a tenant with no media an empty map and a level of 0", async () => {
+    const none = "6a000000-0000-4000-8000-00000000fffd";
+    expect(
+      await uploadsByKind(store, none, "2026-01-01", "2026-12-31"),
+    ).toEqual({});
+    // The level is 0 and not empty, for `storedMessages`' reason: a bare aggregate with
+    // no GROUP BY always returns exactly one row.
+    expect(await storedBytes(store, none, "2026-12-31")).toBe(0);
   });
 });

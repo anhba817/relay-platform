@@ -10,10 +10,29 @@
 -- which 4.6's finding is free, and it is worth writing down because the next person to add
 -- a view will not have it.
 --
--- `sumMap(map(kind, 1))` COUNTS UPLOADS BY KIND AND `sum(bytes_delta)` SUMS THE LEVEL'S
--- DELTAS. A rendition is not an upload — nobody uploaded it — so only `reserved` counts
--- toward FR-009, while every event's bytes count toward the level. FR-010 is the
+-- `sumMapIf(…, event = 'reserved')` COUNTS UPLOADS BY KIND AND `sum(bytes_delta)` SUMS THE
+-- LEVEL'S DELTAS. A rendition is not an upload — nobody uploaded it — so only `reserved`
+-- counts toward FR-009, while every event's bytes count toward the level. FR-010 is the
 -- requirement that those two answers stay different on purpose and identical everywhere.
+--
+-- **THE `-If` COMBINATOR RATHER THAN A ZERO INSIDE THE MAP, AND A TEST IS WHAT CHANGED IT.**
+-- The first version was `sumMap(map(kind, toUInt64(if(event = 'reserved', 1, 0))))`, which
+-- gives every event's kind a key and non-uploads a value of `0`. Measured: a day holding one
+-- image reservation, one audio REJECTION and one image rendition answered
+-- `{'audio':0,'image':1}` — an `audio` key in a column called `uploads_by_kind`, for a day on
+-- which nobody uploaded any audio. Worse for the caller than it looks: the key set stops
+-- meaning *"the kinds this tenant uploaded"* and starts meaning *"the kinds that had any
+-- media event"*, and a reader iterating the map reports a kind that belongs to a different
+-- question.
+--
+-- `sumMapIf` emits no key for a row that does not match, and `{}` when no row in the group
+-- does — which is `dailyUsage`'s own rule one level down: *"a day with no activity is a
+-- missing row, never a row of zeros."* Measured before this line was written, both halves.
+--
+-- AND THE ZEROS WERE NOT SELF-CORRECTING. `SummingMergeTree` drops a row whose summed
+-- columns are all zero; it does **not** drop a zero-valued key inside a map. Asked of the
+-- server with `OPTIMIZE … FINAL`: `{'audio':0,'image':1,'video':0}` before the merge and
+-- after it, unchanged. So the wrong answer was stable, which is the kind that survives.
 CREATE MATERIALIZED VIEW IF NOT EXISTS relay_analytics.mv_billing_storage
 TO relay_analytics.daily_usage_billing
 AS SELECT
@@ -24,6 +43,6 @@ AS SELECT
     0                                                       AS stored_delta,
     0                                                       AS connection_minutes,
     sum(bytes_delta)                                        AS stored_bytes_delta,
-    sumMap(map(kind, toUInt64(if(event = 'reserved', 1, 0)))) AS uploads_by_kind
+    sumMapIf(map(kind, toUInt64(1)), event = 'reserved')    AS uploads_by_kind
 FROM relay_analytics.media_events
 GROUP BY environment_id, day

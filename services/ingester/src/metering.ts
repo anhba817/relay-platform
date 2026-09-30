@@ -101,7 +101,6 @@ export async function storedMessages(
   return Number(rows.flat()[0]);
 }
 
-
 /** FR-MED-12's level: the bytes a tenant is storing as of a day (chapter 4.16).
  *
  * **DR-17's TECHNIQUE, AND `storedMessages` ABOVE IS THE SHAPE.** *"A daily rollup
@@ -131,4 +130,60 @@ export async function storedBytes(
       FORMAT TSV`,
   );
   return Number(rows.flat()[0]);
+}
+
+/** FR-009's counts: how many objects a tenant uploaded on a day, by kind (chapter 4.16).
+ *
+ * **THIS EXISTS BECAUSE 4.6's FINDING WOULD OTHERWISE HAVE HAPPENED AGAIN, ONE MOVEMENT
+ * LATER.** That chapter is called *"the rollup nobody read"*: it found a rollup that had
+ * existed for two chapters, satisfied its clause, and was read by nothing — `grep` gave a
+ * comment and a file referenced by no script, service or config. `uploads_by_kind` was in
+ * exactly that state when this function was written: one writer (`0018`), no reader
+ * outside a test. A clause that says the platform MUST count something is not discharged
+ * by a column that holds the count.
+ *
+ * A DAY RATHER THAN A BALANCE, WHICH IS THE OPPOSITE OF `storedBytes` ABOVE AND ON
+ * PURPOSE. Uploads are a FLOW — *"per tenant per day"* — so the window is closed at both
+ * ends, where a stored level is a stock and has no lower bound. The two live in the same
+ * `SELECT` in `0018` and the mistake of reading one the other's way is the specific thing
+ * FR-010 exists to prevent.
+ *
+ * `sumMap` AND NOT A BARE `SELECT`, for `dailyUsage`'s reason at one more remove. The
+ * column is `SimpleAggregateFunction(sumMap, …)` on a `SummingMergeTree`, so an unmerged
+ * table answers one map per insert; measured in phase 2, a plain `Map` in this position
+ * does not merge at all and keeps the first row's value.
+ *
+ * A KIND WITH NO UPLOADS IS ABSENT FROM THE MAP, NOT PRESENT AS ZERO — `dailyUsage`'s
+ * *"a day with no activity is a missing row, never a row of zeros"*, one level down. The
+ * caller fills the vocabulary if it needs a dense record, and this does not pretend to. */
+export async function uploadsByKind(
+  store: ClickHouse,
+  environmentId: string,
+  from: string,
+  to: string,
+): Promise<Record<string, number>> {
+  const rows = await store.query(
+    `SELECT sumMap(uploads_by_kind) FROM ${DB}.daily_usage_billing
+      WHERE environment_id = toUUID('${environmentId}') AND day BETWEEN '${from}' AND '${to}'
+      FORMAT TSV`,
+  );
+  return parseKindMap(rows.flat()[0]);
+}
+
+/** ClickHouse's TSV form for a `Map`, measured: `{'audio':14,'image':155,'video':2}` —
+ *  one line, single-quoted keys, unquoted values. **Not JSON**, and the difference is not
+ *  cosmetic: the first version of this read asked for `FORMAT JSONCompact`, whose keys are
+ *  double-quoted and whose body is a multi-line envelope this client's tab-splitter would
+ *  shred. The regex below would have matched nothing in it and returned **`{}`** — a
+ *  silently empty answer from a tenant with uploads, which is the shape of wrong this
+ *  project files against itself. The format was then asked of the server rather than
+ *  assumed.
+ *
+ *  PARSED RATHER THAN RE-SHAPED IN SQL, because the alternative — `arrayJoin` into rows —
+ *  turns one read into a shape every caller has to reassemble. */
+function parseKindMap(value: string | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const m of (value ?? "").matchAll(/'([^']+)':(\d+)/g))
+    out[m[1]!] = Number(m[2]);
+  return out;
 }
