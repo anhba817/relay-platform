@@ -100,6 +100,59 @@ describe("integrating with Relay from the outside", () => {
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   };
 
+  /** Wait for a media attachment to leave `pending`, by reading the channel the way a
+   *  client would (chapter 4.17).
+   *
+   *  **THERE IS NO SURFACE THAT ANSWERS "HAS THE WORKER RUN YET".** The client PUTs
+   *  straight to the store (ADR-13), so nothing tells the platform the upload finished
+   *  and chapter 4.13 built a sweep on a 5,000 ms timer instead. A client learns the
+   *  verdict by reading the message again, which is what this does.
+   *
+   *  A CONDITION WITH A DEADLINE, NEVER AN ELAPSED TIME. The wait is uniform over the
+   *  interval — measured at min 1,861, p50 3,993, max 5,568 ms over ten independent
+   *  trials — so an assertion on duration would be tuned to whichever point in the cycle
+   *  the test happened to start at. An earlier measurement of this platform reported
+   *  `p50 5,693 ms` from five runs taken in a loop, each beginning just after the sweep
+   *  that ended the one before: **a loop that waits for the thing it is timing
+   *  synchronises with it.**
+   *
+   *  AND THE FAILURE NAMES THE WORKER, because from out here it has to. With the worker
+   *  stopped an uploaded object stays `pending` for ever and `GET /v1/media/{id}` answers
+   *  the same 404 as an id nobody has — chapter 4.12 built that indistinguishability
+   *  deliberately — so a deadline that reported only "still pending" would describe a
+   *  legitimate state and say nothing about why. */
+  const waitForAttachmentState = async (
+    channelId: string,
+    mediaId: string,
+    auth: string,
+    deadlineMs = 25_000,
+  ): Promise<string> => {
+    // NO `let seen = "pending"` BEFORE THE LOOP — the initialiser is never read, and
+    // `no-useless-assignment` says so. Chapter 4.16 hit the identical rule on a
+    // `let seen = 0`; this is the second time, which makes it a habit rather than a slip.
+    const started = Date.now();
+    for (;;) {
+      const res = await get(`/v1/channels/${channelId}/messages?limit=10`, auth);
+      const messages = (res.body["messages"] ?? []) as {
+        attachments?: { media_id?: string; state?: string }[];
+      }[];
+      const attachment = messages
+        .flatMap((m) => m.attachments ?? [])
+        .find((a) => a.media_id === mediaId);
+      const seen = attachment?.state ?? "absent";
+      if (seen !== "pending") return seen;
+      if (Date.now() - started > deadlineMs) {
+        throw new Error(
+          `media ${mediaId} is still '${seen}' after ${Date.now() - started} ms. ` +
+            `The sweep runs every 5,000 ms, so this is not the timer — the media worker ` +
+            `is not producing verdicts. Check that it is running and that its boot line ` +
+            `names a reachable scanner: 'docker compose logs media-worker | tail -2'.`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  };
+
   beforeAll(() => {
     ({ api, ws, credential } = required());
   });
@@ -506,14 +559,32 @@ describe("integrating with Relay from the outside", () => {
     // hand-run are the only things that execute it. The other four were found by the
     // api lane and the coverage lane; this one was found by CI.
     //
-    // `pending` is right and is not a race. The object was uploaded but nothing has
-    // verified it — this suite runs no media worker, which is what makes the value
-    // stable rather than timing-dependent.
+    // `pending` IS RIGHT, AND THE REASON WRITTEN HERE WAS FALSE FOR TWO CHAPTERS.
+    //
+    // It read: *"this suite runs no media worker, which is what makes the value stable
+    // rather than timing-dependent."* **CI's sealed job runs
+    // `docker compose --profile services up -d --wait`, and `media-worker` is in that
+    // profile** — so a worker has been running every time this assertion passed.
+    //
+    // It is timing-dependent AND it is stable, which are two different claims. The sweep
+    // runs every 5,000 ms and the three steps between the PUT and this line take
+    // milliseconds, so the margin is most of an interval: measured at min 1,861, p50
+    // 3,993, max 5,568 ms from PUT to verdict over ten independent trials. **A race with
+    // a four-second margin is the kind nothing ever catches**, and the sentence that
+    // would have explained it away is the one chapter 4.17 went looking for.
     expect(delivered.payload.attachments).toEqual([
       { type: "url", kind: "image", url: "https://example.test/outside-url.png" },
       { type: "media", media_id: mediaId, state: "pending" },
     ]);
     socket.close();
+
+    // AND THE REASON IS NOW CHECKED RATHER THAN ASSERTED IN PROSE (chapter 4.17). A
+    // comment is not a test: if the state above is `pending` because the read is inside
+    // the window, then waiting past the window must produce a verdict. If a future
+    // change stops a worker running in this lane, the line above keeps passing and this
+    // one goes red naming the worker.
+    const settled = await waitForAttachmentState(channelId, mediaId, credential);
+    expect(settled, "the deployed worker produced no verdict").toBe("ready");
 
     // AND THE BYTES COME BACK, FROM OUTSIDE (chapter 4.12, SC-010). The frame above
     // carries an id and nothing else; a client holding it has to ask for a URL, and
