@@ -173,16 +173,10 @@ describe("integrating with Relay from the outside", () => {
   const post = async (path: string, body: unknown, auth: string) => {
     const res = await fetch(`${api}${path}`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${auth}`,
-      },
+      headers: { "content-type": "application/json", authorization: `Bearer ${auth}` },
       body: JSON.stringify(body),
     });
-    return {
-      status: res.status,
-      body: (await res.json()) as Record<string, unknown>,
-    };
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   };
 
   /** The read twin of `post`, added by chapter 4.12 for the delivery route. Eleven
@@ -193,10 +187,7 @@ describe("integrating with Relay from the outside", () => {
     const res = await fetch(`${api}${path}`, {
       headers: { authorization: `Bearer ${auth}` },
     });
-    return {
-      status: res.status,
-      body: (await res.json()) as Record<string, unknown>,
-    };
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   };
 
   /** Wait for a media attachment to leave `pending`, by reading the channel the way a
@@ -268,22 +259,14 @@ describe("integrating with Relay from the outside", () => {
 
   it("creates a channel, and creating it twice is not an error", async () => {
     const external = `outsider-${Date.now()}`;
-    const first = await post(
-      "/v1/channels",
-      { external_id: external, type: "public" },
-      credential,
-    );
+    const first = await post("/v1/channels", { external_id: external, type: "public" }, credential);
     expect(first.status).toBe(201);
     expect(first.body["external_id"]).toBe(external);
     channelId = first.body["id"] as string;
 
     // The documentation says a repeat returns the existing channel. 200 rather
     // than 201 is how a client tells which happened without reading the body.
-    const again = await post(
-      "/v1/channels",
-      { external_id: external, type: "public" },
-      credential,
-    );
+    const again = await post("/v1/channels", { external_id: external, type: "public" }, credential);
     expect(again.status).toBe(200);
     expect(again.body["id"]).toBe(channelId);
   });
@@ -316,20 +299,13 @@ describe("integrating with Relay from the outside", () => {
       credential,
     );
     expect(res.status).toBe(200);
-    const members = res.body["members"] as {
-      external_id: string;
-      status: string;
-    }[];
+    const members = res.body["members"] as { external_id: string; status: string }[];
     expect(members.map((m) => m.external_id)).toEqual(["ana", "ben"]);
     expect(members.every((m) => m.status === "added")).toBe(true);
   });
 
   it("mints a token for one of those members", async () => {
-    const res = await post(
-      "/auth/dev-token",
-      { user: "ana", ttl_seconds: 3600 },
-      credential,
-    );
+    const res = await post("/auth/dev-token", { user: "ana", ttl_seconds: 3600 }, credential);
     expect(res.status).toBe(200);
     token = res.body["token"] as string;
     expect(typeof token).toBe("string");
@@ -404,12 +380,9 @@ describe("integrating with Relay from the outside", () => {
     // The response echoes the sender it recorded, which the README promises.
     expect(sent.body["user"]).toBe("outside-bot");
 
-    const history = await fetch(
-      `${api}/v1/channels/${channelId}/messages?limit=10`,
-      {
-        headers: { authorization: `Bearer ${credential}` },
-      },
-    );
+    const history = await fetch(`${api}/v1/channels/${channelId}/messages?limit=10`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
     expect(history.status).toBe(200);
     const page = (await history.json()) as { messages: { text: string }[] };
     expect(page.messages.map((m) => m.text)).toContain(text);
@@ -433,10 +406,7 @@ describe("integrating with Relay from the outside", () => {
     //
     // The send is the one an integrating developer's backend actually makes.
     const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
-    const frames: {
-      type: string;
-      payload?: { text?: string; seq?: number };
-    }[] = [];
+    const frames: { type: string; payload?: { text?: string; seq?: number } }[] = [];
     // Listeners attached BEFORE the open await. `connection.ack` arrives the
     // instant the upgrade completes, and awaiting `open` first yields to the event
     // loop — the frame lands with no listener and is gone.
@@ -450,24 +420,16 @@ describe("integrating with Relay from the outside", () => {
       socket.addEventListener("close", (event) =>
         reject(new Error(`closed ${(event as CloseEvent).code}`)),
       );
-      setTimeout(
-        () => reject(new Error(`no socket at ${ws} within 10s`)),
-        10_000,
-      );
+      setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
     });
 
-    const waitFor = async (
-      predicate: (f: { type: string }) => boolean,
-      what: string,
-    ) => {
+    const waitFor = async (predicate: (f: { type: string }) => boolean, what: string) => {
       const deadline = Date.now() + 10_000;
       for (;;) {
         const found = frames.find(predicate);
         if (found) return found;
         if (Date.now() > deadline) {
-          throw new Error(
-            `no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`,
-          );
+          throw new Error(`no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`);
         }
         await new Promise((r) => setTimeout(r, 50));
       }
@@ -497,9 +459,7 @@ describe("integrating with Relay from the outside", () => {
     // this path, because the sender is not holding a socket. What has to arrive is
     // the delivery, on a socket that was already open before the send.
     await waitFor(
-      (f) =>
-        f.type === "message.created" &&
-        (f as { payload?: { text?: string } }).payload?.text === text,
+      (f) => f.type === "message.created" && (f as { payload?: { text?: string } }).payload?.text === text,
       "message.created for the text just sent",
     );
     socket.close();
@@ -517,10 +477,8 @@ describe("integrating with Relay from the outside", () => {
    * message. */
   it("delivers two attachments to a socket, in order, sent over REST", async () => {
     const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
-    const frames: {
-      type: string;
-      payload?: { text?: string; attachments?: { url?: string }[] };
-    }[] = [];
+    const frames: { type: string; payload?: { text?: string; attachments?: { url?: string }[] } }[] =
+      [];
     socket.addEventListener("message", (event) => {
       frames.push(JSON.parse(String(event.data)) as { type: string });
     });
@@ -530,24 +488,16 @@ describe("integrating with Relay from the outside", () => {
       socket.addEventListener("close", (event) =>
         reject(new Error(`closed ${(event as CloseEvent).code}`)),
       );
-      setTimeout(
-        () => reject(new Error(`no socket at ${ws} within 10s`)),
-        10_000,
-      );
+      setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
     });
 
-    const waitFor = async (
-      predicate: (f: { type: string }) => boolean,
-      what: string,
-    ) => {
+    const waitFor = async (predicate: (f: { type: string }) => boolean, what: string) => {
       const deadline = Date.now() + 10_000;
       for (;;) {
         const found = frames.find(predicate);
         if (found) return found;
         if (Date.now() > deadline) {
-          throw new Error(
-            `no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`,
-          );
+          throw new Error(`no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`);
         }
         await new Promise((r) => setTimeout(r, 50));
       }
@@ -562,16 +512,8 @@ describe("integrating with Relay from the outside", () => {
         user: "outside-bot",
         idempotency_key: randomUUID(),
         attachments: [
-          {
-            type: "url",
-            kind: "image",
-            url: "https://example.test/outside-first.png",
-          },
-          {
-            type: "url",
-            kind: "video",
-            url: "https://example.test/outside-second.mp4",
-          },
+          { type: "url", kind: "image", url: "https://example.test/outside-first.png" },
+          { type: "url", kind: "video", url: "https://example.test/outside-second.mp4" },
         ],
       },
       credential,
@@ -611,10 +553,7 @@ describe("integrating with Relay from the outside", () => {
    * keep apart, and this test is the only thing outside the api that would notice. */
   it("uploads a file and attaches it, from outside, in order beside a url (FR-021, SC-002d)", async () => {
     const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
-    const frames: {
-      type: string;
-      payload?: { text?: string; attachments?: unknown[] };
-    }[] = [];
+    const frames: { type: string; payload?: { text?: string; attachments?: unknown[] } }[] = [];
     socket.addEventListener("message", (event) => {
       frames.push(JSON.parse(String(event.data)) as { type: string });
     });
@@ -624,10 +563,7 @@ describe("integrating with Relay from the outside", () => {
       socket.addEventListener("close", (event) =>
         reject(new Error(`closed ${(event as CloseEvent).code}`)),
       );
-      setTimeout(
-        () => reject(new Error(`no socket at ${ws} within 10s`)),
-        10_000,
-      );
+      setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
     });
 
     const waitFor = async (
@@ -639,9 +575,7 @@ describe("integrating with Relay from the outside", () => {
         const found = frames.find(predicate);
         if (found) return found;
         if (Date.now() > deadline) {
-          throw new Error(
-            `no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`,
-          );
+          throw new Error(`no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`);
         }
         await new Promise((r) => setTimeout(r, 50));
       }
@@ -674,10 +608,7 @@ describe("integrating with Relay from the outside", () => {
       { filename: "outside.png", mime_type: "image/png", bytes: png.length },
       credential,
     );
-    expect(
-      slot.status,
-      "the platform refused a slot to a published credential",
-    ).toBe(201);
+    expect(slot.status, "the platform refused a slot to a published credential").toBe(201);
     const mediaId = slot.body["media_id"] as string;
 
     // THE BYTES GO STRAIGHT TO THE STORE AND NOT THROUGH RELAY, which is ADR-13's whole
@@ -686,10 +617,7 @@ describe("integrating with Relay from the outside", () => {
       method: "PUT",
       body: png,
     });
-    expect(
-      uploaded.status,
-      "the presigned URL was not usable from outside",
-    ).toBe(200);
+    expect(uploaded.status, "the presigned URL was not usable from outside").toBe(200);
 
     const text = `outside media ${randomUUID()}`;
     const posted = await post(
@@ -699,11 +627,7 @@ describe("integrating with Relay from the outside", () => {
         user: "outside-bot",
         idempotency_key: randomUUID(),
         attachments: [
-          {
-            type: "url",
-            kind: "image",
-            url: "https://example.test/outside-url.png",
-          },
+          { type: "url", kind: "image", url: "https://example.test/outside-url.png" },
           { type: "media", media_id: mediaId },
         ],
       },
@@ -742,11 +666,7 @@ describe("integrating with Relay from the outside", () => {
     // a four-second margin is the kind nothing ever catches**, and the sentence that
     // would have explained it away is the one chapter 4.17 went looking for.
     expect(delivered.payload.attachments).toEqual([
-      {
-        type: "url",
-        kind: "image",
-        url: "https://example.test/outside-url.png",
-      },
+      { type: "url", kind: "image", url: "https://example.test/outside-url.png" },
       { type: "media", media_id: mediaId, state: "pending" },
     ]);
     socket.close();
@@ -792,16 +712,11 @@ describe("integrating with Relay from the outside", () => {
       await new Promise((r) => setTimeout(r, 500));
       link = await get(`/v1/media/${mediaId}`, credential);
     }
-    expect(
-      link.status,
-      "the platform refused a delivery URL for its own attachment",
-    ).toBe(200);
+    expect(link.status, "the platform refused a delivery URL for its own attachment").toBe(200);
     expect(typeof link.body["expires_at"]).toBe("string");
 
     const bytes = await fetch(link.body["url"] as string);
-    expect(bytes.status, "the delivery URL was not usable from outside").toBe(
-      200,
-    );
+    expect(bytes.status, "the delivery URL was not usable from outside").toBe(200);
     // AGAINST THE SAME ARRAY THAT WAS UPLOADED, not a second copy of it. This read
     // `new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0])` — the old fixture,
     // written out twice — and when the upload became a real PNG the assertion kept
@@ -1380,11 +1295,7 @@ describe("integrating with Relay from the outside", () => {
    * import.** A protocol a customer cannot drive is a protocol nobody has tested
    * from outside. */
   it("says it is typing, and a second member's socket hears it", async () => {
-    const second = await post(
-      "/auth/dev-token",
-      { user: "ben", ttl_seconds: 3600 },
-      credential,
-    );
+    const second = await post("/auth/dev-token", { user: "ben", ttl_seconds: 3600 }, credential);
     expect(second.status).toBe(200);
     const benToken = second.body["token"] as string;
 
@@ -1395,39 +1306,28 @@ describe("integrating with Relay from the outside", () => {
       frames: { type: string; payload?: { channel?: string; user?: string } }[];
     }> => {
       const socket = new WebSocket(`${ws}/v1/ws?token=${forToken}`);
-      const frames: {
-        type: string;
-        payload?: { channel?: string; user?: string };
-      }[] = [];
+      const frames: { type: string; payload?: { channel?: string; user?: string } }[] = [];
       socket.addEventListener("message", (event) => {
         frames.push(JSON.parse(String(event.data)) as { type: string });
       });
       socket.addEventListener("error", () => undefined);
       await new Promise<void>((resolve, reject) => {
         socket.addEventListener("open", () => resolve());
-        setTimeout(
-          () => reject(new Error(`no socket at ${ws} within 10s`)),
-          10_000,
-        );
+        setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
       });
       return { socket, frames };
     };
 
     const until = async (
       frames: { type: string; payload?: { channel?: string; user?: string } }[],
-      predicate: (f: {
-        type: string;
-        payload?: { channel?: string; user?: string };
-      }) => boolean,
+      predicate: (f: { type: string; payload?: { channel?: string; user?: string } }) => boolean,
       what: string,
     ): Promise<void> => {
       const deadline = Date.now() + 10_000;
       for (;;) {
         if (frames.some(predicate)) return;
         if (Date.now() > deadline) {
-          throw new Error(
-            `no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`,
-          );
+          throw new Error(`no ${what}; saw ${frames.map((f) => f.type).join(", ") || "nothing"}`);
         }
         await new Promise((r) => setTimeout(r, 50));
       }
@@ -1438,16 +1338,11 @@ describe("integrating with Relay from the outside", () => {
     await until(ana.frames, (f) => f.type === "connection.ack", "ana's ack");
     await until(ben.frames, (f) => f.type === "connection.ack", "ben's ack");
 
-    ana.socket.send(
-      JSON.stringify({ type: "typing.send", payload: { channel: channelId } }),
-    );
+    ana.socket.send(JSON.stringify({ type: "typing.send", payload: { channel: channelId } }));
 
     await until(
       ben.frames,
-      (f) =>
-        f.type === "typing" &&
-        f.payload?.channel === channelId &&
-        f.payload?.user === "ana",
+      (f) => f.type === "typing" && f.payload?.channel === channelId && f.payload?.user === "ana",
       "a typing frame naming ana",
     );
     // And the signaller hears nothing of their own — checked here rather than only
@@ -1487,10 +1382,7 @@ describe("integrating with Relay from the outside", () => {
         socket.addEventListener("close", (event) =>
           reject(new Error(`closed ${(event as CloseEvent).code}`)),
         );
-        setTimeout(
-          () => reject(new Error(`no socket at ${ws} within 10s`)),
-          10_000,
-        );
+        setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
       });
       return socket;
     };
@@ -1509,10 +1401,7 @@ describe("integrating with Relay from the outside", () => {
         sixth.addEventListener("close", (event) =>
           resolve((event as CloseEvent).code),
         );
-        setTimeout(
-          () => reject(new Error("the sixth was not closed within 10s")),
-          10_000,
-        );
+        setTimeout(() => reject(new Error("the sixth was not closed within 10s")), 10_000);
       });
 
       // The code a client branches on, and the frame that carries the detail.
@@ -1533,16 +1422,11 @@ describe("integrating with Relay from the outside", () => {
     });
     socket.addEventListener("error", () => undefined);
     const closed = new Promise<number>((resolve) => {
-      socket.addEventListener("close", (event) =>
-        resolve((event as CloseEvent).code),
-      );
+      socket.addEventListener("close", (event) => resolve((event as CloseEvent).code));
     });
     await new Promise<void>((resolve, reject) => {
       socket.addEventListener("open", () => resolve());
-      setTimeout(
-        () => reject(new Error(`no socket at ${ws} within 10s`)),
-        10_000,
-      );
+      setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
     });
 
     // `message.ack` is the server's word. A client sending it is claiming to be the
@@ -1605,17 +1489,13 @@ describe("integrating with Relay from the outside", () => {
     expect([200, 201]).toContain(joined.status);
 
     const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
-    const frames: Array<{ type: string; payload?: Record<string, unknown> }> =
-      [];
+    const frames: Array<{ type: string; payload?: Record<string, unknown> }> = [];
     socket.addEventListener("message", (event) => {
       frames.push(JSON.parse(String(event.data)) as { type: string });
     });
     socket.addEventListener("error", () => undefined);
     const waitFor = async (
-      predicate: (f: {
-        type: string;
-        payload?: Record<string, unknown>;
-      }) => boolean,
+      predicate: (f: { type: string; payload?: Record<string, unknown> }) => boolean,
       what: string,
     ) => {
       const deadline = Date.now() + 10_000;
@@ -1639,10 +1519,7 @@ describe("integrating with Relay from the outside", () => {
     const before = `outsider edit ${Date.now()}`;
     const posted = await fetch(`${api}/v1/channels/${channelId}/messages`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify({ text: before }),
     });
     expect(posted.status).toBe(201);
@@ -1657,10 +1534,7 @@ describe("integrating with Relay from the outside", () => {
       `${api}/v1/channels/${channelId}/messages/${sent.id}`,
       {
         method: "PATCH",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-        },
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
         body: JSON.stringify({ text: after }),
       },
     );
@@ -1746,8 +1620,7 @@ describe("integrating with Relay from the outside", () => {
     const requests = body["requests"] as Array<Record<string, unknown>>;
     for (const row of requests) {
       expect(["string", "object"]).toContain(typeof row["endpoint"]);
-      if (row["endpoint"] !== null)
-        expect(typeof row["endpoint"]).toBe("string");
+      if (row["endpoint"] !== null) expect(typeof row["endpoint"]).toBe("string");
       expect(typeof row["status"]).toBe("number");
       expect(typeof row["request_id"]).toBe("string");
     }
