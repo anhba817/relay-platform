@@ -296,11 +296,38 @@ describe("what the report says about itself", () => {
   });
 
   it("reports the keys that belong to no tenant rather than dropping them", async () => {
-    const report = await reconcileStorage(db, store, config);
-    // Four such prefixes exist on this lane and NONE is on the listing's first page.
-    expect(report.unattributable.keys).toBeGreaterThan(0);
-    expect(report.inventory.truncated).toBe(false);
-    expect(report.inventory.pages).toBeGreaterThan(0);
+    // **IT PLANTS ITS OWN DEBRIS, AND CI IS WHAT TAUGHT IT TO.** The first version read
+    // `expect(report.unattributable.keys).toBeGreaterThan(0)` and passed on this machine
+    // because the development bucket holds 83 such keys under four prefixes left by old
+    // probes. **CI's volume is empty**, so every key there is tenant-prefixed and the
+    // assertion was about the lane's history rather than about the platform — 056's
+    // finding exactly, where a persistent volume hid a defect that an empty one named,
+    // and 4.8's rule for the other direction: *an empty log passes a leak check for the
+    // same reason an empty page does.*
+    const before = await reconcileStorage(db, store, config);
+
+    const key = `not-a-tenant-${randomUUID()}/debris`;
+    const url = presign({
+      method: "PUT",
+      ...config,
+      endpoint: config.internalEndpoint,
+      key,
+      expiresIn: 300,
+    });
+    expect(
+      (await fetch(url, { method: "PUT", body: Buffer.alloc(321, 1) })).ok,
+    ).toBe(true);
+    planted.push(key);
+
+    const after = await reconcileStorage(db, store, config);
+    expect(after.unattributable.keys).toBe(before.unattributable.keys + 1);
+    expect(after.unattributable.bytes).toBe(before.unattributable.bytes + 321);
+    // AND IT IS NOT COUNTED AS ANYBODY'S. The prefix is not a uuid, so no tenant gains
+    // 321 bytes from it — which is the half that makes reporting it worth anything.
+    expect(after.sides.bucket).toBe(before.sides.bucket);
+
+    expect(after.inventory.truncated).toBe(false);
+    expect(after.inventory.pages).toBeGreaterThan(0);
   });
 });
 
