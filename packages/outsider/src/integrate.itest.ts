@@ -954,6 +954,189 @@ describe("integrating with Relay from the outside", () => {
     // chapter publishes the distribution.**
   });
 
+  /** **THE OTHER HALF: A REFUSAL ARRIVES AS A MARKER, NOT A GAP** (chapter 4.17 —
+   *  FR-003, FR-006a, SC-004, SC-003a).
+   *
+   *  FR-MED-09's reason is a person: a recipient must be able to tell *"somebody sent me
+   *  a file and the platform refused it"* from *"somebody deleted a message"* and from
+   *  *"somebody sent text"*. Those are three different things to say back, and before
+   *  this test nothing checked they are three different things to READ.
+   *
+   *  THE BYTES CONTRADICT THE DECLARATION, WHICH IS FR-MED-03 AND NOT THE SCANNER. A
+   *  43-byte GIF89a declared as `image/png`: the slot route records what the caller said
+   *  and the worker reads what arrived (chapter 4.13). **No object can both satisfy
+   *  `ALLOWED_TYPES` and trip the virus scanner** — there is no text type in the table,
+   *  so EICAR cannot be uploaded as anything — which is why the refusal this journey can
+   *  actually produce is the type one.
+   *
+   *  AND THE DECLARED SIZE IS HONEST. 43 bytes declared, 43 uploaded; a mismatch of one
+   *  byte in either direction is a different refusal, and a test that got both wrong at
+   *  once would pass for the wrong reason. */
+  it("delivers a refused upload as a rejected marker a recipient can tell apart (4.17, SC-004)", async () => {
+    const rejectChannel = await post(
+      "/v1/channels",
+      { external_id: `reject-${Date.now()}`, type: "public" },
+      credential,
+    );
+    expect(rejectChannel.status).toBe(201);
+    const rejectId = rejectChannel.body["id"] as string;
+    expect(
+      (await post(`/v1/channels/${rejectId}/members`, { user_ids: ["ana"] }, credential)).status,
+      "ana was not added, so her socket will hear nothing",
+    ).toBe(200);
+
+    const socket = new WebSocket(`${ws}/v1/ws?token=${token}`);
+    const frames: { type: string; payload?: Record<string, unknown> }[] = [];
+    socket.addEventListener("message", (event) => {
+      frames.push(JSON.parse(String(event.data)) as { type: string });
+    });
+    // NOTHING IS SWALLOWED IN THIS TEST. An earlier probe of this path wrapped its setup
+    // in `.catch(() => {})`, so a members call with the wrong body failed silently and
+    // the subscriber stayed outside the channel — it then saw NO frames at all, and
+    // "no `media.updated`" read exactly like the feature not existing. Three of four
+    // attempts at this probe failed that way.
+    socket.addEventListener("error", () => undefined);
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve());
+      socket.addEventListener("close", (event) =>
+        reject(new Error(`closed ${(event as CloseEvent).code}`)),
+      );
+      setTimeout(() => reject(new Error(`no socket at ${ws} within 10s`)), 10_000);
+    });
+
+    // A REAL GIF89a, 1 × 1, 43 bytes — a file that is valid and is not what was claimed.
+    // Random bytes would be refused too, by `rendition_failed` or by the sniff finding
+    // nothing; a well-formed file of the wrong type is the case the clause describes.
+    const gif = new Uint8Array([
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0xff,
+      0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c,
+      0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00,
+      0x3b,
+    ]);
+
+    const slot = await post(
+      "/v1/media",
+      { filename: "liar.png", mime_type: "image/png", bytes: gif.length },
+      credential,
+    );
+    expect(slot.status, "the slot route judges the declaration, not the bytes").toBe(201);
+    const rejectedId = slot.body["media_id"] as string;
+    expect(
+      (await fetch(slot.body["upload_url"] as string, { method: "PUT", body: gif })).status,
+    ).toBe(200);
+
+    const rejectText = `rejected journey ${randomUUID()}`;
+    const sent = await post(
+      `/v1/channels/${rejectId}/messages`,
+      {
+        text: rejectText,
+        user: "outside-bot",
+        idempotency_key: randomUUID(),
+        attachments: [{ type: "media", media_id: rejectedId }],
+      },
+      credential,
+    );
+    expect(sent.status, "the send happens before the verdict, so it is accepted").toBe(201);
+
+    const state = await waitForAttachmentState(rejectId, rejectedId, credential);
+    expect(state, "the worker accepted a GIF declared as a PNG").toBe("rejected");
+
+    // THE FRAME CARRIES THE REFUSAL TOO (FR-006a, SC-003a). `announce` returns early
+    // unless the state is `ready` or `rejected`, so both terminal states travel the same
+    // way — and until this test the rejection half had only ever been watched with
+    // `recordMediaVerdict` called directly by a test (chapter 4.14).
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      if (frames.some((f) => f.type === "media.updated")) break;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `no media.updated after a rejection; saw ${frames.map((f) => f.type).join(", ")}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(frames.find((f) => f.type === "media.updated")?.payload).toEqual({
+      media_id: rejectedId,
+      channel: rejectId,
+      state: "rejected",
+    });
+    socket.close();
+
+    // FR-MED-09's TESTABLE HALF: THE MESSAGE SURVIVES THE REFUSAL. Checked as a premise
+    // before it was asserted — a history route that filtered a message whose only
+    // attachment was refused would make this whole user story unbuildable, and the
+    // chapter would have had to record that rather than work round it. It does not
+    // filter.
+    const history = await get(`/v1/channels/${rejectId}/messages?limit=10`, credential);
+    const read = (
+      history.body["messages"] as { text?: string | null; attachments?: unknown[] }[]
+    ).find((m) => m.text === rejectText);
+    expect(read, "the message vanished from history when its attachment was refused").toBeDefined();
+    expect(read?.attachments).toEqual([
+      { type: "media", media_id: rejectedId, state: "rejected" },
+    ]);
+
+    // AND THREE CASES A RECIPIENT MUST TELL APART, FROM PUBLISHED FIELDS ALONE. This is
+    // the clause's own reason rather than a shape test:
+    //
+    //   a refused upload      text: the sender's   attachments: [{… state:"rejected"}]
+    //   a message with none   text: the sender's   attachments: []
+    //   a deleted message     text: NULL           attachments: []
+    //
+    // The tombstone is what makes the third distinguishable, and it is a different field
+    // from the one carrying the second — so a client that reads only `attachments`
+    // cannot tell a deletion from a plain message, and one that reads only `text` cannot
+    // tell a refusal from a delivery.
+    const plain = await post(
+      `/v1/channels/${rejectId}/messages`,
+      { text: `plain ${randomUUID()}`, user: "outside-bot", idempotency_key: randomUUID() },
+      credential,
+    );
+    expect(plain.status).toBe(201);
+    expect(plain.body["attachments"]).toEqual([]);
+
+    const doomed = await post(
+      `/v1/channels/${rejectId}/messages`,
+      { text: `doomed ${randomUUID()}`, user: "outside-bot", idempotency_key: randomUUID() },
+      credential,
+    );
+    expect(doomed.status).toBe(201);
+    const removed = await fetch(
+      `${api}/v1/channels/${rejectId}/messages/${doomed.body["id"] as string}`,
+      { method: "DELETE", headers: { authorization: `Bearer ${credential}` } },
+    );
+    expect(removed.status).toBe(204);
+
+    const after = await get(`/v1/channels/${rejectId}/messages?limit=10`, credential);
+    const tombstone = (
+      after.body["messages"] as { id: string; text?: string | null; attachments?: unknown[] }[]
+    ).find((m) => m.id === (doomed.body["id"] as string));
+    expect(tombstone?.text, "a deleted message keeps its row and loses its text").toBeNull();
+    expect(tombstone?.attachments).toEqual([]);
+
+    // AND THE LINK IS REFUSED, INDISTINGUISHABLY FROM AN ID NOBODY HAS (chapter 4.12).
+    //
+    // Byte-identical apart from `request_id`, which is the property 4.12 built on
+    // purpose: a refusal naming the cause would report whether somebody else's object
+    // exists. **This is the first time it has been checked from outside with a real
+    // refusal behind it** — every earlier check set the state with SQL, so the two sides
+    // of the comparison were both fixtures.
+    const refused = await get(`/v1/media/${rejectedId}`, credential);
+    const ghost = await get(`/v1/media/${randomUUID()}`, credential);
+    expect(refused.status).toBe(404);
+    expect(ghost.status).toBe(404);
+    // FILTERED RATHER THAN DESTRUCTURED. `const { request_id: _ignored, ...rest }` is
+    // the idiomatic spelling and `no-unused-vars` refuses it here, underscore and all.
+    const withoutRequestId = (body: Record<string, unknown>) =>
+      Object.fromEntries(Object.entries(body).filter(([key]) => key !== "request_id"));
+    expect(withoutRequestId(refused.body)).toEqual(withoutRequestId(ghost.body));
+    // AND THE CONTROL, BECAUSE TWO EMPTY OBJECTS ARE ALSO EQUAL. The comparison above is
+    // worth nothing unless the bodies have content, and a refusal that dropped its code
+    // would satisfy it.
+    expect(refused.body["code"]).toBe("not_found");
+    expect(refused.body["request_id"]).not.toBe(ghost.body["request_id"]);
+  });
+
   /** T100a — **the first `socket.send` in this file's history.**
    *
    * `grep -c "\.send(" packages/outsider/src/integrate.itest.ts` read **0** across
