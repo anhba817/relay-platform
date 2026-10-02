@@ -20,6 +20,7 @@ import type { RequestWithTenant } from "./request-with-tenant";
 import { Repository } from "../db/repository";
 import { MessagesController } from "./messages.controller";
 import { MessagesService } from "./messages.service";
+import { actorFrom } from "../audit/actor";
 
 /** The api publishes to the live fan-out from the send path, so
  * the module that owns that path owns the client.
@@ -83,7 +84,11 @@ export class MessagePublisherLifecycle implements OnModuleDestroy {
         // has not proved it may act for. The empty-string fallback is the
         // same as 2.2's: no principal means no scope, and the guard below
         // turns that into a 401 before any handler runs.
-        new Repository(db, req.principal?.environmentId ?? ""),
+        new Repository(
+          db,
+          req.principal?.environmentId ?? "",
+          actorFrom(req),
+        ),
     },
     MessagesService,
     { provide: LOGGER, useFactory: apiLogger },

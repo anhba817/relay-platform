@@ -8,6 +8,7 @@ import { Repository } from "../db/repository";
 import { ChannelsController } from "./channels.controller";
 import { ChannelsService } from "./channels.service";
 import type { RequestWithTenant } from "../messages/request-with-tenant";
+import { actorFrom } from "../audit/actor";
 
 // The messages module's shape, for the messages module's reasons: the repository
 // is the plain 2.1 class, constructed per request with the tenant the middleware
@@ -26,7 +27,11 @@ import type { RequestWithTenant } from "../messages/request-with-tenant";
       scope: Scope.REQUEST,
       inject: ["DB", REQUEST],
       useFactory: (db: Db, req: RequestWithTenant) =>
-        new Repository(db, req.principal?.environmentId ?? ""),
+        new Repository(
+          db,
+          req.principal?.environmentId ?? "",
+          actorFrom(req),
+        ),
     },
     ChannelsService,
   ],

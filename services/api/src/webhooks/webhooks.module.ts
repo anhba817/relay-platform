@@ -21,6 +21,7 @@ import {
 } from "./delivery-relay";
 import { WebhooksController } from "./webhooks.controller";
 import { WebhooksService } from "./webhooks.service";
+import { actorFrom } from "../audit/actor";
 
 export const DELIVERY_RELAY = "DELIVERY_RELAY";
 
@@ -69,7 +70,11 @@ export class DeliveryRelayService implements OnModuleDestroy {
       scope: Scope.REQUEST,
       inject: ["DB", REQUEST],
       useFactory: (db: Db, req: RequestWithTenant) =>
-        new Repository(db, req.principal?.environmentId ?? ""),
+        new Repository(
+          db,
+          req.principal?.environmentId ?? "",
+          actorFrom(req),
+        ),
     },
     WebhooksService,
     {

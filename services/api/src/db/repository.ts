@@ -25,6 +25,7 @@ import {
   DEFAULT_LIMITS,
   type LimitedOperation,
 } from "../limits/policy";
+import type { ActorContext, RECORDS_NOTHING } from "../audit/actor";
 import type { Db } from "./client";
 import {
   apiKeys,
@@ -2879,9 +2880,18 @@ export class Repository {
   // Constructor parameter properties — the shorthand chapter 1.4 released
   // for this service when ADR-15 spent erasableSyntaxOnly on decorator
   // metadata. The guarantee still holds in the gateway and every package.
+  //
+  // THE THIRD ARGUMENT IS OPTIONAL, AND THAT IS A MEASUREMENT RATHER THAN A PREFERENCE.
+  // Required, the compiler names every construction site — which is the property chapter
+  // 4.14 wanted and got — and here that is **110 sites across 32 test files**, 17 of them
+  // fenced across 131 pages, to give an actor to repositories that will never record
+  // anything. Optional, the compiler names none, so the check moves to a test that reads
+  // the source: an optional parameter is a check the compiler stopped doing, and
+  // `repository.itest.ts` is what replaces it.
   constructor(
     private readonly db: Db,
     private readonly environmentId: string,
+    private readonly actor?: ActorContext | typeof RECORDS_NOTHING,
   ) {}
 
   /** The environment this repository is scoped to, readable.

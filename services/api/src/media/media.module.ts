@@ -12,6 +12,7 @@ import { Repository } from "../db/repository";
 import { MediaController } from "./media.controller";
 import { MediaService } from "./media.service";
 import type { RequestWithTenant } from "../messages/request-with-tenant";
+import { actorFrom } from "../audit/actor";
 
 // Hosted media's module (FR-MED-01, FR-MED-02).
 //
@@ -44,7 +45,11 @@ import type { RequestWithTenant } from "../messages/request-with-tenant";
       scope: Scope.REQUEST,
       inject: ["DB", REQUEST],
       useFactory: (db: Db, req: RequestWithTenant) =>
-        new Repository(db, req.principal?.environmentId ?? ""),
+        new Repository(
+          db,
+          req.principal?.environmentId ?? "",
+          actorFrom(req),
+        ),
     },
     // A THIRD COPY OF THE SAME FACTORY, AND THE RULE THAT FORCES IT IS WRITTEN IN
     // `internal.module.ts`: *"a provider is visible to the module that declares it and to

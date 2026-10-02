@@ -18,6 +18,7 @@ import { Accepts, CredentialGuard } from "./credential.guard";
 import type { RequestWithPrincipal } from "./principal";
 import { MAX_TOKEN_LIFETIME_SECONDS, mintUserToken } from "./user-token";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
+import { RECORDS_NOTHING } from "../audit/actor";
 
 // FR-AUT-09: the development-only endpoint that turns an API key into an
 // end-user token. It exists so a developer reaches a first authenticated
@@ -116,7 +117,17 @@ export class DevTokenController {
     // identifier exists and is not a person". That is a leak this route cannot close,
     // and 404 is chosen because it is the answer this route already gives for an
     // environment it cannot resolve — one shape rather than a new one (FR-005).
-    const repo = new Repository(this.db, principal.environmentId);
+    // `RECORDS_NOTHING`, AND IT IS A VALUE RATHER THAN AN OMISSION (FR-MOD-03).
+    // Minting a credential is not a moderation action — `POST /auth/dev-token` is
+    // classified `not-moderation` — so this repository will never write an audit entry
+    // and has no actor to write one with. Leaving the argument off would make this site
+    // indistinguishable from one that forgot, which is what `repository.itest.ts` reads
+    // the source to prevent.
+    const repo = new Repository(
+      this.db,
+      principal.environmentId,
+      RECORDS_NOTHING,
+    );
     const existing = await repo.getUserByExternalId(body.user);
     if (existing?.kind === "bot") {
       throw new NotFoundException({

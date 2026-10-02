@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
@@ -1672,5 +1674,136 @@ describe("the read shapes that do NOT carry attachments (FR-009)", () => {
     // rows and read text. An exact key set rather than a negative check: this is what
     // stops the helper growing a column nobody asked for.
     expect(Object.keys(rows[0]!).sort()).toEqual(["id", "seq", "text"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-MOD-03 — what the compiler stopped checking when the actor became optional.
+//
+// `Repository`'s third argument is optional and chapter 4.18 measured why: required, the
+// compiler names every construction site, and here that is 110 of them across 32 test
+// files, 17 fenced across 131 pages, to hand an actor to repositories that will never
+// record anything. The cost of optional is that a production site can forget, and a
+// repository built without an actor writes entries with no actor and nothing says so.
+//
+// So the check moves here, and it is structural for the reason 4.4's guard walker is:
+// a behavioural test cannot catch a construction site that does not exist yet.
+//
+// THE ASSERTION READS "OR" BECAUSE ONE SITE LEGITIMATELY RECORDS NOTHING.
+// `auth/dev-token.controller.ts` mints a credential and performs no moderation action.
+// Demanding context from all of them would be satisfied only by an exemption list, which
+// is what `RECORDS_NOTHING` exists to avoid — the absence is a value a check can read.
+// ---------------------------------------------------------------------------
+describe("every production Repository is built with an actor", () => {
+  // ASK THE TREE, DO NOT RESTATE IT. A list of construction sites written here goes
+  // stale the day somebody adds one, and the test keeps passing — which is the failure
+  // this block exists to prevent, reproduced inside its own assertion. 4.4's precedent.
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory()
+        ? walk(join(dir, e.name))
+        : e.name.endsWith(".ts") &&
+            !e.name.includes(".test.") &&
+            !e.name.includes(".itest.")
+          ? [join(dir, e.name)]
+          : [],
+    );
+
+  /** Every `new Repository(` outside a test file, with the argument list that follows
+   * it — to the closing paren of the call, across however many lines prettier wrapped
+   * it onto. Chapter 4.16 found that matching a formatter-owned file by the text you
+   * last wrote matches nothing; this reads the call, not a line. */
+  /** A file with its comments blanked, same length, so offsets still line up.
+   *
+   * BECAUSE THE SCAN MATCHED ITS OWN DOCUMENTATION. `audit/actor.ts` has a comment
+   * saying that this test "reads every production `new Repository(`", and the first
+   * version of this scan found that sentence and demanded three arguments of it. An
+   * instrument that reads prose as code reports a defect in the paragraph describing
+   * itself. Blanked rather than deleted so a future failure's offsets are still the
+   * file's. */
+  const decommented = (src: string): string =>
+    src
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+      .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
+
+  const sites = (): { file: string; call: string }[] => {
+    const out: { file: string; call: string }[] = [];
+    for (const file of walk(join(__dirname, ".."))) {
+      const src = decommented(readFileSync(file, "utf8"));
+      for (let i = src.indexOf("new Repository("); i !== -1; i = src.indexOf("new Repository(", i + 1)) {
+        let depth = 0;
+        let end = i + "new Repository".length;
+        for (; end < src.length; end++) {
+          if (src[end] === "(") depth++;
+          else if (src[end] === ")" && --depth === 0) break;
+        }
+        out.push({ file, call: src.slice(i, end + 1) });
+      }
+    }
+    return out;
+  };
+
+  it("finds the construction sites it claims to police", () => {
+    // A scan that finds nothing passes vacuously, and five gate scripts in this project
+    // have exited 0 on an absent corpus. Assert the count, not the loop.
+    expect(sites().length).toBeGreaterThan(3);
+  });
+
+  /** The call's top-level arguments, with comments removed first.
+   *
+   * COUNTING ARGUMENTS, NOT MATCHING A WORD. The first version of this test asked
+   * whether the call text mentioned `actor` or `RECORDS_NOTHING`, and it was wrong in
+   * both directions: `actorFrom(req)` has no word boundary after `actor`, so every
+   * module failed, and a comment inside the call saying the word would have satisfied it
+   * — which `isolation/fixtures.ts` actually contains. A third argument is a structural
+   * fact and a comment cannot be one. */
+  const args = (call: string): string[] => {
+    const body = call
+      .slice(call.indexOf("(") + 1, call.lastIndexOf(")"))
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+    const out: string[] = [];
+    let depth = 0;
+    let cur = "";
+    for (const ch of body) {
+      if ("([{".includes(ch)) depth++;
+      else if (")]}".includes(ch)) depth--;
+      if (ch === "," && depth === 0) {
+        out.push(cur);
+        cur = "";
+      } else cur += ch;
+    }
+    if (cur.trim() !== "") out.push(cur);
+    return out.map((a) => a.trim()).filter((a) => a !== "");
+  };
+
+  it("gives each one an actor or the named absence", () => {
+    for (const { file, call } of sites()) {
+      expect(
+        args(call).length,
+        `${file} builds a Repository with no actor context`,
+      ).toBe(3);
+    }
+  });
+
+  it("does not read its own documentation as a construction site", () => {
+    // The control for the blanking above. Both halves: a call inside a comment is not a
+    // site, and a real call still is.
+    expect(decommented('// see `new Repository(db, env)`')).not.toContain(
+      "new Repository(",
+    );
+    expect(decommented("const r = new Repository(db, env, a);")).toContain(
+      "new Repository(",
+    );
+    // and the line structure survives, so a reported offset is still the file's
+    expect(decommented("a\n/* x */\nb").split("\n")).toHaveLength(3);
+  });
+
+  it("can tell a comment from an argument", () => {
+    // The control for the paragraph above: the shape that fooled the first version must
+    // not fool this one.
+    expect(args('new Repository(db, env, /* actor */)')).toHaveLength(2);
+    expect(args('new Repository(db, env, actorFrom(req))')).toHaveLength(3);
+    expect(args('new Repository(\n  db,\n  env,\n  // RECORDS_NOTHING\n)')).toHaveLength(2);
   });
 });

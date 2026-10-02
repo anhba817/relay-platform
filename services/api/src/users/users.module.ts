@@ -8,6 +8,7 @@ import { Repository } from "../db/repository";
 import { UsersController } from "./users.controller";
 import { UsersService } from "./users.service";
 import type { RequestWithTenant } from "../messages/request-with-tenant";
+import { actorFrom } from "../audit/actor";
 
 // The channels module's shape, for the channels module's reasons.
 //
@@ -30,7 +31,11 @@ import type { RequestWithTenant } from "../messages/request-with-tenant";
       scope: Scope.REQUEST,
       inject: ["DB", REQUEST],
       useFactory: (db: Db, req: RequestWithTenant) =>
-        new Repository(db, req.principal?.environmentId ?? ""),
+        new Repository(
+          db,
+          req.principal?.environmentId ?? "",
+          actorFrom(req),
+        ),
     },
     UsersService,
   ],

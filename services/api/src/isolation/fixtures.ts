@@ -1,3 +1,4 @@
+import { RECORDS_NOTHING } from "../audit/actor";
 import { createApiKey, createEnvironment, Repository } from "../db/repository";
 import { encryptSecret, mintSigningSecret } from "../webhooks/secret";
 
@@ -52,7 +53,17 @@ export interface TwoTenants {
 async function seedTenant(db: Db, label: string): Promise<Tenant> {
   const environment = await createEnvironment(db, { name: `isolation-${label}` });
   const key = await createApiKey(db, { environmentId: environment.id });
-  const repo = new Repository(db, environment.id);
+  const repo = new Repository(
+    db,
+    environment.id,
+    // `RECORDS_NOTHING` (FR-MOD-03). This file is test support that lives in `src/`
+    // rather than in a `.itest.ts`, so the source walk in `db/repository.itest.ts`
+    // reads it as a production site — correctly, because a check that trusted a
+    // filename would be an exemption list with extra steps. These fixtures plant
+    // rows and perform no moderation action, so there is no actor to supply and the
+    // absence is stated rather than left to be inferred.
+    RECORDS_NOTHING,
+  );
 
   const userExternalId = `${label}-user`;
   const user = await repo.createUser(userExternalId, `${label} user`);
@@ -146,7 +157,7 @@ export async function seedSameTenant(db: Db, mintToken: MintToken): Promise<Same
   const stamp = Math.random().toString(36).slice(2, 8);
   const environment = await createEnvironment(db, { name: `iso-same-${stamp}` });
   const key = await createApiKey(db, { environmentId: environment.id });
-  const repo = new Repository(db, environment.id);
+  const repo = new Repository(db, environment.id, RECORDS_NOTHING);
 
   const member = await repo.createUser(`same-${stamp}-member`, "A Member");
   const stranger = await repo.createUser(`same-${stamp}-stranger`, "A Stranger");
@@ -222,7 +233,7 @@ export async function seedCollidingTenants(
   const seed = async (label: string, type: "public" | "private") => {
     const environment = await createEnvironment(db, { name: `iso-collide-${label}-${stamp}` });
     const key = await createApiKey(db, { environmentId: environment.id });
-    const repo = new Repository(db, environment.id);
+    const repo = new Repository(db, environment.id, RECORDS_NOTHING);
     const userExternalId = `collide-${label}-${stamp}-user`;
     const user = await repo.createUser(userExternalId);
     // THE SAME external id in both environments. `DR-02` makes it unique per
