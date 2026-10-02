@@ -1446,6 +1446,87 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
+
+        // ── Chapter 4.18, FR-MOD-03's audit log ──────────────────────────────────
+        //
+        // SEVEN PINS FOR EIGHT NEW FILES, and `audit.module.ts` is the one left out
+        // ON PURPOSE: `**/*.module.ts` is excluded above, so a pin on it would match
+        // no file and be SILENT. That is chapter 4.4's finding in this very file —
+        // it excluded `**/main.ts` and also pinned `services/ingester/src/main.ts`,
+        // one unbindable pin among 45. Both halves of that probe were run again here.
+        //
+        // SIX OF THE SEVEN ARE AT 100 AND MEASURED THERE, not aspired to. The v8 text
+        // reporter omits a file at 100/100/100/100, so the table showed two of these
+        // eight and `coverage-summary.json` showed all eight — the table answers which
+        // files have a gap, the JSON answers which were seen (chapter 4.10).
+        "services/api/src/audit/actor.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/audit/audit.port.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/audit/audit.reader.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/audit/audit.schema.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/audit/moderation-routes.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        "services/api/src/db/audit-reads.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // THE CURSOR WAS RAISED, NOT PINNED WHERE IT LANDED. It measured 88.23 / 80 on
+        // the first run, with lines 70-72 uncovered: a token whose instant is outside
+        // anything the column can hold, and one whose id is 36 characters and not a
+        // uuid. Both arms are reachable and neither had a test. `cursor.test.ts` drives
+        // them — chapter 4.13's `shape.ts`, raised rather than lowered, and it runs in
+        // the Docker-free lane because a cursor is arithmetic.
+        "services/api/src/audit/cursor.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // AND THE CONTROLLER IS PINNED BELOW WHAT IT MEASURES, WITH THE REASON NAMED.
+        // 92.85 / 83.33 / 100 / 92.30, and the uncovered line is the 403 for a principal
+        // with no environment — **which T046 proved cannot fire**. `@Accepts("application")`
+        // makes the credential guard refuse a platform principal before the handler runs,
+        // and an application principal always resolves to an environment.
+        //
+        // The branch stays: it is the contract's, it matches the request log's route, and
+        // deleting it would leave the next reader to rediscover why it is absent. What
+        // keeps this route safe is the decorator, and `route.itest.ts` tests THAT — run
+        // red by deleting it, which answers a user token 200 with the tenant's history.
+        //
+        // 90 / 80 against 92.85 / 83.33: below the observation by about the swing
+        // `session.ts` showed across two identical runs, with both numbers here so the
+        // next reader does not have to re-measure to know which is which.
+        "services/api/src/audit/audit.controller.ts": {
+          branches: 80,
+          functions: 100,
+          lines: 90,
+          statements: 90,
+        },
       },
     },
   },
