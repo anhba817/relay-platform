@@ -53,12 +53,20 @@ describe("and refuses everything it did not produce", () => {
     expect(decodeAuditCursor(mint(Date.UTC(2026, 0, 1), UUID))).not.toBeNull();
   });
 
-  it("refuses an id that is the right shape and is not a uuid", () => {
-    // 36 characters with hyphens in the right places passes the outer pattern; the
-    // version and variant nibbles are what `UUID` checks. Without this arm a token could
-    // carry a value the column cannot compare.
-    const notAUuid = "zzzzzzzz-4642-4710-a910-e703bf852190";
-    expect(notAUuid).toHaveLength(36);
-    expect(decodeAuditCursor(mint(Date.UTC(2026, 9, 2), notAUuid))).toBeNull();
+  it("refuses an id the outer pattern admits and `UUID` does not", () => {
+    // THE FIXTURE HAS TO GET PAST THE FIRST PATTERN TO REACH THE SECOND, and the first
+    // version of this test did not. It used `zzzzzzzz-4642-…`, which is 36 characters
+    // and contains `z` — so `[0-9a-fA-F-]{36}` refuses it four lines earlier and the arm
+    // this test is named for never ran. It passed, and CI's coverage reported
+    // `cursor.ts` at 94.11 / 90 with line 72 uncovered while the pin said 100.
+    //
+    // What reaches it: 36 characters, all hex or hyphen, with the hyphens in the wrong
+    // places. The outer pattern cannot see grouping and `UUID` can.
+    const admitted = "aae5d6254642-4710-a910-e703bf8521901";
+    expect(admitted).toHaveLength(36);
+    expect(/^[0-9a-fA-F-]{36}$/.test(admitted), "the outer pattern must admit it").toBe(
+      true,
+    );
+    expect(decodeAuditCursor(mint(Date.UTC(2026, 9, 2), admitted))).toBeNull();
   });
 });
