@@ -1265,3 +1265,73 @@ export const mediaObjects = pgTable(
       .where(sql`${t.parentId} IS NOT NULL`),
   ],
 );
+
+// THE AUDIT LOG (FR-MOD-03), AND THE ONLY TABLE HERE NOTHING CAN UPDATE OR DELETE.
+//
+// The immutability is a `BEFORE UPDATE OR DELETE` trigger in `0021_audit_log.sql` and it
+// cannot be expressed here — drizzle has no trigger vocabulary — so this declaration is
+// the half of the table a reader of this file sees, and the other half is the half that
+// matters. `REVOKE UPDATE, DELETE` would have been expressible and does nothing: the api
+// connects as a superuser, measured, which is why the mechanism is a trigger.
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: uuid("id").primaryKey(),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id),
+    // MILLISECOND, AND NOT THE DEFAULT MICROSECOND. The one place in this file where a
+    // precision is declared, because this is the platform's first keyset cursor over a
+    // Postgres timestamp. `toIso` emits `…083Z` and an undeclared column stores
+    // `…083489`, so a cursor minted from the transmitted value and compared against the
+    // column skips every row inside the lost fraction, at every page boundary. The other
+    // 40 `timestamptz` columns are precision 6 and the constitution asks for
+    // millisecond; that deviation is not this chapter's to repair, and this column is
+    // the one place it would cost a reader rows.
+    //
+    // AND IT IS `occurred_at`, NOT `created_at`, WHICH EVERY OTHER TABLE HERE USES.
+    // The two instants are identical by construction — the row is written inside the
+    // action's transaction — and that is exactly why the familiar name would mislead. A
+    // reader who sees `created_at` reasonably wonders whether the row could have been
+    // written after the action; it cannot. If a later chapter ever writes an entry
+    // outside the action's transaction, this name is what has to change, and that is the
+    // right place for the friction.
+    occurredAt: timestamp("occurred_at", {
+      withTimezone: true,
+      precision: 3,
+    }).notNull(),
+    actorKind: text("actor_kind").notNull(),
+    // NULL FOR A PLATFORM PRINCIPAL, which carries no tenant and so no identifier a
+    // tenant could read. A key id for an application credential, an external id for a
+    // user.
+    actorId: text("actor_id"),
+    // `METHOD /path`, the derived route's own key. One name for this column, the read
+    // route's filter and `audit/moderation-routes.ts`'s both-directions check.
+    action: text("action").notNull(),
+    targetKind: text("target_kind").notNull(),
+    // THE IDENTIFIER A CUSTOMER USES: an external id for a user, a uuid for a channel or
+    // a message, because those are what the routes take.
+    targetId: text("target_id").notNull(),
+    requestId: uuid("request_id").notNull(),
+  },
+  (t) => [
+    check(
+      "audit_log_actor_kind_check",
+      sql`${t.actorKind} IN ('application', 'user', 'platform')`,
+    ),
+    check(
+      "audit_log_target_kind_check",
+      sql`${t.targetKind} IN ('user', 'message', 'membership', 'channel')`,
+    ),
+    // THE READ ROUTE'S ONLY ACCESS PATH, AND THE TENANCY PREDICATE'S. The third column is
+    // the cursor's tiebreaker and it is not optional: `occurred_at` is not unique, and
+    // `request-log/reader.ts` already measured what a single-column keyset costs — "42
+    // `(environment_id, ts)` pairs in this lane hold more than one row; a `ts`-only
+    // comparison skips or repeats all 89 of them."
+    index("audit_log_read_idx").on(
+      t.environmentId,
+      t.occurredAt.desc(),
+      t.id.desc(),
+    ),
+  ],
+);
