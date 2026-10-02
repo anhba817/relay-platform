@@ -151,11 +151,19 @@ export interface ListVerdict {
  * test below is what turns that into a sentence about the recogniser. */
 export function rowsOf(body: unknown): unknown[] {
   if (Array.isArray(body)) return body;
-  const shaped = body as { data?: unknown; requests?: unknown } | null;
+  const shaped = body as {
+    data?: unknown;
+    requests?: unknown;
+    entries?: unknown;
+  } | null;
   if (Array.isArray(shaped?.data)) return shaped.data;
   // Chapter 4.8's envelope: the array is named for the resource, as
   // `messages.service.ts` names its own. R23 refused `rows` for being a storage word.
   if (Array.isArray(shaped?.requests)) return shaped.requests;
+  // AND CHAPTER 4.18's, WHICH IS THE THIRD TIME THIS FUNCTION HAS MET A NEW ONE. Adding
+  // the name is the whole cost of keeping the table rather than deriving it, and 4.8
+  // measured what deriving it costs instead — a false pass on any array in the body.
+  if (Array.isArray(shaped?.entries)) return shaped.entries;
   return [];
 }
 

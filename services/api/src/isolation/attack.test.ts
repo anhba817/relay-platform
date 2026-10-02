@@ -62,6 +62,14 @@ describe("counting the rows in a list answer", () => {
     expect(rowsOf({ data: [1, 2], next_cursor: "x" })).toEqual([1, 2]);
   });
 
+  it("reads each envelope the platform actually serves, by name", () => {
+    // ONE PER NAMED ARM, AND THE `requests` ARM HAD NO TEST AT ALL until chapter 4.18
+    // came to add a third. Every arm here is one a `list` attack depends on, and an arm
+    // nothing drives is an arm that can be deleted or mistyped without a word.
+    expect(rowsOf({ requests: [1, 2], has_more: false })).toEqual([1, 2]);
+    expect(rowsOf({ entries: [1], has_more: false })).toEqual([1]);
+  });
+
   it("returns nothing for a shape it does not recognise", () => {
     // The arm that matters. Zero rows from an unknown shape looks exactly like
     // zero rows from a correctly-scoped list, and only one of those is a pass.

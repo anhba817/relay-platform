@@ -27,6 +27,7 @@ import {
   seedTwoTenants,
   type CollidingTenants,
   type SameTenant,
+  type Tenant,
   type TwoTenants,
 } from "./fixtures";
 import { periodOf } from "../quotas/period";
@@ -1357,6 +1358,61 @@ describe("the isolation gauntlet", () => {
       // leak check while being broken, which is the `list` shape's own trap — and here it
       // is not hypothetical, because a log with no ingester behind it really is empty.
       expect(verdict.count, "the attacker's own log came back empty").toBeGreaterThan(0);
+    });
+
+    /** GET /v1/audit-log (chapter 4.18, FR-MOD-03, FR-006).
+     *
+     * AND THIS ONE PLANTS ITS ROWS THROUGH THE PRODUCT, not behind it. The request log's
+     * attack has to `INSERT` because nothing in the composed stack writes to that table
+     * (no ingester runs, `gaps.md` 050-8). An audit entry has a writer right here: a ban
+     * over HTTP produces one, so the plant exercises the whole path the leak check is
+     * about — credential to principal to actor to row — instead of asserting isolation
+     * over rows the api never wrote.
+     *
+     * A THROWAWAY USER IN EACH ENVIRONMENT, not the fixture's own. Banning
+     * `t.attacker.userExternalId` would leave a banned user behind for whatever attack
+     * runs next, which is the shape 045 found eight times: an action scoped wider than
+     * the thing it tests.
+     *
+     * THE FORBIDDEN VALUES ARE THE VICTIM's TARGET AND ITS ENVIRONMENT ID. `listAttack`
+     * searches the serialised body, so a victim identifier reaching a cursor or an echo
+     * counts as a leak exactly as a row would. */
+    it("GET /v1/audit-log — a tenant's moderation history holds its own entries and none of the victim's", async () => {
+      attacked.add("GET /v1/audit-log");
+      const stamp = randomUUID().slice(0, 8);
+      const banned = async (who: Tenant): Promise<string> => {
+        const externalId = `audit-${stamp}-${who === t.victim ? "victim" : "attacker"}`;
+        const created = await send(url, who.credential, {
+          method: "POST",
+          path: "/v1/users",
+          // THE BATCH SHAPE, which is what this route takes — `{ users: [...] }`, 200
+          // and not 201 because the array reports created, updated and revived per
+          // entry. The single-entry guess answered 400.
+          body: { users: [{ external_id: externalId, display_name: "Audit probe" }] },
+        });
+        expect(created.status, `could not create ${externalId}`).toBe(200);
+        const ban = await send(url, who.credential, {
+          method: "POST",
+          path: `/v1/users/${externalId}/ban`,
+        });
+        expect(ban.status, `could not ban ${externalId}`).toBe(200);
+        return externalId;
+      };
+      await banned(t.attacker);
+      const victimTarget = await banned(t.victim);
+
+      const verdict = await listAttack(
+        url,
+        t.attacker.credential,
+        { method: "GET", path: "/v1/audit-log" },
+        [t.victim.environmentId, victimTarget],
+      );
+      expect(verdict.status).toBe(200);
+      expect(verdict.leaked, `leaked: ${verdict.leaked.join(", ")}`).toEqual([]);
+      // AND ITS OWN ENTRY IS THERE. A page that returned nothing passes the leak check
+      // while being broken — the `list` shape's own trap, and on a log that is empty
+      // until somebody moderates it is not hypothetical.
+      expect(verdict.count, "the attacker's own audit log came back empty").toBeGreaterThan(0);
     });
 
     it("POST /v1/webhooks — a create by one tenant cannot appear in another's list", async () => {

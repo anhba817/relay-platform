@@ -101,6 +101,18 @@ const DRIVER_EXEMPT = [
     // `usageFor` would mean asserting the roll-up against the function that reads
     // it — the same circularity, one table over.
     "services/api/src/quotas/quotas.itest.ts",
+    // AND THE AUDIT LOG'S, WHICH IS THE EXEMPTION'S HONEST CASE IN ITS PUREST FORM: the
+    // state under test is one the repository CANNOT reach, and could not be made to.
+    // FR-004 says an entry must not be modifiable or removable by any path the platform
+    // exposes, and that the refusal must be DEMONSTRATED rather than asserted — so the
+    // test has to attempt an `UPDATE` and a `DELETE` on `audit_log`. There is no
+    // repository method for either and there must never be one; a route that does not
+    // exist proves nothing about a table. The attempt has to go through the driver or
+    // the requirement has no test at all.
+    //
+    // The suite's READS go through `db/audit-reads.ts` like the route's, so this
+    // exemption buys exactly the two statements it exists for.
+    "services/api/src/audit/audit.itest.ts",
     // AND THE CONNECTION-METERING CHAPTER'S, WHICH MAKES THE SAME CLAIM ONE
     // DIMENSION OVER: a credited minute survives a `FLUSHALL` of the counter store,
     // because a quota is about THIS MONTH and the rate limiter's store is allowed to

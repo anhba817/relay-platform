@@ -446,6 +446,25 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   // route with a token the guard refuses at the door and the handler would never run.
   { method: "GET", path: "/v1/request-log", accepts: "application", shape: "list" },
 
+  // ── THE AUDIT LOG (chapter 4.18, FR-MOD-03), AND THE DERIVATION FOUND IT FIRST AGAIN ──
+  //
+  // Run before this entry existed: `47 derived, 39 attacked, 8 exempt` with
+  // `unclassified: ["GET /v1/audit-log"]`. Eighth time, and the list has still never been
+  // ahead of the derivation.
+  //
+  // `list`, AND `application` FOR THE REQUEST LOG'S REASON. The controller declares
+  // `@Accepts("application")`; this field tells the gauntlet which credential to attack
+  // with, so `"user"` here would send it at the route with a token the guard refuses at
+  // the door and the handler would never run.
+  //
+  // AND THE ATTACK HAS TO PLANT ITS OWN ROWS, like the request log's and for a sharper
+  // version of the same reason: an audit log is empty until somebody moderates, so on a
+  // fresh lane both tenants' logs hold nothing and an empty page passes a leak check
+  // without the route having been asked anything. The attack bans a throwaway user in
+  // each environment over HTTP first, which exercises the write path rather than planting
+  // rows behind it.
+  { method: "GET", path: "/v1/audit-log", accepts: "application", shape: "list" },
+
   // ── THE UPLOAD SLOT (chapter 4.10, FR-MED-01), AND THE DERIVATION FOUND IT EIGHTH ──
   //
   // Run before this entry existed: `44 derived, 37 attacked, 6 exempt` with
