@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql as sqlTag } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { auditPage, auditPageQuery, type AuditRow } from "../db/audit-reads";
+import {
+  auditActionsHeld,
+  auditPage,
+  auditPageQuery,
+  type AuditRow,
+} from "../db/audit-reads";
 import { createDb, createPool, DEFAULT_DATABASE_URL, type Db } from "../db/client";
 import { migrate } from "../db/migrate";
 import {
@@ -302,6 +307,37 @@ describe("a tenant reads its own history and no other (FR-006, constitution I)",
     // an echo is a leak exactly as a row is (`listAttack`'s rule, applied here).
     expect(JSON.stringify(page)).not.toContain("iso-theirs");
     expect(JSON.stringify(page)).not.toContain(other.id);
+  });
+});
+
+describe("the filter's VOCABULARY is scoped too, which no other test asked", () => {
+  it("does not tell a tenant which actions other tenants have taken", async () => {
+    // T046's ARM 2, WHICH WAS INVISIBLE. Deleting the tenancy predicate from
+    // `auditActionsHeld` left the audit suites 21 of 21 and the gauntlet 62 of 62 — no
+    // test had two tenants whose action vocabularies differ, so an unscoped
+    // `SELECT DISTINCT action` read as correct. 4.12 measured the same shape on three
+    // scopes at once; this is one scope with no neighbour covering for it.
+    //
+    // IT IS A SMALLER LEAK THAN A ROW AND IT IS STILL A LEAK: the set of action KINDS a
+    // competitor's moderators perform is information about how they run their product.
+    const mine = new Repository(db, env.id, actor());
+    const theirs = new Repository(db, other.id, actor());
+
+    // An action only the OTHER tenant performs. The archive pair is this suite's
+    // choice because nothing in `env` archives a channel except the filter test, which
+    // runs in its own describe and may not have run yet — so the claim is made with a
+    // channel this test creates.
+    const c = await theirs.createChannel("vocab-theirs", "public", "V");
+    await theirs.archiveChannel(c.id);
+    const u = await mine.createUser("vocab-mine", "V");
+    await mine.banUser(u.id);
+
+    const held = new Set(await auditActionsHeld(db, env.id));
+    expect(held.has(ACTION.ban), "this tenant's own action is missing").toBe(true);
+    expect(
+      held.has(ACTION.archiveChannel),
+      "another tenant's action appeared in this tenant's vocabulary",
+    ).toBe(false);
   });
 });
 
