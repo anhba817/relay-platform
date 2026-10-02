@@ -178,13 +178,13 @@ describe("a user's channel listing", () => {
 
   // ── T116b: the role is in the projection ────────────────────────────────────
   it("returns each channel's role for the user the path names", async () => {
-    await repo.setMemberRole(newest, member.id, "moderator");
+    await repo.setMemberRole(newest, member.id, "moderator", "lister");
     const body = (await (await list("lister")).json()) as {
       data: Array<{ external_id: string; role: string }>;
     };
     expect(body.data.find((c) => c.external_id === "newest")?.role).toBe("moderator");
     expect(body.data.find((c) => c.external_id === "oldest")?.role).toBe("member");
-    await repo.setMemberRole(newest, member.id, "member");
+    await repo.setMemberRole(newest, member.id, "member", "lister");
   });
 
   // ── T113: the cursor ────────────────────────────────────────────────────────
@@ -1156,7 +1156,7 @@ describe("a user's channel listing", () => {
   it("answers 404 for a user this tenant does not have, and for a deleted one", async () => {
     expect((await ban("never-heard-of")).status).toBe(404);
     const gone = await repo.createUser("ban-then-delete", "Gone");
-    await repo.deleteUser(gone.id);
+    await repo.deleteUser(gone.id, "ban-then-delete");
     // A DELETED USER CANNOT BE BANNED, and does not need to be: every route naming them
     // answers 404 and their session carries no channels. Banning one would be a state
     // with no observable difference.

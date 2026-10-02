@@ -227,7 +227,7 @@ export class UsersService {
   async deleteUser(externalId: string): Promise<{ external_id: string; deleted: true }> {
     const user = await this.repo.getUserByExternalId(externalId);
     if (!user) throw new NotFoundException("user not found");
-    await this.repo.deleteUser(user.id);
+    await this.repo.deleteUser(user.id, externalId);
     return { external_id: externalId, deleted: true };
   }
 

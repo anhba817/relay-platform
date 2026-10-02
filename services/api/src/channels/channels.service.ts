@@ -171,7 +171,12 @@ export class ChannelsService {
     if (!(await this.repo.channelExists(channelId))) throw this.notFound();
     const user = await this.repo.getUserByExternalId(userExternalId);
     if (!user) throw this.notFound();
-    const outcome = await this.repo.setMemberRole(channelId, user.id, role);
+    const outcome = await this.repo.setMemberRole(
+      channelId,
+      user.id,
+      role,
+      userExternalId,
+    );
     if (outcome === "not_a_member") throw this.notFound();
     return { external_id: userExternalId, role };
   }

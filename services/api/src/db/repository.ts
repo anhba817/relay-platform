@@ -7,6 +7,7 @@ import {
   eq,
   gt,
   inArray,
+  isNotNull,
   isNull,
   lt,
   ne,
@@ -25,11 +26,13 @@ import {
   DEFAULT_LIMITS,
   type LimitedOperation,
 } from "../limits/policy";
-import type { ActorContext, RECORDS_NOTHING } from "../audit/actor";
+import { RECORDS_NOTHING, type ActorContext } from "../audit/actor";
+import { ACTION } from "../audit/moderation-routes";
 import type { Db } from "./client";
 import {
   apiKeys,
   applications,
+  auditLog,
   channels,
   consumedEvents,
   environments,
@@ -2920,6 +2923,71 @@ export class Repository {
     return this.environmentId;
   }
 
+  /** Write one audit entry, inside the caller's transaction (FR-MOD-03, FR-005).
+   *
+   * Called by every recording method in this class — `banUser`, `unbanUser`,
+   * `deleteUser`, `removeMembers`, `setMemberRole`, `archiveChannel`,
+   * `unarchiveChannel` and `deleteMessage` — after each has established that its action
+   * changed something.
+   *
+   * `tx` IS THE ACTION'S OWN TRANSACTION AND THAT IS THE WHOLE OF FR-005. An entry
+   * committed separately from the action it describes is a log that can disagree with
+   * the platform, in both directions: an action with no entry if the second write fails,
+   * and an entry for an action that rolled back.
+   *
+   * IT WRITES NOTHING WHEN THERE IS NO ACTOR, AND THAT IS NOT A SILENT FAILURE — it is
+   * two things a check covers. A production `Repository` is built with an actor or with
+   * `RECORDS_NOTHING`, and `db/repository.itest.ts` reads the source of every
+   * construction site to say so, because the parameter is optional and the compiler
+   * stopped asking. A repository built with neither is a test's, and a test that means
+   * to exercise the log supplies one — `audit.itest.ts` asserts the entries appear, and
+   * asserts that a `RECORDS_NOTHING` repository writes none.
+   *
+   * The alternative was throwing, and it was costed rather than dismissed: 30 `new
+   * Repository(` sites across the eight test files that call a recording method would
+   * have to supply an actor to go on testing something else. That buys a second guard
+   * over the same property `repository.itest.ts` already guards, at four times the
+   * price, and every one of those sites is a file the fence chain publishes. */
+  /** The actor's kind, or `undefined` when this repository records nothing.
+   *
+   * Read by `deleteMessage` alone, which is the one action whose classification depends
+   * on the credential (FR-002a): a tenant key deleting somebody else's message is
+   * FR-MOD-02, a user deleting their own is chapter 3.23's FR-013, and a compliance log
+   * that recorded the second would fill with ordinary user activity. */
+  private get actorKind(): ActorContext["kind"] | undefined {
+    const actor = this.actor;
+    return actor === undefined || actor === RECORDS_NOTHING
+      ? undefined
+      : actor.kind;
+  }
+
+  private async recordAction(
+    tx: Pick<Db, "insert">,
+    entry: {
+      action: string;
+      targetKind: "user" | "message" | "membership" | "channel";
+      targetId: string;
+    },
+  ): Promise<void> {
+    const actor = this.actor;
+    if (actor === undefined || actor === RECORDS_NOTHING) return;
+    await tx.insert(auditLog).values({
+      id: randomUUID(),
+      environmentId: this.environmentId,
+      // `new Date()` AND NOT `sql`now()``, which every other write in this class uses
+      // for a timestamp. `now()` is the transaction's start instant, so a long
+      // transaction would date the entry before the action it records — and the column
+      // is millisecond-precision expressly so the read route's cursor can trust it.
+      occurredAt: new Date(),
+      actorKind: actor.kind,
+      actorId: actor.id,
+      action: entry.action,
+      targetKind: entry.targetKind,
+      targetId: entry.targetId,
+      requestId: actor.requestId,
+    });
+  }
+
   // ---------------------------------------------------------------------
   // Hosted media. The slot's whole database half, in one method, because the
   // check reads what the insert writes.
@@ -3560,31 +3628,69 @@ export class Repository {
    * value and only one of them can be `now()`.
    */
   async archiveChannel(channelId: string): Promise<boolean> {
-    const updated = await this.db
-      .update(channels)
-      .set({ archivedAt: sql`now()` })
-      .where(
-        and(
-          eq(channels.id, channelId),
-          eq(channels.environmentId, this.environmentId),
-        ),
-      )
-      .returning({ id: channels.id });
-    return updated.length > 0;
+    // FR-005a's EXCEPTION, THE THIRD AND FOURTH TIME. Neither of this pair had a
+    // transaction and neither needed one for itself; both need one so the entry commits
+    // with the change. The answers are unchanged.
+    return this.db.transaction(async (tx) => {
+      const updated = await tx
+        .update(channels)
+        .set({ archivedAt: sql`now()` })
+        .where(
+          and(
+            eq(channels.id, channelId),
+            eq(channels.environmentId, this.environmentId),
+          ),
+        )
+        .returning({ id: channels.id });
+      if (updated.length === 0) return false;
+
+      // FR-MOD-03. The target is the channel's uuid, which is what the route takes and
+      // therefore what a customer already has — no threading, unlike the user cases.
+      //
+      // ARCHIVING AN ARCHIVED CHANNEL WRITES AN ENTRY, for the reason the comment above
+      // gives for the boolean: this write is idempotent BY THE WRITE, so the statement
+      // really did affect a row. The mechanical rule is uniform across the eight actions
+      // and this is the case where it is most visibly a choice.
+      await this.recordAction(tx, {
+        action: ACTION.archiveChannel,
+        targetKind: "channel",
+        targetId: channelId,
+      });
+      return true;
+    });
   }
 
   async unarchiveChannel(channelId: string): Promise<boolean> {
-    const updated = await this.db
-      .update(channels)
-      .set({ archivedAt: null })
-      .where(
-        and(
-          eq(channels.id, channelId),
-          eq(channels.environmentId, this.environmentId),
-        ),
-      )
-      .returning({ id: channels.id });
-    return updated.length > 0;
+    // FR-005a's EXCEPTION, THE THIRD AND FOURTH TIME. Neither of this pair had a
+    // transaction and neither needed one for itself; both need one so the entry commits
+    // with the change. The answers are unchanged.
+    return this.db.transaction(async (tx) => {
+      const updated = await tx
+        .update(channels)
+        .set({ archivedAt: null })
+        .where(
+          and(
+            eq(channels.id, channelId),
+            eq(channels.environmentId, this.environmentId),
+          ),
+        )
+        .returning({ id: channels.id });
+      if (updated.length === 0) return false;
+
+      // FR-MOD-03. The target is the channel's uuid, which is what the route takes and
+      // therefore what a customer already has — no threading, unlike the user cases.
+      //
+      // ARCHIVING AN ARCHIVED CHANNEL WRITES AN ENTRY, for the reason the comment above
+      // gives for the boolean: this write is idempotent BY THE WRITE, so the statement
+      // really did affect a row. The mechanical rule is uniform across the eight actions
+      // and this is the case where it is most visibly a choice.
+      await this.recordAction(tx, {
+        action: ACTION.unarchiveChannel,
+        targetKind: "channel",
+        targetId: channelId,
+      });
+      return true;
+    });
   }
 
   /** Set a member's role (FR-011).
@@ -3611,20 +3717,43 @@ export class Repository {
     channelId: string,
     userId: string,
     role: string,
+    userExternalId: string,
   ): Promise<"set" | "not_a_member"> {
-    const updated = await this.db
-      .update(members)
-      .set({ role })
-      .where(
-        and(
-          eq(members.channelId, channelId),
-          eq(members.userId, userId),
-          sql`EXISTS (SELECT 1 FROM channels c WHERE c.id = ${channelId}
+    // THE TRANSACTION IS FR-005a's EXCEPTION, TAKEN A SECOND TIME. This method had none
+    // and did not need one for its own sake; it needs one so the entry and the role
+    // change commit together. The answer it returns is unchanged.
+    return this.db.transaction(async (tx) => {
+      const updated = await tx
+        .update(members)
+        .set({ role })
+        .where(
+          and(
+            eq(members.channelId, channelId),
+            eq(members.userId, userId),
+            sql`EXISTS (SELECT 1 FROM channels c WHERE c.id = ${channelId}
                        AND c.environment_id = ${this.environmentId})`,
-        ),
-      )
-      .returning({ userId: members.userId });
-    return updated.length > 0 ? "set" : "not_a_member";
+          ),
+        )
+        .returning({ userId: members.userId });
+      if (updated.length === 0) return "not_a_member";
+
+      // FR-MOD-03. THE EXTERNAL ID IS THREADED HERE AND IT IS THE ONLY PLACE IT HAD TO
+      // BE: this `RETURNING` carries a uuid, because unlike the ban and the removal this
+      // method emits no customer-facing event and never needed the other identifier.
+      //
+      // AND SETTING THE ROLE A MEMBER ALREADY HOLDS WRITES AN ENTRY. The no-op rule in
+      // this chapter is mechanical — did the write statement affect a row — and here it
+      // did. Knowing whether the VALUE changed would need a SELECT inside the write
+      // transaction, which is the query `deleteMessage` argues against paying on every
+      // call, and the softer reading is defensible anyway: the moderator performed the
+      // action and the platform carried it out.
+      await this.recordAction(tx, {
+        action: ACTION.setMemberRole,
+        targetKind: "membership",
+        targetId: `${channelId}/${userExternalId}`,
+      });
+      return "set";
+    });
   }
 
   /** One member's role, or null when there is no membership. Used by the tests that
@@ -3742,6 +3871,28 @@ export class Repository {
       await tx.insert(outbox).values({
         subject: event.subject,
         payload: event.payload,
+      });
+
+      // FR-MOD-03, IN THE SAME LOOP AND FOR THE SAME REASON. One entry per member the
+      // `RETURNING` gave back, so a bulk call naming five of which two were not members
+      // writes three — the no-op rule applied per member rather than per request.
+      //
+      // AND THE EXTERNAL ID WAS ALREADY HERE, which is the second time in this chapter.
+      // The plan had it threaded in from `channels.service.ts`, which does hold it; this
+      // method's `RETURNING` has carried a `external_id` subquery since the membership
+      // chapter, because the event one line up publishes the member as a customer sees
+      // them. **A method that already emits a customer-visible event already holds
+      // customer-visible identifiers**, and that is what the threading survey should
+      // have asked.
+      //
+      // THE TARGET IS THE MEMBERSHIP, WHICH IS A PAIR, so the id is the two identifiers
+      // the route carries with a slash between them. Unambiguous whatever the external
+      // id contains — a uuid is 36 characters and cannot hold a slash, so the first one
+      // is always the separator.
+      await this.recordAction(tx, {
+        action: ACTION.removeMember,
+        targetKind: "membership",
+        targetId: `${channelId}/${row.userExternalId}`,
       });
     }
 
@@ -4064,6 +4215,22 @@ export class Repository {
       if (banned.length === 0) return [];
       const externalId = banned[0]!.externalId;
 
+      // FR-MOD-03, AFTER THE GUARD AND INSIDE THE SAME TRANSACTION. After, because an
+      // action that changed nothing earns no entry and `isNull(users.bannedAt)` above is
+      // what makes a re-ban change nothing — the same guard that already stops the
+      // events. Inside, because FR-005 wants the entry and the ban to commit or roll
+      // back together.
+      //
+      // AND THE EXTERNAL ID WAS ALREADY HERE. The chapter's plan said this method would
+      // have to be given it, on the reasoning that `setBanned` resolves the user and
+      // hands over a uuid. It does — and the `RETURNING` three lines up reads the
+      // external id back out, for the membership events. Nothing was threaded.
+      await this.recordAction(tx, {
+        action: ACTION.ban,
+        targetKind: "user",
+        targetId: externalId,
+      });
+
       const channelRows = await tx
         .select({ channelId: members.channelId })
         .from(members)
@@ -4087,13 +4254,49 @@ export class Repository {
     });
   }
 
+  /** Lift a ban (FR-032), and record it (FR-MOD-03).
+   *
+   * THREE THINGS CHANGED HERE AND THEY ARE ONE CHANGE. Before this chapter the method
+   * was a bare `update` with no transaction, no `RETURNING` and no `isNull` guard — so
+   * lifting a real ban and unbanning somebody who was never banned were the same call
+   * with the same answer, `void`. It could not tell whether it had done anything, which
+   * is the one question FR-008 asks of every recording action.
+   *
+   * `isNotNull(bannedAt)` IS THE GUARD, and it is `banUser`'s in the mirror: that method
+   * has had `isNull(bannedAt)` since the ban chapter, for exactly this reason, and the
+   * pair was asymmetric for no recorded reason. The entry now follows the same rule as
+   * the ban's — an unban that lifted nothing writes nothing.
+   *
+   * THE TRANSACTION IS FR-005a's EXCEPTION, TAKEN DELIBERATELY. FR-012 says this chapter
+   * adds no transaction to an action that lacked one; four actions could not satisfy
+   * both clauses and this is the first. What it buys is the entry committing with the
+   * action. What it costs is a new way to fail, and the answer this method returns is
+   * unchanged — `void` then, `void` now — so no caller sees a difference.
+   *
+   * THE EXTERNAL ID COMES FROM THE `RETURNING`, not from a threaded parameter. The
+   * chapter's plan had it threaded from `users.service.ts`; once the method needed a
+   * `RETURNING` anyway, the column was already coming back. */
   async unbanUser(userId: string): Promise<void> {
-    await this.db
-      .update(users)
-      .set({ bannedAt: null })
-      .where(
-        and(eq(users.id, userId), eq(users.environmentId, this.environmentId)),
-      );
+    await this.db.transaction(async (tx) => {
+      const lifted = await tx
+        .update(users)
+        .set({ bannedAt: null })
+        .where(
+          and(
+            eq(users.id, userId),
+            eq(users.environmentId, this.environmentId),
+            isNotNull(users.bannedAt),
+          ),
+        )
+        .returning({ externalId: users.externalId });
+
+      if (lifted.length === 0) return;
+      await this.recordAction(tx, {
+        action: ACTION.unban,
+        targetKind: "user",
+        targetId: lifted[0]!.externalId,
+      });
+    });
   }
 
   /** Delete a user, keeping the row (FR-027, FR-028, FR-029).
@@ -4118,7 +4321,7 @@ export class Repository {
    *
    * IDEMPOTENT, and it reports which happened, so the route can answer 200 twice while a
    * user who never existed still gets 404. */
-  async deleteUser(userId: string): Promise<boolean> {
+  async deleteUser(userId: string, userExternalId: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const [alive] = await tx
         .select({ id: users.id, deletedAt: users.deletedAt })
@@ -4158,6 +4361,25 @@ export class Repository {
           deletedAt: alive.deletedAt ?? new Date(),
         })
         .where(eq(users.id, userId));
+
+      // FR-MOD-03, AND THE NO-OP TEST IS NOT THIS METHOD'S RETURN VALUE.
+      //
+      // `deleteUser` answers `true` for a user it just deleted AND for one already
+      // deleted — the `?? new Date()` above keeps the original instant, so the second
+      // call changes nothing and still reports `true`. The boolean means "a row
+      // existed", which is what the route needs to tell 200 from 404; it does not mean
+      // "something changed". Chapter 4.18's own phase-2 survey read it as the no-op
+      // discriminator and was wrong.
+      //
+      // `alive.deletedAt` is the discriminator. A second deletion writes no entry, for
+      // the same reason a re-ban writes none.
+      if (alive.deletedAt === null) {
+        await this.recordAction(tx, {
+          action: ACTION.deleteUser,
+          targetKind: "user",
+          targetId: userExternalId,
+        });
+      }
       return true;
     });
   }
@@ -5418,6 +5640,25 @@ export class Repository {
         subject: event.subject,
         payload: event.payload,
       });
+
+      // FR-MOD-03, AND ONLY WHEN A TENANT KEY DID IT (FR-002a). This is the one route
+      // whose classification the credential decides: `moderation-when-application`.
+      //
+      // THE CONDITION IS THE ACTOR'S KIND, NOT `userId === undefined`. The two agree
+      // today — the controller passes the user only for a user token — but they are
+      // different claims, and the one the audit log is entitled to is who authenticated
+      // the request. Reading the parameter would make the entry depend on a calling
+      // convention rather than on a credential.
+      //
+      // On this branch only, like the event above: a repeated deletion returned before
+      // reaching here, so a client retrying a 204 writes no second entry.
+      if (this.actorKind === "application") {
+        await this.recordAction(tx, {
+          action: ACTION.deleteMessage,
+          targetKind: "message",
+          targetId: messageId,
+        });
+      }
 
       return {
         deleted: {

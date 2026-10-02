@@ -644,7 +644,7 @@ describe("the membership rows (FR-WHK-02)", () => {
     // and `memberships_role_check` — the ORGANISATION one — is ('owner','admin',
     // 'member'). The schema comment predicts this confusion in as many words and the
     // first draft of this test made it anyway.
-    expect(await repo.setMemberRole(channelId, mai.id, "moderator")).toBe("set");
+    expect(await repo.setMemberRole(channelId, mai.id, "moderator", "mai")).toBe("set");
 
     // `membership.changed`'s enum has two members and neither means "role".
     // A reader who sees add and remove producing events will assume a PATCH does

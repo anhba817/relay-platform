@@ -308,7 +308,7 @@ describe("members_role_check names the channel's three (FR-011, R8)", () => {
     // `constraint`. Asserting on the wrapper's message would have passed for any
     // failed update at all — including one that failed for the wrong reason.
     const error = await repoA
-      .setMemberRole(channel.id, user.id, "admin")
+      .setMemberRole(channel.id, user.id, "admin", user.external_id)
       .then(() => null)
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Error);
@@ -329,7 +329,12 @@ describe("members_role_check names the channel's three (FR-011, R8)", () => {
     const user = await repoA.createUser("role-check-ok-user");
     await repoA.addMember(channel.id, user.id);
 
-    expect(await repoA.setMemberRole(channel.id, user.id, "moderator")).toBe("set");
+    expect(await repoA.setMemberRole(
+        channel.id,
+        user.id,
+        "moderator",
+        user.external_id,
+      )).toBe("set");
     expect(await repoA.memberRole(channel.id, user.id)).toBe("moderator");
   });
 
@@ -587,12 +592,12 @@ describe("the listing's tombstone rule and its clamp", () => {
 // next run: the instrument was right and the code was untested.
 describe("the repository's own refusals", () => {
   it("returns false when deleting a user that does not exist", async () => {
-    expect(await repoA.deleteUser("00000000-0000-4000-8000-000000000000")).toBe(false);
+    expect(await repoA.deleteUser("00000000-0000-4000-8000-000000000000", "nobody")).toBe(false);
   });
 
   it("returns null when patching a deleted user's profile", async () => {
     const doomed = await repoA.createUser("arm-patch-deleted", "Doomed");
-    await repoA.deleteUser(doomed.id);
+    await repoA.deleteUser(doomed.id, "arm-patch-deleted");
     // The route answers 404 before reaching this, because `requireUser` reads the marker.
     // One layer down, the `isNull(deletedAt)` in the WHERE is what refuses.
     expect(await repoA.updateUserProfile(doomed.id, { display_name: "nope" })).toBeNull();
@@ -854,7 +859,7 @@ describe("editMessage", () => {
     await repoA.editMessage(channel.id, sent.id, { text: "after", userId: author.id });
 
     await repoA.archiveChannel(channel.id);
-    await repoA.deleteUser(author.id);
+    await repoA.deleteUser(author.id, author.external_id);
 
     // `message_edits` references the MESSAGE, and both of those operations keep their
     // rows — the archive sets a timestamp (FR-020) and a user deletion is a

@@ -594,7 +594,7 @@ describe("credentials", () => {
       const repo = new Repository(db, env.id);
       const gone = `deleted-${Math.random().toString(36).slice(2, 8)}`;
       const row = await repo.createUser(gone, "Deleted");
-      await repo.deleteUser(row.id);
+      await repo.deleteUser(row.id, gone);
 
       const minted = await devToken(key.credential, { user: gone });
       expect(minted.status).toBe(200);
