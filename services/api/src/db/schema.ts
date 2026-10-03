@@ -442,12 +442,30 @@ export const messages = pgTable(
 //
 //     PRIMARY KEY (message_id, edited_at)
 //
-// The key is a constraint with a cost the SAD does not spell out: two edits to
+// The key is a constraint with a cost the SAD does not spell out: two writes to
 // one message at the same timestamp collide rather than both being kept.
-// Postgres holds microseconds, so that needs two edits inside one microsecond
-// on one message. A surrogate id would take both rows and leave a history with
-// two entries claiming the same instant, which is a silent wrong answer where
-// this is a loud refusal. The published constraint stands (Constitution VII).
+//
+// THE WINDOW IS A MILLISECOND, NOT A MICROSECOND, and this comment said the
+// latter until chapter 4.19 measured it. The column is `timestamptz` at
+// precision 6 and `now()` does produce microseconds — but every value ever
+// written here arrives through the driver as a JavaScript `Date`, which holds
+// milliseconds, so the stored instant is always truncated. The table says so:
+// **5,149 of 5,149 rows land exactly on a millisecond boundary.** The collision
+// window was a thousand times wider than the sentence claimed, for as long as
+// this table has existed.
+//
+// It became reachable when 4.19 gave the table a second writer: a concurrent
+// edit and deletion of one message collided on attempt 1 of 10 in
+// `repository.itest.ts`'s race, and the deletion's transaction rolled back —
+// leaving the message un-tombstoned, which is FR-007's property. The deletion
+// path writes `sql`now()`` for that reason and keeps full precision. **The edit
+// path still writes a `Date`**, so two concurrent edits of one message inside
+// one millisecond would still collide; that is pre-existing, out of this
+// chapter's scope under FR-008, and recorded in its `gaps.md`.
+//
+// A surrogate id would take both rows and leave a history with two entries
+// claiming the same instant, which is a silent wrong answer where this is a
+// loud refusal. The published constraint stands (Constitution VII).
 //
 // APPEND ONLY (FR-004). Nothing updates or deletes a row here. A
 // second edit appends a second row; the current text lives on `messages`.
@@ -462,12 +480,30 @@ export const messageEdits = pgTable(
       .notNull()
       .references(() => messages.id),
     editedAt: timestamp("edited_at", { withTimezone: true }).notNull(),
-    // FR-MSG-07: what the message said before this edit. NOT NULL, and that
-    // has a consequence the chapter meets rather than works around: a deletion
-    // writes no row here, because a tombstone has no text to preserve. FR-010
-    // refuses an edit on a tombstone instead of defining what its history
-    // would say.
+    // FR-MSG-07: what the message said before this edit. NOT NULL.
+    //
+    // THIS COMMENT USED TO EXPLAIN AN ABSENCE AS A NECESSITY, and four chapters
+    // read past the gap because of it. It said: "a deletion writes no row here,
+    // because a tombstone has no text to preserve". That is true of the row
+    // AFTER the deletion and false at the moment before it — `deleteMessage`
+    // holds the text it is about to destroy. The sentence described the
+    // behaviour correctly and gave a reason that was not the reason, which is
+    // the most expensive kind of comment to get wrong.
+    //
+    // Chapter 4.19 writes a row here on deletion too, carrying that last text.
     priorText: text("prior_text").notNull(),
+    // WHY THIS VERSION STOPPED BEING CURRENT (chapter 4.19) — `'edit'` or
+    // `'deletion'`, bounded by `message_edits_ended_by_check` in `0022`.
+    //
+    // REQUIRED, so the compiler names both insert sites. There are two: the
+    // edit path's, which has been here since 3.23, and the deletion's, which is
+    // this chapter's. The count was read rather than grepped (T014a) — the
+    // grep's estimate was three times too large.
+    //
+    // No default, because a default lets a writer stay silent and the one rule
+    // this column exists for is that a row cannot be silent about which
+    // happened.
+    endedBy: text("ended_by").notNull(),
   },
   (t) => [primaryKey({ columns: [t.messageId, t.editedAt] })],
 );

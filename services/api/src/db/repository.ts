@@ -2692,6 +2692,29 @@ export interface EditedMessageRow extends MessageRow {
  * has to decide what to do with those; the layer does not decide for it. */
 export interface MessageWithSender extends MessageRow {
   user: string | null;
+  /** When it was removed, or `null` (chapter 4.19, FR-007).
+   *
+   * **REQUIRED AND NULLABLE, UNLIKE `edited_at?` DIRECTLY ABOVE**, and the contrast is
+   * the decision rather than an inconsistency. Three precedents were read before it was
+   * taken. `edited_at?` is optional for write-path convenience — which its own comment
+   * calls "exactly what made the attachments chapter's `internalSendResponseSchema` a
+   * break waiting to happen". The USER row's `deleted_at: string | null` is required and
+   * nullable, and its comment is this argument already written down: *"selected here
+   * rather than filtered in the query so a caller can tell the two apart: a repository
+   * that hid deleted rows would make the marker unobservable and the deletion
+   * untestable."* And `text: string | null` on this very interface is the same shape for
+   * the same class of value — null on most rows, load-bearing when it is not.
+   *
+   * The bill was counted before it was chosen: FIVE construction sites, read rather than
+   * grepped, four of which must now spell `deleted_at: null`. A grep over the type's name
+   * said fourteen and that figure was three times too large.
+   *
+   * WHY A CLIENT NEEDS IT. Three things describe one removal — the real-time
+   * `message.deleted` frame, the webhook built from the outbox row, and this. The first
+   * two carry the instant and history did not, so a client that was offline when the
+   * message went learned that it is gone and not when. (The `DELETE` itself answers 204
+   * with an empty body and carries nothing at all.) */
+  deleted_at: string | null;
 }
 
 /** Thrown when a channel id resolves to nothing IN THIS TENANT — which,
@@ -5387,6 +5410,11 @@ export class Repository {
         messageId,
         editedAt,
         priorText: row.text,
+        // CHAPTER 4.19. This row's text stopped being current because a later edit
+        // replaced it — which was the only way a row got here until this chapter, and
+        // is now one of two. The backfill in `0022` wrote `'edit'` on all 4,863
+        // existing rows for the same reason.
+        endedBy: "edit",
       });
 
       // THE EVENT COMMITS WITH THE EDIT (FR-019, ADR-06). Same argument
@@ -5609,6 +5637,61 @@ export class Repository {
       // assigned, and the event and the frame must both quote that one.
       const deletedAt = toIso(updated!.deletedAt!);
 
+      // CHAPTER 4.19, FR-001. THE TEXT THE MESSAGE HELD WHEN IT WAS REMOVED.
+      //
+      // Until this line a deletion wrote nothing here, so a message deleted after N
+      // edits left N recoverable texts out of the N+1 that existed and a message
+      // deleted with no edits left zero of one. FR-MOD-01 asks for a complete history
+      // and FR-MSG-08 reserves hard deletion for the compliance endpoint; losing the
+      // last version at a moderation delete was a hard deletion on the wrong path.
+      //
+      // ON THIS BRANCH ONLY, which is FR-004 and the same half of FR-009 the event
+      // insert below turns on: a repeated deletion returned above without writing, so
+      // it records no second final version. The count is what proves it — three rows
+      // after the first delete and three after the second, not a delta of zero, which
+      // nothing happening also satisfies.
+      //
+      // THE INSTANT IS THE ROW'S, NOT A SECOND READING. `updated!.deletedAt!` is the
+      // value the database assigned and the `.returning()` handed back, and the
+      // tombstone, the frame, the outbox event and this row therefore all quote one
+      // timestamp. `editMessage` states the same rule 280 lines up and gives the
+      // reason: the history row's own primary key is `(message_id, edited_at)`, so a
+      // caller matching an entry to the message state that produced it needs the two
+      // to be equal. A fresh `now()` here would be a different microsecond and the
+      // match would fail silently.
+      //
+      // `row.text` IS NARROWED TO A STRING by the early return above — the branch that
+      // sends an already-deleted message back tests `row.text === null` — so
+      // `prior_text NOT NULL` is never offered a null, including for the system
+      // messages with no text that `deleteMessage`'s own comment contemplates.
+      // `sql`now()`` AND NOT `updated!.deletedAt!`, AND A TEST FOUND THE DIFFERENCE.
+      //
+      // Both express the same instant — `now()` is `transaction_timestamp()` and is
+      // stable across this transaction, so this row and the tombstone's `deleted_at`
+      // are the same value by construction. What differs is PRECISION. The column is
+      // `timestamptz` at precision 6 and the value that came back through the driver
+      // is a JavaScript `Date`, which holds MILLISECONDS — so writing it back
+      // truncates, and the primary key `(message_id, edited_at)` gets a collision
+      // window a thousand times wider than the column can represent.
+      //
+      // Measured: `repository.itest.ts`'s concurrent edit-and-deletion race failed on
+      // attempt 1 of 10 with `23505 … Key (message_id, edited_at)=(…, 11:10:28.806+00)
+      // already exists`, and the deletion's whole transaction rolled back — the
+      // message was left un-tombstoned by a concurrent edit, which is FR-007's
+      // property broken by this chapter's own insert.
+      //
+      // AND THE TABLE SAYS HOW LONG THAT HAS BEEN TRUE OF THE EDIT PATH: 5,149 of
+      // 5,149 existing rows are millisecond-exact on a microsecond column, because
+      // every value ever written here came from JavaScript. `schema.ts` claimed the
+      // key needed "two edits inside one microsecond"; it needed two inside one
+      // millisecond, and that comment is corrected.
+      await tx.insert(messageEdits).values({
+        messageId,
+        editedAt: sql`now()`,
+        priorText: row.text,
+        endedBy: "deletion",
+      });
+
       // FEATURE 044, FR-002/FR-003. A DELETION IS A REVISION and raises the count exactly as
       // an edit does — US1's third acceptance scenario fails if only edits are counted. Same
       // transaction, same argument as the edit path.
@@ -5696,11 +5779,19 @@ export class Repository {
   async listMessageEdits(
     channelId: string,
     messageId: string,
-  ): Promise<Array<{ prior_text: string; edited_at: string }>> {
+  ): Promise<
+    Array<{
+      prior_text: string;
+      edited_at: string;
+      ended_at: string;
+      ended_by: string;
+    }>
+  > {
     const rows = await this.db
       .select({
         priorText: messageEdits.priorText,
         editedAt: messageEdits.editedAt,
+        endedBy: messageEdits.endedBy,
       })
       .from(messageEdits)
       .innerJoin(messages, eq(messages.id, messageEdits.messageId))
@@ -5713,9 +5804,23 @@ export class Repository {
         ),
       )
       .orderBy(asc(messageEdits.editedAt));
+    // `edited_at` AND `ended_at` CARRY THE SAME VALUE, DELIBERATELY (chapter 4.19).
+    //
+    // One column, two names, because `edited_at` is published and cannot be removed
+    // without a breaking change under CON-05 — and it is the wrong word for a row whose
+    // text ended in a deletion. `ended_at` is the right word and is additive. The
+    // duplication is one field wide, it is the price of not versioning a route over a
+    // noun, and it is stated in `contracts/message-versions.md` so nobody has to work
+    // out which of two names to trust. A client should read `ended_at` and `ended_by`;
+    // `edited_at` is kept for callers written before this chapter.
+    //
+    // The array key stays `edits` where `versions` would read better, for the same
+    // reason and at the same price.
     return rows.map((r) => ({
       prior_text: r.priorText,
       edited_at: toIso(r.editedAt),
+      ended_at: toIso(r.editedAt),
+      ended_by: r.endedBy,
     }));
   }
 
@@ -6579,6 +6684,7 @@ export class Repository {
       // only by a tenant key (FR-023a), and this column says an edit happened without
       // saying what it replaced.
       edited_at: messages.editedAt,
+      deleted_at: messages.deletedAt,
     };
     const scoped = (extra?: SQL) =>
       and(
@@ -6635,6 +6741,13 @@ export class Repository {
       // key and a null one are the same value through `??` — the control test for this
       // field was green before the field existed because its first draft used `??`.
       edited_at: row.edited_at === null ? null : toIso(row.edited_at),
+      // CHAPTER 4.19, FR-007. `null`, NOT `undefined`, for the reason the line above
+      // states: an absent key and a null one are the same value through `??` and
+      // different to a contract. This is the field that lets a client catching up
+      // through history tell a removal from a message that never had text, and say
+      // when — the `message.deleted` frame and the webhook have carried the instant
+      // since 3.23 and this surface did not.
+      deleted_at: row.deleted_at === null ? null : toIso(row.deleted_at),
       })),
     );
   }

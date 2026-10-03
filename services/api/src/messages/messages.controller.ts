@@ -498,7 +498,19 @@ export class MessagesController {
   async edits(
     @Param("channelId") channelId: string,
     @Param("messageId") messageId: string,
-  ): Promise<{ edits: Array<{ prior_text: string; edited_at: string }> }> {
+  ): Promise<{
+    edits: Array<{
+      prior_text: string;
+      edited_at: string;
+      // CHAPTER 4.19. Widened here as well as in the repository, and the compiler
+      // would not have asked: the returned literal's `edits` value is a call result
+      // rather than an object literal, so no excess-property check fires, and the two
+      // new fields would have reached the client at runtime while this signature said
+      // there were two. A type that is wrong and silent.
+      ended_at: string;
+      ended_by: string;
+    }>;
+  }> {
     // NO `userId`, AND THAT IS THE DECLARATION SPEAKING. Only an application credential
     // reaches this handler, so there is no member to resolve and no membership to
     // check; `channelVisibleTo(channelId, undefined)` is the tenant reading, which sees
