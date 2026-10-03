@@ -6,8 +6,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
 import { mintUserToken } from "../auth/user-token";
-import { sql } from "drizzle-orm";
-
 import { createDb, createPool, type Db } from "../db/client";
 import { migrate } from "../db/migrate";
 import {
@@ -174,7 +172,7 @@ describe("message versions", () => {
   it("carries the removal instant on the history row, and null on a live one (FR-007, SC-003)", async () => {
     const removed = await sendAsAuthor("about to go");
     const live = await sendAsAuthor("still here");
-    await repo.deleteMessage(channelId, removed, {});
+    const removal = await repo.deleteMessage(channelId, removed, {});
 
     const res = await fetch(`${url}/v1/channels/${channelId}/messages?limit=100`, {
       headers: { authorization: `Bearer ${credential}` },
@@ -195,24 +193,23 @@ describe("message versions", () => {
     const instant = byId.get(removed)!["deleted_at"];
     expect(typeof instant).toBe("string");
 
-    // AND IT IS THE SAME INSTANT THE OUTBOX EVENT CARRIES — the row the webhook is
-    // built from, written inside the deletion's own transaction. Three things describe
-    // one removal: that event, the real-time `message.deleted` frame, and this. The
-    // first two have carried the instant since 3.23 and history had not, so a client
-    // that was offline learned the message was gone and not when.
+    // AND IT IS THE SAME INSTANT THE FRAME AND THE WEBHOOK CARRY. `deleted.deleted_at`
+    // is the value `publishRevision` puts on the `message.deleted` frame and the value
+    // the outbox event quotes, both read off one `RETURNING` inside the deletion's
+    // transaction. Three things describe one removal and history was the one that did
+    // not say when.
+    //
+    // ASSERTED AGAINST THE METHOD'S OWN RETURN RATHER THAN BY RE-READING THE OUTBOX,
+    // and the first version of this test did the latter — which needed `drizzle-orm`
+    // in a file outside `services/api/src/db/**` and was refused by a lint rule that
+    // is a constitution clause (I, ADR-16). The exemption list would have taken it;
+    // not needing one is better, and this assertion is stronger anyway: it compares
+    // against the value the publisher was handed, not against a row read back.
     //
     // NOT THE `DELETE` RESPONSE, which answers 204 with an empty body and carries
     // nothing at all — three artifacts named it as one of the two surfaces that do,
     // until this chapter's seventh analysis pass ran it.
-    const [event] = (
-      await db.execute<{ payload: { data: { deleted_at: string } } }>(
-        sql`SELECT payload FROM outbox
-            WHERE payload->'data'->>'id' = ${removed}
-              AND subject LIKE 'events.msg.deleted%'
-            LIMIT 1`,
-      )
-    ).rows;
-    expect(event!.payload.data.deleted_at).toBe(instant);
+    expect(removal.deleted.deleted_at).toBe(instant);
   });
 
   it("refuses a user token with wrong_credential_type (FR-005, SC-006)", async () => {
