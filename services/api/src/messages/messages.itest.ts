@@ -1413,7 +1413,18 @@ describe("PATCH /v1/channels/:channelId/messages/:messageId", () => {
       expect(edits).toHaveLength(1);
       // AN EXACT KEY SET, not `attachments === undefined`: an absent key and an
       // undefined value are the same to a truthiness check and different to a contract.
-      expect(Object.keys(edits[0]!).sort()).toEqual(["edited_at", "prior_text"]);
+      //
+      // FOUR KEYS SINCE CHAPTER 4.19, and this assertion moving is the contract test
+      // doing its job rather than FR-008 being broken: `ended_at` and `ended_by` are
+      // added to every row. It was the ONE assertion the chapter predicted would move,
+      // and running the file unedited found exactly it — 67 of 68 otherwise green.
+      // `attachments` is still absent, which is what this test is about.
+      expect(Object.keys(edits[0]!).sort()).toEqual([
+        "edited_at",
+        "ended_at",
+        "ended_by",
+        "prior_text",
+      ]);
     });
 
     it("returns a tombstone as an empty list through the history route (FR-012, SC-003)", async () => {

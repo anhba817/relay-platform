@@ -851,6 +851,45 @@ describe("editMessage", () => {
     expect(await repoA.listMessageEdits(channel.id, sent.id)).toEqual([]);
   });
 
+  it("an edit and a deletion on one message never collide on (message_id, edited_at)", async () => {
+    // ASSERTED RATHER THAN ASSUMED (chapter 4.19, T020). The primary key is
+    // `(message_id, edited_at)` and this chapter gives the table a second writer, so
+    // the two could in principle land on one instant and the second insert would be a
+    // loud failure in the middle of a deletion. *Cannot collide by construction* is
+    // the kind of claim this project has had to withdraw, so here is the measurement.
+    //
+    // The construction argument, for the record: FR-010 of chapter 3.23 refuses an
+    // edit on a tombstone, so every edit strictly precedes the deletion, and `now()`
+    // is the transaction timestamp — two transactions, two instants. The test exists
+    // because that paragraph is an argument and this is evidence.
+    const author = await repoA.createUser("t020-order", "Author");
+    const channel = await repoA.createChannel("t020-order", "public");
+    await repoA.addMember(channel.id, author.id);
+    const sent = await repoA.sendMessage(channel.id, { text: "first", userId: author.id });
+    await repoA.editMessage(channel.id, sent.id, { text: "second", userId: author.id });
+    await repoA.deleteMessage(channel.id, sent.id, {});
+
+    const edits = await repoA.listMessageEdits(channel.id, sent.id);
+    expect(edits.map((e) => e.prior_text)).toEqual(["first", "second"]);
+    expect(edits.map((e) => e.ended_by)).toEqual(["edit", "deletion"]);
+
+    // DISTINCT AND ORDERED, which is the property the key needs and the ordering the
+    // route promises. Equal instants would mean the insert had already thrown.
+    const instants = edits.map((e) => e.ended_at);
+    expect(new Set(instants).size).toBe(2);
+    expect(instants[0]! < instants[1]!).toBe(true);
+
+    // AND THE DELETION'S INSTANT IS THE TOMBSTONE'S, not a second clock reading. The
+    // row, the frame, the outbox event and this version all quote one timestamp, so a
+    // caller can match a version to the message state that produced it.
+    const [row] = (
+      await db.execute<{ deleted_at: Date }>(
+        sql`SELECT deleted_at FROM messages WHERE id = ${sent.id}`,
+      )
+    ).rows;
+    expect(new Date(instants[1]!).getTime()).toBe(new Date(row!.deleted_at).getTime());
+  });
+
   it("the history survives its channel being archived and its author deleted", async () => {
     const author = await repoA.createUser("t036b-author", "Author");
     const channel = await repoA.createChannel("t036b", "public");
