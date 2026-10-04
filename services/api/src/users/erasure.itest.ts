@@ -8,7 +8,13 @@ import { randomUUID } from "node:crypto";
 
 import { AppModule } from "../app.module";
 import { createDb, createPool, type Db } from "../db/client";
-import { createApiKey, createEnvironment, Repository } from "../db/repository";
+import {
+  createApiKey,
+  createEnvironment,
+  environmentSigningSecret,
+  Repository,
+} from "../db/repository";
+import { mintUserToken } from "../auth/user-token";
 import {
   AnalyticalStoreError,
   createAnalyticalStore,
@@ -448,6 +454,69 @@ describe("the receipt is evidence", () => {
     expect(results.find((r) => r.store === "daily_usage")?.outcome).toBe(
       "retained_anonymous",
     );
+  });
+
+  it("refuses a user token, which is the only thing standing between an end user and this route", async () => {
+    // T036a, AND THE PROBE IS WHY THIS TEST EXISTS. Deleting `@Accepts("application")`
+    // from the controller turned NOTHING red — 12 of 12 and the gauntlet 64 of 64 —
+    // which is chapter 4.18's finding one route over, with the consequence inverted.
+    // There the undefended case was a READ and a leak; here it is an erasure, so an
+    // end-user token that reaches this handler destroys another person's data and
+    // every read-shaped assertion in the suite still passes.
+    //
+    // THE DECORATOR IS THE DECISION, NOT A BRANCH IN THE HANDLER, so this is the only
+    // place it can be tested from.
+    const id = `token-${randomUUID().slice(0, 8)}`;
+    await mine.repo.createUser(id, "Not Yours To Erase");
+    const env = await environmentSigningSecret(db, mine.id);
+    expect(env, "the environment has no signing secret").not.toBeNull();
+    const { token } = await mintUserToken(env!.signingSecret, {
+      user: id,
+      environmentId: mine.id,
+      ttlSeconds: 3600,
+    });
+
+    const res = await fetch(`${url}/v1/users/${id}/data`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.status, "a user token reached the erasure route").toBe(403);
+
+    // AND THE USER IS STILL THERE, because a status code cannot say whether the
+    // handler ran before refusing.
+    expect(await mine.repo.getUserByExternalId(id)).not.toBeNull();
+  });
+
+  it("refuses a user id from another environment, which no route can reach", async () => {
+    // T036, ARMS A AND B. Deleting either environment scope inside `eraseUser` turned
+    // nothing red, because `UsersService` resolves the external id through a
+    // tenant-scoped read first and the method never receives a foreign id. That is a
+    // single-mutation probe measuring the DEFENCE rather than the arm — 4.12's
+    // finding, and 065 found three such reads where removing any two was invisible.
+    //
+    // THE ANSWER IS THE TEST THAT MAKES THE ARM VISIBLE, not the deletion that makes
+    // it honest. Calling the repository directly is the only caller that can present
+    // a foreign id, and it is one refactor away from being a real one.
+    const foreignEnv = await createEnvironment(db, { name: "erasure-arm-probe" });
+    const foreignRepo = new Repository(db, foreignEnv.id, {
+      kind: "application",
+      id: "arm-probe",
+      requestId: randomUUID(),
+    });
+    const victim = await foreignRepo.createUser(
+      `arm-${randomUUID().slice(0, 8)}`,
+      "Another Tenant's",
+    );
+
+    await expect(
+      mine.repo.eraseUser(victim.id, "whatever"),
+      "eraseUser erased a user from another environment",
+    ).rejects.toThrow(/no user .* in this environment/);
+
+    expect(
+      await foreignRepo.getUserByExternalId(victim.external_id),
+      "the other tenant's user was erased",
+    ).not.toBeNull();
   });
 
   it("names the 73.6% its own media erasure cannot reach", async () => {
