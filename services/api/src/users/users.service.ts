@@ -319,12 +319,22 @@ export class UsersService {
         // would be true and unread by the person who needs it.
         { store: "media_objects", outcome: "erased", rows: erased.media.length,
           note: "attributed uploads only; 73.6% of objects platform-wide record no uploader" },
+        // NO CLAUSE IDS IN A NOTE, AND IT IS NOT A STYLE RULE. This body is read by a
+        // compliance officer at a CUSTOMER, who has no access to this platform's
+        // specification — `FR-028` in a receipt is a string they cannot resolve by
+        // any means available to them. The reason goes in words or it does not go.
+        //
+        // (And the two ids the first draft used were feature-local to the chapter
+        // that built `deleteUser`, so they do not resolve inside this repository
+        // either: there is no FR-028 in `docs/04-srs.md`. The messages clause is
+        // FR-USR-05; the billing one is an argument in `deleteUser`'s own comment
+        // and no clause at all.)
         { store: "messages", outcome: "retained_anonymous",
           rows: erased.messagesRetained,
-          note: "FR-028: a channel's history must not lose one participant's half" },
+          note: "kept: a channel's history must not lose one participant's half of every conversation. The author is erased and the text is not" },
         { store: "usage_active_users", outcome: "retained_anonymous",
           rows: erased.activeUserRowsRetained,
-          note: "FR-029: a customer who deleted a user in March still owes for March" },
+          note: "kept: usage already invoiced. The rows count a user per period and name nobody once the profile is erased" },
         ...analytical,
         { store: "audit_log", outcome: "cannot_erase",
           note: "target_id holds the external id and the log is append-only (ADR-35)" },

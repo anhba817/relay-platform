@@ -4466,8 +4466,8 @@ export class Repository {
    *
    * ## WHY THE ROW SURVIVES, WHICH IS THE WHOLE STRUCTURE IN ONE PARAGRAPH
    *
-   * FR-028 keeps the messages — a channel's history must not lose one participant's
-   * half of every conversation — so `messages.user_id` stays. All five foreign keys to
+   * FR-USR-05 keeps the messages — *"preserving their messages as authored by a
+   * deleted user"* — so `messages.user_id` stays. All five foreign keys to
    * `users` are `NO ACTION`, so the row is then unreachable: there is no "delete the
    * row last", because there is no deleting it at all. `erasure.itest.ts`'s first test
    * is that refusal, with a control.
