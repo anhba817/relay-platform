@@ -135,8 +135,11 @@ export const environments = pgTable(
     // envelope-encrypted (NFR-SEC-02)
     signingSecret: text("signing_secret").notNull(),
     retentionDays: integer("retention_days"),
-    // DECLARED IN 2.1 AND STILL EMPTY. Named in SRS §6.1's Environment entity
-    // and SAD §338, read by nothing in seventeen chapters. THIS chapter
+    // DECLARED IN 2.1 AND READ BY NOTHING FOR SEVENTEEN CHAPTERS. Named in SRS
+    // §6.1's Environment entity and SAD §338, and set on 0 of 33,051 rows at
+    // the open of the chapter that finally reads it — `retention-reads.ts`
+    // enumerates the environments holding one and `sweep.ts` acts on them
+    // (FR-MOD-06). Bounded to the clause's three values below. THE chapter
     // deliberately did NOT put rate-limit policy here: the column is named for
     // quotas, quotas are a later chapter, and the distinction between a limit
     // that may be lost and a quota that is money is the thing this chapter is
@@ -177,6 +180,17 @@ export const environments = pgTable(
     check(
       "environments_rest_limit_non_negative",
       sql`${t.restLimitPerMinute} IS NULL OR ${t.restLimitPerMinute} >= 0`,
+    ),
+    // CHAPTER 4.20. FR-MOD-06 enumerates 30 / 90 / 365 days / indefinite rather
+    // than describing a range, so `45` is not a stricter policy a customer
+    // chose — it is a value nothing in the specification licenses, and a sweep
+    // acting on it would enforce a promise nobody made. NULL is indefinite,
+    // which is this column's own existing spelling for it rather than a fourth
+    // sentinel value. Added by `0024` against 0 of 33,051 rows, so it validated
+    // against an empty set.
+    check(
+      "environments_retention_days_check",
+      sql`${t.retentionDays} IS NULL OR ${t.retentionDays} IN (30, 90, 365)`,
     ),
     check(
       "environments_send_limit_non_negative",
@@ -476,9 +490,22 @@ export const messages = pgTable(
 export const messageEdits = pgTable(
   "message_edits",
   {
+    // CHAPTER 4.20 MADE THIS A CASCADE, and by itself that changed nothing —
+    // which is the measurement that shaped the design. A cascade issues an
+    // ordinary `DELETE` against this table and `message_edits_append_only` is a
+    // ROW trigger, so it fires on the generated statement and refuses it; the
+    // error even names it, `DELETE FROM ONLY "public"."message_edits"`. The
+    // cascade needs `0025`'s named exception to work at all.
+    //
+    // IT IS STILL RIGHT FOR A REASON INDEPENDENT OF EXPIRY: a version row must
+    // not outlive its message. Without the cascade the sweep would carry an
+    // ordered two-step delete in application code and that invariant would live
+    // in a procedure somebody maintains rather than in the schema — which is
+    // the distinction chapter 4.15 drew when it gave a rendition's reachability
+    // to a composite foreign key rather than to a predicate.
     messageId: uuid("message_id")
       .notNull()
-      .references(() => messages.id),
+      .references(() => messages.id, { onDelete: "cascade" }),
     editedAt: timestamp("edited_at", { withTimezone: true }).notNull(),
     // FR-MSG-07: what the message said before this edit. NOT NULL.
     //

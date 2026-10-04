@@ -11,6 +11,7 @@ import { createAnalyticalStore } from "../metering/clickhouse";
 import { mintUserToken } from "../auth/user-token";
 import { environmentSigningSecret, Repository, usageFor } from "../db/repository";
 import { createDb, createPool } from "../db/client";
+import { retentionDaysOf } from "../db/retention-reads";
 import {
   credentialAttack,
   listAttack,
@@ -289,6 +290,39 @@ describe("the isolation gauntlet", () => {
     // THE STATE READ IS WHAT A STATUS CANNOT SAY. The listing carries `text` and
     // `edited_at`, so a 404 that completed the edit shows up here and nowhere else.
     expect(verdict.stateChanged, "the victim's message text or edited_at moved").toBe(false);
+  });
+
+  it("PATCH /v1/environments/:id — a foreign environment's retention policy is not set", async () => {
+    attacked.add("PATCH /v1/environments/:environmentId");
+    // THE WORST THING AN ATTACKER CAN DO TO ANOTHER TENANT ON THIS SURFACE IS NOT A
+    // READ. Setting a thirty-day policy on somebody else's environment arms a sweep to
+    // destroy their history, and `reset-lane.mjs` does not restore lane data by design.
+    // So constitution I's usual failure — a leak — is not the one to probe here; the
+    // failure is a LOSS, and the state read below is what would catch it.
+    const verdict = await writeAttack(
+      url,
+      t.attacker.credential,
+      {
+        method: "PATCH",
+        path: `/v1/environments/${t.victim.environmentId}`,
+        body: { retention_days: 30 },
+      },
+      {
+        method: "PATCH",
+        path: `/v1/environments/${ABSENT_UUID}`,
+        body: { retention_days: 30 },
+      },
+      () => t.victim.repo.listMessages(t.victim.channelId, { limit: 50 }),
+    );
+    expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+    // 404 AND NOT 403, because a refusal naming the cause reports whether somebody
+    // else's environment exists — chapter 4.11's rule for media objects, and the same
+    // argument applies to an id a caller can guess.
+    expect(verdict.foreign.status).toBe(404);
+    expect(verdict.stateChanged, "the victim's messages moved").toBe(false);
+    // AND THE POLICY ITSELF, which the message listing cannot see. A 404 that wrote the
+    // column anyway leaves no trace in any other assertion in this suite.
+    expect(await retentionDaysOf(db, t.victim.environmentId)).toBeNull();
   });
 
   it("DELETE .../messages/:messageId — a foreign message is not tombstoned", async () => {

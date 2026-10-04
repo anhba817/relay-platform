@@ -6830,4 +6830,174 @@ export class Repository {
       )
       .orderBy(asc(messages.sequence));
   }
+
+  /** ONE PAGE OF THIS ENVIRONMENT'S EXPIRED MESSAGES — FR-MOD-06's predicate.
+   *
+   * Called by `sweepRetention` in `../retention/sweep.ts`, once per page per
+   * environment with a policy. The convention `CLAUDE.md` sets: a claim about when a
+   * symbol runs names the thing that runs it.
+   *
+   * THE BOUND IS A CONSTANT COMPUTED BY THE CALLER, which is the whole reason this is
+   * one query per environment rather than one join across all of them. Written as a
+   * join over every environment the age lands in a `Join Filter` — measured, 617
+   * buffers with `Rows Removed by Join Filter: 1018`. Per environment with the bound
+   * bound it is 73 and the planner reaches `channels_environment_last_activity`.
+   * **Neither is a speedup over the other**: 546 of that 617 is the scan of all 33,051
+   * environments, which the per-environment form pays too as its first step. What this
+   * shape buys is pageability and a predicate the planner can push into an index.
+   *
+   * KEYSET ON `(channel_id, created_at)`, which is what `messages_channel_created`
+   * exists for. Chapter 4.13's sweep read one page with an offset and the head never
+   * moved, so an object nobody uploaded to stayed `pending` for ever. And the cursor is
+   * a SQL row value rather than an `OR` chain: chapter 4.18 measured that an `OR`
+   * cursor lands in a `Filter:` and re-walks every earlier page. */
+  async expiredMessageIds(
+    olderThan: Date,
+    limit: number,
+    after?: { channelId: string; createdAt: Date },
+  ): Promise<{ id: string; channelId: string; createdAt: Date }[]> {
+    return this.db
+      .select({
+        id: messages.id,
+        channelId: messages.channelId,
+        createdAt: messages.createdAt,
+      })
+      .from(messages)
+      .innerJoin(channels, eq(channels.id, messages.channelId))
+      .where(
+        and(
+          eq(channels.environmentId, this.environmentId),
+          lt(messages.createdAt, olderThan),
+          after
+            ? sql`(${messages.channelId}, ${messages.createdAt}) > (${after.channelId}::uuid, ${after.createdAt})`
+            : undefined,
+        ),
+      )
+      .orderBy(asc(messages.channelId), asc(messages.createdAt))
+      .limit(limit);
+  }
+
+  /** DESTROY A PAGE OF EXPIRED MESSAGES, AND THE VERSION ROWS THEY OWN.
+   *
+   * Called by `sweepRetention` in `../retention/sweep.ts` and by nothing else. This is
+   * the one legitimate hard deletion outside FR-MOD-04's compliance endpoint, which
+   * ADR-36's first decision licenses by reading the constitution's *compliance path* as
+   * admitting a retention sweep.
+   *
+   * THE `SET LOCAL` IS THE MECHANISM AND THE WORD `LOCAL` IS THE GUARANTEE. Without it
+   * the flag outlives this transaction on a pooled connection and every later request
+   * can delete version rows — measured. And `SET LOCAL` outside a transaction block is
+   * a WARNING, not an error, which leaves the flag unset and every cascade refused in a
+   * way that looks exactly like the trigger working. Both failures are silent and they
+   * point in opposite directions, so the delete runs inside this explicit transaction
+   * and `retention.itest.ts` asserts the flag's VALUE at the moment of the delete.
+   *
+   * The version rows go by `ON DELETE CASCADE` rather than by a second statement here:
+   * a cascade keeps *a version cannot outlive its message* in the schema instead of in
+   * a procedure somebody maintains. `0025` records why that needed a trigger exception
+   * at all — a cascade issues an ordinary `DELETE` and a row trigger fires on it. */
+  /** HOW MANY VERSION ROWS A MESSAGE OWNS. Called by `retention.itest.ts` only, which
+   * is `listMessagesRaw`'s convention: a test that needs SQL cannot write it, because
+   * `eslint.config.mjs` restricts `drizzle-orm` and `pg` to this directory. */
+  async versionRowCountRaw(messageId: string): Promise<number> {
+    const rows = await this.db
+      .select({ id: messageEdits.messageId })
+      .from(messageEdits)
+      .where(eq(messageEdits.messageId, messageId));
+    return rows.length;
+  }
+
+  /** Move a message's `created_at` back by whole days, each fixture to its own instant.
+   *
+   * Called by `retention.itest.ts` only. **Nothing on this lane is thirty days old** —
+   * the oldest message is 2026-09-14 and FR-MOD-06's shortest policy is thirty days —
+   * so every retention fixture is backdated and the chapter says so rather than
+   * implying it measured real traffic. */
+  async backdateMessageRaw(messageId: string, days: number): Promise<void> {
+    await this.db
+      .update(messages)
+      .set({ createdAt: sql`now() - make_interval(days => ${days})` })
+      .where(eq(messages.id, messageId));
+  }
+
+  /** An UPDATE the append-only trigger must refuse, flag or no flag.
+   *
+   * Called by `retention.itest.ts` only. It exists to be rejected: `TG_OP = 'DELETE'`
+   * is part of `0025`'s condition precisely so that expiry destroys rows and never
+   * rewrites one, and reading that condition is not testing it. */
+  async tamperVersionRowRaw(messageId: string): Promise<void> {
+    await this.db
+      .update(messageEdits)
+      .set({ priorText: "tampered" })
+      .where(eq(messageEdits.messageId, messageId));
+  }
+
+  /** A DELETE of the children with no flag set, which the trigger must still refuse.
+   *
+   * Called by `retention.itest.ts` only. The exception `0025` opens is one verb on one
+   * table reached one way; this is the same verb reached the other way. */
+  async deleteVersionRowsRaw(messageId: string): Promise<void> {
+    await this.db.delete(messageEdits).where(eq(messageEdits.messageId, messageId));
+  }
+
+  async destroyMessages(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL relay.expiring = 'on'`);
+      const destroyed = await tx
+        .delete(messages)
+        .where(
+          and(
+            inArray(messages.id, ids),
+            // THE TENANCY PREDICATE, AND IT IS NOT DECORATION. `ids` arrives from
+            // `expiredMessageIds`, which is already scoped — but this is a bulk DELETE,
+            // and constitution I's usual failure is a leak where this one is a loss.
+            // An id from another tenant reaching this list destroys that tenant's data.
+            inArray(
+              messages.channelId,
+              this.db
+                .select({ id: channels.id })
+                .from(channels)
+                .where(eq(channels.environmentId, this.environmentId)),
+            ),
+          ),
+        )
+        .returning({ id: messages.id });
+      return destroyed.length;
+    });
+  }
+}
+
+/** SET OR CLEAR AN ENVIRONMENT'S RETENTION POLICY — FR-MOD-06's only write.
+ *
+ * Called by `EnvironmentsController.patch` and by `retention.itest.ts`. Standalone
+ * rather than a `Repository` method because the caller already holds the environment
+ * id as the thing it is addressing, not as a scope it is reading within — and the
+ * controller resolves tenancy before it gets here.
+ *
+ * **`null` IS INDEFINITE AND IS NOT A MISSING FIELD.** FR-MOD-06's fourth option is
+ * *indefinite*, and the absence of a value is how this schema has spelled that since
+ * chapter 2.1. A client clearing a policy sends `null` explicitly; a client omitting
+ * the field changes nothing, and the two are different requests all the way down — the
+ * route's schema distinguishes them and so does this signature, which is why it takes
+ * `number | null` rather than `number | undefined`.
+ *
+ * The three legal values are enforced by `environments_retention_days_check` rather
+ * than here: the clause enumerates them, and a constraint is how an enumeration
+ * survives a caller nobody anticipated. */
+export async function setRetentionPolicy(
+  db: Db,
+  environmentId: string,
+  retentionDays: number | null,
+): Promise<{ id: string; name: string; retentionDays: number | null } | undefined> {
+  const [row] = await db
+    .update(environments)
+    .set({ retentionDays })
+    .where(eq(environments.id, environmentId))
+    .returning({
+      id: environments.id,
+      name: environments.kind,
+      retentionDays: environments.retentionDays,
+    });
+  return row;
 }

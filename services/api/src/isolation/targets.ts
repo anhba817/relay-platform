@@ -281,6 +281,13 @@ export const CLASSIFICATIONS: readonly Classification[] = [
   { method: "POST", path: "/v1/channels/:channelId/archive", accepts: "application", shape: "write" },
   { method: "DELETE", path: "/v1/channels/:channelId/archive", accepts: "application", shape: "write" },
 
+  // ── the retention policy (chapter 4.20) ────────────────────────────────────────
+  // THE FIRST ENVIRONMENT-LEVEL ROUTE THIS PLATFORM HAS HAD, and the id in the path is
+  // the tenant's own environment — so a forged one is the attack, and the controller
+  // answers 404 rather than 403 because a refusal naming the cause reports whether
+  // somebody else's environment exists.
+  { method: "PATCH", path: "/v1/environments/:environmentId", accepts: "application", shape: "write" },
+
   // ── the webhook surface (this chapter), and the derivation named all seven ─────
   //
   // ELEVEN ROUTES ARRIVED AND THE LEDGER SAID SIX. This chapter's rows were deferred

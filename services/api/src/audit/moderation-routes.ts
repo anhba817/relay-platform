@@ -93,6 +93,20 @@ export const MODERATION_ROUTES = {
   // absence of permission. The spec expected *edit another author's message* to be the
   // ninth inclusion; it is not an action that exists
   "PATCH /v1/channels/:channelId/messages/:messageId": "not-moderation",
+  // CHAPTER 4.20. A configuration change on the caller's own environment, so it is
+  // provisioning rather than moderation — the same reading that makes `POST
+  // /v1/channels` not-moderation. Setting a thirty-day policy does destroy content,
+  // which is the argument the other way and the reason this entry is a decision rather
+  // than a default: 4.18's line is **standing, not data**, and this actor acts on
+  // nobody's standing. What destroys the messages is the sweep, days or months later,
+  // run by an operator carrying no credential at all — and FR-MOD-03's population is
+  // *moderation actions*, which are things a credential did. A row here would name an
+  // actor who deleted nothing and a target that is the environment itself, which
+  // `audit_log_target_kind_check` does not admit.
+  //
+  // REVISIT IF THE SWEEP EVER GAINS AN ACTOR. A scheduler holding a credential performs
+  // the deletion itself, and that action IS moderation.
+  "PATCH /v1/environments/:environmentId": "not-moderation",
   // FR-002a's one route. Under a key it is FR-MOD-02; under a user token deleting
   // their own message it is chapter 3.23's FR-013, and a compliance log that recorded
   // the second would fill with ordinary user activity

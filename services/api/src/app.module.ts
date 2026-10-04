@@ -30,6 +30,7 @@ import { RateLimitMiddleware } from "./limits/rate-limit.middleware";
 import { RequestContextMiddleware } from "./request-context.middleware";
 import { RequestLogMiddleware, requestLogEnabled } from "./request-log/request-log.middleware";
 import { AuditModule } from "./audit/audit.module";
+import { EnvironmentsModule } from "./environments/environments.module";
 import { RequestLogModule } from "./request-log/request-log.module";
 import { ANALYTICS_PUBLISHER } from "./webhooks/analytics";
 import { createJetStreamPublisher, ensureAnalyticsStream } from "./outbox/jetstream.publisher";
@@ -58,6 +59,7 @@ import type { Publisher } from "./outbox/publisher";
     // and the route does not exist — which `pnpm build` would not notice and the
     // cross-tenant gauntlet would, because it derives its targets from the router.
     AuditModule,
+    EnvironmentsModule,
     RequestLogModule,
     // HOSTED MEDIA, AND THIS LINE IS THE WHOLE OF WHETHER THE ROUTE EXISTS. A module
     // written, tested and never registered gives a 404 that reads as a routing bug
