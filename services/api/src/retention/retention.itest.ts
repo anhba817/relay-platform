@@ -11,7 +11,7 @@ import {
   setRetentionPolicy,
 } from "../db/repository";
 import { expiringFlag } from "../db/retention-reads";
-import { sweepRetention } from "./sweep";
+import { report, sweepRetention } from "./sweep";
 
 // CHAPTER 4.20 — the messages that expire.
 //
@@ -280,6 +280,28 @@ describe("retention", () => {
       (await victim.listMessagesRaw(victimChannel.id)).some((m) => m.id === theirs.id),
       "the sweep destroyed another tenant's message",
     ).toBe(true);
+  });
+
+  it("--dry-run counts and destroys nothing, and the line says which it was", async () => {
+    // THE QUICKSTART TELLS AN OPERATOR TO RUN THIS FIRST, and after 2026-10-14 it is
+    // the only thing standing between a thirty-day policy and real lane data. A dry run
+    // that quietly destroyed would be the worst defect this chapter could ship.
+    await setRetentionPolicy(db, environmentId, 30);
+    const doomed = await aged("counted, not destroyed", 60);
+
+    const [dry] = await sweepRetention(db, new Date(), { environmentId, dryRun: true });
+
+    expect(dry?.messagesDestroyed).toBeGreaterThanOrEqual(1);
+    expect(await survives(doomed)).toBe(true);
+
+    // AND THE COUNTED LINE DISTINGUISHES THE TWO ZEROES (055-4). A sweep that found no
+    // environment with a policy and a sweep that found nothing expired both exit 0.
+    expect(report([], false)).toContain("no environment has a policy");
+    expect(report(dry ? [dry] : [], true)).toContain("would destroy");
+
+    const [real] = await sweepRetention(db, new Date(), { environmentId });
+    expect(await survives(doomed)).toBe(false);
+    expect(report(real ? [real] : [], false)).toContain("destroyed");
   });
 
   it("is re-runnable: the second run finds nothing the first left (FR-008)", async () => {

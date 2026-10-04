@@ -1495,6 +1495,45 @@ export default defineConfig({
           lines: 100,
           statements: 100,
         },
+        // CHAPTER 4.20. Four new files, pinned BELOW the measured value by the swing
+        // `session.ts` demonstrated — 87.80% and 85.36% on identical code twenty
+        // minutes apart — because a floor at the measurement goes red for no change to
+        // the code, and the fix is then to lower it: a ratchet that teaches people to
+        // lower ratchets.
+        "services/api/src/db/retention-reads.ts": {
+          // 100 / 75 / 100 measured. The branch arm is the `retentionDays!` narrowing
+          // of a column the WHERE has already excluded nulls from, and `?? null` in
+          // `expiringFlag` for a row that is always present.
+          branches: 70,
+          functions: 100,
+          lines: 95,
+          statements: 95,
+        },
+        "services/api/src/environments/environments.controller.ts": {
+          // 90 / 87.5 / 100 measured.
+          branches: 80,
+          functions: 100,
+          lines: 85,
+          statements: 85,
+        },
+        "services/api/src/environments/environments.schema.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // `sweep.ts` MEASURED 63.79 / 47.82 / 60 AND THE ANSWER WAS A TEST, NOT A LOW
+        // PIN. The dry run was the largest uncovered arm and the quickstart tells an
+        // operator to run it first — after 2026-10-14 it is the only thing between a
+        // thirty-day policy and real lane data, so a dry run that quietly destroyed
+        // would be the worst defect this chapter could ship. What remains uncovered is
+        // the `require.main` CLI block, which no test can enter.
+        "services/api/src/retention/sweep.ts": {
+          branches: 55,
+          functions: 60,
+          lines: 65,
+          statements: 65,
+        },
         // THE CURSOR WAS RAISED, NOT PINNED WHERE IT LANDED. It measured 88.23 / 80 on
         // the first run, with lines 70-72 uncovered: a token whose instant is outside
         // anything the column can hold, and one whose id is 36 characters and not a

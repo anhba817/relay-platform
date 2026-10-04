@@ -205,8 +205,13 @@ export function report(counts: SweepCounts[], dryRun: boolean): string {
       `over ${c.pages} page(s)`,
   );
   const total = counts.reduce((sum, c) => sum + c.messagesDestroyed, 0);
+  // THE SUMMARY TAKES THE VERB IN THE OTHER ORDER. Reusing the per-environment `verb`
+  // here produced `1 message(s) would destroy in total`, which the quickstart run caught
+  // — the counted line IS the output of this command (055-4), so its grammar is not
+  // cosmetic.
+  const summary = dryRun ? "would be destroyed" : "destroyed";
   lines.push(
-    `retention: ${counts.length} environment(s) with a policy, ${total} message(s) ${verb} in total`,
+    `retention: ${counts.length} environment(s) with a policy, ${total} message(s) ${summary} in total`,
   );
   return lines.join("\n");
 }
