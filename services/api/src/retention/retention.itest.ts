@@ -244,6 +244,44 @@ describe("retention", () => {
     expect(await repo.renditionCountRaw(parent)).toBe(0);
   });
 
+  it("destroyMessages refuses an id from another tenant, on its own (FR-009)", async () => {
+    // THIS TEST EXISTS BECAUSE THE ARM WAS INVISIBLE WITHOUT IT. Deleting the tenancy
+    // predicate inside `destroyMessages` and re-running the retention suite AND the
+    // isolation gauntlet turned **nothing** red — 71 of 71 both ways — because every id
+    // the sweep passes has already been scoped by `expiredMessageIds`. That is 065-4's
+    // finding: a single-mutation probe measures the DEFENCE, not the arm.
+    //
+    // THE ARM IS STILL RIGHT. It defends a caller that does not scope first, and one
+    // refactor is all it takes to become that caller. So the response is the test that
+    // makes it visible rather than the deletion that makes it honest.
+    //
+    // AND A MISS HERE IS A LOSS RATHER THAN A LEAK, which is the inversion this chapter
+    // keeps running into: constitution I's usual failure is somebody reading data they
+    // should not see, and the usual probe asks what came back. Here the wrong scope
+    // destroys another tenant's messages and the probe has to ask what SURVIVED.
+    const other = await createEnvironment(db, { name: "retention-victim" });
+    const victim = new Repository(db, other.id, {
+      kind: "application",
+      id: "retention-suite",
+      requestId: crypto.randomUUID(),
+    });
+    const user = await victim.createUser("victim-author", "Author");
+    const victimChannel = await victim.createChannel("victim", "public");
+    await victim.addMember(victimChannel.id, user.id);
+    const theirs = await victim.sendMessage(victimChannel.id, {
+      text: "another tenant's message",
+      userId: user.id,
+    });
+
+    // `repo` is scoped to `environmentId`; the id belongs to `other`.
+    expect(await repo.destroyMessages([theirs.id])).toBe(0);
+
+    expect(
+      (await victim.listMessagesRaw(victimChannel.id)).some((m) => m.id === theirs.id),
+      "the sweep destroyed another tenant's message",
+    ).toBe(true);
+  });
+
   it("is re-runnable: the second run finds nothing the first left (FR-008)", async () => {
     await setRetentionPolicy(db, environmentId, 30);
     await aged("idempotence a", 40);
