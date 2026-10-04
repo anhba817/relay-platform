@@ -10,9 +10,11 @@ import { AppModule } from "../app.module";
 import { createDb, createPool, type Db } from "../db/client";
 import { createApiKey, createEnvironment, Repository } from "../db/repository";
 import {
+  AnalyticalStoreError,
   createAnalyticalStore,
   type AnalyticalStore,
 } from "../metering/clickhouse";
+import { eraseFromAnalyticalStore } from "./erasure";
 
 // ERASING AN END USER, AND THE WALL THE TRAVERSAL EXISTS TO CLIMB (FR-MOD-04).
 //
@@ -338,5 +340,126 @@ describe("erasure, end to end", () => {
       await countConnections(theirs.id, bystander),
       "an interpolated external id deleted another tenant's connection events",
     ).toBe(1);
+  });
+});
+
+describe("the receipt is evidence", () => {
+  let app: INestApplication;
+  let url: string;
+  let db: Db;
+  let store: AnalyticalStore;
+  let mine: { id: string; credential: string; repo: Repository };
+
+  const erase = (externalId: string) =>
+    fetch(`${url}/v1/users/${encodeURIComponent(externalId)}/data`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${mine.credential}` },
+    });
+
+  const receiptFor = async (externalId: string) => {
+    const res = await erase(externalId);
+    const body = (await res.json()) as {
+      stores: { store: string; outcome: string; rows?: number; note?: string }[];
+    };
+    return { status: res.status, body };
+  };
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    app = moduleRef.createNestApplication();
+    await app.init();
+    await app.listen(0);
+    url = await app.getUrl();
+
+    db = createDb(createPool());
+    store = createAnalyticalStore();
+    const env = await createEnvironment(db, { name: "erasure-receipt" });
+    mine = {
+      id: env.id,
+      credential: (await createApiKey(db, { environmentId: env.id })).credential,
+      repo: new Repository(db, env.id, {
+        kind: "application",
+        id: "erasure-receipt",
+        requestId: randomUUID(),
+      }),
+    };
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it("tells the three silences apart", async () => {
+    // T028. A STORE THAT NEVER NAMED THEM, A STORE THAT NAMES THEM BY KEY, AND A STORE
+    // THAT HOLDS THEIR IDENTITY AND CANNOT GIVE IT UP. All three would report "0 rows
+    // erased" and all three would be true, which is exactly what the receipt exists to
+    // prevent — the compliance officer needs the difference and the number hides it.
+    const id = `silence-${randomUUID().slice(0, 8)}`;
+    await mine.repo.createUser(id, "Three Silences");
+
+    const { body } = await receiptFor(id);
+    const by = (name: string) => body.stores.find((s) => s.store === name);
+
+    expect(by("api_requests")?.outcome).toBe("nothing_to_erase");
+    expect(by("daily_usage")?.outcome).toBe("retained_anonymous");
+    expect(by("audit_log")?.outcome).toBe("cannot_erase");
+
+    // AND THEY ARE DISTINGUISHABLE IN THE BODY, which is the assertion rather than the
+    // three above: three different words, not one word three times.
+    expect(
+      new Set(
+        ["api_requests", "daily_usage", "audit_log"].map((n) => by(n)?.outcome),
+      ).size,
+      "the receipt collapsed the distinction it exists to carry",
+    ).toBe(3);
+
+    // EVERY `cannot_erase` AND `retained_anonymous` CARRIES A NOTE. A word a reader
+    // cannot act on is worse than a number.
+    for (const name of ["daily_usage", "audit_log", "messages", "usage_active_users"])
+      expect(by(name)?.note, `${name} reported a verdict with no reason`).toBeTruthy();
+  });
+
+  it("reports not_reached when the analytical store does not answer", async () => {
+    // T029, THE HALF THAT CAN LIVE IN THE LANE. The truest version of this test stops
+    // the container — and the lane runs two files at a time, so it would take
+    // ClickHouse away from every suite beside it. 4.10 found exactly that with MinIO,
+    // and `check-lane-scope.py` cannot see an ACTION scoped too wide. The run against
+    // a genuinely stopped container is in `baseline.txt`, measured once, by hand.
+    //
+    // WHAT THIS ASSERTS IS THE OUTCOME, NOT THE PLUMBING: every failure mode of that
+    // client — a timeout, a refused connection, a rejected statement — has to arrive
+    // as one word, because an operator can do exactly one thing about all three.
+    const dead: AnalyticalStore = {
+      query: () => Promise.reject(new AnalyticalStoreError("refused", 0)),
+    };
+    const results = await eraseFromAnalyticalStore(mine.id, "whoever", dead);
+    const ce = results.find((r) => r.store === "connection_events");
+    expect(ce?.outcome).toBe("not_reached");
+    expect(ce?.note).toBeTruthy();
+
+    // AND THE OTHER TWO STILL REPORT, because neither was ever going to be attempted.
+    // A store that was not asked and a store that could not be reached are different
+    // facts and an outage must not blur them.
+    expect(results.find((r) => r.store === "api_requests")?.outcome).toBe(
+      "nothing_to_erase",
+    );
+    expect(results.find((r) => r.store === "daily_usage")?.outcome).toBe(
+      "retained_anonymous",
+    );
+  });
+
+  it("names the 73.6% its own media erasure cannot reach", async () => {
+    // T030. An erasure that takes the attributed objects is correct and incomplete,
+    // and `media_objects.user_id` being nullable is why. Measured: 11,173 of 15,189.
+    const id = `media-note-${randomUUID().slice(0, 8)}`;
+    await mine.repo.createUser(id, "Uploader");
+
+    const { body } = await receiptFor(id);
+    const media = body.stores.find((s) => s.store === "media_objects");
+    expect(media?.note, "the receipt does not say what it could not reach").toMatch(
+      /73\.6%/,
+    );
   });
 });

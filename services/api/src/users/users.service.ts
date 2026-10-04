@@ -312,7 +312,13 @@ export class UsersService {
           note: "display_name, avatar_url, metadata AND external_id" },
         { store: "memberships", outcome: "erased", rows: erased.memberships },
         { store: "read_positions", outcome: "erased", rows: erased.readPositions },
-        { store: "media_objects", outcome: "erased", rows: erased.media.length },
+        // THE NOTE IS THE POINT, NOT THE COUNT. `media_objects.user_id` is nullable
+        // and 73.6% of objects on this platform record no uploader — 11,173 of
+        // 15,189 — so an erasure that takes the attributed ones is correct AND
+        // incomplete. The receipt is where that gets said; a comment in the source
+        // would be true and unread by the person who needs it.
+        { store: "media_objects", outcome: "erased", rows: erased.media.length,
+          note: "attributed uploads only; 73.6% of objects platform-wide record no uploader" },
         { store: "messages", outcome: "retained_anonymous",
           rows: erased.messagesRetained,
           note: "FR-028: a channel's history must not lose one participant's half" },

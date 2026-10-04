@@ -119,10 +119,14 @@ export async function eraseFromAnalyticalStore(
     results.push({
       store: "connection_events",
       outcome: "not_reached",
+      // `status` IS 0 WHEN THERE WAS NO RESPONSE — an abort, a refused connection, a
+      // DNS failure — and `the analytical store answered 0` is what the first version
+      // printed, which is a sentence a compliance officer would have to come and ask
+      // about. The two cases are one outcome and two sentences.
       note:
-        cause instanceof AnalyticalStoreError
-          ? `the analytical store answered ${cause.status}`
-          : "the analytical store did not answer",
+        cause instanceof AnalyticalStoreError && cause.status !== 0
+          ? `the analytical store refused with HTTP ${cause.status}; these rows may still be there`
+          : "the analytical store did not answer; these rows may still be there",
     });
   }
 
