@@ -118,6 +118,12 @@ export const MODERATION_ROUTES = {
   "POST /v1/users": "not-moderation",
   // removes a person's profile and memberships
   "DELETE /v1/users/:externalId": "moderation",
+  // FR-MOD-04's erasure, and the same judgement applied to a strictly larger action:
+  // it removes everything the route above removes AND the external id, the uploads and
+  // the analytical rows. **Standing, not data** points the same way here — a person who
+  // cannot be named can do nothing — and unlike a policy setting this actor acts
+  // directly on somebody else's data
+  "DELETE /v1/users/:externalId/data": "moderation",
   // profile maintenance. **The line this set draws is STANDING, not data**: ban,
   // delete, role and removal change what a person may do; a display name does not
   "PATCH /v1/users/:externalId": "not-moderation",
@@ -149,6 +155,7 @@ export const ACTION = {
   ban: "POST /v1/users/:externalId/ban",
   unban: "DELETE /v1/users/:externalId/ban",
   deleteUser: "DELETE /v1/users/:externalId",
+  eraseUser: "DELETE /v1/users/:externalId/data",
   removeMember: "POST /v1/channels/:channelId/members/remove",
   setMemberRole: "PATCH /v1/channels/:channelId/members/:userExternalId",
   archiveChannel: "POST /v1/channels/:channelId/archive",

@@ -1,7 +1,16 @@
-import { HttpStatus, Injectable, NotFoundException } from "@nestjs/common";
+import { HttpStatus, Inject, Injectable, NotFoundException } from "@nestjs/common";
+
+import type { Logger } from "@relay/service-kit";
 
 import { protocolError } from "../protocol-error";
 import { Repository, type UserRow } from "../db/repository";
+import { LOGGER } from "../logger";
+import { deleteObjectWithRenditions, storeConfig } from "../media/store";
+import { kindOf } from "../media/kinds";
+import { publishStorageDelta } from "../metering/storage-event";
+import { ANALYTICS_PUBLISHER } from "../webhooks/analytics";
+import type { Publisher } from "../outbox/publisher";
+import { eraseFromAnalyticalStore, type StoreResult } from "./erasure";
 import {
   encodeCursor,
   type ListingQuery,
@@ -19,7 +28,11 @@ import {
  * empty list satisfied it. The requirement is about the user the PATH names. */
 @Injectable()
 export class UsersService {
-  constructor(private readonly repo: Repository) {}
+  constructor(
+    private readonly repo: Repository,
+    @Inject(ANALYTICS_PUBLISHER) private readonly analytics: Publisher,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
 
   /** A deleted user is a 404 on every route that names them (FR-017).
    *
@@ -229,6 +242,88 @@ export class UsersService {
     if (!user) throw new NotFoundException("user not found");
     await this.repo.deleteUser(user.id, externalId);
     return { external_id: externalId, deleted: true };
+  }
+
+  /** Erase an end user from every store that can remove them (FR-MOD-04).
+   *
+   * NOT `deleteUser`, which is the method directly above and keeps the row, the
+   * messages and the billing rows on purpose. The two verbs sit next to each other
+   * here for the same reason their routes do: `contracts/erasure.md` argues that two
+   * operations differing only in what they preserve must not differ only in a flag,
+   * and side by side they are harder to confuse than in two files.
+   *
+   * A SECOND ERASURE IS A 404 AND THAT INVERTS THE OBVIOUS ANSWER. The traversal
+   * replaces `external_id`, so after the first call no user has the one in the path.
+   * `deleteUser` above goes to some trouble to answer 200 twice; this cannot, and a
+   * hash kept on the tombstone to make it possible is refused — `u-4821` and an email
+   * address are both brute-forceable, so a hash is the identity wearing a disguise.
+   * **The operator's proof is the audit entry**, which is append-only by design. */
+  async eraseUser(externalId: string): Promise<{
+    user_external_id: string;
+    requested_at: string;
+    completed_at: string;
+    stores: StoreResult[];
+  }> {
+    const requestedAt = new Date();
+    const user = await this.repo.getUserByExternalId(externalId);
+    if (!user) throw new NotFoundException("user not found");
+
+    const erased = await this.repo.eraseUser(user.id, externalId);
+
+    // THE BYTES AND THE DELTAS, OUTSIDE THE TRANSACTION AND ONE REQUEST PER OBJECT.
+    // The store has no foreign keys and nothing cascades there, and a publish inside a
+    // transaction that rolled back would emit a delta for an object that still exists
+    // — `storage-event.ts` makes both arguments. The operational quota recomputes from
+    // the rows and the analytical meter does not, which is what makes a skipped delta
+    // a permanent overcount rather than a blip.
+    for (const row of erased.media) {
+      await deleteObjectWithRenditions(
+        storeConfig(),
+        row.objectKey,
+        row.renditionKeys,
+      );
+      void publishStorageDelta(this.analytics, this.logger, {
+        environmentId: this.repo.environment,
+        mediaId: row.id,
+        cause: "deleted",
+        kind: kindOf(row.mimeType) ?? "image",
+        // NEGATIVE, AND CARRIED RATHER THAN DERIVED FROM `cause`: a reader that infers
+        // the sign puts the rule in a second place.
+        bytesDelta: -row.declaredBytes,
+        occurredAt: new Date(),
+      });
+    }
+
+    // THE ANALYTICAL HALF RUNS AFTER THE OPERATIONAL ONE HAS COMMITTED, and its
+    // failure is a receipt line rather than an exception. Constitution III: a
+    // ClickHouse outage must not roll back an erasure that has already destroyed a
+    // person's profile, their external id and their uploads.
+    const analytical = await eraseFromAnalyticalStore(
+      this.repo.environment,
+      externalId,
+    );
+
+    return {
+      user_external_id: externalId,
+      requested_at: requestedAt.toISOString(),
+      completed_at: new Date().toISOString(),
+      stores: [
+        { store: "profile", outcome: "erased", rows: erased.profile,
+          note: "display_name, avatar_url, metadata AND external_id" },
+        { store: "memberships", outcome: "erased", rows: erased.memberships },
+        { store: "read_positions", outcome: "erased", rows: erased.readPositions },
+        { store: "media_objects", outcome: "erased", rows: erased.media.length },
+        { store: "messages", outcome: "retained_anonymous",
+          rows: erased.messagesRetained,
+          note: "FR-028: a channel's history must not lose one participant's half" },
+        { store: "usage_active_users", outcome: "retained_anonymous",
+          rows: erased.activeUserRowsRetained,
+          note: "FR-029: a customer who deleted a user in March still owes for March" },
+        ...analytical,
+        { store: "audit_log", outcome: "cannot_erase",
+          note: "target_id holds the external id and the log is append-only (ADR-35)" },
+      ],
+    };
   }
 
   /** Ban and unban, tenant-wide (FR-031, FR-032).

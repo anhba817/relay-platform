@@ -145,6 +145,18 @@ export const CLASSIFICATIONS: readonly Classification[] = [
     shape: "write",
   },
 
+  // FR-MOD-04's erasure, and `write` for a reason the other entries here do not have.
+  // Constitution I's usual failure is a LEAK — a tenant reads what is not theirs — and
+  // this one is a LOSS. A forged erasure that answers 404 and destroys the rows anyway
+  // leaves nothing for a read-shaped assertion to find, so the attack in
+  // `gauntlet.itest.ts` asks what SURVIVED rather than what came back.
+  {
+    method: "DELETE",
+    path: "/v1/users/:externalId/data",
+    accepts: "application",
+    shape: "write",
+  },
+
   // The ban pair, both `write`. The attack is a foreign external id: a
   // tenant must not be able to ban another tenant's user, and the refusal is the 404 a
   // user who does not exist in THIS environment gets — which is what they are.

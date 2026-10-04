@@ -1,0 +1,342 @@
+import "reflect-metadata";
+
+import { Test } from "@nestjs/testing";
+import type { INestApplication } from "@nestjs/common";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { randomUUID } from "node:crypto";
+
+import { AppModule } from "../app.module";
+import { createDb, createPool, type Db } from "../db/client";
+import { createApiKey, createEnvironment, Repository } from "../db/repository";
+import {
+  createAnalyticalStore,
+  type AnalyticalStore,
+} from "../metering/clickhouse";
+
+// ERASING AN END USER, AND THE WALL THE TRAVERSAL EXISTS TO CLIMB (FR-MOD-04).
+//
+// `DELETE /v1/users/:externalId/data` is not FR-USR-05's deletion. That verb keeps the
+// row, the messages and the billing rows ON PURPOSE, and this one does not — which is
+// why the two sit side by side in `users.controller.ts` rather than differing by a
+// flag. `contracts/erasure.md` carries the argument.
+//
+// THE FIRST TEST HERE IS A PROBE AND IT IS WRITTEN TO BE RED. A first draft of this
+// file called `deleteUser` and asserted what survives — the row, the messages, the
+// `usage_active_users` rows — all of which this chapter preserves deliberately. That
+// probe would have been green at the open, green after the traversal and green at
+// close-out, and read as evidence three times. A probe that can never go red proves
+// nothing.
+
+describe("the users row cannot be deleted while its children exist", () => {
+  let db: Db;
+  let repo: Repository;
+  /** A user with a membership — one child is enough, and `members` is the key that
+   *  fires first. */
+  let encumbered: { id: string };
+  /** A user with no row anywhere else. The control. */
+  let bare: { id: string };
+
+  beforeAll(async () => {
+    db = createDb(createPool());
+    const env = await createEnvironment(db, { name: "erasure-probe" });
+    // THE ACTOR IS NOT OPTIONAL HERE EVEN THOUGH THIS SUITE RECORDS NOTHING.
+    // `repository.itest.ts` walks the source for two-argument constructions and
+    // caught chapter 4.20 with one; the named absence is how a suite that writes no
+    // audit entry says so rather than defaulting into one.
+    repo = new Repository(db, env.id, {
+      kind: "application",
+      id: "erasure-probe",
+      requestId: randomUUID(),
+    });
+
+    encumbered = await repo.createUser("probe-encumbered", "Has A Membership");
+    const channel = await repo.createChannel("probe-channel", "public");
+    await repo.addMember(channel.id, encumbered.id);
+
+    bare = await repo.createUser("probe-bare", "Has Nothing");
+  });
+
+  it("refuses the row, and the error names the key that stopped it", async () => {
+    // T015. All five foreign keys to `users` are `NO ACTION`, so the row is
+    // unreachable until every child is gone. The constraint name is asserted rather
+    // than the message text: `repository.itest.ts:141`'s convention, and the only part
+    // of a driver error that is a fact about the schema rather than about the driver.
+    await expect(repo.deleteUserRowRaw(encumbered.id)).rejects.toMatchObject({
+      cause: { constraint: "members_user_id_users_id_fk" },
+    });
+  });
+
+  it("deletes a user with no children — the control", async () => {
+    // WITHOUT THIS THE REFUSAL ABOVE MEANS NOTHING. A broken call, a wrong id and a
+    // foreign key all present as a rejected promise; only the pair tells them apart.
+    await expect(repo.deleteUserRowRaw(bare.id)).resolves.toBe(1);
+  });
+});
+
+describe("erasure, end to end", () => {
+  let app: INestApplication;
+  let url: string;
+  let db: Db;
+  let store: AnalyticalStore;
+
+  /** The caller's own tenant. */
+  let mine: { id: string; credential: string; repo: Repository };
+  /** A second tenant holding a user with the SAME external id. FR-008's real test:
+   *  an external id is unique per environment, not globally. */
+  let theirs: { id: string; credential: string; repo: Repository };
+
+  const plantConnection = async (environmentId: string, externalId: string) =>
+    store.query(
+      `INSERT INTO relay_analytics.connection_events
+         (environment_id, ts, connection_id, event, user_external_id)
+       VALUES ({env:UUID}, now64(3), generateUUIDv4(), 'opened', {uid:String})`,
+      { env: environmentId, uid: externalId },
+    );
+
+  const countConnections = async (environmentId: string, externalId: string) => {
+    const rows = await store.query(
+      `SELECT count() FROM relay_analytics.connection_events
+        WHERE environment_id = {env:UUID} AND user_external_id = {uid:String}`,
+      { env: environmentId, uid: externalId },
+    );
+    return Number(rows[0]?.[0] ?? 0);
+  };
+
+  const tenant = async (name: string) => {
+    const env = await createEnvironment(db, { name });
+    return {
+      id: env.id,
+      credential: (await createApiKey(db, { environmentId: env.id })).credential,
+      repo: new Repository(db, env.id, {
+        kind: "application",
+        id: name,
+        requestId: randomUUID(),
+      }),
+    };
+  };
+
+  /** A user with something in every store the traversal touches. */
+  const populate = async (t: { id: string; repo: Repository }, externalId: string) => {
+    const user = await t.repo.createUser(externalId, "To Be Erased");
+    const channel = await t.repo.createChannel(`ch-${externalId}`, "public");
+    await t.repo.addMember(channel.id, user.id);
+    await t.repo.sendMessage(channel.id, { text: "still here after", userId: user.id });
+    await t.repo.setReadPosition(channel.id, user.id, 1);
+    await plantConnection(t.id, externalId);
+    return { user, channel };
+  };
+
+  const erase = (externalId: string, credential: string) =>
+    fetch(`${url}/v1/users/${encodeURIComponent(externalId)}/data`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${credential}` },
+    });
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    app = moduleRef.createNestApplication();
+    await app.init();
+    await app.listen(0);
+    url = await app.getUrl();
+
+    db = createDb(createPool());
+    store = createAnalyticalStore();
+    mine = await tenant("erasure-mine");
+    theirs = await tenant("erasure-theirs");
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it("removes the user from every store that can remove them, counted absolutely", async () => {
+    // T022. ABSOLUTE COUNTS, NOT DELTAS. The lane runs two files at a time and
+    // `reset-lane.mjs` does not purge data by design, so a before-and-after difference
+    // is a claim about the whole table and somebody else's rows are in it.
+    const id = `erase-${randomUUID().slice(0, 8)}`;
+    const { user, channel } = await populate(mine, id);
+
+    const res = await erase(id, mine.credential);
+    expect(res.status).toBe(200);
+    const receipt = (await res.json()) as {
+      user_external_id: string;
+      stores: { store: string; outcome: string; rows?: number }[];
+    };
+    const outcome = (name: string) =>
+      receipt.stores.find((s) => s.store === name);
+
+    expect(receipt.user_external_id).toBe(id);
+    expect(outcome("profile")?.outcome).toBe("erased");
+    expect(outcome("memberships")).toMatchObject({ outcome: "erased", rows: 1 });
+    expect(outcome("read_positions")).toMatchObject({ outcome: "erased", rows: 1 });
+    expect(outcome("connection_events")).toMatchObject({ outcome: "erased", rows: 1 });
+
+    // AND THE STORES THEMSELVES, because a receipt is a claim and this is the check.
+    expect(await mine.repo.listMembers(channel.id)).not.toContain(user.id);
+    expect(await countConnections(mine.id, id)).toBe(0);
+    expect(await mine.repo.getUserByExternalId(id)).toBeNull();
+  });
+
+  it("keeps the messages and the billing rows, and says so with a number", async () => {
+    // T022, the other half. `retained_anonymous` is not `erased` and must not read as
+    // it: the rows stay under a named clause and the key they carry now resolves to a
+    // tombstone holding nothing.
+    const id = `retain-${randomUUID().slice(0, 8)}`;
+    const { user } = await populate(mine, id);
+
+    const res = await erase(id, mine.credential);
+    const receipt = (await res.json()) as {
+      stores: { store: string; outcome: string; rows?: number }[];
+    };
+    const messages = receipt.stores.find((s) => s.store === "messages");
+    expect(messages?.outcome).toBe("retained_anonymous");
+    expect(messages?.rows).toBeGreaterThan(0);
+
+    // THE TOMBSTONE IS WHY THE MESSAGES CAN STAY. All five foreign keys to `users` are
+    // `NO ACTION`, so keeping `messages.user_id` means the row cannot go — and the row
+    // staying, emptied, is what makes every key-only reference stop naming anybody.
+    // LOOKED UP BY THE REPLACEMENT ID RATHER THAN BY THE UUID, which asserts the
+    // value the traversal writes instead of merely that the row is still there.
+    const tombstone = await mine.repo.getUserByExternalId(`erased:${user.id}`);
+    expect(tombstone, "no tombstone under the replacement id").not.toBeNull();
+    expect(tombstone?.display_name).toBeNull();
+    await expect(
+      mine.repo.deleteUserRowRaw(user.id),
+      "the tombstone deleted, so the messages lost their author",
+    ).rejects.toMatchObject({ cause: { constraint: "messages_user_id_users_id_fk" } });
+  });
+
+  it("is not deleteUser, and the two are asserted side by side", async () => {
+    // T021's characterisation test. Green today and green forever — its value is that
+    // it goes red the day somebody collapses the two verbs into one, which is the
+    // confusion `contracts/erasure.md` exists to prevent.
+    const deletedId = `char-del-${randomUUID().slice(0, 8)}`;
+    const erasedId = `char-era-${randomUUID().slice(0, 8)}`;
+    const a = await populate(mine, deletedId);
+    const b = await populate(mine, erasedId);
+
+    await mine.repo.deleteUser(a.user.id, deletedId);
+    await erase(erasedId, mine.credential);
+
+    // DELETION KEEPS THE NAME. That is FR-USR-05 working, not a defect.
+    expect(
+      await mine.repo.getUserByExternalId(deletedId),
+      "deleteUser cleared the external id",
+    ).not.toBeNull();
+
+    // ERASURE DOES NOT — and the row is findable only under the replacement.
+    expect(
+      await mine.repo.getUserByExternalId(erasedId),
+      "erasure kept the external id",
+    ).toBeNull();
+    expect(
+      await mine.repo.getUserByExternalId(`erased:${b.user.id}`),
+      "erasure left no tombstone",
+    ).not.toBeNull();
+
+    // AND BOTH KEEP THE MESSAGES, which is the half a reader is most likely to get
+    // backwards. Asserted through the foreign key rather than a count: if either
+    // user's messages had gone, the row would delete.
+    for (const u of [a.user, b.user]) {
+      await expect(
+        mine.repo.deleteUserRowRaw(u.id),
+        "this user's messages were destroyed",
+      ).rejects.toMatchObject({
+        cause: { constraint: "messages_user_id_users_id_fk" },
+      });
+    }
+  });
+
+  it("answers 404 on the second erasure, which inverts the obvious answer", async () => {
+    // T024, and the contract said 200 until T010 cleared the external id. After the
+    // first call no user has that id, so 404 is the honest answer and not a bug. The
+    // cost is in `contracts/erasure.md`: a retry after a timeout cannot tell *already
+    // erased* from *never existed*, and a hash on the tombstone that would answer it is
+    // refused because a low-entropy external id hashes to something brute-forceable.
+    const id = `twice-${randomUUID().slice(0, 8)}`;
+    await populate(mine, id);
+
+    expect((await erase(id, mine.credential)).status).toBe(200);
+    expect((await erase(id, mine.credential)).status).toBe(404);
+  });
+
+  it("refuses a foreign external id indistinguishably from one nobody has", async () => {
+    // T023(a). Byte-identical once `request_id` is removed — 4.11's rule: a refusal
+    // that names the cause reports whether somebody else's user exists.
+    const foreign = `foreign-${randomUUID().slice(0, 8)}`;
+    await theirs.repo.createUser(foreign, "not yours");
+
+    const a = await erase(foreign, mine.credential);
+    const b = await erase(`absent-${randomUUID().slice(0, 8)}`, mine.credential);
+    expect(a.status).toBe(404);
+    expect(b.status).toBe(404);
+
+    const strip = async (r: Response) => {
+      const body = (await r.json()) as Record<string, unknown>;
+      delete body["request_id"];
+      return body;
+    };
+    expect(await strip(a)).toEqual(await strip(b));
+
+    // AND THE OTHER TENANT'S USER IS UNTOUCHED, which the status code cannot say.
+    expect(await theirs.repo.getUserByExternalId(foreign)).not.toBeNull();
+  });
+
+  it("erases one tenant's user when two environments share the external id", async () => {
+    // T023(b), AND THE ANALYTICAL HALF IS THE POINT. The route can refuse correctly
+    // while an unscoped statement destroys a third party's rows, and no read-shaped
+    // assertion would see it. Measured on the lane's worst id: unscoped, `tuan` loses
+    // 152 rows from 110 other tenants and 4 correctly — 97.4% wrong.
+    const shared = `shared-${randomUUID().slice(0, 8)}`;
+    await populate(mine, shared);
+    await populate(theirs, shared);
+
+    expect((await erase(shared, mine.credential)).status).toBe(200);
+
+    expect(await mine.repo.getUserByExternalId(shared)).toBeNull();
+    expect(await theirs.repo.getUserByExternalId(shared)).not.toBeNull();
+    expect(await countConnections(mine.id, shared)).toBe(0);
+    expect(
+      await countConnections(theirs.id, shared),
+      "an unscoped analytical delete took the other tenant's rows",
+    ).toBe(1);
+  });
+
+  it("erases a user whose external id is SQL, and every other row survives", async () => {
+    // T023a, SC-014. THE PLATFORM REALLY DOES ACCEPT THIS ID — `users.schema.ts` is
+    // `z.string().min(1).max(255)`, any 255 characters, and the upsert round-trips it
+    // in a 201. Interpolated into the scoped statement it takes the count from 0 to the
+    // whole table, because `OR` binds looser than the `AND` chain the scope is written
+    // in. This is the only assertion that distinguishes a scoped statement from one
+    // that merely looks scoped.
+    //
+    // AND THE PAYLOAD IS `' OR 1=1 --`, NOT `ev'il OR 1=1 --`, WHICH `research.md` R9
+    // NAMED AND WHICH DOES NOT WORK. Measured against the server, both interpolated
+    // into the scoped count:
+    //
+    //     ev'il OR 1=1 --    Code: 62. Syntax error: failed at position 144 (il)
+    //     ' OR 1=1 --        1,116 — the whole table
+    //
+    // The leading quote has to CLOSE the literal cleanly. `'ev'il …` parses as the
+    // string `'ev'` followed by an identifier and dies, which an interpolating
+    // implementation survives as a caught error and a `not_reached` line. **A payload
+    // that errors tests the error path; only one that parses tests the predicate**, and
+    // a probe run against the wrong one goes red for the wrong reason and reads as
+    // proof.
+    const hostile = "' OR 1=1 --";
+    await populate(mine, hostile);
+    const bystander = `bystander-${randomUUID().slice(0, 8)}`;
+    await populate(theirs, bystander);
+
+    expect((await erase(hostile, mine.credential)).status).toBe(200);
+
+    expect(await countConnections(mine.id, hostile)).toBe(0);
+    expect(
+      await countConnections(theirs.id, bystander),
+      "an interpolated external id deleted another tenant's connection events",
+    ).toBe(1);
+  });
+});

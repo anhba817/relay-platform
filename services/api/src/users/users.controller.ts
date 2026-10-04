@@ -141,6 +141,27 @@ export class UsersController {
     return this.users.deleteUser(externalId);
   }
 
+  /** Erase a user — everything about them that any store can remove (FR-MOD-04).
+   *
+   * `/data` ON THE END, AND NOT A FLAG ON THE ROUTE ABOVE. That one is FR-USR-05's
+   * deletion and keeps the row, the messages and the billing rows on purpose. Two
+   * verbs that differ only in what they preserve must not differ only in a query
+   * parameter: a mistyped flag would be an irreversible erasure, and the path is the
+   * thing a reader of the call site sees. `contracts/erasure.md` carries it.
+   *
+   * NO `@Body()`, AND THAT IS WHY CONSTITUTION VI's FIFTH BULLET IS NOT ENGAGED rather
+   * than unmet. The bullet governs endpoints that take input; this one takes a path
+   * parameter. Measured against the bodyless `DELETE` above: `{"totally":"unknown"}`
+   * and `{}` answer identically, because no decorator exists to parse either.
+   *
+   * THE CREDENTIAL IS THE CLASS'S DECISION, not a branch in here. `@Accepts(
+   * "application")` at the top of this file refuses a user token before the handler
+   * runs — which chapter 4.18 found is the arm nothing had tested, one route over. */
+  @Delete(":externalId/data")
+  async eraseUser(@Param("externalId") externalId: string) {
+    return this.users.eraseUser(externalId);
+  }
+
   /** The ban pair (FR-031).
    *
    * TWO ROUTES ON ONE PATH RATHER THAN A `PATCH` WITH A BOOLEAN. `POST …/ban` and

@@ -21,9 +21,31 @@
 // READ-ONLY, DELIBERATELY. The reconciler compares and writes nothing, and an interface with
 // no insert cannot be talked into one.
 
-/** A read against the analytical store. Rows as TSV, split by tab. */
+/** A read against the analytical store. Rows as TSV, split by tab.
+ *
+ * `params` BINDS VALUES INSTEAD OF INTERPOLATING THEM (FR-014, chapter 4.21). Write
+ * `{name:Type}` in the SQL and pass `{ name: value }`; the client sends each one as a
+ * `param_<name>` query parameter and the server substitutes it after parsing, so a
+ * value can never become syntax.
+ *
+ * WHY IT IS HERE AND NOT AN ESCAPE AT THE CALL SITE. Chapter 4.8 defended this surface
+ * with *a type, not an escape* — what left the schema was a `Date` and the only
+ * function that turns one into SQL takes a `Date`, so there was nothing to forget. A
+ * user's external id has no such type: `users.schema.ts` accepts
+ * `z.string().min(1).max(255)`, any 255 characters, and the platform really does accept
+ * `ev'il OR 1=1 --` and round-trips it in a 201. Measured against the erasure's scoped
+ * statement:
+ *
+ *     interpolated, that id   count 0 -> 1,081     the whole table, all 460 tenant pairs
+ *     bound, that id          count 0              refused as a value
+ *     bound, `tuan` scoped    count 4              the control
+ *
+ * It is chapter 4.8's finding word for word — *it does not widen the window, it defeats
+ * the tenant predicate, because `OR` binds looser than the `AND` chain the scope is
+ * written in*. An escape is a thing every future caller must remember, and this project
+ * has deleted hand-maintained tables for less. */
 export interface AnalyticalStore {
-  query(sql: string): Promise<string[][]>;
+  query(sql: string, params?: Readonly<Record<string, string>>): Promise<string[][]>;
 }
 
 /** A refusal from the store, CARRYING THE HTTP STATUS (chapter 4.8, FR-025).
@@ -85,13 +107,28 @@ export function createAnalyticalStore({
 } = {}): AnalyticalStore {
   const auth = "Basic " + Buffer.from(`${user}:${password}`).toString("base64");
   return {
-    query: async (sql: string): Promise<string[][]> => {
+    query: async (
+      sql: string,
+      params?: Readonly<Record<string, string>>,
+    ): Promise<string[][]> => {
       // ONE STATEMENT PER REQUEST. The HTTP interface refuses a multi-statement body with
       // `Code: 62`, which chapter 4.2 established is the interface's rule rather than a
       // tidiness convention.
+      // THE PARAMETERS RIDE IN THE URL, NOT THE BODY, because the body IS the
+      // statement — `query` is sent as the POST payload, so there is nowhere else to
+      // put them. `URLSearchParams` escapes each value for the transport; the server
+      // does the SQL-side substitution after parsing, which is the part that matters.
+      const search = new URLSearchParams();
+      for (const [name, value] of Object.entries(params ?? {}))
+        search.set(`param_${name}`, value);
+      const url =
+        search.size === 0
+          ? `http://${host}:${port}/`
+          : `http://${host}:${port}/?${search.toString()}`;
+
       let res: Response;
       try {
-        res = await fetch(`http://${host}:${port}/`, {
+        res = await fetch(url, {
           method: "POST",
           headers: { Authorization: auth },
           body: sql,

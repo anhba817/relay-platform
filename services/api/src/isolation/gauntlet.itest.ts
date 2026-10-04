@@ -1167,6 +1167,50 @@ describe("the isolation gauntlet", () => {
     expect(mine?.deleted_at ?? null, "the caller's own user was not deleted").not.toBeNull();
   });
 
+  it("DELETE /v1/users/:externalId/data — the erasure takes one tenant's user", async () => {
+    attacked.add("DELETE /v1/users/:externalId/data");
+    // THE SAME COLLISION AS THE DELETE ABOVE, AND A HARDER ASSERTION, because
+    // constitution I's usual failure here is a LOSS rather than a leak. An erasure
+    // that answers 404 and destroys the rows anyway leaves nothing for a read-shaped
+    // assertion to find, so this one asks what SURVIVED.
+    const shared = `gauntlet-erase-${randomUUID().slice(0, 8)}`;
+    const victim = await t.victim.repo.createUser(shared, "the victim's own");
+    await t.attacker.repo.createUser(shared, "the attacker's own");
+
+    const channel = await t.victim.repo.createChannel(shared, "public");
+    await t.victim.repo.addMember(channel.id, victim.id);
+
+    const res = await fetch(`${url}/v1/users/${shared}/data`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${t.attacker.credential}` },
+    });
+    // 200, because the attacker genuinely has a user with that id and erasing their
+    // own is the correct outcome. A 404 here would make the test pass for the wrong
+    // reason — a scoping bug and a correct refusal are the same status code.
+    expect(res.status).toBe(200);
+
+    // THE VICTIM'S USER IS STILL THERE, STILL NAMED, STILL A MEMBER. Erasure replaces
+    // `external_id`, so the victim's row is unreachable by that id if it leaked —
+    // which is why the lookup itself is the assertion.
+    const after = await t.victim.repo.getUserByExternalId(shared);
+    expect(after, "the victim's user was erased by the attacker").not.toBeNull();
+    expect(after?.display_name, "the victim's profile was cleared").toBe(
+      "the victim's own",
+    );
+    // `listMembers` returns user ids, so the membership is checked by the victim's
+    // own uuid rather than by a shape the method does not return.
+    const stillAMember = await t.victim.repo.listMembers(channel.id);
+    expect(
+      stillAMember,
+      "the victim's membership was deleted by the attacker",
+    ).toContain(victim.id);
+
+    // And the attacker's own IS gone, which is what makes the above about scoping
+    // rather than about the erasure failing altogether.
+    const mine = await t.attacker.repo.getUserByExternalId(shared);
+    expect(mine, "the caller's own user was not erased").toBeNull();
+  });
+
   // ── the profile: a read pair and a write pair over the same path ────────────────
   //
   // Two routes on one path, and they take different attacks: `GET` is a read pair —

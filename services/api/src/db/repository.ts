@@ -4454,6 +4454,153 @@ export class Repository {
     });
   }
 
+  /** Erase an end user — FR-MOD-04's traversal through every Postgres store that
+   * names them. The analytical half is `users/erasure.ts`; constitution III keeps the
+   * two apart and the receipt reports them separately.
+   *
+   * **THIS IS NOT `deleteUser`, AND THE DIFFERENCE IS THE POINT.** That method is
+   * FR-USR-05's and keeps the row, the messages and the `usage_active_users` rows ON
+   * PURPOSE. This one keeps the messages and the billing rows for the same two clauses
+   * and destroys everything that identifies the person, `external_id` included.
+   * `erasure.itest.ts` asserts the two side by side so they cannot drift together.
+   *
+   * ## WHY THE ROW SURVIVES, WHICH IS THE WHOLE STRUCTURE IN ONE PARAGRAPH
+   *
+   * FR-028 keeps the messages — a channel's history must not lose one participant's
+   * half of every conversation — so `messages.user_id` stays. All five foreign keys to
+   * `users` are `NO ACTION`, so the row is then unreachable: there is no "delete the
+   * row last", because there is no deleting it at all. `erasure.itest.ts`'s first test
+   * is that refusal, with a control.
+   *
+   * And that is what makes the rest legal. The row becomes a tombstone holding nothing,
+   * so every other store that references the user BY KEY — `usage_active_users`, the
+   * `uniq` sketches — stops naming anybody without being touched. One decision, three
+   * consequences, and `baseline.txt`'s T010 and T011 carry the argument.
+   *
+   * ## `external_id` IS REPLACED, NOT CLEARED, AND THE COLUMN IS WHY
+   *
+   * It is `NOT NULL` under `users_environment_id_external_id_unique`, so there is no
+   * null to write. The replacement is `erased:<users.id>` — unique by construction
+   * because the uuid is the primary key, and non-identifying for exactly the reason
+   * T011 established. **The two decisions hold each other up**: without the key
+   * argument there would be no safe value to put here.
+   *
+   * A SECOND ERASURE THEREFORE ANSWERS 404, not a 200 with an empty receipt, because
+   * no user has that external id any more. `contracts/erasure.md` carries the cost and
+   * why a hash is refused.
+   *
+   * `description` IS NOT CLEARED, for FR-004a's reason one method down: it says what a
+   * bot IS, and clearing it violates `users_bot_description_check`, which would make a
+   * bot the one kind of user that cannot be erased.
+   *
+   * RETURNS THE MEDIA ROWS rather than a count, because the caller owes a
+   * `deleteObjectWithRenditions` and a negative `deleted` storage event per object —
+   * `destroyMediaObjects`' convention, and neither is reconstructable from a number. */
+  async eraseUser(
+    userId: string,
+    userExternalId: string,
+  ): Promise<{
+    profile: number;
+    readPositions: number;
+    memberships: number;
+    messagesRetained: number;
+    activeUserRowsRetained: number;
+    media: Awaited<ReturnType<Repository["destroyMediaObjects"]>>;
+  }> {
+    // THE MEDIA IDS COME OUT BEFORE THE TRANSACTION, because `destroyMediaObjects`
+    // opens one of its own. Collecting them first is also the ordering rule
+    // `data-model.md` states: a value that lives on a row the traversal destroys has
+    // to be read before the row goes. Chapter 4.20 paid this with `media_id`.
+    const owned = await this.db
+      .select({ id: mediaObjects.id })
+      .from(mediaObjects)
+      .where(
+        and(
+          eq(mediaObjects.userId, userId),
+          eq(mediaObjects.environmentId, this.environmentId),
+          isNull(mediaObjects.parentId),
+        ),
+      );
+
+    const media = await this.destroyMediaObjects(owned.map((o) => o.id));
+
+    return this.db.transaction(async (tx) => {
+      const [alive] = await tx
+        .select({ id: users.id, deletedAt: users.deletedAt })
+        .from(users)
+        .where(and(eq(users.id, userId), eq(users.environmentId, this.environmentId)))
+        .limit(1);
+      if (alive === undefined) {
+        throw new Error(`eraseUser: no user ${userId} in this environment`);
+      }
+
+      const positions = await tx
+        .delete(readPositions)
+        .where(eq(readPositions.userId, userId))
+        .returning({ userId: readPositions.userId });
+      const memberships = await tx
+        .delete(members)
+        .where(eq(members.userId, userId))
+        .returning({ userId: members.userId });
+
+      // COUNTED, NOT DELETED. Both are `retained_anonymous` on the receipt: the rows
+      // stay under a named clause and the key they carry now resolves to a tombstone.
+      // The counts are what let the receipt say so with a number instead of a promise.
+      const retainedMessages = await tx
+        .select({ id: messages.id })
+        .from(messages)
+        .where(eq(messages.userId, userId));
+      const retainedActive = await tx
+        .select({ userId: usageActiveUsers.userId })
+        .from(usageActiveUsers)
+        .where(
+          and(
+            eq(usageActiveUsers.userId, userId),
+            eq(usageActiveUsers.environmentId, this.environmentId),
+          ),
+        );
+
+      await tx
+        .update(users)
+        .set({
+          displayName: null,
+          avatarUrl: null,
+          metadata: {},
+          externalId: `erased:${userId}`,
+          deletedAt: alive.deletedAt ?? new Date(),
+        })
+        .where(eq(users.id, userId));
+
+      // FR-013, AND THE ENTRY CARRIES THE NAME IT JUST ERASED.
+      //
+      // `targetId` is the EXTERNAL id, as every other user-target entry in this log
+      // is — 1,357 of 1,357, not one of them a uuid. Writing the uuid instead was
+      // considered and refused: this entry is the operator's only proof the erasure
+      // happened, and FR-MOD-03's log exists to demonstrate exactly that. The log is
+      // append-only (ADR-35), so the receipt reports it as `cannot_erase` and the
+      // chapter says plainly that the one place the name survives is the record that
+      // the name was erased.
+      //
+      // UNCONDITIONAL, unlike `deleteUser`'s. That method skips the entry on a second
+      // call because the user was already deleted; a second erasure cannot reach this
+      // line at all, because the external id it would be called with no longer exists.
+      await this.recordAction(tx, {
+        action: ACTION.eraseUser,
+        targetKind: "user",
+        targetId: userExternalId,
+      });
+
+      return {
+        profile: 1,
+        readPositions: positions.length,
+        memberships: memberships.length,
+        messagesRetained: retainedMessages.length,
+        activeUserRowsRetained: retainedActive.length,
+        media,
+      };
+    });
+  }
+
   /** Write a user's profile (FR-023, FR-024).
    *
    * THE FIRST WRITER `users.avatar_url` AND `users.metadata` HAVE EVER HAD. Both columns
@@ -7089,6 +7236,26 @@ export class Repository {
    * table reached one way; this is the same verb reached the other way. */
   async deleteVersionRowsRaw(messageId: string): Promise<void> {
     await this.db.delete(messageEdits).where(eq(messageEdits.messageId, messageId));
+  }
+
+  /** Delete the `users` row itself, with nothing cleared first.
+   *
+   * Called by `erasure.itest.ts` only — `listMessagesRaw`'s convention, because
+   * `eslint.config.mjs` keeps `drizzle-orm` inside this directory.
+   *
+   * IT EXISTS TO BE REFUSED. All five foreign keys to `users` are `NO ACTION`, so a
+   * row with any child anywhere is unreachable and the error names the key that
+   * stopped it. That refusal is why `eraseUser` traverses children first and the row
+   * last: the order is a correctness property rather than a preference, and the only
+   * way to show it is to try the row on its own and be told no. The control — the
+   * same statement against a user with no children — is what makes the refusal mean
+   * the keys rather than a broken call. */
+  async deleteUserRowRaw(userId: string): Promise<number> {
+    const gone = await this.db
+      .delete(users)
+      .where(and(eq(users.id, userId), eq(users.environmentId, this.environmentId)))
+      .returning({ id: users.id });
+    return gone.length;
   }
 
   async destroyMessages(ids: string[]): Promise<number> {
