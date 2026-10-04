@@ -4,7 +4,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { createDb, createPool, type Db } from "../db/client";
 import { migrate } from "../db/migrate";
-import { createEnvironment, Repository, setRetentionPolicy } from "../db/repository";
+import {
+  createEnvironment,
+  recordMediaVerdict,
+  Repository,
+  setRetentionPolicy,
+} from "../db/repository";
 import { expiringFlag } from "../db/retention-reads";
 import { sweepRetention } from "./sweep";
 
@@ -149,6 +154,94 @@ describe("retention", () => {
     expect(await repo.destroyMessages([id])).toBe(1);
 
     expect(await expiringFlag(db)).not.toBe("on");
+  });
+
+  /** A reserved, ready media object owned by this environment. */
+  const anObject = async (
+    name: string,
+    { withRendition = false }: { withRendition?: boolean } = {},
+  ): Promise<string> => {
+    const id = crypto.randomUUID();
+    await repo.reserveMediaSlot({
+      id,
+      userId: authorId,
+      filename: `${name}.png`,
+      mimeType: "image/png",
+      declaredBytes: 1024,
+      objectKey: `${environmentId}/${id}`,
+    });
+    await recordMediaVerdict(db, {
+      id,
+      verdict: "ready",
+      verifiedBytes: 1024,
+      verifiedType: "image/png",
+      width: 640,
+      height: 480,
+      ...(withRendition
+        ? {
+            rendition: {
+              id: crypto.randomUUID(),
+              kind: "thumbnail",
+              objectKey: `${environmentId}/${id}/thumb`,
+              bytes: 2048,
+              width: 320,
+              height: 240,
+            },
+          }
+        : {}),
+    });
+    return id;
+  };
+
+  const attach = async (
+    text: string,
+    mediaId: string,
+    daysOld: number,
+  ): Promise<string> => {
+    const { id } = await repo.sendMessage(channelId, {
+      text,
+      userId: authorId,
+      attachments: [{ type: "media", media_id: mediaId }],
+    });
+    await repo.backdateMessageRaw(id, daysOld);
+    return id;
+  };
+
+  it("destroys a sole-referenced object and SPARES a shared one (FR-006, FR-MED-11)", async () => {
+    await setRetentionPolicy(db, environmentId, 30);
+    const sole = await anObject("sole");
+    const shared = await anObject("shared");
+    await attach("expired, sole attachment", sole, 40);
+    await attach("expired, shared attachment", shared, 41);
+    // THE SURVIVOR IS WHAT MAKES THIS TWO-SIDED. FR-MSG-11 has allowed the same
+    // `media_id` in two messages since chapter 3.24, so *unless shared* is a real case
+    // rather than a defensive one — and a sweep that destroyed this object would take
+    // an attachment out of a message nobody asked to expire.
+    await attach("still inside the policy, same object", shared, 5);
+
+    const [counts] = await sweepRetention(db, new Date(), { environmentId });
+
+    expect(await repo.mediaObjectExistsRaw(sole)).toBe(false);
+    expect(await repo.mediaObjectExistsRaw(shared)).toBe(true);
+    expect(counts?.objectsDestroyed).toBe(1);
+    expect(counts?.objectsKeptAsShared).toBe(1);
+  });
+
+  it("a rendition goes with its parent, and the schema is what does it (FR-007)", async () => {
+    await setRetentionPolicy(db, environmentId, 30);
+    const parent = await anObject("with-thumb", { withRendition: true });
+    await attach("expired, and it has a thumbnail", parent, 50);
+
+    // CHAPTER 4.15 GAVE A RENDITION'S REACHABILITY TO `media_objects_parent_fk` WITH
+    // `ON DELETE CASCADE`, so this should need no code at all — which is a thing to RUN
+    // rather than to reason about. If the cascade were ever changed, the only symptom
+    // would be an orphaned thumbnail nobody can reach and nobody is billed for.
+    expect(await repo.renditionCountRaw(parent)).toBe(1);
+
+    await sweepRetention(db, new Date(), { environmentId });
+
+    expect(await repo.mediaObjectExistsRaw(parent)).toBe(false);
+    expect(await repo.renditionCountRaw(parent)).toBe(0);
   });
 
   it("is re-runnable: the second run finds nothing the first left (FR-008)", async () => {

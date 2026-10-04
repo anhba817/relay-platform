@@ -1,7 +1,13 @@
+import type { Logger } from "@relay/service-kit";
+
 import { RECORDS_NOTHING } from "../audit/actor";
 import { createDb, createPool } from "../db/client";
 import { environmentsWithPolicy } from "../db/retention-reads";
-import { Repository } from "../db/repository";
+import { Repository, unreferencedAmong } from "../db/repository";
+import { kindOf } from "../media/kinds";
+import { deleteObjectWithRenditions, storeConfig } from "../media/store";
+import { publishStorageDelta } from "../metering/storage-event";
+import type { Publisher } from "../outbox/publisher";
 
 // CHAPTER 4.20 — FR-MOD-06's retention job, and the word `job` is the part this file
 // cannot supply.
@@ -25,11 +31,22 @@ const PAGE = 500;
 export interface SweepCounts {
   environmentId: string;
   messagesDestroyed: number;
+  /** Objects destroyed because nothing surviving referenced them any more. */
+  objectsDestroyed: number;
+  /** Objects a surviving message still names — FR-MED-11's *unless shared*. */
+  objectsKeptAsShared: number;
   pages: number;
 }
 
 export interface SweepOptions {
   dryRun?: boolean;
+  /** Where the `deleted` storage event goes. Absent on a dry run and in tests that do
+   * not care; present from the CLI. **FR-013 is why it exists at all**: the operational
+   * quota is a `sum(declared_bytes)` over rows and corrects itself the moment the row
+   * goes, but the analytical meter is a sum of EVENTS and does not — so without this
+   * the tenant is charged for bytes that no longer exist, permanently, and chapter
+   * 4.16's reconciliation attributes the gap to reservations. */
+  publisher?: { publisher: Publisher; logger: Logger } | undefined;
   /** One environment instead of all of them, for an operator investigating one tenant.
    *
    * `| undefined` EXPLICITLY, because this workspace compiles with
@@ -87,16 +104,71 @@ export async function sweepRetention(
     const olderThan = new Date(now.getTime() - policy.retentionDays * 86_400_000);
 
     let destroyed = 0;
+    let objects = 0;
+    let kept = 0;
     let pages = 0;
     let after: { channelId: string; createdAt: Date } | undefined;
     for (;;) {
       const page = await repo.expiredMessageIds(olderThan, PAGE, after);
       if (page.length === 0) break;
       pages += 1;
+      // COLLECT THE ATTACHMENTS BEFORE THE DELETE, because after it the rows are gone
+      // and so is every `media_id` they named. Free: the jsonb is already on the page.
+      const candidates = [
+        ...new Set(
+          page.flatMap((row) =>
+            (row.attachments ?? [])
+              .filter((a) => a.type === "media")
+              .map((a) => a.media_id),
+          ),
+        ),
+      ];
+
       if (options.dryRun) {
         destroyed += page.length;
       } else {
         destroyed += await repo.destroyMessages(page.map((row) => row.id));
+
+        // THE REFERENCE CHECK RUNS AFTER THE MESSAGES ARE GONE, which is the one
+        // ordering constraint here that changes the answer. An object referenced only
+        // by expired messages is unreferenced only once they are; run this first and
+        // every shared-looking object survives.
+        //
+        // AND THE CANDIDATES ARE THIS PAGE'S OWN, not every old object in the
+        // environment. `unreferencedMediaIn` asks the second question and its answer
+        // includes objects nothing ever attached — FR-MED-10's orphans, whose reaper is
+        // a later chapter's. Destroying them here would enforce the wrong clause.
+        const unreferenced = await unreferencedAmong(db, policy.id, candidates);
+        kept += candidates.length - unreferenced.length;
+
+        const rows = await repo.destroyMediaObjects(unreferenced);
+        objects += rows.length;
+        for (const row of rows) {
+          // THE BYTES ARE A SEPARATE REQUEST PER OBJECT, because the store has no
+          // foreign keys and nothing cascades there.
+          await deleteObjectWithRenditions(
+            storeConfig(),
+            row.objectKey,
+            row.renditionKeys,
+          );
+          if (options.publisher !== undefined) {
+            // NEGATIVE, AND CARRIED RATHER THAN DERIVED FROM `cause` —
+            // `storage-event.ts` says so in as many words: a reader that infers the
+            // sign puts the rule in a second place.
+            void publishStorageDelta(
+              options.publisher.publisher,
+              options.publisher.logger,
+              {
+                environmentId: policy.id,
+                mediaId: row.id,
+                cause: "deleted",
+                kind: kindOf(row.mimeType) ?? "image",
+                bytesDelta: -row.declaredBytes,
+                occurredAt: new Date(),
+              },
+            );
+          }
+        }
       }
       // KEYSET, NOT OFFSET. On a dry run nothing is deleted, so the cursor is the only
       // thing that advances — without it the same page returns for ever.
@@ -104,7 +176,13 @@ export async function sweepRetention(
       after = { channelId: last.channelId, createdAt: last.createdAt };
       if (page.length < PAGE) break;
     }
-    counts.push({ environmentId: policy.id, messagesDestroyed: destroyed, pages });
+    counts.push({
+      environmentId: policy.id,
+      messagesDestroyed: destroyed,
+      objectsDestroyed: objects,
+      objectsKeptAsShared: kept,
+      pages,
+    });
   }
   return counts;
 }
@@ -122,7 +200,9 @@ export function report(counts: SweepCounts[], dryRun: boolean): string {
   }
   const lines = counts.map(
     (c) =>
-      `retention: ${c.environmentId} ${verb} ${c.messagesDestroyed} message(s) over ${c.pages} page(s)`,
+      `retention: ${c.environmentId} ${verb} ${c.messagesDestroyed} message(s) and ` +
+      `${c.objectsDestroyed} object(s), kept ${c.objectsKeptAsShared} still referenced, ` +
+      `over ${c.pages} page(s)`,
   );
   const total = counts.reduce((sum, c) => sum + c.messagesDestroyed, 0);
   lines.push(

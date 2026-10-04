@@ -651,7 +651,17 @@ export async function channelsReferencingMediaIn(
 /** WHICH OF A TENANT'S MEDIA OBJECTS NOTHING REFERENCES ANY MORE — FR-MED-10's predicate.
  *
  * **CALLED BY NOTHING YET, AND THAT IS NOT AN OVERSIGHT.** FR-MED-10's reaper does not
- * exist; `docs/12` row 22, the erasure chapter, is where it gets a caller. Chapter 4.15
+ * exist; `docs/12` row 22, the erasure chapter, is where it gets a caller.
+ *
+ * **CHAPTER 4.20 CAME CLOSE AND DID NOT TAKE IT, WHICH IS WORTH RECORDING HERE BECAUSE
+ * THE NEXT READER WILL HAVE THE SAME IDEA.** The retention sweep needs a reference
+ * check and this function is one, so reusing it looked free. It asks a different
+ * question: *which objects in this environment older than X does no message reference*
+ * — a superset that includes objects **never attached to anything**, 48 of them in one
+ * environment on the development lane. Those are this function's own population,
+ * FR-MED-10's orphans, and a retention policy has nothing to do with them. The sweep
+ * brings the `media_id` values of the messages it just destroyed instead, to
+ * `unreferencedAmong` below, which is the half the two callers share. Chapter 4.15
  * writes the predicate here anyway because the alternative is what happened to
  * FR-MED-07's first sentence — three chapters cited the clause, every one of them
  * implemented the half it needed, and nobody noticed the other half was unmet. A
@@ -700,6 +710,43 @@ export async function unreferencedMediaIn(
   // can be looked up rather than scanned. What comes back is the attachment arrays, and
   // the intersection is arithmetic in Node — cheaper than asking Postgres to unnest and
   // far easier to read than a lateral join nobody will revisit.
+  return unreferencedAmong(
+    db,
+    environmentId,
+    candidates.map((row) => row.id),
+  );
+}
+
+/** OF THESE OBJECT IDS, WHICH DOES NO SURVIVING MESSAGE REFERENCE?
+ *
+ * Called by `unreferencedMediaIn` above, which brings every old object in an
+ * environment, and by `sweepRetention` in `../retention/sweep.ts`, which brings the
+ * `media_id` values of the messages it has just destroyed. **The two populations are
+ * different and only the caller knows which one it means** — the sweep must not be
+ * handed the first, because it contains objects that were never attached to anything,
+ * and those are FR-MED-10's orphans rather than FR-MED-11's. On this lane that is 48
+ * objects in one environment: a sweep destroying them would be enforcing the wrong
+ * clause under a retention policy.
+ *
+ * ONE QUERY FOR THE WHOLE BATCH, AND IT REACHES THE INDEX. The operand of each
+ * containment test is a bound value rather than a column from the other side of a
+ * join, which is what chapter 4.12 measured the difference of: bound, the planner uses
+ * `messages_attachments_gin`; set-wise it cannot, and the same index sits idle under a
+ * parallel sequential scan. Measured here at 100 candidates — a `BitmapOr` over 100
+ * `Bitmap Index Scan`s, 976 buffers and 15.2 ms, about 9.8 buffers an object against
+ * 107 for a single one issued alone.
+ *
+ * **AN `OR` IS NOT ALWAYS A `Filter:`**, which is worth saying because chapter 4.18
+ * found the opposite for a keyset cursor written as one. A cursor's range predicates
+ * cannot be ORed into an index scan; containment predicates can, and this was checked
+ * rather than assumed. */
+export async function unreferencedAmong(
+  db: Db,
+  environmentId: string,
+  candidateIds: readonly string[],
+): Promise<string[]> {
+  if (candidateIds.length === 0) return [];
+
   const rows = await db
     .select({ attachments: sql<Attachment[] | null>`${messages.attachments}` })
     .from(messages)
@@ -708,10 +755,10 @@ export async function unreferencedMediaIn(
       and(
         eq(channels.environmentId, environmentId),
         or(
-          ...candidates.map(
-            (row) =>
+          ...candidateIds.map(
+            (id) =>
               sql`${messages.attachments} @> ${JSON.stringify([
-                { type: "media", media_id: row.id },
+                { type: "media", media_id: id },
               ])}::jsonb`,
           ),
         ),
@@ -722,7 +769,7 @@ export async function unreferencedMediaIn(
     for (const attachment of row.attachments ?? [])
       if (attachment.type === "media") referencedIds.add(attachment.media_id);
 
-  return candidates.map((row) => row.id).filter((id) => !referencedIds.has(id));
+  return candidateIds.filter((id) => !referencedIds.has(id));
 }
 
 export async function recordMediaVerdict(
@@ -6855,12 +6902,29 @@ export class Repository {
     olderThan: Date,
     limit: number,
     after?: { channelId: string; createdAt: Date },
-  ): Promise<{ id: string; channelId: string; createdAt: Date }[]> {
+  ): Promise<
+    {
+      id: string;
+      channelId: string;
+      createdAt: Date;
+      attachments: Attachment[] | null;
+    }[]
+  > {
     return this.db
       .select({
         id: messages.id,
         channelId: messages.channelId,
         createdAt: messages.createdAt,
+        // THE FORWARD HALF OF FR-MED-11, AND IT IS FREE. `attachments` is a jsonb
+        // column on the row the sweep already has in hand, so collecting the
+        // `media_id` values costs no second query. The expensive half is the reverse
+        // question — *is this object still referenced?* — which `unreferencedAmong`
+        // answers for the whole batch at once.
+        //
+        // AND IT MUST BE READ BEFORE THE DELETE, which is the one ordering constraint
+        // in this pair that is not obvious: after `destroyMessages` the rows are gone
+        // and so is every id they named.
+        attachments: sql<Attachment[] | null>`${messages.attachments}`,
       })
       .from(messages)
       .innerJoin(channels, eq(channels.id, messages.channelId))
@@ -6896,6 +6960,93 @@ export class Repository {
    * a cascade keeps *a version cannot outlive its message* in the schema instead of in
    * a procedure somebody maintains. `0025` records why that needed a trigger exception
    * at all — a cascade issues an ordinary `DELETE` and a row trigger fires on it. */
+  /** DESTROY MEDIA OBJECTS AND THE RENDITIONS THAT HANG OFF THEM, returning what the
+   * caller needs to finish the job outside the database.
+   *
+   * Called by `sweepRetention` in `../retention/sweep.ts`, after the messages that
+   * referenced them are gone and after `unreferencedAmong` has confirmed no surviving
+   * message still names them. Nothing else deletes a `media_objects` row: chapter 4.15
+   * established that the rejection path removes bytes and keeps the row on purpose, so
+   * before this chapter the table only ever grew.
+   *
+   * **THE RENDITIONS GO BY CASCADE**, `media_objects_parent_fk`, which chapter 4.15
+   * chose precisely so a rendition's reachability is its parent's and no caller has to
+   * keep two deletes in step. The keys come back anyway, because the STORE has no
+   * foreign keys and the bytes have to be removed one request at a time.
+   *
+   * RETURNS THE ROWS RATHER THAN A COUNT because the caller owes two more things per
+   * object: a `deleteObjectWithRenditions` against the store, and a `deleted` storage
+   * event whose `bytesDelta` is negative (FR-013). Neither can be reconstructed from a
+   * number. */
+  async destroyMediaObjects(ids: readonly string[]): Promise<
+    {
+      id: string;
+      objectKey: string;
+      declaredBytes: number;
+      mimeType: string;
+      renditionKeys: string[];
+    }[]
+  > {
+    if (ids.length === 0) return [];
+
+    const scoped = and(
+      inArray(mediaObjects.id, [...ids]),
+      // THE TENANCY PREDICATE, AND HERE A MISS IS A LOSS RATHER THAN A LEAK.
+      eq(mediaObjects.environmentId, this.environmentId),
+      isNull(mediaObjects.parentId),
+    );
+
+    const parents = await this.db
+      .select({
+        id: mediaObjects.id,
+        objectKey: mediaObjects.objectKey,
+        declaredBytes: mediaObjects.declaredBytes,
+        // THE MIME TYPE RATHER THAN THE KIND. The storage event wants a `kind`, and
+        // `kindOf` is the one function that maps between them — it lives in `media/`
+        // and this file does not reach into a feature directory. The caller converts.
+        mimeType: mediaObjects.mimeType,
+      })
+      .from(mediaObjects)
+      .where(scoped);
+    if (parents.length === 0) return [];
+
+    const parentIds = parents.map((p) => p.id);
+    const renditions = await this.db
+      .select({ parentId: mediaObjects.parentId, objectKey: mediaObjects.objectKey })
+      .from(mediaObjects)
+      .where(inArray(mediaObjects.parentId, parentIds));
+
+    await this.db.delete(mediaObjects).where(scoped);
+
+    return parents.map((p) => ({
+      ...p,
+      renditionKeys: renditions
+        .filter((r) => r.parentId === p.id)
+        .map((r) => r.objectKey),
+    }));
+  }
+
+  /** Whether a media object row is still there. Called by `retention.itest.ts` only —
+   * `listMessagesRaw`'s convention, because lint keeps SQL in this directory. */
+  async mediaObjectExistsRaw(id: string): Promise<boolean> {
+    const rows = await this.db
+      .select({ id: mediaObjects.id })
+      .from(mediaObjects)
+      .where(
+        and(eq(mediaObjects.id, id), eq(mediaObjects.environmentId, this.environmentId)),
+      );
+    return rows.length > 0;
+  }
+
+  /** How many renditions hang off a parent object. Called by `retention.itest.ts`. */
+  async renditionCountRaw(parentId: string): Promise<number> {
+    const rows = await this.db
+      .select({ id: mediaObjects.id })
+      .from(mediaObjects)
+      .where(eq(mediaObjects.parentId, parentId));
+    return rows.length;
+  }
+
   /** HOW MANY VERSION ROWS A MESSAGE OWNS. Called by `retention.itest.ts` only, which
    * is `listMessagesRaw`'s convention: a test that needs SQL cannot write it, because
    * `eslint.config.mjs` restricts `drizzle-orm` and `pg` to this directory. */

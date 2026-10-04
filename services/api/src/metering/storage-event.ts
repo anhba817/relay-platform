@@ -9,12 +9,21 @@ import type { Publisher } from "../outbox/publisher";
 
 /** FR-MED-12's producer (chapter 4.16). One function, four causes.
  *
- * **THE CAUSES ARE FOUR AND THE CALLERS ARE THREE.** `reserved` comes from the slot
+ * **THE CAUSES ARE FOUR AND SO ARE THE CALLERS, SINCE CHAPTER 4.20.** `reserved` comes from the slot
  * route, `rejected` and `rendition` from the verdict handler, and `deleted` from
  * **nothing yet** — chapter 4.15 established that no code path deletes a
  * `media_objects` row, because the rejection path removes bytes and keeps the row on
- * purpose (`0018`: *"a rejected object's row is all that survives it"*). The reaper is
- * `docs/12` row 22's, the erasure chapter, and this signature is the one it will call.
+ * purpose (`0018`: *"a rejected object's row is all that survives it"*). **`deleted`
+ * now comes from `retention/sweep.ts`**, which destroys an object whose every
+ * referencing message has expired — the first code path in this platform that removes
+ * a `media_objects` row at all. FR-MED-10's 24-hour orphan reaper is still row 22's and
+ * will be the second.
+ *
+ * AND WITHOUT THIS THE SWEEP WOULD HAVE BEEN SILENTLY WRONG IN ONE DIRECTION ONLY. The
+ * operational quota is `sum(declared_bytes)` over rows (SRS 1.17) and corrects itself
+ * the moment the row goes, so every operational assertion stays green while the
+ * analytical meter — a sum of events — keeps charging for bytes that no longer exist.
+ * That asymmetry is what made it easy to miss and expensive to miss.
  *
  * Following `CLAUDE.md`'s convention: a claim about when a symbol runs names the thing
  * that runs it, so *"called on deletion"* would be false today and is written as what it

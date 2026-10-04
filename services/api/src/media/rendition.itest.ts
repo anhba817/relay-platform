@@ -263,11 +263,29 @@ describe("a rendition belongs to its parent", () => {
         "the sweep found no reads of media_objects at all, so it did not look",
       ).toBeGreaterThan(0);
 
+      // CHAPTER 4.20 MADE THIS NUMBER ONE, which is what the paragraph above was
+      // waiting for. The retention sweep destroys an object whose every referencing
+      // message has expired, so `Repository.destroyMediaObjects` is the first row
+      // deletion this platform has had — and the count stops being the assertion the
+      // moment it stops being zero.
+      //
+      // SO THE CLAIM IS THE PAIRING NOW, NOT THE ABSENCE. Every row deletion must be
+      // on a path that also removes the bytes, because the store has no foreign keys
+      // and nothing cascades there: a row deleted without its object leaves bytes
+      // nobody can reach and the tenant is still charged for them. One hit and one
+      // caller is a weaker statement than zero hits, and it is the strongest one
+      // available once a deletion exists.
       const hits = sweep("delete(mediaObjects)\\|DELETE FROM media_objects");
       expect(
         hits,
         `row-deletion paths changed:\n${hits.join("\n")}\nWire deleteObjectWithRenditions into the new one.`,
-      ).toHaveLength(0);
+      ).toHaveLength(1);
+
+      const byteDeletes = sweep("deleteObjectWithRenditions(");
+      expect(
+        byteDeletes.length,
+        "a media_objects row is deleted somewhere and nothing removes the bytes",
+      ).toBeGreaterThan(1);
     });
   });
 
