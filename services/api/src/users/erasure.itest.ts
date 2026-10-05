@@ -353,7 +353,6 @@ describe("the receipt is evidence", () => {
   let app: INestApplication;
   let url: string;
   let db: Db;
-  let store: AnalyticalStore;
   let mine: { id: string; credential: string; repo: Repository };
 
   const erase = (externalId: string) =>
@@ -380,7 +379,6 @@ describe("the receipt is evidence", () => {
     url = await app.getUrl();
 
     db = createDb(createPool());
-    store = createAnalyticalStore();
     const env = await createEnvironment(db, { name: "erasure-receipt" });
     mine = {
       id: env.id,
@@ -517,6 +515,98 @@ describe("the receipt is evidence", () => {
       await foreignRepo.getUserByExternalId(victim.external_id),
       "the other tenant's user was erased",
     ).not.toBeNull();
+  });
+
+  it("reports cannot_erase when the delete returns and the rows are still there", async () => {
+    // T065. THE ARM THAT MAKES THE VERB CHOICE MATTER. `ALTER TABLE … DELETE` returns
+    // before it acts, so a receipt built on it would report rows it had not removed.
+    // The lightweight form is visible to the next statement — and this asserts what
+    // happens if a store ever stops behaving that way, which is the only reason the
+    // verification `SELECT` exists at all.
+    const stubborn: AnalyticalStore = {
+      query: (sql) =>
+        Promise.resolve(sql.startsWith("SELECT") ? [["7"]] : []),
+    };
+    const results = await eraseFromAnalyticalStore(mine.id, "whoever", stubborn);
+    const ce = results.find((r) => r.store === "connection_events");
+    expect(ce).toMatchObject({ outcome: "cannot_erase", rows: 7 });
+    expect(ce?.note).toMatch(/still there/);
+  });
+
+  it("reports zero when the count query answers with no row at all", async () => {
+    // T065/T066. THE LAST TWO BRANCHES, AND THE PROBE IS WHAT FOUND THEM. Two tests
+    // took this file from 63.63% to 81.81% and the pin was written at 90 on the
+    // assumption it had reached 100 — which only the both-ways pin probe caught,
+    // because a pin BELOW the real number is silent in exactly the way a pin on an
+    // absent file is.
+    //
+    // `SELECT count()` always answers with one row, so these two `?? 0` arms are
+    // defensive. They are covered rather than pinned around, because the alternative
+    // is a lower floor justified by a sentence nobody can check.
+    const empty: AnalyticalStore = { query: () => Promise.resolve([]) };
+    const results = await eraseFromAnalyticalStore(mine.id, "whoever", empty);
+    expect(results.find((r) => r.store === "connection_events")).toMatchObject({
+      outcome: "erased",
+      rows: 0,
+    });
+  });
+
+  it("names the HTTP status when the store refuses, and does not when there was none", async () => {
+    // T065, and the distinction is the one the ClickHouse-stopped run exposed.
+    // `AnalyticalStoreError.status` is 0 when there was no response at all — an
+    // abort, a refused connection, a DNS failure — so `the analytical store answered
+    // 0` is a sentence reporting a status that does not exist, to the reader least
+    // able to come and ask what it means.
+    const refusing: AnalyticalStore = {
+      query: () => Promise.reject(new AnalyticalStoreError("Code: 62", 400)),
+    };
+    const silent: AnalyticalStore = {
+      query: () => Promise.reject(new AnalyticalStoreError("ECONNREFUSED", 0)),
+    };
+    const a = (await eraseFromAnalyticalStore(mine.id, "x", refusing)).find(
+      (r) => r.store === "connection_events",
+    );
+    const b = (await eraseFromAnalyticalStore(mine.id, "x", silent)).find(
+      (r) => r.store === "connection_events",
+    );
+    expect(a?.outcome).toBe("not_reached");
+    expect(a?.note).toMatch(/HTTP 400/);
+    expect(b?.outcome).toBe("not_reached");
+    expect(b?.note).toMatch(/did not answer/);
+    expect(b?.note).not.toMatch(/0/);
+  });
+
+  it("destroys the media objects the user uploaded, and counts them", async () => {
+    // THE RECEIPT CLAIMS A ROW COUNT FOR `media_objects` AND NOTHING EXERCISED IT.
+    // Every other fixture in this file creates a user with no uploads, so the
+    // traversal's media branch was never entered — `eraseUser`'s `owned.map(...)`
+    // has no caller, the `destroyMediaObjects` call gets an empty array and returns
+    // early, and the receipt reports `rows: 0` for a store it never touched. A green
+    // suite and a claim nobody checked.
+    //
+    // FOUND BY THE COVERAGE RATCHET, NOT BY READING: `repository.ts` measured 179 of
+    // 180 functions against a pin of 100%, persistently, across two runs whose test
+    // failures were different — which is what ruled out a flaky neighbour and left
+    // an arm this suite had simply never reached.
+    const id = `media-${randomUUID().slice(0, 8)}`;
+    const user = await mine.repo.createUser(id, "Uploader");
+    const mediaId = randomUUID();
+    await mine.repo.reserveMediaSlot({
+      id: mediaId,
+      userId: user.id,
+      filename: "evidence.png",
+      mimeType: "image/png",
+      declaredBytes: 1024,
+      objectKey: `${mine.id}/${mediaId}`,
+    });
+    expect(await mine.repo.mediaObjectExistsRaw(mediaId)).toBe(true);
+
+    const { body } = await receiptFor(id);
+    const media = body.stores.find((s) => s.store === "media_objects");
+    expect(media).toMatchObject({ outcome: "erased", rows: 1 });
+
+    // AND THE ROW IS ACTUALLY GONE, because a receipt is a claim.
+    expect(await mine.repo.mediaObjectExistsRaw(mediaId)).toBe(false);
   });
 
   it("names the 73.6% its own media erasure cannot reach", async () => {
