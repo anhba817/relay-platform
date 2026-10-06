@@ -241,9 +241,29 @@ services:
       timeout: 10s
       # LONGER THAN THE OTHERS, because this is not "is it up" — it is "has
       # freshclam finished", and the answer is a 355,678-signature download that is
-      # bandwidth-bound and unbounded on a slow link. Twenty retries at five
-      # seconds is 100 s of grace after the start period.
-      retries: 20
+      # bandwidth-bound and unbounded on a slow link.
+      #
+      # TWENTY RETRIES WAS 130 s OF GRACE AND CI NEEDED 136 (feature 068). The
+      # budget did not shrink — **the gap the download has to close grew**. This
+      # image is pinned at `clamav/clamav:1.5` and the database it ships ages one
+      # day per day: on 2026-10-06 it booted at local 28136 against a remote 28145,
+      # nine versions and more than the seven days this check allows. So a fresh
+      # volume can no longer pass on the bundled database at all — it must download
+      # first, and `clamdscan -V` asks the DAEMON, so the daemon must then reload.
+      # Measured in CI: `compose up` at 11:38:52, `unhealthy` at 11:41:08, and
+      # `daily.cld updated (version: 28145, sigs: 355726)` in the last log line
+      # before the failure. It finished the download as the budget ran out.
+      #
+      # INVISIBLE ON ANY DEVELOPER MACHINE, for 056-9's reason exactly: the volume
+      # persists, so this host answered `28143/Sun Oct 4` and `healthy` in
+      # milliseconds while CI could not pass at all. The only instrument that sees
+      # it is an empty volume.
+      #
+      # Forty retries is 230 s. That is not a measurement of the download, which is
+      # bandwidth-bound and will differ on every runner; it is headroom over the one
+      # observation there is. **The real fix is a fresher image**, and the day this
+      # number has to move again is the day to take it.
+      retries: 40
       start_period: 30s
 
 
