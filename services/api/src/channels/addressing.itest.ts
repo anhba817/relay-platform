@@ -81,7 +81,7 @@ describe("addressing a channel", () => {
     // tombstoned it, and the uuid pass answered 403 editing a tombstone — a
     // failure that looks exactly like the uuid path breaking and is the fixture.
     messageIds = [];
-    for (const _ of [0, 1]) {
+    while (messageIds.length < 2) {
       const sent = await fetch(`${url}/v1/channels/${ordersChannelId}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${memberToken}` },
