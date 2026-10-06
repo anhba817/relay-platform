@@ -24,6 +24,7 @@ import {
   type MembershipPublisher,
 } from "../membership/publisher";
 import { ZodValidationPipe } from "../messages/zod-validation.pipe";
+import { ChannelIdPipe } from "./channel-id.pipe";
 import { ChannelsService } from "./channels.service";
 import {
   addMembersBodySchema,
@@ -112,7 +113,7 @@ export class ChannelsController {
   @Get(":channelId")
   @Accepts("application", "user")
   async read(
-    @Param("channelId") channelId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
     @Req() req: RequestWithPrincipal,
   ) {
     const actingExternalId =
@@ -151,13 +152,13 @@ export class ChannelsController {
    */
   @Post(":channelId/archive")
   @HttpCode(HttpStatus.OK)
-  async archive(@Param("channelId") channelId: string) {
+  async archive(@Param("channelId", ChannelIdPipe) channelId: string) {
     return this.channels.setArchived(channelId, true);
   }
 
   @Delete(":channelId/archive")
   @HttpCode(HttpStatus.OK)
-  async unarchive(@Param("channelId") channelId: string) {
+  async unarchive(@Param("channelId", ChannelIdPipe) channelId: string) {
     return this.channels.setArchived(channelId, false);
   }
 
@@ -169,7 +170,7 @@ export class ChannelsController {
    */
   @Patch(":channelId/members/:userExternalId")
   async setMemberRole(
-    @Param("channelId") channelId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
     @Param("userExternalId") userExternalId: string,
     @Body(new ZodValidationPipe(setMemberRoleBodySchema)) body: SetMemberRoleBody,
   ) {
@@ -189,7 +190,7 @@ export class ChannelsController {
   @Post(":channelId/members/remove")
   @HttpCode(HttpStatus.OK)
   async removeMembers(
-    @Param("channelId") channelId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
     @Body(new ZodValidationPipe(removeMembersBodySchema)) body: RemoveMembersBody,
   ) {
     const results = await this.channels.removeMembers(channelId, body);
@@ -254,7 +255,7 @@ export class ChannelsController {
   @HttpCode(HttpStatus.OK)
   @Accepts("user")
   async join(
-    @Param("channelId") channelId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
     @Req() req: RequestWithPrincipal,
   ) {
     // The guard has already refused anything that is not a user principal, so this
@@ -282,7 +283,7 @@ export class ChannelsController {
   @Post(":channelId/members")
   @HttpCode(200)
   async addMembers(
-    @Param("channelId") channelId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
     @Body(new ZodValidationPipe(addMembersBodySchema)) body: AddMembersBody,
   ) {
     const members = await this.channels.addMembers(channelId, body);

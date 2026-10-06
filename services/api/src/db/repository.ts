@@ -1454,6 +1454,21 @@ export async function organisationRecipients(
  * run it (the broker chapter's data model). */
 export const DISPATCHER_CONSUMER = "dispatcher";
 
+/** Whether a path segment could be a uuid at all (FR-CHN-11).
+ *
+ * A SHAPE TEST AND NOT A VALIDATION. Nothing here asks whether the uuid names a
+ * row — only whether handing it to a `uuid` column can raise `22P02`, which is
+ * the question `resolveChannelId` has to answer before it writes a predicate.
+ * The 500 this chapter opens on is that cast, so the one branch that matters is
+ * the negative one: a value failing this test is never compared to `channels.id`.
+ *
+ * Deliberately not `z.uuid()`. The repository layer takes no schema dependency
+ * (the lint rule keeps the query engine here and the schemas out), and the
+ * question is narrower than zod's: Postgres accepts any of the eight canonical
+ * hex-and-dash forms and this is the one it will not raise on. */
+const UUID_SHAPE =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 /** Turn one event into one delivery per matching endpoint — **in one
  * transaction** (research R2).
  *
@@ -3550,6 +3565,62 @@ export class Repository {
         ),
       );
     return rows[0] ?? null;
+  }
+
+  /** Turn whatever arrived in a path segment into this channel's key (FR-CHN-11).
+   *
+   * THE SHAPE TEST IS WHAT REMOVES THE 500, and it is not an optimisation. A path
+   * segment that cannot parse as a uuid is handed to the identity query alone, so
+   * `'order-88412'::uuid` never happens — and that cast is the whole of the defect
+   * this chapter opens on. Postgres raises it before the `OR` beside it can
+   * short-circuit, so a single `external_id = $2 OR id = $2::uuid` is not a
+   * resolution that sometimes fails: it is one that always fails for every value
+   * a customer is likely to send.
+   *
+   * THE IDENTITY WINS A TRUE TIE. An `external_id` is `z.string().min(1).max(255)`
+   * and may itself be a uuid — legal, and 0 of 41,772 channels have one. When a
+   * value could name both spaces, `order by (external_id = $2) desc` prefers the
+   * channel the customer NAMED; the other stays reachable by its uuid from any
+   * caller holding it. Key-first would strand a customer permanently with no error
+   * they could act on, which is the only argument that decides this: the two
+   * lookups cost the same, measured twice a day apart with the ordering reversing
+   * between runs.
+   *
+   * ONE QUERY, AND BOTH ARMS ARE INDEX SCANS. 4.18 found a keyset cursor written
+   * as an `OR` landing in a `Filter:` and re-walking every page, so this plan was
+   * read before the form was chosen, not after:
+   *
+   *     Limit -> Sort -> Bitmap Heap Scan              shared hit=11   0.068 ms
+   *       BitmapOr
+   *         Bitmap Index Scan …_environment_id_external_id_unique   Index Cond
+   *         Bitmap Index Scan channels_pkey                         Index Cond
+   *
+   * The key arm's tenancy lands on the heap recheck rather than in its index
+   * condition — a foreign tenant's row enters the bitmap and is filtered out. That
+   * reads as a leak and is not: the plain `channels_pkey` lookup every route runs
+   * today does exactly the same thing.
+   *
+   * SCOPED BY CONSTRUCTION. `this.environmentId` comes from the constructor, which
+   * is 4.21's mechanism: there is no predicate here for a later chapter to forget.
+   * Delete it and `gauntlet.itest.ts` turns red.
+   *
+   * Called by `ChannelIdPipe.transform`, which is the only caller. */
+  async resolveChannelId(segment: string): Promise<string | null> {
+    const looksLikeUuid = UUID_SHAPE.test(segment);
+    const rows = await this.db
+      .select({ id: channels.id })
+      .from(channels)
+      .where(
+        and(
+          eq(channels.environmentId, this.environmentId),
+          looksLikeUuid
+            ? or(eq(channels.externalId, segment), eq(channels.id, segment))
+            : eq(channels.externalId, segment),
+        ),
+      )
+      .orderBy(sql`(${channels.externalId} = ${segment}) desc`)
+      .limit(1);
+    return rows[0]?.id ?? null;
   }
 
   async listChannels(): Promise<ChannelRow[]> {

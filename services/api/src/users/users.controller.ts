@@ -19,6 +19,7 @@ import { ALL_CHANNELS } from "@relay/protocol";
 import { Repository } from "../db/repository";
 
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
+import { ChannelIdPipe } from "../channels/channel-id.pipe";
 import {
   MEMBERSHIP_PUBLISHER,
   type MembershipPublisher,
@@ -89,7 +90,7 @@ export class UsersController {
   @Accepts("application", "user")
   async setReadPosition(
     @Param("externalId") externalId: string,
-    @Param("channelId") channelId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
     @Body(new ZodValidationPipe(readPositionBodySchema)) body: ReadPositionBody,
   ): Promise<{ sequence: number }> {
     return this.users.setReadPosition(externalId, channelId, body.sequence);

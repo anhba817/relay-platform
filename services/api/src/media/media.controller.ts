@@ -48,10 +48,14 @@ export class MediaController {
    * uuid`, and the filter has no rung for it — a caller-triggered 500 on sixteen shipped
    * routes, thirteen taking `channelId` and three taking `messageId`. It is chapter
    * 4.11's research R3 exactly, which found the same defect in a request BODY, measured
-   * it, and fixed it with `z.uuid()` — while nobody looked at the path. The other sixteen
-   * are recorded in `gaps.md` with their measurement rather than repaired here, because a
-   * chapter about signed delivery that rewrites three controllers is teaching two things
-   * badly.
+   * it, and fixed it with `z.uuid()` — while nobody looked at the path.
+   *
+   * THE OTHER SIXTEEN ARE CLOSED, and this sentence used to say they were recorded in
+   * `gaps.md` rather than repaired, because a chapter about signed delivery that
+   * rewrites three controllers teaches two things badly. The identifier chapter
+   * (FR-CHN-11) repaired them: `ChannelIdPipe` closes the thirteen `channelId` routes
+   * as a side effect of never casting a value that cannot be a uuid, and
+   * `UuidParamPipe` closes the three `messageId` ones. 058-3 is 16 to 0.
    *
    * NOT THROUGH `ZodValidationPipe`, AND THE REASON IS ITS `field`. That pipe names the
    * field from the zod issue's `path`, which is empty for a scalar and then omitted — so

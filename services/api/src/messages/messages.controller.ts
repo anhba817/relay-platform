@@ -16,6 +16,7 @@ import {
 } from "@nestjs/common";
 
 import { Accepts, CredentialGuard } from "../auth/credential.guard";
+import { ChannelIdPipe } from "../channels/channel-id.pipe";
 import { Repository } from "../db/repository";
 import { MessagesService } from "./messages.service";
 import {
@@ -33,6 +34,7 @@ import {
 // to compile it.
 import type { EditMessageBody, HistoryQuery, SendMessageBody } from "./messages.schema";
 import type { RequestWithPrincipal } from "../auth/principal";
+import { UuidParamPipe } from "./uuid-param.pipe";
 import { ZodValidationPipe } from "./zod-validation.pipe";
 
 /** The end user this request acts for, or `undefined` when the tenant is acting.
@@ -114,7 +116,7 @@ export class MessagesController {
 
   @Post()
   async send(
-    @Param("channelId") channelId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
     @Body(new ZodValidationPipe(sendMessageBodySchema)) body: SendMessageBody,
     @Req() req: RequestWithPrincipal,
   ) {
@@ -298,8 +300,8 @@ export class MessagesController {
   @Patch(":messageId")
   @Accepts("user")
   async edit(
-    @Param("channelId") channelId: string,
-    @Param("messageId") messageId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
+    @Param("messageId", new UuidParamPipe("messageId")) messageId: string,
     @Body(new ZodValidationPipe(editMessageBodySchema)) body: EditMessageBody,
     @Req() req: RequestWithPrincipal,
   ) {
@@ -406,8 +408,8 @@ export class MessagesController {
   @Delete(":messageId")
   @HttpCode(204)
   async remove(
-    @Param("channelId") channelId: string,
-    @Param("messageId") messageId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
+    @Param("messageId", new UuidParamPipe("messageId")) messageId: string,
     @Req() req: RequestWithPrincipal,
   ): Promise<void> {
     // THE DELETER, PER CREDENTIAL CLASS. A user token names its subject; an application
@@ -496,8 +498,8 @@ export class MessagesController {
   @Get(":messageId/edits")
   @Accepts("application")
   async edits(
-    @Param("channelId") channelId: string,
-    @Param("messageId") messageId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
+    @Param("messageId", new UuidParamPipe("messageId")) messageId: string,
   ): Promise<{
     edits: Array<{
       prior_text: string;
@@ -526,7 +528,7 @@ export class MessagesController {
 
   @Get()
   async history(
-    @Param("channelId") channelId: string,
+    @Param("channelId", ChannelIdPipe) channelId: string,
     @Query(new ZodValidationPipe(historyQuerySchema)) query: HistoryQuery,
     @Req() req: RequestWithPrincipal,
   ) {
