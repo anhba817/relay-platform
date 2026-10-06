@@ -230,13 +230,44 @@ services:
       # SEVEN DAYS. ClamAV publishes daily; a bound of one would go red on any
       # machine that starts the stack before freshclam's first run of the day, and
       # a bound of thirty would pass the window this check exists to catch.
+      # AND IT ASKS THE DAEMON TO RELOAD WHEN THE ANSWER IS STALE (feature 068).
+      #
+      # `freshclam` downloads the database and then cannot tell `clamd` about it:
+      #
+      #     daily.cld updated (version: 28145, sigs: 355726, ...)
+      #     WARNING: Clamd was NOT notified: Can't connect to clamd through
+      #              /tmp/clamd.sock: No such file or directory
+      #
+      # The two race at startup. When the download wins, clamd loads the fresh
+      # database and this check passes at once; when clamd wins, it loads the one
+      # the IMAGE bundles and freshclam's daemon then sleeps for hours before it
+      # would try again. So without the reload below, what this check measures is
+      # the age of the database clamd happened to load at container start.
+      #
+      # THE CHECK RUNS FIRST AND THE RELOAD ONLY ON FAILURE, which matters: a
+      # reload re-reads 3,628,118 signatures, and doing that every five seconds on
+      # a healthy container would be a steady background cost for nothing. On the
+      # failing path it is asked once per interval until it lands.
+      #
+      # MEASURED, both arms. A daemon reporting `28143` with `28145` on disk was
+      # reloaded and answered `28144` — `Database correctly reloaded (3628118
+      # signatures)` in clamd's own log, about eight seconds, which is two
+      # intervals. A simulated stale version takes the `||` branch, triggers the
+      # reload and returns 1.
+      #
+      # WHAT COULD NOT BE REPRODUCED HERE: CI's losing side of the race. On this
+      # machine a container with an empty volume had today's database 45 seconds
+      # in, because the download beats clamd's startup on a fast link. The fix is
+      # reasoned from the measured mechanism rather than from a local reproduction
+      # of the failure, and CI is what confirms it.
       test:
         - CMD-SHELL
         - >-
           V=$$(clamdscan -V) &&
           D=$$(echo "$$V" | cut -d/ -f3) &&
           B=$$(date -D "%a %b %d %H:%M:%S %Y" -d "$$D" +%s) &&
-          [ $$(( ($$(date +%s) - $$B) / 86400 )) -le 7 ]
+          [ $$(( ($$(date +%s) - $$B) / 86400 )) -le 7 ] ||
+          { clamdscan --reload >/dev/null 2>&1; false; }
       interval: 5s
       timeout: 10s
       # LONGER THAN THE OTHERS, because this is not "is it up" — it is "has
