@@ -694,6 +694,61 @@ export default defineConfig({
           lines: 94,
           statements: 94,
         },
+        // CHAPTER 4.22. The resolution is one line and v8 counts four branches in
+        // the file; three run. Measured rather than assumed, because T033a said a
+        // figure below 100 on a tenant-isolation file means a missing test:
+        //
+        //     branch 0  binary-expr  line 84  [97, 56]   the `??`, both arms
+        //     branch 1  cond-expr    line 79  [ 0,  1]   `@Injectable()`
+        //
+        // **LINE 79 IS THE DECORATOR AND THERE IS NO TERNARY ON IT.** Both arms
+        // carry an identical location with a null end column, which is what the
+        // compiler's own emitted code looks like after source-mapping. No test can
+        // reach an arm that is not in the file, so this is 75 and the clause is met
+        // by the three that are.
+        //
+        // I WAS WRONG TWICE GETTING HERE AND THE SECOND ONE IS WORTH THE LINES.
+        // `media/media.service.ts` is also `@Injectable()`, also takes `Repository`
+        // by class type, and measures 18/18 — which looked like a refutation. Its
+        // one null-end-column `cond-expr` is at line 113 and is a REAL ternary
+        // spanning four lines: `userExternalId === undefined ? null : await …`,
+        // counts [1, 5]. **A null end column means a multi-line expression, not an
+        // emitted one**; what distinguishes the shim is two arms at the SAME
+        // location. Comparing the percentages said one thing and comparing the
+        // branch maps said another.
+        "services/api/src/channels/channel-id.pipe.ts": {
+          branches: 75,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // 058-3's last three. Four statements, one `safeParse`, both arms run.
+        "services/api/src/messages/uuid-param.pipe.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        // CHAPTER 4.22 EDITED THESE TWO AND NEITHER HAD A PIN, which a re-measure
+        // of existing pins cannot see — 062-12's finding, where 68 of 139 files
+        // were unpinned and a human found it by comparing one chapter to another.
+        // 92.50 / 85.00 / 100 / 97.22 measured; pinned under it by the usual
+        // margin, because this file is a controller with forty-odd branch points
+        // and a moving denominator is exactly what that margin is for.
+        "services/api/src/channels/channels.controller.ts": {
+          branches: 83,
+          functions: 100,
+          lines: 95,
+          statements: 90,
+        },
+        // 100 / 100 / 100 / 100 measured, and pinned there: it is a schema file of
+        // pure declarations, so there is no denominator to move.
+        "services/api/src/users/users.schema.ts": {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
 
         "services/api/src/webhooks/disable.ts": {
           branches: 100,
