@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException, type PipeTransform } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
+
+import { Injectable, type PipeTransform } from "@nestjs/common";
 
 import { Repository } from "../db/repository";
 
@@ -41,6 +43,34 @@ import { Repository } from "../db/repository";
  * edits that do nothing. That rule is real and it governs dependencies, not
  * enhancers.
  *
+ * ## IT RESOLVES AND IT NEVER REFUSES, AND THE GAUNTLET IS WHY
+ *
+ * The first version threw `NotFoundException("channel not found")` when nothing
+ * resolved — the same refusal every handler makes, which looked exactly right and
+ * was a disclosure. **A pipe runs before the handler, so it answers before every
+ * check the handler makes**, and two of those checks come first on purpose:
+ *
+ *     a BANNED user, real channel        403 user_banned      the ban check
+ *     a BANNED user, invented channel    404 not_found        this pipe
+ *
+ * `gauntlet.itest.ts` asserts those two are byte-identical once `request_id` is
+ * stripped — *a banned user gets one answer for every channel id* — and with the
+ * throwing pipe a banned user could tell a real channel from one that does not
+ * exist. `messages.itest.ts` caught the same shape one check over: a token for a
+ * user with no row answers `400 unknown user` before the channel is read, so a
+ * refusing pipe made an absent channel answer 404 where a present one answered
+ * 400, and the pair stopped matching.
+ *
+ * So an unresolved segment becomes **a uuid that names nothing** and the handler
+ * refuses in its own order, exactly as it does today for a caller who passes a
+ * uuid nobody has. Every ordering in all thirteen routes is the one that shipped;
+ * the only thing this pipe changes is which strings can reach it.
+ *
+ * A FRESH RANDOM UUID RATHER THAN A FIXED SENTINEL. A nil uuid is a value a row
+ * could in principle hold; `randomUUID()` cannot collide with anything, and it
+ * makes the claim exact — an identifier that names nothing behaves like a uuid
+ * that names nothing, because downstream it IS one.
+ *
  * Applied at the thirteen `@Param("channelId", ChannelIdPipe)` sites: seven in
  * `channels.controller.ts`, five under `messages.controller.ts`'s
  * `v1/channels/:channelId/messages` prefix, one on `users.controller.ts`'s read
@@ -51,15 +81,6 @@ export class ChannelIdPipe implements PipeTransform<string, Promise<string>> {
   constructor(private readonly repo: Repository) {}
 
   async transform(value: string): Promise<string> {
-    const id = await this.repo.resolveChannelId(value);
-    if (id === null) {
-      // THE SAME REFUSAL THE HANDLERS ALREADY MAKE, word for word. A constant
-      // message is `channels.service.ts`'s decision and FR-TEN-05's requirement:
-      // a foreign channel and an absent one must answer identically, or the
-      // difference is itself a disclosure. Echoing the segment back here would
-      // undo that for every route at once.
-      throw new NotFoundException("channel not found");
-    }
-    return id;
+    return (await this.repo.resolveChannelId(value)) ?? randomUUID();
   }
 }
