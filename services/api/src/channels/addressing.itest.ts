@@ -317,4 +317,38 @@ describe("addressing a channel", () => {
       expect(byItsOwnName).toMatchObject({ id: victim.id });
     });
   });
+
+  // FR-006 / SC-006 — WHAT A CUSTOMER RECEIVES THAT THEY CANNOT USE.
+  //
+  // The sweep that produced this went looking for the `GET /v1/users` listing
+  // cursor ADR-37 names as its one live edge, found there is no such route, and
+  // enumerated every v1 response shape instead. One field failed the test — an
+  // identifier that is Relay's alone AND that no route accepts — and it was on a
+  // write route everyone uses.
+  describe("the internal key a customer could not use", () => {
+    it("is gone from the member-add response", async () => {
+      const res = await fetch(`${url}/v1/channels/${ORDER}/members`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${credential}` },
+        body: JSON.stringify({ user_ids: [MEMBER] }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { members: Record<string, unknown>[] };
+      expect(body.members.length).toBeGreaterThan(0);
+      for (const m of body.members) {
+        expect(Object.keys(m).sort()).toEqual(["external_id", "role", "status"]);
+      }
+    });
+
+    // THE CONTROL, and it is what makes the removal mean something: the value that
+    // used to be in that field is accepted by nothing, while the one that stayed
+    // is accepted by the route a customer would reach for.
+    it("because no route took it, and the identity does", async () => {
+      const row = await repo.getUserByExternalId(MEMBER);
+      const byKey = await get(`/v1/users/${row!.id}`);
+      const byIdentity = await get(`/v1/users/${MEMBER}`);
+      expect(byKey.status).toBe(404);
+      expect(byIdentity.status).toBe(200);
+    });
+  });
 });

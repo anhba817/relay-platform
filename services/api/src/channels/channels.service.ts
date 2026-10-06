@@ -39,7 +39,22 @@ export interface MemberRemoval {
 }
 
 export interface MemberResult {
-  user_id: string;
+  /** THE IDENTITY, AND NOTHING ELSE (FR-006, FR-CHN-11).
+   *
+   * This shape carried `user_id: string` — the row's `users.id` — on every member
+   * added, for every user, erased or not. **No route accepts that value**:
+   * `GET /v1/users/{a users.id}` is 404 while `GET /v1/users/{external_id}` is
+   * 200, so a caller who stored it held a key to nothing. No test asserted it, no
+   * clause documented it, no tutorial page showed it, and ADR-37's opening
+   * sentence said it could not happen — *"`users.id` is an internal uuid that the
+   * platform exposes nowhere a caller can act on."*
+   *
+   * Found by FR-006's sweep rather than by reading: the chapter went looking for
+   * the listing cursor ADR-37 names, found that route does not exist, and swept
+   * every v1 response shape instead. Three siblings turned up and are kept with
+   * their reasons — `audit_log[].id` and `actor.id` are record references a
+   * customer quotes back, and `request_id` is constitution V's requirement. This
+   * one had no reason. */
   external_id: string;
   status: "added" | "already_a_member";
   /** What role the member holds AFTER the call — read back, not
@@ -278,7 +293,6 @@ export class ChannelsService {
         throw new NotFoundException("channel not found");
       }
       results.push({
-        user_id: user.id,
         external_id: externalId,
         status: outcome,
         // The role the member ends up with, read back rather than echoed: on an
