@@ -685,6 +685,66 @@ describe("the isolation gauntlet", () => {
     expect(verdict.stateChanged, "the victim gained a member").toBe(false);
   });
 
+  // THE NEW WAY TO NAME SOMEBODY ELSE'S CHANNEL (FR-CHN-11, constitution I).
+  //
+  // Until chapter 4.22 there was one forgeable channel identifier and it was a uuid,
+  // which an attacker has to be GIVEN. Now there are two, and the second is one they
+  // can GUESS: `support-ticket-1`, `order-88412`, the customer's own naming scheme.
+  // The resolution is scoped by the request-scoped `Repository`'s constructor, so a
+  // foreign identifier resolves to nothing — and this is the test that says so.
+  //
+  // THE PAIR IS FOREIGN-VERSUS-ABSENT, as everywhere else here: the victim's real
+  // external id against one nobody has used. Indistinguishable, or the answer tells
+  // the attacker the victim's channel exists.
+  it("GET /v1/channels/:channelId — a foreign EXTERNAL id reads as an absent one", async () => {
+    attacked.add("GET /v1/channels/:channelId");
+    const foreign = await fetch(`${url}/v1/channels/${t.victim.channelExternalId}`, {
+      headers: { authorization: `Bearer ${t.attacker.credential}` },
+    });
+    const absent = await fetch(`${url}/v1/channels/nobody-has-named-this`, {
+      headers: { authorization: `Bearer ${t.attacker.credential}` },
+    });
+    expect(foreign.status).toBe(absent.status);
+    expect(withoutRequestId(await foreign.json())).toEqual(
+      withoutRequestId(await absent.json()),
+    );
+  });
+
+  it("POST /v1/channels/:channelId/messages — a foreign EXTERNAL id writes nothing", async () => {
+    attacked.add("POST /v1/channels/:channelId/messages");
+    const verdict = await writeAttack(
+      url,
+      t.attacker.credential,
+      {
+        method: "POST",
+        path: `/v1/channels/${t.victim.channelExternalId}/messages`,
+        body: { user: "intruder", text: "by the name you gave it" },
+      },
+      {
+        method: "POST",
+        path: `/v1/channels/nobody-has-named-this/messages`,
+        body: { user: "intruder", text: "by a name nobody gave" },
+      },
+      () => t.victim.repo.listMessagesRaw(t.victim.channelId),
+    );
+    expect(verdict.differences, verdict.differences.join("; ")).toEqual([]);
+    expect(verdict.stateChanged, "the victim's channel took a message").toBe(false);
+  });
+
+  // AND THE CONTROL THAT MAKES BOTH OF THOSE MEAN SOMETHING: the same external id,
+  // from the tenant that owns it, must WORK. A resolution that refused everyone
+  // would pass the two attacks above perfectly.
+  it("the control: the victim's own credential reaches it by the same name", async () => {
+    const res = await fetch(`${url}/v1/channels/${t.victim.channelExternalId}`, {
+      headers: { authorization: `Bearer ${t.victim.credential}` },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      external_id: t.victim.channelExternalId,
+      id: t.victim.channelId,
+    });
+  });
+
   it("POST /v1/channels — the other tenant's external_id is not interference", async () => {
     attacked.add("POST /v1/channels");
     // THIS ROUTE CARRIES NO IDENTIFIER TO FORGE, so the pair is not foreign-versus-
