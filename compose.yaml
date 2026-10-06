@@ -241,29 +241,34 @@ services:
       timeout: 10s
       # LONGER THAN THE OTHERS, because this is not "is it up" — it is "has
       # freshclam finished", and the answer is a 355,678-signature download that is
-      # bandwidth-bound and unbounded on a slow link.
+      # bandwidth-bound and unbounded on a slow link. Twenty retries at five
+      # seconds is 100 s of grace after the start period.
       #
-      # TWENTY RETRIES WAS 130 s OF GRACE AND CI NEEDED 136 (feature 068). The
-      # budget did not shrink — **the gap the download has to close grew**. This
-      # image is pinned at `clamav/clamav:1.5` and the database it ships ages one
-      # day per day: on 2026-10-06 it booted at local 28136 against a remote 28145,
-      # nine versions and more than the seven days this check allows. So a fresh
-      # volume can no longer pass on the bundled database at all — it must download
-      # first, and `clamdscan -V` asks the DAEMON, so the daemon must then reload.
-      # Measured in CI: `compose up` at 11:38:52, `unhealthy` at 11:41:08, and
-      # `daily.cld updated (version: 28145, sigs: 355726)` in the last log line
-      # before the failure. It finished the download as the budget ran out.
+      # AND ON A FRESH VOLUME NO NUMBER OF RETRIES PASSES THIS CHECK (feature 068).
+      # freshclam downloads the database and cannot tell the daemon, every time, on
+      # every machine:
       #
-      # INVISIBLE ON ANY DEVELOPER MACHINE, for 056-9's reason exactly: the volume
-      # persists, so this host answered `28143/Sun Oct 4` and `healthy` in
-      # milliseconds while CI could not pass at all. The only instrument that sees
-      # it is an empty volume.
+      #     daily.cld updated (version: 28145, sigs: 355726, ...)
+      #     WARNING: Clamd was NOT notified: Can't connect to clamd through
+      #              /tmp/clamd.sock: No such file or directory
       #
-      # Forty retries is 230 s. That is not a measurement of the download, which is
-      # bandwidth-bound and will differ on every runner; it is headroom over the one
-      # observation there is. **The real fix is a fresher image**, and the day this
-      # number has to move again is the day to take it.
-      retries: 40
+      # freshclam finishes before clamd has opened its socket, and the freshclam
+      # DAEMON then sleeps for hours before it would try again. `clamdscan -V` asks
+      # the daemon, so what this check measures is **the age of the database clamd
+      # loaded at container start** — not the age of the database.
+      #
+      # ON A WARM VOLUME that is a recent database and the check passes in
+      # milliseconds; this host answers `28143/Sun Oct 4` from the daemon while the
+      # disk holds `28145` written the same morning, and is green. ON AN EMPTY
+      # VOLUME it is whatever the pinned image bundles, which ages one day per day:
+      # on 2026-10-06 that was 28136 against a remote 28145, past the seven days
+      # this check allows, so CI could not pass at all.
+      #
+      # RETRIES WERE RAISED TO 40 AND PUT BACK, because the first reading of the CI
+      # log was "the download finished as the budget ran out" — true, and not the
+      # cause. The next line said the daemon was never told. **A number that cannot
+      # fix a fault should not be left looking as though it did.**
+      retries: 20
       start_period: 30s
 
 
