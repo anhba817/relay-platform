@@ -258,6 +258,15 @@ services:
     environment:
       DATABASE_URL: postgres://relay:relay@postgres:5432/relay
       RELAY_NATS_URL: nats://nats:4222
+      # ONE REPLICA, BECAUSE THIS BROKER IS ONE NODE. The Dockerfile sets
+      # `NODE_ENV=production`, so `replicaCount()` returns ADR-02's R3 and every
+      # `streams.add` answers `replicas > 1 not supported in non-clustered mode`
+      # — the composed api cannot create a stream it does not have (049-2). The
+      # escape hatch has existed since chapter 4.4 and nothing set it: the
+      # streams were created from OUTSIDE the container once, and survived on
+      # the volume for nineteen features, which is why the defect stayed hidden
+      # until feature 068 recreated the volume.
+      RELAY_NATS_REPLICAS: "1"
       # Container names, not localhost — the api's own default is
       # `redis://localhost:6379`, which inside this container is not the Redis
       # service. And the tenant limiter FAILS OPEN by design (SAD §6.3), so a
