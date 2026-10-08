@@ -57,7 +57,7 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
             // The api now reports whether the user is banned, and a stub
             // that does not say is a stub that has not thought about it.
             banned: false,
-            channel_ids: [CHANNEL],
+            channels: [{ id: CHANNEL, external_id: CHANNEL }],
             revisions: {},
             // The limits ride the session response because the
             // gateway has no database to read them from — so the stub supplies
@@ -72,7 +72,7 @@ function stubApi(overrides: Partial<ApiClient> = {}): ApiClient {
         // so a stub that never overrides it is a stub whose re-read agrees with its
         // own connect — which is the state every test in this file that is not about
         // membership wants.
-        memberships: async () => [CHANNEL],
+        memberships: async () => ([CHANNEL]).map((c: string) => ({ id: c, external_id: c })),
         // Null is what a gateway with no metering credential gets, and it is the right
         // default here: every test in this file is about the socket, and a meter that
         // reported would only add a call nobody asserts on.
@@ -1150,7 +1150,7 @@ describe("the socket's limits", () => {
           // The ban flag, which is upstream of this chapter in this order — a stub
           // that does not say is a stub that has not thought about it.
           banned: false,
-          channel_ids: [CHANNEL],
+          channels: [{ id: CHANNEL, external_id: CHANNEL }],
           revisions: {},
           limits: { connect: 2, send: 600 },
         }),
@@ -1187,7 +1187,7 @@ describe("the socket's limits", () => {
           // The ban flag, which is upstream of this chapter in this order — a stub
           // that does not say is a stub that has not thought about it.
           banned: false,
-          channel_ids: [CHANNEL],
+          channels: [{ id: CHANNEL, external_id: CHANNEL }],
           revisions: {},
           limits: { connect: 3_000, send: configured },
         }),

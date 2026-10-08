@@ -68,8 +68,11 @@ export class MembershipsController {
       // Ids alone: this route answers what a user may hear, not what has changed in it.
       // `channelsForUser` carries revision counts for the session route (feature 044);
       // mapping them off here keeps one query behind both.
-      channel_ids: user
-        ? (await this.repo.channelsForUser(user.id)).map((c) => c.channel_id)
+      channels: user
+        ? (await this.repo.channelsForUser(user.id)).map((c) => ({
+            id: c.channel_id,
+            external_id: c.external_id,
+          }))
         : [],
     };
   }

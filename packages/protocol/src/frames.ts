@@ -15,6 +15,23 @@ import {
 // definition. Payloads are strict: unknown fields are rejected.
 
 /** Per-channel resume cursor: { channel_id: highest seq seen } (ADR-03). */
+/** WHAT A `channel` IS CALLED ON THIS CONTRACT (FR-RTM-11, chapter 4.23).
+ *
+ * Every `channel` field below, and every key of `cursorSchema` and of the ack's
+ * `revisions`, and every member of the ack's `truncated`, carries the identifier the
+ * CUSTOMER gave the channel — not the uuid Relay minted. **The type did not change
+ * and that is why this comment exists**: `z.string().min(1)` admitted both before
+ * and after, so nothing in the toolchain can tell a reader which one arrives.
+ *
+ * AND SEVEN IS A COUNT OF DECLARATIONS, NOT OF SCHEMAS. `forwardedMessageSchema`
+ * extends `messageSchema`, and `messageCreatedSchema`, `messageUpdatedSchema` and
+ * `messageDeletedSchema` wrap payloads that carry the field — four more places the
+ * rule holds and is not written.
+ *
+ * INBOUND, BOTH FORMS ARE ACCEPTED. A client published before this chapter holds a
+ * uuid-keyed cursor and a uuid in its sends, and 19 of 44,574 channels carry an
+ * identifier that is itself another channel's uuid — so no shape test separates
+ * them and the gateway tries the identity first, as REST does. */
 export const cursorSchema = z.record(z.string(), z.number().int().positive());
 
 /** The message on the wire — derived from the SAD §6.1 `messages` columns.

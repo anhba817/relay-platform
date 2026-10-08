@@ -228,6 +228,13 @@ export class ChannelsController {
     user: string,
     change: "added" | "removed",
   ): Promise<void> {
+    // ONE READ, ON A LOW-RATE PATH, AND 4.22 IS WHY IT IS NEEDED AT ALL
+    // (FR-RTM-11, chapter 4.23). A gateway cannot name a channel a connection has
+    // just joined — its map was built at connect — so the identity rides the
+    // change. `ChannelIdPipe` resolved the caller's identifier to a key before this
+    // handler ran, so the name has to be read back; a membership change is rare
+    // enough to pay for it, which a delivered message would not be.
+    const channel = await this.repo.getChannelById(channelId);
     await this.membership.publish({
       // THE REPOSITORY'S SCOPE, NOT AN OPTIONAL CHAIN OFF THE PRINCIPAL. Both read
       // the same id from the same verified credential, and `?? "unknown"` carries a
@@ -235,6 +242,7 @@ export class ChannelsController {
       // arm in `users.controller.ts` at 75% against a pin of 100.
       environment: this.repo.environment,
       channel: channelId,
+      ...(channel !== null && { channel_identity: channel.external_id }),
       user,
       change,
     });

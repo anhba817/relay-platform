@@ -116,8 +116,95 @@ function isInboundFrame(frame: Frame): frame is Extract<Frame, { type: InboundFr
   return INBOUND_FRAME_TYPES.has(frame.type as InboundFrameType);
 }
 
-function send(socket: WebSocket, frame: RelayedFrame): void {
-  socket.send(JSON.stringify(frame));
+/** THE ONE PLACE A FRAME LEAVES, AND THEREFORE THE ONE PLACE A CHANNEL IS RENAMED
+ * (FR-RTM-11, chapter 4.23).
+ *
+ * WHY HERE AND NOT AT THE SITES THAT BUILD FRAMES. Of the twenty-one places this
+ * service writes `channel:`, three build a client frame, eleven are LOG LINES an
+ * operator reads against the subjects, six are internal publishes and one is a
+ * comment — and `message.created`, the commonest frame on the socket, arrives as a
+ * payload FORWARDED from the api and is written by no expression here at all. A
+ * per-site translation would rename eleven log lines, rename two publishes, and
+ * miss the frame clients see most.
+ *
+ * AND EVERYTHING BEHIND THIS LINE STAYS KEYED, which is the other half of the
+ * argument: `connection.buffer` holds frames that `flushable` indexes by
+ * `marks[frame.channel]` and that the revocation filter compares with
+ * `change.channel`. Translating where a frame is BUILT would put an identity into
+ * the buffer and leave both comparisons looking at keys — a resuming client re-sent
+ * its whole backlog, and a revoked channel's backlog flushed anyway (FR-029). Both
+ * failures are silent. Translating on the way out cannot reach them.
+ *
+ * A MISS DROPS THE FRAME AND SAYS SO. After the membership frame carries its own
+ * identity and `ALL_CHANNELS` is handled before the map, a miss is a bug. The
+ * alternative — emit the key — hands a client the uuid this chapter removes, on
+ * exactly the channel it just failed to name, and a client cannot recover from that;
+ * a dropped frame is recoverable, because the message is durable and the resume
+ * cursor carries it on the next connect. */
+function send(
+  connection: Pick<Connection, "socket" | "identities" | "id">,
+  frame: RelayedFrame,
+  logger?: Logger,
+): void {
+  const named = nameForClient(connection, frame, logger);
+  if (named === undefined) return;
+  connection.socket.send(JSON.stringify(named));
+}
+
+/** The translation itself, separated so the refusal has one place to live. */
+function nameForClient(
+  connection: Pick<Connection, "identities" | "id">,
+  frame: RelayedFrame,
+  logger?: Logger,
+): RelayedFrame | undefined {
+  const payload = (frame as { payload?: Record<string, unknown> }).payload;
+  if (payload === undefined) return frame;
+
+  const rename = (key: unknown): string | undefined => {
+    if (typeof key !== "string") return undefined;
+    const identity = connection.identities.get(key);
+    if (identity === undefined) {
+      logger?.log("error", "frame.unnamed_channel", {
+        connection_id: connection.id,
+        type: frame.type,
+        channel: key,
+      });
+    }
+    return identity;
+  };
+
+  if (typeof payload["channel"] === "string") {
+    const identity = rename(payload["channel"]);
+    if (identity === undefined) return undefined;
+    return { ...frame, payload: { ...payload, channel: identity } } as RelayedFrame;
+  }
+
+  // THE ACK, WHICH NAMES CHANNELS THREE TIMES WITHOUT THE WORD: `revisions` and
+  // `cursor` are keyed by channel and `truncated` is a list of them. A count of
+  // `channel` fields cannot see any of the three.
+  if (frame.type !== "connection.ack") return frame;
+  const rekey = (map: unknown): Record<string, number> | undefined => {
+    const out: Record<string, number> = {};
+    for (const [key, value] of Object.entries(map as Record<string, number>)) {
+      const identity = rename(key);
+      if (identity === undefined) return undefined;
+      out[identity] = value;
+    }
+    return out;
+  };
+  const revisions = rekey(payload["revisions"]);
+  const cursor = rekey(payload["cursor"]);
+  const truncated: string[] = [];
+  for (const key of (payload["truncated"] ?? []) as string[]) {
+    const identity = rename(key);
+    if (identity === undefined) return undefined;
+    truncated.push(identity);
+  }
+  if (revisions === undefined || cursor === undefined) return undefined;
+  return {
+    ...frame,
+    payload: { ...payload, revisions, cursor, truncated },
+  } as RelayedFrame;
 }
 
 /** EIR-API-04's envelope, wearing its WebSocket clothes.
@@ -183,7 +270,10 @@ function sendError(
    * whole frame failed and there is no field to name. */
   field?: string,
 ): void {
-  send(socket, {
+  // DIRECT, AND NOT THROUGH `send` ABOVE. An error frame names no channel, so there
+  // is nothing to translate — and this refusal has to work at the upgrade, before a
+  // `Connection` and therefore before any map exists (FR-RTM-11, chapter 4.23).
+  socket.send(JSON.stringify({
     type: "error",
     payload: {
       code,
@@ -192,7 +282,7 @@ function sendError(
       request_id: requestId,
       ...(field !== undefined && field.length > 0 ? { field } : {}),
     },
-  });
+  }));
 }
 
 export interface SessionServerOptions {
@@ -368,7 +458,7 @@ export function attachSessions({
       // discarded the moment the connection went live — which is precisely when
       // the fabric could still be catching up.
       if (suppressed(connection.marks, message)) continue;
-      send(connection.socket, { type: "message.created", payload: message });
+      send(connection, { type: "message.created", payload: message });
     }
   }
   fanout?.onDelivery(deliver);
@@ -407,13 +497,13 @@ export function attachSessions({
       // changes what one of its attachments resolves to.
       switch (revision.kind) {
         case "updated":
-          send(connection.socket, { type: "message.updated", payload: revision.message });
+          send(connection, { type: "message.updated", payload: revision.message });
           break;
         case "deleted":
-          send(connection.socket, { type: "message.deleted", payload: revision.message });
+          send(connection, { type: "message.deleted", payload: revision.message });
           break;
         case "media":
-          send(connection.socket, {
+          send(connection, {
             type: "media.updated",
             payload: {
               media_id: revision.media_id,
@@ -469,7 +559,7 @@ export function attachSessions({
         continue;
       }
       if (connection.identity.userExternalId === signal.user) continue;
-      send(connection.socket, {
+      send(connection, {
         type: "typing",
         payload: { channel: signal.channel, user: signal.user },
       });
@@ -493,7 +583,7 @@ export function attachSessions({
       // One frame per transition per connection, however many channels this
       // connection shares with the subject (FR-012).
       if (!presence?.claim(payload.transition, connection.id)) continue;
-      send(connection.socket, {
+      send(connection, {
         type: "presence.changed",
         payload: { user: payload.user, state: payload.state },
       });
@@ -603,7 +693,7 @@ export function attachSessions({
       type: "membership.changed" as const,
       payload: { channel: change.channel, user: change.user, change: change.change },
     };
-    for (const connection of others) send(connection.socket, frame);
+    for (const connection of others) send(connection, frame);
 
     for (const connection of subject) {
       // SEND, THEN CUT. Reversing these two statements is the whole of FR-008, and
@@ -628,7 +718,17 @@ export function attachSessions({
         ]).then(
           () => {
             connection.channelIds.add(change.channel);
-            send(connection.socket, frame);
+            // THE MAP BEFORE THE SEND, AND THAT ORDERING IS THE WHOLE OF FR-RTM-11
+            // HERE. This frame is the first thing a client hears about a channel it
+            // has just joined; `send` names a channel from `identities`, so an entry
+            // added after the send would make the one frame announcing the channel
+            // the only frame that cannot name it. The identity rides the change for
+            // exactly this reason — the gateway has nothing to look it up with.
+            if (change.channel_identity !== undefined) {
+              connection.identities.set(change.channel, change.channel_identity);
+              connection.keys.set(change.channel_identity, change.channel);
+            }
+            send(connection, frame, logger);
             logger.log("info", "membership.applied", {
               change: "added",
               connection_id: connection.id,
@@ -649,12 +749,18 @@ export function attachSessions({
         );
         continue;
       }
-      send(connection.socket, frame);
+      send(connection, frame, logger);
       if (change.change !== "removed") continue;
 
       // THE FIRST MUTATION OF THIS SET AFTER THE CONNECTION EXISTS. Every reader of
       // `channelIds` has assumed it immutable since chapter 2.5.
       connection.channelIds.delete(change.channel);
+      // AFTER THE SEND ABOVE, NOT BEFORE IT. The frame that tells a client it has
+      // been removed still has to name the channel it is about, so the entry
+      // outlives the membership by exactly one frame (FR-RTM-11).
+      const removedIdentity = connection.identities.get(change.channel);
+      connection.identities.delete(change.channel);
+      if (removedIdentity !== undefined) connection.keys.delete(removedIdentity);
       // AND THE BUFFER IS ONE OF THOSE READERS (FR-029). `flushable(buffer, marks)`
       // filters on `frame.seq` and on nothing else, so a removal landing mid-resume
       // would unsubscribe the channel and then flush its buffered messages anyway —
@@ -726,7 +832,8 @@ export function attachSessions({
    * The client cannot tell which trigger fired, and that is correct: a
    * `membership.changed` frame means the same thing either way. */
   async function reread(connection: Connection): Promise<void> {
-    const actual = new Set(await api.memberships(connection.identity));
+    const truth = await api.memberships(connection.identity);
+    const actual = new Set(truth.map((c) => c.id));
     const held = new Set(connection.channelIds);
 
     for (const channelId of held) {
@@ -743,6 +850,14 @@ export function attachSessions({
       deliverMembership({
         environment: connection.identity.environmentId,
         channel: channelId,
+        // THE BACKSTOP CARRIES THE NAME TOO (FR-RTM-11). An addition found on the
+        // timer announces a channel this connection has never heard of, exactly as
+        // a published change does — and the gateway has no database to ask. Without
+        // this the one frame that tells a client about the channel would be the one
+        // frame unable to name it, and `send` would drop it.
+        ...(truth.find((c) => c.id === channelId) !== undefined && {
+          channel_identity: truth.find((c) => c.id === channelId)!.external_id,
+        }),
         user: connection.identity.userExternalId,
         change: "added",
       });
@@ -930,7 +1045,7 @@ export function attachSessions({
         void open(
           ws,
           result.identity,
-          result.channelIds,
+          result.channels,
           result.revisions,
           req.url ?? "/",
           // REQUIRED, SO IT COMES BEFORE THE TWO OPTIONAL ONES. `sendLimit` is a
@@ -948,7 +1063,9 @@ export function attachSessions({
   async function open(
     socket: WebSocket,
     identity: Identity,
-    channelIds: string[],
+    /** Pairs, not keys (FR-RTM-11): the connection derives its key set AND both
+     * directions of the translation from this one list, so they cannot disagree. */
+    channels: { id: string; external_id: string }[],
     /** BESIDE `channelIds` AND NOT AFTER `url`, because it arrives with them from one
      * session answer — and because `claimedId` below is optional: gaps.md 045-18 records
      * a parameter inserted ahead of an optional one silently renaming every later
@@ -974,7 +1091,10 @@ export function attachSessions({
       // call at the door. There is no second lookup to fail here — the api is
       // still the only source of membership (ADR-05), it just answers both
       // questions at once, and a failure now closes the socket before it opens.
-      channelIds: new Set(channelIds),
+      channelIds: new Set(channels.map((c) => c.id)),
+      // ONE LIST, TWO MAPS, AND `channelIds` STAYS KEYS (FR-RTM-11).
+      identities: new Map(channels.map((c) => [c.id, c.external_id])),
+      keys: new Map(channels.map((c) => [c.external_id, c.id])),
       // Reported on the ack and never read again by this service.
       revisions,
       missedPings: 0,
@@ -1312,7 +1432,7 @@ export function attachSessions({
       truncated: string[];
     },
   ): void {
-    send(connection.socket, {
+    send(connection, {
       type: "connection.ack",
       payload: {
         user: connection.identity.userExternalId,
@@ -1401,7 +1521,7 @@ export function attachSessions({
 
     for (const [, page] of Object.entries(backfilled)) {
       for (const message of page.messages) {
-        send(connection.socket, {
+        send(connection, {
           type: "message.created",
           payload: message,
         });
@@ -1418,7 +1538,7 @@ export function attachSessions({
       return;
     }
     for (const message of flushable(connection.buffer, marks)) {
-      send(connection.socket, { type: "message.created", payload: message });
+      send(connection, { type: "message.created", payload: message });
     }
     connection.buffer = [];
     // KEPT, where chapter 2.7 discarded them. Scoped to the cursors this
@@ -1628,7 +1748,7 @@ export function attachSessions({
       // The ack carries the sequence the API committed — after the commit,
       // never before (FR-MSG-05, unchanged since 2.2; the socket is a new
       // door onto the same write path).
-      send(connection.socket, { type: "message.ack", payload: { seq } });
+      send(connection, { type: "message.ack", payload: { seq } });
       // …and only THEN does anyone else hear about it. Durability, then the
       // sender's confirmation, then everybody's copy: no step overtakes the
       // one before it (§5.1's ordering, now spanning machines).

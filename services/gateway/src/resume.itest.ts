@@ -130,7 +130,7 @@ describe("resume across a real fabric", () => {
         // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
-        channel_ids: [CHANNEL],
+        channels: [{ id: CHANNEL, external_id: CHANNEL }],
         revisions: {},
         // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -149,7 +149,7 @@ describe("resume across a real fabric", () => {
       // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
-      memberships: async () => [CHANNEL],
+      memberships: async () => ([CHANNEL]).map((c: string) => ({ id: c, external_id: c })),
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -172,7 +172,7 @@ describe("resume across a real fabric", () => {
         // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
-        channel_ids: [CHANNEL],
+        channels: [{ id: CHANNEL, external_id: CHANNEL }],
         revisions: {},
         // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -189,7 +189,7 @@ describe("resume across a real fabric", () => {
       // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
-      memberships: async () => [CHANNEL],
+      memberships: async () => ([CHANNEL]).map((c: string) => ({ id: c, external_id: c })),
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -208,7 +208,7 @@ describe("resume across a real fabric", () => {
         // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
-        channel_ids: [CHANNEL],
+        channels: [{ id: CHANNEL, external_id: CHANNEL }],
         revisions: {},
         // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -223,7 +223,7 @@ describe("resume across a real fabric", () => {
       // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
-      memberships: async () => [CHANNEL],
+      memberships: async () => ([CHANNEL]).map((c: string) => ({ id: c, external_id: c })),
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -262,7 +262,7 @@ describe("resume across a real fabric", () => {
         // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
-        channel_ids: [CHANNEL],
+        channels: [{ id: CHANNEL, external_id: CHANNEL }],
         revisions: {},
         // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -277,7 +277,7 @@ describe("resume across a real fabric", () => {
       // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
-      memberships: async () => [CHANNEL],
+      memberships: async () => ([CHANNEL]).map((c: string) => ({ id: c, external_id: c })),
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -309,7 +309,7 @@ describe("resume across a real fabric", () => {
         // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
-        channel_ids: [CHANNEL],
+        channels: [{ id: CHANNEL, external_id: CHANNEL }],
         revisions: {},
         // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -324,7 +324,7 @@ describe("resume across a real fabric", () => {
       // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
-      memberships: async () => [CHANNEL],
+      memberships: async () => ([CHANNEL]).map((c: string) => ({ id: c, external_id: c })),
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -369,7 +369,7 @@ describe("resume across a real fabric", () => {
         environment_id: "env-1",
         user: "tuan",
         banned: false,
-        channel_ids: [CHANNEL],
+        channels: [{ id: CHANNEL, external_id: CHANNEL }],
         revisions: {},
         limits: { connect: 3_000, send: 600 },
       }),
@@ -385,7 +385,7 @@ describe("resume across a real fabric", () => {
       sendMessage: async () => {
         throw new Error("not used");
       },
-      memberships: async () => [CHANNEL],
+      memberships: async () => ([CHANNEL]).map((c: string) => ({ id: c, external_id: c })),
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -416,7 +416,7 @@ describe("resume across a real fabric", () => {
         // The api now reports whether the user is banned, and a stub
         // that does not say is a stub that has not thought about it.
         banned: false,
-        channel_ids: [CHANNEL],
+        channels: [{ id: CHANNEL, external_id: CHANNEL }],
         revisions: {},
         // The limits ride the session response now. Generous, and
         // beside the point of every test in this file.
@@ -431,7 +431,7 @@ describe("resume across a real fabric", () => {
       // Agrees with `session` above: this file is about the resume,
       // and a backstop that disagreed with the connect would be a second subject
       // under test.
-      memberships: async () => [CHANNEL],
+      memberships: async () => ([CHANNEL]).map((c: string) => ({ id: c, external_id: c })),
     });
     const socket = new WebSocket(
       `${harness.url}?token=${await token()}&cursor=${CHANNEL}:41`,
@@ -484,7 +484,7 @@ describe("two instances on one fabric", () => {
       environment_id: "env-1",
       user: "tuan",
       banned: false,
-      channel_ids: channels,
+      channels: channels.map((c) => ({ id: c, external_id: c })),
       revisions: {},
       limits: { connect: 3_000, send: 600 },
     }),
@@ -494,7 +494,7 @@ describe("two instances on one fabric", () => {
     },
     // The same list `session` answers with, so the backstop confirms
     // what the connect already established and changes nothing.
-    memberships: async () => channels,
+    memberships: async () => channels.map((c) => ({ id: c, external_id: c })),
   });
 
   afterEach(async () => {

@@ -168,9 +168,22 @@ export function subjectFor(type: string, environmentId: string): string {
   return [EVENT_SUBJECT_PREFIX, abbreviated, ...rest, environmentId].join(".");
 }
 
-/** api → gateway: the channels this user may hear (FR-RTM-01). */
+/** api → gateway: the channels this user may hear (FR-RTM-01).
+ *
+ * PAIRS, FOR THE SAME REASON THE SESSION RESPONSE CARRIES THEM (FR-RTM-11, chapter
+ * 4.23). This route is the revocation backstop's: it re-reads the truth on a timer
+ * and the gateway applies the difference through the same `deliverMembership` the
+ * fast path takes. An ADDITION found that way announces a channel the connection
+ * has never heard of, so without the identity here the one frame telling a client
+ * about the channel is the one frame that cannot name it — and the gateway, which
+ * has no database, has nothing to look it up with. */
 export const internalMembershipsResponseSchema = z.strictObject({
-  channel_ids: z.array(z.string().min(1)),
+  channels: z.array(
+    z.strictObject({
+      id: z.string().min(1),
+      external_id: z.string().min(1),
+    }),
+  ),
 });
 
 /** api → gateway: who the presented token belongs to, and what it
@@ -187,8 +200,26 @@ export const internalMembershipsResponseSchema = z.strictObject({
 export const internalSessionResponseSchema = z.strictObject({
   environment_id: z.string().min(1),
   user: z.string().min(1),
-  channel_ids: z.array(z.string().min(1)),
-  /** Per channel, how many revisions it has seen — the same keys as `channel_ids`.
+  /** The channels this user may hear, each as the pair the gateway needs: the key
+   * everything behind the client edge routes on, and the identifier the customer
+   * gave it (FR-RTM-11, chapter 4.23).
+   *
+   * PAIRS RATHER THAN A SECOND FIELD, because two parallel arrays are two lists
+   * that must agree with nothing comparing them — the defect `gaps.md` 3.23-4
+   * records about `targets.ts`, and the reason `channelsForUser` carries its
+   * revision count on the same row rather than in a second call. */
+  channels: z.array(
+    z.strictObject({
+      id: z.string().min(1),
+      external_id: z.string().min(1),
+    }),
+  ),
+  /** Per channel, how many revisions it has seen — the same keys as `channels[].id`.
+   *
+   * KEYED BY THE KEY, AND DELIBERATELY. The gateway re-keys this map to identities
+   * at the ack, because that is the edge where a client is; this contract is the
+   * api talking to the gateway, where the sentence two paragraphs up still holds —
+   * internal uuids are the api's business.
    *
    * ONE QUERY, TWO FIELDS. The membership read already joins `channels` to answer
    * `channel_ids`, so the counter comes back on rows the api was fetching anyway: no

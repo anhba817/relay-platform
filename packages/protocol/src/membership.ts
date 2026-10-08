@@ -64,6 +64,18 @@ export function subjectForUserMembership(
 export const membershipFabricSchema = z.strictObject({
   environment: z.string().min(1),
   channel: z.string().min(1),
+  /** What the customer calls this channel (FR-RTM-11, chapter 4.23).
+   *
+   * IT RIDES THE CHANGE BECAUSE THE GATEWAY CANNOT LOOK IT UP. A user added
+   * mid-session learns of the channel from this frame, and until it arrives the
+   * connection's map has no entry for it — so the identity has to come WITH the
+   * change or the first frame for a new channel cannot be named. The backstop that
+   * re-reads memberships is a sixty-second timer (`DEFAULT_REREAD_INTERVAL_MS`) and
+   * this frame goes out immediately; it cannot stand in.
+   *
+   * ABSENT FOR `ALL_CHANNELS`, which is not a channel and is expanded into one
+   * change per real channel before anything is sent. */
+  channel_identity: z.string().min(1).optional(),
   user: z.string().min(1),
   change: z.enum(["added", "removed"]),
 });

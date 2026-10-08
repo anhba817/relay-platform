@@ -85,7 +85,9 @@ export interface ApiClient {
    *
    * The one question a periodic re-read has, asked of the route that answers only
    * it. `session()` would answer this too and three other things. */
-  memberships(identity: Identity): Promise<string[]>;
+  memberships(
+    identity: Identity,
+  ): Promise<{ id: string; external_id: string }[]>;
   /** Resume backfill (chapter 2.7): everything past the cursors, per
    * channel, already shaped as wire frames. */
   backfill(
@@ -207,7 +209,7 @@ export function createApiClient(
         internalMembershipsResponseSchema,
         "memberships",
       );
-      return body.channel_ids;
+      return body.channels;
     },
     async backfill(identity, cursors) {
       const res = await fetch(`${baseUrl}/internal/backfill`, {

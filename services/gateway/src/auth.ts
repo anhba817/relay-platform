@@ -39,7 +39,11 @@ export type Authentication =
   | {
       outcome: "ok";
       identity: Identity;
-      channelIds: string[];
+      /** The channels this user may hear, as pairs (FR-RTM-11, chapter 4.23): the
+       * key everything behind the client edge routes on, and the identifier the
+       * customer gave it. The connection derives both a key set and a translation
+       * from this one list, so the two cannot disagree. */
+      channels: { id: string; external_id: string }[];
       /** Per channel, how many revisions it has seen. Reported to the client on the
        * ack and never compared here: the gateway has no opinion about staleness, and
        * no database to form one with. */
@@ -100,7 +104,7 @@ export async function authenticate(
         // asserting an identity the gateway invented.
         token,
       },
-      channelIds: session.channel_ids,
+      channels: session.channels,
       revisions: session.revisions,
       limits: session.limits,
     };

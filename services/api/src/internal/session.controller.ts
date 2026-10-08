@@ -129,7 +129,13 @@ export class SessionController {
       // the two fields cannot disagree about which channels this user belongs to — and
       // the counter costs no extra query, because the membership join already touches
       // `channels` to answer the ids.
-      channel_ids: channels.map((c) => c.channel_id),
+      // THE PAIR, NOT THE KEY (FR-RTM-11). `channelsForUser` returns both off one
+      // row, so the gateway is told what the customer calls each channel at the
+      // same instant it is told which channels there are.
+      channels: channels.map((c) => ({
+        id: c.channel_id,
+        external_id: c.external_id,
+      })),
       revisions: Object.fromEntries(
         channels.map((c) => [c.channel_id, c.revision_sequence]),
       ),

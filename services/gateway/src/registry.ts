@@ -23,6 +23,23 @@ export interface Connection {
   readonly identity: Identity;
   readonly socket: WebSocket;
   channelIds: Set<string>;
+  /** What the customer calls each of those channels, and the way back
+   * (FR-RTM-11, chapter 4.23).
+   *
+   * BOTH DIRECTIONS, BECAUSE THE EDGE HAS TWO. `identities` names a channel on the
+   * way out — every frame, and the three structures on the ack that carry no
+   * `channel` field. `keys` turns what a client SAYS back into the key the api, the
+   * subjects and the cursor filter all speak, because a client may now say either.
+   *
+   * DERIVED FROM ONE LIST, so they cannot disagree, and safe to invert because
+   * `unique("channels_environment_id_external_id_unique")` makes an identity unique
+   * inside the environment this connection belongs to.
+   *
+   * AND `channelIds` STAYS KEYS. Three membership tests read it — signalTyping's
+   * guard, the revocation backstop's set difference, and the resume cursor's filter
+   * — and all three invert silently if it ever holds an identity. */
+  identities: Map<string, string>;
+  keys: Map<string, string>;
   missedPings: number;
   /** Chapter 2.7. A connection resuming through the tunnel spends its first
    * milliseconds holding live frames back so the backfill can go first; a

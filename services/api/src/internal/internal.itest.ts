@@ -143,7 +143,13 @@ describe("the internal surface", () => {
     });
     const parsed = internalSessionResponseSchema.safeParse(await res.json());
     expect(parsed.error?.issues ?? []).toEqual([]);
-    expect(parsed.data?.channel_ids).toContain(channelId);
+    expect(parsed.data?.channels.map((c) => c.id)).toContain(channelId);
+    // AND THE NAME THE CUSTOMER GAVE IT, BESIDE THE KEY (FR-RTM-11). The gateway
+    // cannot translate what it was never told, and this is the only place it is
+    // told — one row per channel, so the two cannot disagree.
+    expect(
+      parsed.data?.channels.find((c) => c.id === channelId)?.external_id,
+    ).toBeTypeOf("string");
     // The half that is new: the api says who the token belongs to.
     expect(parsed.data?.user).toBe("tuan");
     expect(parsed.data?.environment_id).toBe(env.id);
@@ -156,7 +162,7 @@ describe("the internal surface", () => {
     });
     expect(res.status).toBe(200);
     expect(
-      internalSessionResponseSchema.parse(await res.json()).channel_ids,
+      internalSessionResponseSchema.parse(await res.json()).channels,
     ).toEqual([]);
   });
 
@@ -185,7 +191,7 @@ describe("the internal surface", () => {
     expect(res.status).toBe(200);
     const parsed = internalMembershipsResponseSchema.safeParse(await res.json());
     expect(parsed.error?.issues ?? []).toEqual([]);
-    expect(parsed.data?.channel_ids).toContain(channelId);
+    expect(parsed.data?.channels.map((c) => c.id)).toContain(channelId);
   });
 
   it("answers a user with no row as a user with no channels", async () => {
@@ -198,7 +204,7 @@ describe("the internal surface", () => {
     });
     expect(res.status).toBe(200);
     expect(
-      internalMembershipsResponseSchema.parse(await res.json()).channel_ids,
+      internalMembershipsResponseSchema.parse(await res.json()).channels,
     ).toEqual([]);
   });
 

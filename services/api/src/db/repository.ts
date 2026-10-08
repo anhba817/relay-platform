@@ -4100,10 +4100,17 @@ export class Repository {
    * is a typecheck failure at exactly the boundary this project commits at. */
   async channelsForUser(
     userId: string,
-  ): Promise<{ channel_id: string; revision_sequence: number }[]> {
+  ): Promise<
+    { channel_id: string; external_id: string; revision_sequence: number }[]
+  > {
     return await this.db
       .select({
         channel_id: members.channelId,
+        // THE IDENTITY COSTS A COLUMN AND NOT A JOIN (FR-RTM-11, chapter 4.23).
+        // `channels` is already reached for the revision count, so the name the
+        // customer gave this channel rides a row the query was fetching anyway —
+        // the same argument the count itself made one feature earlier.
+        external_id: channels.externalId,
         revision_sequence: channels.revisionSequence,
       })
       .from(members)

@@ -137,11 +137,11 @@ async function boot(options: {
       environment_id: environment,
       user: options.user,
       banned: false,
-      channel_ids: options.channels,
+      channels: options.channels.map((c: string) => ({ id: c, external_id: c })),
       revisions: {},
       limits: { connect: 3_000, send: 600 },
     }),
-    memberships: async () => options.channels,
+    memberships: async () => options.channels.map((c: string) => ({ id: c, external_id: c })),
     backfill: async () => ({}) as never,
     sendMessage: async () => {
       throw new Error("not used");

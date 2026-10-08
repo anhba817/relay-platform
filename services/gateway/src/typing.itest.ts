@@ -113,14 +113,14 @@ async function boot(options: {
       environment_id: environment,
       user: options.user,
       banned: false,
-      channel_ids: options.channels,
+      channels: options.channels.map((c: string) => ({ id: c, external_id: c })),
       revisions: {},
       // The limits ride this response as of the limits chapter, and this fixture is
       // generous on purpose: T048b below asserts that a typing signal spends NO send
       // budget, and a tight number here would make that pass for the wrong reason.
       limits: { connect: 3_000, send: 600 },
     }),
-    memberships: async () => options.channels,
+    memberships: async () => options.channels.map((c: string) => ({ id: c, external_id: c })),
     backfill: async () => {
       if (options.backfillDelayMs !== undefined) {
         await new Promise((r) => setTimeout(r, options.backfillDelayMs));
