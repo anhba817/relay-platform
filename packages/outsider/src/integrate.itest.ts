@@ -168,6 +168,10 @@ describe("integrating with Relay from the outside", () => {
   let ws: string;
   let credential: string;
   let channelId: string;
+  /** What the customer called the channel. A socket client sees THIS in every frame
+   * from chapter 4.23 on, so a suite that holds a socket has to hold both names:
+   * REST routes take either, and frames only ever carry one. */
+  let channelExternalId: string;
   let token: string;
 
   const post = async (path: string, body: unknown, auth: string) => {
@@ -263,6 +267,7 @@ describe("integrating with Relay from the outside", () => {
     expect(first.status).toBe(201);
     expect(first.body["external_id"]).toBe(external);
     channelId = first.body["id"] as string;
+    channelExternalId = external;
 
     // The documentation says a repeat returns the existing channel. 200 rather
     // than 201 is how a client tells which happened without reading the body.
@@ -759,9 +764,10 @@ describe("integrating with Relay from the outside", () => {
     // `media.updated`** — on a PUBLIC channel. The absence of every frame looks exactly
     // like the absence of the one you came for, which is how an earlier probe read as
     // `media.updated` not existing at all.
+    const journeyExternal = `journey-${Date.now()}`;
     const journeyChannel = await post(
       "/v1/channels",
-      { external_id: `journey-${Date.now()}`, type: "public" },
+      { external_id: journeyExternal, type: "public" },
       credential,
     );
     expect(
@@ -924,12 +930,16 @@ describe("integrating with Relay from the outside", () => {
     //
     // THE WHOLE PAYLOAD, NOT THE STATE ALONE. `{media_id, channel, state}` and nothing
     // else — asserting only the state would pass for a frame announcing somebody else's
-    // object in somebody else's channel, which is the shape a fan-out bug takes. The
-    // channel is the id rather than the external id, which is worth pinning from out
-    // here because it is the field a client routes on.
+    // object in somebody else's channel, which is the shape a fan-out bug takes.
+    //
+    // **THE CHANNEL IS THE EXTERNAL ID SINCE CHAPTER 4.23, AND THIS COMMENT USED TO SAY
+    // THE OPPOSITE** — "the id rather than the external id… because it is the field a
+    // client routes on". That reasoning was right and its conclusion is now inverted:
+    // what a client routes on is the name the customer gave the channel, which is what
+    // the frame carries. A test pinning the uuid from out here was pinning the defect.
     expect(updated.payload).toEqual({
       media_id: journeyMediaId,
-      channel: journeyId,
+      channel: journeyExternal,
       state: "ready",
     });
 
@@ -1037,9 +1047,10 @@ describe("integrating with Relay from the outside", () => {
    *  byte in either direction is a different refusal, and a test that got both wrong at
    *  once would pass for the wrong reason. */
   it("delivers a refused upload as a rejected marker a recipient can tell apart (4.17, SC-004)", async () => {
+    const rejectExternal = `reject-${Date.now()}`;
     const rejectChannel = await post(
       "/v1/channels",
-      { external_id: `reject-${Date.now()}`, type: "public" },
+      { external_id: rejectExternal, type: "public" },
       credential,
     );
     expect(rejectChannel.status).toBe(201);
@@ -1151,7 +1162,9 @@ describe("integrating with Relay from the outside", () => {
     }
     expect(frames.find((f) => f.type === "media.updated")?.payload).toEqual({
       media_id: rejectedId,
-      channel: rejectId,
+      // The name, not the key — a frame carries what the customer called the
+      // channel since chapter 4.23 (FR-RTM-11).
+      channel: rejectExternal,
       state: "rejected",
     });
     socket.close();
@@ -1342,7 +1355,10 @@ describe("integrating with Relay from the outside", () => {
 
     await until(
       ben.frames,
-      (f) => f.type === "typing" && f.payload?.channel === channelId && f.payload?.user === "ana",
+      (f) =>
+        f.type === "typing" &&
+        f.payload?.channel === channelExternalId &&
+        f.payload?.user === "ana",
       "a typing frame naming ana",
     );
     // And the signaller hears nothing of their own — checked here rather than only
