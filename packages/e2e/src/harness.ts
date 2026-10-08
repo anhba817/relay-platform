@@ -551,7 +551,11 @@ export async function boot({ gateways = 2 } = {}): Promise<System> {
         environmentId: primaryEnvironment,
         // The REST assertions present a credential, not a header.
         credential: await keyFor(primaryEnvironment),
-        channel: channel.id,
+        // THE NAME, NOT THE KEY (FR-RTM-11, chapter 4.23). A socket client sees
+        // `fleet` in every frame now, so a journey test that filters its timeline
+        // by the uuid matches nothing — which is how this lane found the change.
+        // Sending still accepts either form; reading only ever sees one.
+        channel: "fleet",
         dispatcher: new Client(
           "dispatcher",
           await token(primaryEnvironment, "dispatcher"),
