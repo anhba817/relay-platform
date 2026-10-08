@@ -264,6 +264,75 @@ describe("the socket refuses another tenant's identifiers", () => {
     socket.socket.close();
   }, 20_000);
 
+  it("message.send naming the other tenant's channel by its IDENTITY is refused", async () => {
+    // THE SUITE DERIVES ITS TARGETS FROM `frameSchema`'S MEMBERS, so it catches a
+    // frame type added and forgotten — and chapter 4.23 adds no frame type. It
+    // changes what a field CARRIES, and three of the structures it changes are not
+    // frame types at all. **A derived-target suite is green by construction against
+    // a value change**, which is why these cases are written by hand.
+    //
+    // AND THE IDENTITY IS THE SHARPER ATTACK. The uuid above is a value the attacker
+    // had to be given; `victim-channel` is a name they can GUESS, and after this
+    // chapter it is a name the platform accepts.
+    const socket = connect(url, t.attacker.token);
+    await socket.waitFor("connection.ack");
+    socket.socket.send(
+      JSON.stringify({
+        type: "message.send",
+        payload: {
+          idem_key: randomUUID(),
+          channel: t.victim.channelIdentity,
+          text: "from the attacker, by name",
+        },
+      }),
+    );
+    const error = await socket.waitFor("error");
+    const payload = error.payload as { code?: string; message?: string };
+    expect(JSON.stringify(payload)).not.toContain(t.victim.channelIdentity);
+    expect(JSON.stringify(payload)).not.toContain(t.victim.channelId);
+    expect(payload.code).toBeTruthy();
+    socket.socket.close();
+  }, 20_000);
+
+  it("a typing frame for the other tenant's channel reaches nobody, by key or by identity", async () => {
+    // THE ONE INBOUND PATH WITH NO REFUSAL BEHIND IT. `signalTyping` drops a channel
+    // the connection does not hold with no frame, no close code and no log line
+    // (FR-013) — so the assertion is that nothing comes back and the socket stays
+    // open, which is what "dropped" looks like from outside. A refusal here would
+    // be the leak: it would tell the attacker the channel exists.
+    const socket = connect(url, t.attacker.token);
+    await socket.waitFor("connection.ack");
+    const seen: unknown[] = [];
+    socket.socket.on("message", (raw: Buffer) => seen.push(JSON.parse(raw.toString())));
+    for (const channel of [t.victim.channelId, t.victim.channelIdentity]) {
+      socket.socket.send(JSON.stringify({ type: "typing.send", payload: { channel } }));
+    }
+    await new Promise((r) => setTimeout(r, 600));
+    expect(JSON.stringify(seen)).not.toContain(t.victim.channelId);
+    expect(JSON.stringify(seen)).not.toContain(t.victim.channelIdentity);
+    expect(socket.socket.readyState).toBe(WebSocket.OPEN);
+    socket.socket.close();
+  }, 20_000);
+
+  it("a cursor naming the other tenant's channel by IDENTITY backfills nothing", async () => {
+    // The uuid half of this is asserted below and has been since the previous
+    // chapter. This is the half the identity opens: `scopeCursors` now resolves an
+    // identity before filtering, so the question is whether that resolution can
+    // reach outside the connection's own map. It cannot — the map is built from the
+    // session response, which is scoped by `users.environmentId` — and this is the
+    // test that says so from outside.
+    const socket = connect(
+      url,
+      t.attacker.token,
+      `&cursor=${t.victim.channelIdentity}:0`,
+    );
+    const ack = await socket.waitFor("connection.ack");
+    const payload = ack.payload as { cursor?: Record<string, number> };
+    expect(Object.keys(payload.cursor ?? {})).not.toContain(t.victim.channelIdentity);
+    expect(Object.keys(payload.cursor ?? {})).not.toContain(t.victim.channelId);
+    socket.socket.close();
+  }, 20_000);
+
   it("every declared frame type that is not message.send is refused inbound", async () => {
     // SCHEMA VALIDATION RUNS BEFORE THE TYPE CHECK, and that shapes what this can
     // claim. A frame whose payload does not match its own schema is answered
