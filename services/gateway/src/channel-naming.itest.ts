@@ -9,7 +9,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { ApiClient } from "./api-client.js";
 import { createFanout } from "./fanout.js";
+import { createMembership } from "./membership.js";
 import { attachSessions } from "./session.js";
+import { createTyping } from "./typing.js";
 
 // WHAT A CLIENT IS TOLD A CHANNEL IS CALLED (FR-RTM-11, chapter 4.23).
 //
@@ -51,6 +53,8 @@ interface Harness {
 
 async function boot(): Promise<Harness> {
   const fanout = createFanout({ url, logger: silent });
+  const typing = createTyping({ url, logger: silent });
+  const membership = createMembership({ url, logger: silent });
   const api: Omit<ApiClient, "reportUsage"> = {
     // THE ONE PLACE THE TWO NAMES DIFFER. Every other stub in this service sets the
     // identity equal to the key, because those suites are about something else;
@@ -86,6 +90,8 @@ async function boot(): Promise<Harness> {
     api: { ...api, reportUsage: async () => null } as ApiClient,
     logger: silent,
     fanout,
+    typing,
+    membership,
   });
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
@@ -93,6 +99,8 @@ async function boot(): Promise<Harness> {
     url: `ws://127.0.0.1:${port}/v1/ws`,
     close: async () => {
       await sessions.close();
+      await typing.close();
+      await membership.close();
       await fanout.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
@@ -175,4 +183,48 @@ describe("what a client is told a channel is called", () => {
       socket.close();
     }
   }, 20_000);
+
+  it("lets nothing a client receives over a whole session carry the key (SC-004)", async () => {
+    harness = await boot();
+    const socket = new WebSocket(`${harness.url}?token=${TOKEN}&cursor=${KEY}:1`);
+    const frames = record(socket);
+    try {
+      await until(() => frames.find((f) => f.type === "connection.ack"), "ack");
+      // Everything a channel-naming frame can be provoked by from outside: a
+      // delivered message, a typing signal and a membership change, each on the
+      // fabric the api would have used.
+      // ANOTHER GATEWAY INSTANCE, NOT A RAW CLIENT. `ioredis` is restricted to the
+      // two limiter files (constitution I, enforced by lint), and this suite needs
+      // no exemption: the modules the gateway already uses to publish are the
+      // honest way to stand in for one — the same shape `publishFromElsewhere`
+      // takes for the fan-out.
+      // TWO KINDS, NOT THREE. `Membership` exposes no publish — the api owns that
+      // subject — so a membership frame is asserted where its own suite asserts it
+      // (`membership.itest.ts`, updated by this chapter) and this sweep provokes
+      // what it can reach honestly.
+      const elsewhereTyping = createTyping({ url, logger: silent });
+      try {
+        for (let i = 0; i < 20 && frames.length < 3; i++) {
+          await publishFromElsewhere(message(7));
+          await elsewhereTyping.publish({
+            environment: "env",
+            channel: KEY,
+            user: "linh",
+          });
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      } finally {
+        await elsewhereTyping.close();
+      }
+      // THE COUNT IS STATED, NOT ASSERTED IN AGGREGATE. "No uuid anywhere" is
+      // equally true of a session that received nothing, which is the assertion
+      // this test would otherwise be making.
+      expect(frames.length).toBeGreaterThanOrEqual(3);
+      const kinds = new Set(frames.map((f) => f.type));
+      expect([...kinds].sort()).toEqual(["connection.ack", "message.created", "typing"]);
+      expect(JSON.stringify(frames)).not.toContain(KEY);
+    } finally {
+      socket.close();
+    }
+  }, 30_000);
 });

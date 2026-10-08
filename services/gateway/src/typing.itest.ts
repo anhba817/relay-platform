@@ -802,6 +802,13 @@ describe("a typing signal on its way out", () => {
       JSON.stringify({
         environment: "env-1",
         channel,
+        // THE IDENTITY RIDES THE CHANGE NOW (FR-RTM-11, chapter 4.23), and a fixture
+        // imitating the api has to carry it: without this the gateway's map has no
+        // entry for a channel joined mid-connection, so the typing frame announcing
+        // it is DROPPED and logged — which is the designed behaviour, and this test
+        // is how it was observed. This suite's stubs name a channel by its key, so
+        // the identity here is the key.
+        channel_identity: channel,
         user: "mai",
         change: "added",
       }),

@@ -70,6 +70,11 @@ export interface SocketTenant {
   userExternalId: string;
   userId: string;
   channelId: string;
+  /** What the customer called that channel — `${label}-channel` — which is what a
+   * client now sees in every frame and in the ack's three structures (FR-RTM-11,
+   * chapter 4.23). The gauntlet asserts the identity because that is what the
+   * socket emits; asserting the key would be asserting the defect. */
+  channelIdentity: string;
   /** A private channel in the same environment that this tenant's user is NOT a
    * member of. */
   privateChannelId: string;
@@ -105,6 +110,7 @@ export interface SocketTenant {
   seedDeletable: () => Promise<{
     userExternalId: string;
     channelId: string;
+    channelIdentity: string;
     seq: number;
     witnessToken: string;
   }>;
@@ -216,6 +222,7 @@ export async function seedSocketTenants(): Promise<SocketTenants> {
       userExternalId,
       userId: user.id,
       channelId: channel.id,
+      channelIdentity: `${label}-channel`,
       privateChannelId: privateChannel.id,
       // Minted through the api rather than signed here: the signing secret never
       // leaves the api (research R1), which is also why the gateway asks the api to
@@ -314,6 +321,7 @@ export async function seedSocketTenants(): Promise<SocketTenants> {
         return {
           userExternalId: `${label2}-doomed`,
           channelId: room.id,
+          channelIdentity: `${label2}-room`,
           seq: sent.seq,
           witnessToken: await mintToken(api.url, key.credential, `${label2}-witness`),
         };

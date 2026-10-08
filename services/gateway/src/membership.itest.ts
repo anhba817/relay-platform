@@ -320,7 +320,12 @@ async function seed(
 ): Promise<{
   users: Record<string, string>;
   channels: string[];
+  /** What the customer called each of those channels. A frame names a channel by
+   * its identity now (FR-RTM-11, chapter 4.23), so a suite about membership frames
+   * asserts these and the keys stay for the subjects and the fixtures. */
+  channelNames: string[];
   empty: string[];
+  emptyNames: string[];
   sender: string;
 }> {
   const tag = randomUUID().slice(0, 8);
@@ -358,7 +363,9 @@ async function seed(
   return {
     users: names,
     channels: channelRows.map((c) => c.id),
+    channelNames: channelRows.map((_, i) => `channel-${i}-${tag}`),
     empty: emptyRows.map((c) => c.id),
+    emptyNames: emptyRows.map((_, i) => `empty-${i}-${tag}`),
     sender,
   };
 }
@@ -999,7 +1006,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
   });
 
   it("tells the removed user, once, naming themselves and the channel", async () => {
-    const { users, channels } = await seed(["tuan", "linh"], 1);
+    const { users, channels, channelNames } = await seed(["tuan", "linh"], 1);
     const socket = await connect(one, users["tuan"]!);
     const frames = record(socket);
 
@@ -1015,7 +1022,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
     );
     expect(notices).toHaveLength(1);
     expect(notices[0]!.payload).toEqual({
-      channel: channels[0]!,
+      channel: channelNames[0]!,
       user: users["tuan"]!,
       change: "removed",
     });
@@ -1055,7 +1062,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
   it("keeps delivering the removed user's OTHER channel", async () => {
     // A test that only checks the channel went quiet is satisfied by a socket that
     // broke. This is the half that says the connection is still a connection.
-    const { users, channels, sender } = await seed(["tuan", "linh"], 2);
+    const { users, channels, sender, channelNames } = await seed(["tuan", "linh"], 2);
     const socket = await connect(one, users["tuan"]!);
     const frames = record(socket);
 
@@ -1070,7 +1077,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
       () => frames.find((f) => f.type === "message.created"),
       "a message on the second channel",
     );
-    expect(message.payload["channel"]).toBe(channels[1]!);
+    expect(message.payload["channel"]).toBe(channelNames[1]!);
   });
 
   it("keeps delivering to a SECOND LOCAL MEMBER of the same channel", async () => {
@@ -1133,7 +1140,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
     //
     // So the ordering that matters is audience-then-mutate, this test asserts it
     // directly, and the arrival order is left to the window test where it is real.
-    const { users, channels, sender } = await seed(["tuan", "linh"], 1);
+    const { users, channels, sender, channelNames } = await seed(["tuan", "linh"], 1);
     const socket = await connect(one, users["tuan"]!);
     const frames = record(socket);
 
@@ -1161,7 +1168,7 @@ describe("a removed member stops receiving, and is told why (US1)", () => {
     expect(kinds).toEqual(["message.created", "membership.changed"]);
     const notice = frames.find((f) => f.type === "membership.changed")!;
     expect(notice.payload["user"]).toBe(users["tuan"]!);
-    expect(notice.payload["channel"]).toBe(channels[0]!);
+    expect(notice.payload["channel"]).toBe(channelNames[0]!);
   });
 
   it("stops delivery on BOTH instances when the removal happened elsewhere", async () => {
@@ -1337,7 +1344,7 @@ describe("the channel's other members see who left (US2)", () => {
     // rather than a claim counter — presence needed `claim()` because a transition
     // fans out over every shared channel and this does not. Asserted anyway: the
     // structure is the argument, and an argument is not a measurement.
-    const { users, channels } = await seed(["tuan", "linh"], 3);
+    const { users, channels, channelNames } = await seed(["tuan", "linh"], 3);
     await connect(one, users["tuan"]!);
     const watcher = await connect(one, users["linh"]!);
     const theirs = record(watcher);
@@ -1347,7 +1354,7 @@ describe("the channel's other members see who left (US2)", () => {
 
     const notices = theirs.filter((f) => f.type === "membership.changed");
     expect(notices).toHaveLength(1);
-    expect(notices[0]!.payload["channel"]).toBe(channels[0]!);
+    expect(notices[0]!.payload["channel"]).toBe(channelNames[0]!);
   });
 
   it("sends one frame per removed user in a bulk removal, none coalesced", async () => {
@@ -1551,7 +1558,7 @@ describe("a member added mid-connection starts receiving (US3)", () => {
     // channel. The instance holding this connection is subscribed to nothing of
     // `empty[0]` — it cannot be, the user is not in it — so `member:{env}:{user}`
     // is the only way the news reaches here.
-    const { users, empty } = await seed(["tuan"], 1, 1);
+    const { users, empty, emptyNames } = await seed(["tuan"], 1, 1);
     const socket = await connect(one, users["tuan"]!);
     const frames = record(socket);
 
@@ -1562,14 +1569,14 @@ describe("a member added mid-connection starts receiving (US3)", () => {
       "the addition",
     );
     expect(notice.payload).toEqual({
-      channel: empty[0]!,
+      channel: emptyNames[0]!,
       user: users["tuan"]!,
       change: "added",
     });
   });
 
   it("delivers a message posted to the new channel afterwards", async () => {
-    const { users, empty, sender } = await seed(["tuan"], 1, 1);
+    const { users, empty, sender, emptyNames } = await seed(["tuan"], 1, 1);
     const socket = await connect(one, users["tuan"]!);
     const frames = record(socket);
 
@@ -1585,7 +1592,7 @@ describe("a member added mid-connection starts receiving (US3)", () => {
       "a message on the newly joined channel",
     );
     expect(message.payload["text"]).toBe("welcome aboard");
-    expect(message.payload["channel"]).toBe(empty[0]!);
+    expect(message.payload["channel"]).toBe(emptyNames[0]!);
   });
 
   it("makes the new member's presence visible to that channel's members", async () => {
@@ -1780,7 +1787,7 @@ describe("a ban revokes everything at once (US4)", () => {
     // **ONE WINDOW FOR THE WHOLE CASE.** Five seconds is FR-RTM-10's own budget and
     // cannot be injected shorter, so the ban, its negative assertion and the
     // bystander's positive one all share a single wait.
-    const { users, channels, sender } = await seed(["tuan", "linh"], 2);
+    const { users, channels, sender, channelNames } = await seed(["tuan", "linh"], 2);
     const banned = await connect(one, users["tuan"]!);
     const bystander = await connect(one, users["linh"]!);
     const theirs = record(banned);
@@ -1802,7 +1809,7 @@ describe("a ban revokes everything at once (US4)", () => {
       .filter((f) => f.type === "membership.changed")
       .map((f) => f.payload["channel"])
       .sort();
-    expect(named).toEqual([...channels].sort());
+    expect(named).toEqual([...channelNames].sort());
     expect(theirs.some((f) => f.payload["channel"] === "*")).toBe(false);
 
     // THE FIVE-SECOND NEGATIVE IS NOT HERE. It is the same clause the removal test
@@ -1895,7 +1902,7 @@ describe("the backstop — constitution IV's recovery property", () => {
       redisUrl: proxy.url,
       rereadIntervalMs: 300,
     });
-    const { users, channels, sender } = await seed(["tuan", "linh"], 1);
+    const { users, channels, sender, channelNames } = await seed(["tuan", "linh"], 1);
     const socket = await connect(instance, users["tuan"]!);
     try {
       const frames = record(socket);
@@ -1917,7 +1924,7 @@ describe("the backstop — constitution IV's recovery property", () => {
         "the backstop's correction",
       );
       expect(notice.payload["change"]).toBe("removed");
-      expect(notice.payload["channel"]).toBe(channels[0]!);
+      expect(notice.payload["channel"]).toBe(channelNames[0]!);
 
       // AND THE CORRECTION IS REAL, not just announced. The channel is out of the
       // connection's set and its subscriptions released, which is what makes this
@@ -2090,7 +2097,7 @@ describe("the backstop — constitution IV's recovery property", () => {
     // reconnect when the store comes back, and nothing here is rebuilt.
     const proxy = await startRedisProxy();
     const instance = await startInstance({ redisUrl: proxy.url, rereadIntervalMs: 60_000 });
-    const { users, channels } = await seed(["tuan", "linh"], 2);
+    const { users, channels, channelNames } = await seed(["tuan", "linh"], 2);
     const socket = await connect(instance, users["tuan"]!);
     try {
       const frames = record(socket);
@@ -2110,7 +2117,7 @@ describe("the backstop — constitution IV's recovery property", () => {
         "a change published after the fabric came back",
         8_000,
       );
-      expect(notice.payload["channel"]).toBe(channels[1]!);
+      expect(notice.payload["channel"]).toBe(channelNames[1]!);
     } finally {
       socket.close();
       await instance.close();

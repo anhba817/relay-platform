@@ -161,10 +161,17 @@ describe("a channel, a member and a message, all over the public API", () => {
   }
 
   /** A channel and two members, all over public HTTP. Returns the channel id. */
-  async function seedOverTheWire(label: string, users: string[]): Promise<string> {
+  async function seedOverTheWire(
+    label: string,
+    users: string[],
+  ): Promise<{ id: string; external_id: string }> {
+    // THE NAME IS KEPT, NOT JUST THE KEY. A client sees the identifier in every
+    // frame and in the ack's cursor now (FR-RTM-11, chapter 4.23), so a suite about
+    // the public surface has to hold both to assert either.
+    const externalId = `${label}-${randomUUID().slice(0, 8)}`;
     const created = await post(
       "/v1/channels",
-      { external_id: `${label}-${randomUUID().slice(0, 8)}`, type: "public" },
+      { external_id: externalId, type: "public" },
       api.credential,
     );
     expect(created.status).toBe(201);
@@ -177,7 +184,7 @@ describe("a channel, a member and a message, all over the public API", () => {
     expect(members.status).toBe(200);
     const body = (await members.json()) as { members: { status: string }[] };
     expect(body.members.every((m) => m.status === "added")).toBe(true);
-    return channelId;
+    return { id: channelId, external_id: externalId };
   }
 
   const mint = async (user: string): Promise<string> => {
@@ -188,7 +195,7 @@ describe("a channel, a member and a message, all over the public API", () => {
   };
 
   it("delivers a message between two members added over the wire", async () => {
-    const channelId = await seedOverTheWire("live", ["tuan", "mai"]);
+    const { id: channelId } = await seedOverTheWire("live", ["tuan", "mai"]);
 
     const tuan = reader(`${wsUrl}/v1/ws?token=${await mint("tuan")}`);
     const mai = reader(`${wsUrl}/v1/ws?token=${await mint("mai")}`);
@@ -248,7 +255,8 @@ describe("a channel, a member and a message, all over the public API", () => {
   // is a person and `sender_not_permitted` is the refusal — so the send that this test
   // needs to succeed must name software.
   it("delivers a REST-sent message, live and on resume", async () => {
-    const channelId = await seedOverTheWire("rest", ["tuan"]);
+    const { id: channelId, external_id: channelExternalId } =
+      await seedOverTheWire("rest", ["tuan"]);
     const token = await mint("tuan");
     // Created over the public route, because this suite has no database handle by
     // design — it is the one that tests what a customer can reach.
@@ -345,7 +353,7 @@ describe("a channel, a member and a message, all over the public API", () => {
       | { payload: { cursor: Record<string, number>; resume_ok: boolean } }
       | undefined;
     expect(ack?.payload.resume_ok).toBe(true);
-    expect(Object.keys(ack?.payload.cursor ?? {})).toContain(channelId);
+    expect(Object.keys(ack?.payload.cursor ?? {})).toContain(channelExternalId);
     // ONE FRAME, NOT TWO, AND THE CURSOR IS WHY. `cursor=${channelId}:1` says "I have
     // seen through sequence 1", so the backfill replays what came after it — the second
     // message only. Asserting two was an assumption about the fixture rather than a

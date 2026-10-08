@@ -389,7 +389,7 @@ describe("the socket refuses another tenant's identifiers", () => {
     const asMember = connect(url, t.attacker.token, `&cursor=${t.attacker.channelId}:0`);
     const first = await asMember.waitFor("connection.ack");
     const beforeCursor = (first.payload as { cursor?: Record<string, number> }).cursor ?? {};
-    expect(Object.keys(beforeCursor)).toContain(t.attacker.channelId);
+    expect(Object.keys(beforeCursor)).toContain(t.attacker.channelIdentity);
     asMember.socket.close();
 
     // Through the PUBLIC ROUTE, so the test asserts the consequence of the API rather
@@ -435,7 +435,7 @@ describe("the socket refuses another tenant's identifiers", () => {
       const socket = connect(url, t.attacker.token, `&cursor=${t.attacker.channelId}:0`);
       const ack = await socket.waitFor("connection.ack");
       const cursor = (ack.payload as { cursor?: Record<string, number> }).cursor ?? {};
-      expect(Object.keys(cursor)).toContain(t.attacker.channelId);
+      expect(Object.keys(cursor)).toContain(t.attacker.channelIdentity);
       socket.socket.close();
     } finally {
       // IN A `finally`, BECAUSE THE TEST ABOVE LEARNED THIS THE OTHER WAY. It left a
@@ -584,7 +584,7 @@ describe("the socket refuses another tenant's identifiers", () => {
     // ITS OWN FIXTURE. The first version deleted the shared `victim`, which took that
     // tenant's membership with it and made the next test's profile PATCH answer 404 —
     // the same shared-fixture mutation the removal test hit.
-    const { userExternalId, channelId, seq, witnessToken } =
+    const { userExternalId, channelId, channelIdentity, seq, witnessToken } =
       await t.victim.seedDeletable();
 
     const deleted = await fetch(`${t.apiUrl}/v1/users/${userExternalId}`, {
@@ -599,7 +599,7 @@ describe("the socket refuses another tenant's identifiers", () => {
     const socket = connect(url, witnessToken, `&cursor=${channelId}:0`);
     const ack = await socket.waitFor("connection.ack");
     const cursor = (ack.payload as { cursor?: Record<string, number> }).cursor ?? {};
-    expect(Object.keys(cursor)).toContain(channelId);
+    expect(Object.keys(cursor)).toContain(channelIdentity);
 
     const mine = await socket.waitFor("message.created");
     // THE FRAME ARRIVED, and its `user` is the deleted user's external id. Both halves
