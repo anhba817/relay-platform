@@ -273,12 +273,16 @@ describe("the internal surface", () => {
       headers: await headers("stranger"),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { channel_ids: string[] };
-    expect(body.channel_ids).not.toContain(privateChannelId);
+    // A HAND-WRITTEN CAST IS A HOLE IN THE INSTRUMENT. The session response became
+    // pairs in chapter 4.23 and the compiler named thirteen construction sites — not
+    // this one, because `as { … }` asserts a shape rather than reading it. Typed off
+    // the schema now, so the next change to that contract names this line too.
+    const body = internalSessionResponseSchema.parse(await res.json());
+    expect(body.channels.map((c) => c.id)).not.toContain(privateChannelId);
     // `channelId` is the PUBLIC channel this suite's other user belongs to. The
     // stranger can read it by id and send to it, and it is still not in their
     // session: membership decides subscription, visibility decides reads.
-    expect(body.channel_ids).not.toContain(channelId);
+    expect(body.channels.map((c) => c.id)).not.toContain(channelId);
   });
 
   it("names a channel the user IS a member of", async () => {
@@ -288,7 +292,11 @@ describe("the internal surface", () => {
       method: "POST",
       headers: await headers("tuan"),
     });
-    const body = (await res.json()) as { channel_ids: string[] };
-    expect(body.channel_ids).toContain(privateChannelId);
+    // A HAND-WRITTEN CAST IS A HOLE IN THE INSTRUMENT. The session response became
+    // pairs in chapter 4.23 and the compiler named thirteen construction sites — not
+    // this one, because `as { … }` asserts a shape rather than reading it. Typed off
+    // the schema now, so the next change to that contract names this line too.
+    const body = internalSessionResponseSchema.parse(await res.json());
+    expect(body.channels.map((c) => c.id)).toContain(privateChannelId);
   });
 });
