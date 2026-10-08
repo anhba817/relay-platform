@@ -1454,7 +1454,9 @@ export function attachSessions({
     subscribing: Promise<unknown>,
   ): Promise<void> {
     const cursors =
-      presented === null ? {} : scopeCursors(presented, connection.channelIds);
+      presented === null
+        ? {}
+        : scopeCursors(presented, connection.channelIds, connection.keys);
 
     /** Everything that cannot promise completeness ends up here: the client
      * is told resume did not happen and which channels to page instead. The
@@ -1688,7 +1690,18 @@ export function attachSessions({
     // budget (FR-014). It also never reaches the api — the whole path is this
     // gateway, Redis, and whoever is subscribed.
     if (frame.data.type === "typing.send") {
-      await signalTyping(connection, frame.data.payload.channel);
+      // TRANSLATED BEFORE `signalTyping`, WHICH IS WHERE FR-003 IS LOST IF IT IS
+      // LOST (FR-RTM-11). That function opens with a membership test against
+      // `channelIds` — a KEY set — and drops a miss "with no frame, no close code
+      // and no log line" (FR-013). Past it the string becomes a NATS subject. So an
+      // untranslated identifier here is indistinguishable from a client typing into
+      // a channel it has left, and unlike a send there is no api round trip to
+      // refuse it.
+      const typingChannel = frame.data.payload.channel;
+      await signalTyping(
+        connection,
+        connection.keys.get(typingChannel) ?? typingChannel,
+      );
       return;
     }
 
@@ -1737,9 +1750,16 @@ export function attachSessions({
     // carries it further, the message commits without attachments, and the client is
     // acked as though it worked. There is no error anywhere in that sequence.
     const { channel, text, idem_key, attachments } = frame.data.payload;
+    // THE GATEWAY TRANSLATES BEFORE IT KNOCKS (FR-RTM-11, chapter 4.23). The api's
+    // internal door is typed `z.string().uuid()` and stays that way — `internal.ts`
+    // says internal uuids are the api's business — so an identifier has to become a
+    // key on this side. A value the map does not hold is passed through unchanged
+    // and refused by the api exactly as an unknown channel is refused today, which
+    // is the point: this line adds a name, not a new way to be told no.
+    const channelKey = connection.keys.get(channel) ?? channel;
     try {
       const committed = await api.sendMessage(connection.identity, {
-        channel_id: channel,
+        channel_id: channelKey,
         text,
         ...(attachments !== undefined && { attachments }),
         idempotency_key: idem_key,

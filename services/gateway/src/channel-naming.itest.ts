@@ -51,6 +51,11 @@ interface Harness {
   close: () => Promise<void>;
 }
 
+/** What the api's internal door was handed, in order. The door is typed
+ * `z.string().uuid()` and stays that way, so this is where "the gateway translates
+ * before it knocks" stops being a sentence. */
+const knocked: string[] = [];
+
 async function boot(): Promise<Harness> {
   const fanout = createFanout({ url, logger: silent });
   const typing = createTyping({ url, logger: silent });
@@ -69,15 +74,18 @@ async function boot(): Promise<Harness> {
     }),
     memberships: async () => [KEY],
     backfill: async () => ({ [KEY]: { messages: [], truncated: false } }),
-    sendMessage: async () => ({
-      id: "committed",
-      channel_id: KEY,
-      seq: 9,
-      user: "mai",
-      text: "sent",
-      attachments: [],
-      created_at: "2026-10-08T00:00:00.000Z",
-    }),
+    sendMessage: async (_identity: unknown, body: { channel_id: string }) => {
+      knocked.push(body.channel_id);
+      return {
+        id: "committed",
+        channel_id: KEY,
+        seq: 9,
+        user: "mai",
+        text: "sent",
+        attachments: [],
+        created_at: "2026-10-08T00:00:00.000Z",
+      };
+    },
   } as unknown as Omit<ApiClient, "reportUsage">;
   const server: Server = serve({
     service: "gateway",
@@ -225,6 +233,103 @@ describe("what a client is told a channel is called", () => {
       expect(JSON.stringify(frames)).not.toContain(KEY);
     } finally {
       socket.close();
+    }
+  }, 30_000);
+
+  it("takes a send by identifier, and hands the api the key (FR-002)", async () => {
+    harness = await boot();
+    knocked.length = 0;
+    const socket = new WebSocket(`${harness.url}?token=${TOKEN}`);
+    const frames = record(socket);
+    try {
+      await until(() => frames.find((f) => f.type === "connection.ack"), "ack");
+      socket.send(
+        JSON.stringify({
+          type: "message.send",
+          payload: { idem_key: "k1", channel: IDENTITY, text: "by identifier" },
+        }),
+      );
+      await until(() => frames.find((f) => f.type === "message.ack"), "the ack");
+      expect(knocked).toEqual([KEY]);
+    } finally {
+      socket.close();
+    }
+  }, 20_000);
+
+  it("still takes a send by the Relay identifier, SEPARATELY (FR-003)", async () => {
+    // ITS OWN TEST, NOT A SECOND ASSERTION IN THE ONE ABOVE. The chapter's promise
+    // and its compatibility claim fail for different reasons, and a client
+    // published before this chapter holds the key and nothing else.
+    harness = await boot();
+    knocked.length = 0;
+    const socket = new WebSocket(`${harness.url}?token=${TOKEN}`);
+    const frames = record(socket);
+    try {
+      await until(() => frames.find((f) => f.type === "connection.ack"), "ack");
+      socket.send(
+        JSON.stringify({
+          type: "message.send",
+          payload: { idem_key: "k2", channel: KEY, text: "by key" },
+        }),
+      );
+      await until(() => frames.find((f) => f.type === "message.ack"), "the ack");
+      expect(knocked).toEqual([KEY]);
+    } finally {
+      socket.close();
+    }
+  }, 20_000);
+
+  it("passes a channel it cannot name through unchanged, so the api refuses it as it does today (FR-005)", async () => {
+    // WHAT THIS ASSERTS IS AN ABSENCE OF NEW BEHAVIOUR. An identifier naming nothing
+    // this client may hear is not resolved, not refused here, and not logged
+    // differently — it reaches the api verbatim, which is the shape an unknown uuid
+    // has had since 2.2. 068-2 is why that matters: a resolver that refuses answers
+    // BEFORE the checks the handler makes on purpose, and a banned user could then
+    // tell a real channel from an invented one.
+    harness = await boot();
+    knocked.length = 0;
+    const socket = new WebSocket(`${harness.url}?token=${TOKEN}`);
+    const frames = record(socket);
+    try {
+      await until(() => frames.find((f) => f.type === "connection.ack"), "ack");
+      socket.send(
+        JSON.stringify({
+          type: "message.send",
+          payload: { idem_key: "k3", channel: "order-nobody-has", text: "?" },
+        }),
+      );
+      await until(() => knocked.length > 0 ? true : undefined, "the knock");
+      expect(knocked).toEqual(["order-nobody-has"]);
+    } finally {
+      socket.close();
+    }
+  }, 20_000);
+
+  it("resumes a cursor keyed by the identity, and one keyed by the uuid (FR-003)", async () => {
+    // THE SHARP EDGE OF CONSTITUTION II. `scopeCursors` DROPS a key its set does not
+    // hold — no error, no log — so a client presenting the identifiers this chapter
+    // hands out would have resumed nothing and been told nothing. Both forms are
+    // asserted here because every client connected before the chapter presents the
+    // other one, and the failure in either direction is silence.
+    for (const presented of [IDENTITY, KEY]) {
+      harness = await boot();
+      const socket = new WebSocket(
+        `${harness.url}?token=${TOKEN}&cursor=${presented}:1`,
+      );
+      const frames = record(socket);
+      try {
+        const ack = await until(
+          () => frames.find((f) => f.type === "connection.ack"),
+          `an ack for a cursor keyed by ${presented}`,
+        );
+        const payload = (ack as { payload: Record<string, unknown> }).payload;
+        expect(payload["resume_ok"]).toBe(true);
+        expect(Object.keys(payload["cursor"] as object)).toEqual([IDENTITY]);
+      } finally {
+        socket.close();
+        await harness.close();
+        harness = undefined;
+      }
     }
   }, 30_000);
 });

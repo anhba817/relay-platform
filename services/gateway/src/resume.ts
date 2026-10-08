@@ -75,10 +75,28 @@ export function parseCursors(
 export function scopeCursors(
   cursors: Record<string, number>,
   channelIds: Set<string>,
+  /** Identity to key, for a client that presents the name it was given
+   * (FR-RTM-11, chapter 4.23). Optional so every caller that holds no map — the
+   * unit tests of this function among them — keeps the behaviour it had. */
+  keys?: Map<string, string>,
 ): Record<string, number> {
-  return Object.fromEntries(
-    Object.entries(cursors).filter(([channelId]) => channelIds.has(channelId)),
-  );
+  // BOTH FORMS, AND THE FILTER IS WHY THIS MATTERS. A key this set does not hold is
+  // DROPPED here — silently, with no error and no log — so a client presenting the
+  // identifiers this chapter started handing out would have resumed NOTHING and
+  // been told nothing, which is FR-003's one forbidden outcome reached by a filter
+  // rather than by a refusal. Every client connected before the chapter still
+  // presents uuids, so both have to work.
+  //
+  // THE IDENTITY IS TRIED FIRST, AS IT IS ON REST. 19 of 44,574 channels carry an
+  // identifier that is itself another channel's uuid, so no shape test separates
+  // the two and the order is a correctness choice: under key-first a customer who
+  // named a channel with another channel's uuid could never resume their own.
+  const resolved: Record<string, number> = {};
+  for (const [presented, seq] of Object.entries(cursors)) {
+    const key = keys?.get(presented) ?? presented;
+    if (channelIds.has(key)) resolved[key] = seq;
+  }
+  return resolved;
 }
 
 /** The backfill's high-water mark per channel: the last sequence the
